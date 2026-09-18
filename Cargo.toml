@@ -1,0 +1,51 @@
+[package]
+name = "portamax-sim"
+version = "0.1.0"
+edition = "2021"
+default-run = "portamax-sim"
+
+# Real-time audio DSP is genuinely CPU-heavy (14+ apps now, each doing
+# real per-sample synthesis/filtering/effects work every block), and
+# plain `cargo run`'s default dev profile (opt-level = 0, no
+# optimization at all) simply cannot keep up with the ~10.6ms/block
+# real-time deadline at that load -- measured at 100% of blocks
+# missing budget (worst case ~3x over) with all 14 apps idle, before
+# this fix. That's a guaranteed constant buffer underrun, which is
+# exactly what audible "garbling"/crackling sounds like -- nothing to
+# do with any DSP gain-staging or mixing logic. Raising the dev
+# profile's optimization level (while keeping debug assertions,
+# overflow checks, and debug info at their normal dev-friendly
+# defaults, which are independent of opt-level) closes nearly all of
+# that gap -- measured comfortably within budget at idle afterward --
+# without needing to remember `--release` for ordinary iteration.
+[profile.dev]
+opt-level = 2
+
+# Dependencies (cpal, rustfft, embedded-graphics, etc.) are rebuilt far
+# less often than this crate's own code, so paying release-level
+# optimization for them specifically doesn't meaningfully slow down
+# incremental `cargo run` rebuilds, and lets DSP calls that cross into
+# them (e.g. rustfft's inner loops) run at full speed too.
+[profile.dev.package."*"]
+opt-level = 3
+
+# infinitedsp is left out for now — add it once you're ready to replace
+# the hand-rolled filter below with the real DSP graph. Check crates.io
+# for the current version/API before wiring it in, since this scaffold
+# hasn't verified its exact interface.
+[dependencies]
+cpal = "0.15"
+embedded-graphics = "0.8.2"
+hound = "3.5.1"
+midir = "0.10"
+minifb = "0.28.0"
+png = "0.17"
+rustfft = "6.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.6"
+
+[build-dependencies]
+cc = "1.4.6"
+
+[dev-dependencies]
+slint = "1.18.0"
