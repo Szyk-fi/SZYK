@@ -1,0 +1,322 @@
+// Shared hardware-device chrome for every Slint screen POC.
+//
+// The outer shell is the real device's actual physical layout, not
+// the desktop "Portamax UI Mockup" artifact's cream tabletop-gadget
+// bezel anymore: a black, Game-Boy-proportioned body (screen on top,
+// controls stacked below), sharp-ish corners instead of that
+// mockup's soft 26px rounding, two rotary-encoder-with-push-button
+// knobs mounted on the device's left/right edges at the screen's
+// bottom height (not centered under it), then the 4 F-buttons, then
+// the 4x4 pad matrix -- matching `Input` in app.rs exactly
+// (`top: [bool; 4]`, `grid: [bool; 16]`, `knob1`/`knob2` +
+// `knob1_press`/`knob2_press`). The SCREEN's own content (title,
+// per-app body, on-screen bottom bar) is unchanged from the earlier
+// mockup port -- still Space Grotesk + JetBrains Mono, still
+// #5CF07A/#0B100C -- only the plastic around it changed.
+//
+// Each screen POC imports this and supplies its own title/body/
+// bottom-bar/pad-color state instead of re-describing the shell every
+// time -- the same "one shared chrome, each app owns its own content"
+// shape the real device firmware and this simulator both already use
+// (see os.rs).
+
+export struct BarSegment {
+    label: string,
+    active: bool,
+}
+
+export component DeviceFrame inherits Window {
+    width: 940px;
+    height: 1058px;
+    background: #1A1A1A;
+    title: "Portamax -- Slint device-frame POC (scoping only)";
+
+    in property <string> app-name: "APP";
+    in property <string> breadcrumb: "";
+    in property <color> accent: #5CF07A;
+    in property <color> screen-bg: #0B100C;
+    // Where the pad matrix starts, stacked below the screen/F-row --
+    // computed once here so both the Rectangle that positions it and
+    // (if ever needed) a screen POC can reference the same number.
+    property <length> pad-grid-y: 30px + 360px + 26px + 58px + 24px;
+    // Exactly 4 -- F1..F4, same as the real device's bottom bar.
+    // `active` drives the on-screen bottom bar's text only now (a
+    // screen's own persistent state, e.g. the Sequencer staying
+    // "Stop" while running) -- the physical button below is a real
+    // momentary pushbutton instead, lit by an actual press
+    // (`TouchArea.pressed`), not this.
+    in property <[BarSegment]> bar: [
+        { label: "F1  SETTINGS", active: false },
+        { label: "F2  HOME", active: false },
+        { label: "F3  STOP", active: false },
+        { label: "F4  MIXER", active: false },
+    ];
+    // Exactly 16, row-major (see `controller::GRID_NOTES`) -- the
+    // physical pad matrix's current color. Defaults to a dim, uniform
+    // "installed but idle" grey; a screen that actually uses the pads
+    // (Sequencer) overrides this the same way `App::grid_led_overlay`
+    // drives the real Push 2's LEDs in os.rs -- this is that same
+    // idea, just for the device's own built-in pads instead of an
+    // external controller.
+    in property <[color]> pad-colors: [
+        #232323, #232323, #232323, #232323,
+        #232323, #232323, #232323, #232323,
+        #232323, #232323, #232323, #232323,
+        #232323, #232323, #232323, #232323,
+    ];
+
+    Rectangle {
+        x: 30px; y: 24px;
+        width: 880px; height: 1010px;
+        background: #0C0C0C;
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: rgba(255, 255, 255, 0.08);
+
+        // Screen, top-mounted, thin modern bezel instead of the
+        // mockup's chunky cutout. Sits in a centered 640px-wide
+        // column -- the knobs live in the extra width to either side
+        // of it, not stacked below.
+        Rectangle {
+            x: 120px; y: 30px;
+            width: 640px; height: 360px;
+            background: #000000;
+            border-radius: 8px;
+            border-width: 5px;
+            border-color: #000000;
+
+            Rectangle {
+                width: 640px; height: 360px;
+                background: root.screen-bg;
+                border-radius: 4px;
+                clip: true;
+
+                VerticalLayout {
+                    // Title row
+                    HorizontalLayout {
+                        height: 40px;
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        padding-top: 12px;
+                        Text {
+                            text: root.app-name;
+                            font-family: "Space Grotesk";
+                            font-weight: 700;
+                            font-size: 27px;
+                            letter-spacing: 0.4px;
+                            color: root.accent;
+                            vertical-alignment: bottom;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: root.breadcrumb;
+                            font-family: "JetBrains Mono";
+                            font-size: 12px;
+                            letter-spacing: 0.6px;
+                            color: rgba(255, 255, 255, 0.32);
+                            vertical-alignment: bottom;
+                        }
+                    }
+
+                    // Per-screen body -- see each POC's own file.
+                    // Explicit height (360 screen - 40 title - 36
+                    // bottom bar), not `vertical-stretch: 1` -- that
+                    // alone didn't actually force this Rectangle to
+                    // fill the remaining space when a screen's own
+                    // content was short (Settings' plain list, far
+                    // shorter than every other screen's fuller
+                    // content), which let the on-screen bottom bar
+                    // float up right under the last row instead of
+                    // staying pinned to the screen's real bottom edge.
+                    // Caught by rendering and looking, not a test.
+                    Rectangle {
+                        height: 284px;
+                        @children
+                    }
+
+                    // On-screen bottom bar -- sized for real
+                    // legibility on a ~245 PPI 3" panel, not the
+                    // desktop mockup's original proportions. See
+                    // slint_launcher_poc.rs's doc comment for the
+                    // PPI math.
+                    Rectangle {
+                        height: 36px;
+                        Rectangle {
+                            y: 0px; height: 1px;
+                            background: rgba(255, 255, 255, 0.14);
+                        }
+                        HorizontalLayout {
+                            y: 1px;
+                            height: 35px;
+                            for seg in root.bar: Text {
+                                horizontal-stretch: 1;
+                                text: seg.label;
+                                font-family: "JetBrains Mono";
+                                font-size: 14px;
+                                letter-spacing: 0.4px;
+                                font-weight: seg.active ? 700 : 400;
+                                color: seg.active ? root.accent : rgba(255, 255, 255, 0.55);
+                                vertical-alignment: center;
+                                horizontal-alignment: left;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // F1-F4, directly under the screen -- momentary, real
+        // pushbuttons: the physical pill only lights *while actually
+        // held down* (a real-time press indicator), not a toggle a
+        // click leaves switched on. Persistent state (e.g. the
+        // Sequencer's F2 staying "Stop" while running) is still shown
+        // on the screen's own bottom bar text above, which reads
+        // `root.bar` as each screen initializes it -- only the
+        // physical LED itself no longer follows a click.
+        HorizontalLayout {
+            x: 120px; y: 30px + 360px + 26px;
+            width: 640px; height: 58px;
+            spacing: 14px;
+            for seg[i] in root.bar: Rectangle {
+                border-radius: 8px;
+                background: f-touch.pressed ? root.accent : #1B1B1B;
+                border-width: 1px;
+                border-color: f-touch.pressed ? root.accent : rgba(255, 255, 255, 0.08);
+                animate background { duration: 60ms; }
+                Text {
+                    text: "F" + (i + 1);
+                    font-family: "JetBrains Mono";
+                    font-weight: 700;
+                    font-size: 15px;
+                    letter-spacing: 0.5px;
+                    color: f-touch.pressed ? #0B100C : rgba(255, 255, 255, 0.4);
+                }
+                f-touch := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+        }
+
+        // Two rotary-encoder-with-push-button knobs, mounted on the
+        // device's own left/right edges -- in the extra width outside
+        // the 640px screen/button column, vertically centered on the
+        // F-row -- "around the bottom of the screen but on the side
+        // of the device", not stacked in their own row underneath it.
+        //
+        // Real encoders spin freely (no min/max, unlike a
+        // potentiometer) -- matching that, dragging vertically just
+        // keeps adding to the angle rather than clamping, same as
+        // `Input::knob1`/`knob2` being a per-frame *delta*
+        // (app.rs/controller.rs), not an absolute position. A click
+        // darkens the cap while held, standing in for `knob1_press`/
+        // `knob2_press`.
+        knob1 := Rectangle {
+            x: 16px; y: 30px + 360px + 26px + 58px / 2 - 40px;
+            width: 80px; height: 80px;
+            border-radius: 40px;
+            background: #161616;
+            border-width: 3px;
+            border-color: rgba(255, 255, 255, 0.07);
+
+            property <angle> knob-angle: 0deg;
+            property <angle> angle-at-press: 0deg;
+
+            Rectangle {
+                x: 14px; y: 14px;
+                width: 52px; height: 52px;
+                border-radius: 26px;
+                background: knob1-touch.pressed ? #2A2A2A : #1F1F1F;
+                border-width: 1px;
+                border-color: rgba(255, 255, 255, 0.05);
+                animate background { duration: 80ms; }
+            }
+            // Knob-position tick, rotates around the knob's center as
+            // it's dragged.
+            Rectangle {
+                x: 37px; y: 6px;
+                width: 6px; height: 16px;
+                border-radius: 3px;
+                background: root.accent;
+                transform-rotation: knob1.knob-angle;
+                transform-origin: { x: 3px, y: 34px };
+            }
+            knob1-touch := TouchArea {
+                width: 100%;
+                height: 100%;
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        knob1.angle-at-press = knob1.knob-angle;
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        knob1.knob-angle = knob1.angle-at-press + (self.pressed-y - self.mouse-y) * 1.4deg / 1px;
+                    }
+                }
+            }
+        }
+        knob2 := Rectangle {
+            x: 880px - 16px - 80px; y: 30px + 360px + 26px + 58px / 2 - 40px;
+            width: 80px; height: 80px;
+            border-radius: 40px;
+            background: #161616;
+            border-width: 3px;
+            border-color: rgba(255, 255, 255, 0.07);
+
+            property <angle> knob-angle: 0deg;
+            property <angle> angle-at-press: 0deg;
+
+            Rectangle {
+                x: 14px; y: 14px;
+                width: 52px; height: 52px;
+                border-radius: 26px;
+                background: knob2-touch.pressed ? #2A2A2A : #1F1F1F;
+                border-width: 1px;
+                border-color: rgba(255, 255, 255, 0.05);
+                animate background { duration: 80ms; }
+            }
+            Rectangle {
+                x: 37px; y: 6px;
+                width: 6px; height: 16px;
+                border-radius: 3px;
+                background: root.accent;
+                transform-rotation: knob2.knob-angle;
+                transform-origin: { x: 3px, y: 34px };
+            }
+            knob2-touch := TouchArea {
+                width: 100%;
+                height: 100%;
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        knob2.angle-at-press = knob2.knob-angle;
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        knob2.knob-angle = knob2.angle-at-press + (self.pressed-y - self.mouse-y) * 1.4deg / 1px;
+                    }
+                }
+            }
+        }
+
+        // The 4x4 pad matrix -- same physical layout `GRID_NOTES`
+        // addresses, row-major, no flip.
+        VerticalLayout {
+            x: 120px; y: root.pad-grid-y;
+            width: 640px;
+            spacing: 14px;
+            for row in [0, 1, 2, 3] : HorizontalLayout {
+                spacing: 14px;
+                for col in [0, 1, 2, 3] : Rectangle {
+                    property <int> i: row * 4 + col;
+                    height: 110px;
+                    border-radius: 10px;
+                    background: root.pad-colors[i];
+                    border-width: 1px;
+                    border-color: rgba(255, 255, 255, 0.06);
+                }
+            }
+        }
+    }
+}

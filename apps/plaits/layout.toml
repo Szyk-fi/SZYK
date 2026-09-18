@@ -1,0 +1,22 @@
+# Panel geometry for the Plaits screen -- hot-reloaded by the running
+# app (see src/apps/plaits_layout.rs), so editing this and saving is
+# enough to see the change live, no rebuild/restart needed.
+#
+# Kept in sync with the Figma mockup ("Portamax Sim UI" file, frame
+# "Plaits — current (640x360)"), specifically the three named marker
+# rectangles: Layout/Menu, Layout/Panel, Layout/PianoRoll. Resize or
+# move those in Figma, then ask for a re-sync to regenerate this file
+# from their bounding boxes. You can also just edit the numbers below
+# directly -- Figma isn't required.
+
+menu_x = 16
+menu_y = 44
+
+panel_x = 400
+panel_y = 44
+panel_w = 220
+
+# Seeds the Piano Roll group's "Height" setting the first time the app
+# runs -- after that it's user-adjustable in-app (Selection::RollHeight),
+# same as before this became configurable.
+default_roll_height = 50
