@@ -1,0 +1,147 @@
+// A single line with explicit endpoints and a fixed view box. Rectangle rotation
+// is ignored by the software backend; this primitive preserves the real geometry.
+export component VectorSegment inherits Path {
+    in property <length> center-x;
+    in property <length> center-y;
+    in property <float> delta-x;
+    in property <float> delta-y;
+    in property <color> trace;
+    in property <length> line-width: 2px;
+    width: max(1px, abs(root.delta-x) * 1px) + root.line-width;
+    height: max(1px, abs(root.delta-y) * 1px) + root.line-width;
+    x: root.center-x - self.width / 2;
+    y: root.center-y - self.height / 2;
+    viewbox-width: self.width / 1px;
+    viewbox-height: self.height / 1px;
+    fit: preserve;
+    stroke-line-cap: round;
+    stroke: root.trace;
+    stroke-width: root.line-width;
+    MoveTo { x: (root.width / 1px - root.delta-x) / 2; y: (root.height / 1px - root.delta-y) / 2; }
+    LineTo { x: (root.width / 1px + root.delta-x) / 2; y: (root.height / 1px + root.delta-y) / 2; }
+}
+
+// Shared, bounded-cost instrument graphics. All traces come from the live DSP.
+export component InstrumentLabel inherits Text {
+    in property <color> ink: #ffffff;
+    color: root.ink.with-alpha(0.65);
+    font-family: "JetBrains Mono";
+    font-size: 10px;
+    letter-spacing: 1px;
+    height: 16px;
+}
+
+export component InstrumentHeading inherits Rectangle {
+    in property <string> caption;
+    in property <string> title;
+    in property <color> ink: #ffffff;
+    in property <color> accent: #ffaa30;
+    height: 47px;
+    VerticalLayout {
+        spacing: 2px;
+        InstrumentLabel { text: root.caption; ink: root.ink; }
+        Text {
+            text: root.title;
+            color: root.accent;
+            font-family: "Space Grotesk";
+            font-size: 21px;
+            font-weight: 700;
+            overflow: elide;
+        }
+    }
+}
+
+export component ScopeSurface inherits Rectangle {
+    in property <color> ink: #ffffff;
+    in property <color> accent: #ffaa30;
+    background: root.ink.with-alpha(0.025);
+    border-width: 1px;
+    border-color: root.ink.with-alpha(0.14);
+    clip: true;
+    for column in [1, 2, 3, 4, 5, 6, 7] : Rectangle {
+        x: parent.width * column / 8;
+        width: 1px; height: 100%;
+        background: root.ink.with-alpha(0.06);
+    }
+    for row in [1, 2, 3] : Rectangle {
+        y: parent.height * row / 4;
+        height: 1px; width: 100%;
+        background: root.ink.with-alpha(row == 2 ? 0.18 : 0.06);
+    }
+    @children
+}
+
+export component SignalTrace inherits Rectangle {
+    in property <[float]> mid-x;
+    in property <[float]> mid-y;
+    in property <[float]> lengths;
+    in property <[float]> angles;
+    in property <float> source-width: 260;
+    in property <float> source-height: 190;
+    in property <color> trace: #087d78;
+    in property <length> stroke-width: 1.5px;
+    in property <bool> round-caps: false;
+    // Explicit endpoints work on both software and accelerated renderers.
+    for i in root.mid-x.length : VectorSegment {
+        property <float> sx: root.width / (root.source-width * 1px);
+        property <float> sy: root.height / (root.source-height * 1px);
+        center-x: root.mid-x[i] * self.sx * 1px;
+        center-y: root.mid-y[i] * self.sy * 1px;
+        delta-x: root.lengths[i] * Math.cos(root.angles[i] * 1deg) * self.sx;
+        delta-y: root.lengths[i] * Math.sin(root.angles[i] * 1deg) * self.sy;
+        trace: root.trace;
+        line-width: root.stroke-width;
+    }
+
+}
+
+export component ValueTrack inherits Rectangle {
+    in property <string> label;
+    in property <float> value;
+    in property <color> ink: #ffffff;
+    in property <color> accent: #a18bff;
+    height: 29px;
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: root.label;
+            color: root.ink.with-alpha(0.75);
+            font-family: "JetBrains Mono";
+            font-size: 10px;
+            overflow: elide;
+        }
+        Rectangle {
+            height: 4px;
+            background: root.ink.with-alpha(0.12);
+            Rectangle {
+                x: 0px; y: 0px;
+                width: parent.width * max(0, min(1, root.value));
+                height: 100%; background: root.accent;
+            }
+        }
+    }
+}
+
+// Common visual surface for the instrument family. No blur or per-pixel effects.
+export component InstrumentPanel inherits Rectangle {
+    in property <string> caption;
+    in property <color> ink: #ffffff;
+    in property <color> accent: #8adbc4;
+    background: root.ink.with-alpha(0.025);
+    border-width: 1px;
+    border-color: root.ink.with-alpha(0.12);
+    border-radius: 5px;
+    VerticalLayout {
+        padding: 8px;
+        spacing: 7px;
+        HorizontalLayout {
+            height: 14px;
+            spacing: 6px;
+            Rectangle { width: 3px; height: 10px; background: root.accent; }
+            InstrumentLabel { text: root.caption; ink: root.ink; font-size: 9px; height: 14px; horizontal-stretch: 1; overflow: elide; }
+        }
+        Rectangle { height: 1px; background: root.ink.with-alpha(0.12); }
+        @children
+    }
+}
+

@@ -25,7 +25,7 @@
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -158,6 +158,18 @@ pub struct TapeApp {
     expanded: [bool; NUM_GROUPS],
 }
 
+// --- Tape's own palette: warm cream and reel-deck amber-red, not a
+// device-wide theme -- the color of a hardware looper pedal's own VU
+// lamps, distinct from Magnito's cooler rust and Tonestack's tweed. ---
+
+const TAPE_BG: Rgb565 = Rgb565::new(3, 5, 2);
+const TAPE_TITLE: Rgb565 = Rgb565::new(29, 55, 25);
+const TAPE_ACCENT: Rgb565 = Rgb565::new(26, 19, 5);
+const TAPE_DIM: Rgb565 = Rgb565::new(17, 28, 11);
+const TAPE_EMPTY: Rgb565 = Rgb565::new(3, 4, 3);
+const TAPE_OUTLINE: Rgb565 = Rgb565::new(8, 6, 5);
+const TAPE_PLAYHEAD: Rgb565 = Rgb565::new(31, 28, 8);
+
 impl TapeApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self { params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)), sensitivity, nav_speed, audio_bus, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
@@ -277,7 +289,83 @@ impl TapeApp {
     }
 }
 
+impl TapeApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The real 4-track lane view -- same data `draw()`'s own lanes
+    /// sketch reads, exposed for an alternate renderer instead of
+    /// drawn directly.
+    pub(crate) fn track_lanes(&self) -> crate::app::TapeExtra {
+        let loop_len = self.params.loop_length_samples.load(Ordering::Relaxed);
+        let play_pos = self.params.play_pos.load(Ordering::Relaxed);
+        let playhead_frac = if loop_len > 0 { (play_pos % loop_len) as f32 / loop_len as f32 } else { 0.0 };
+
+        let tracks = (0..NUM_TRACKS)
+            .map(|t| {
+                let recording = self.params.tracks[t].recording.load(Ordering::Relaxed);
+                let has_content = self.params.tracks[t].has_content.load(Ordering::Relaxed);
+                let kind = if recording {
+                    2
+                } else if has_content {
+                    1
+                } else {
+                    0
+                };
+                (self.track_status(t), kind, playhead_frac)
+            })
+            .collect();
+
+        crate::app::TapeExtra { tracks }
+    }
+}
+
 impl App for TapeApp {
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Tape(self.track_lanes())
+    }
+
     fn running(&self) -> Option<bool> {
         Some(self.params.running.load(Ordering::Relaxed))
     }
@@ -289,7 +377,7 @@ impl App for TapeApp {
 
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -318,11 +406,16 @@ impl App for TapeApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(TAPE_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, TAPE_TITLE);
         Text::new("Tape", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, TAPE_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, TAPE_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -335,7 +428,7 @@ impl App for TapeApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, TAPE_BG, TAPE_DIM, TAPE_ACCENT);
 
         // --- Right: 4 track lanes, a playhead line, and a filled
         // bar per track showing how much of the loop has content. ---
@@ -352,23 +445,25 @@ impl App for TapeApp {
             let recording = self.params.tracks[t].recording.load(Ordering::Relaxed);
             let has_content = self.params.tracks[t].has_content.load(Ordering::Relaxed);
             let muted = self.params.tracks[t].mute.load(Ordering::Relaxed);
+            // Recording stays its own bright red -- a functional
+            // "armed" alert, not this app's own amber personality.
             let fill = if recording {
                 Rgb565::new(30, 5, 5)
             } else if has_content && !muted {
-                Rgb565::new(0, 35, 6)
+                TAPE_ACCENT
             } else {
-                Rgb565::new(3, 6, 3)
+                TAPE_EMPTY
             };
             Rectangle::new(Point::new(lane_x, y), Size::new(lane_w as u32, lane_h as u32)).into_styled(PrimitiveStyle::with_fill(fill)).draw(fb).ok();
             Rectangle::new(Point::new(lane_x, y), Size::new(lane_w as u32, lane_h as u32))
-                .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(10, 20, 10), 1))
+                .into_styled(PrimitiveStyle::with_stroke(TAPE_OUTLINE, 1))
                 .draw(fb)
                 .ok();
 
             if loop_len > 0 {
                 let frac = (play_pos % loop_len) as f32 / loop_len as f32;
                 let x = lane_x + (frac * lane_w as f32) as i32;
-                Rectangle::new(Point::new(x, y), Size::new(2, lane_h as u32)).into_styled(PrimitiveStyle::with_fill(Rgb565::new(0, 63, 30))).draw(fb).ok();
+                Rectangle::new(Point::new(x, y), Size::new(2, lane_h as u32)).into_styled(PrimitiveStyle::with_fill(TAPE_PLAYHEAD)).draw(fb).ok();
             }
 
             Text::new(&format!("T{} {}", t + 1, self.track_status(t)), Point::new(lane_x + 6, y + lane_h - 8), accent).draw(fb).ok();

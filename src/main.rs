@@ -18,6 +18,7 @@
 
 mod app;
 mod apps;
+mod arpeggiator;
 mod audio;
 mod audio_bus;
 mod audio_devices;
@@ -26,6 +27,7 @@ mod controller;
 mod display;
 mod led_output;
 mod manifest;
+mod midi_map;
 mod mixer_bus;
 mod modbus;
 mod os;
@@ -34,6 +36,7 @@ mod plaits_ffi;
 mod registry;
 mod spleen_fonts;
 mod startup_logo;
+mod theme;
 mod util;
 
 use app::{App, Input};
@@ -134,7 +137,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // row (see paramlist.rs) -- independent of `sensitivity` above, since
     // list navigation is a discrete step-per-detent action, not a scaled
     // continuous edit.
-    let nav_speed = Arc::new(AtomicF32::new(6.0));
+    let nav_speed = Arc::new(AtomicF32::new(3.0));
+    let show_cpu = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let midi_map = Arc::new(midi_map::MidiMap::new());
+    // Settings' live color wheel -- see theme.rs. Threaded through
+    // Registry::new like every other shared control so Settings can
+    // edit it, but this binary's own on-device (embedded_graphics)
+    // renderer doesn't read it back yet -- only the Slint live
+    // prototype (examples/slint_home_live.rs) actually recolors from
+    // it today, so Settings' Hue/Saturation/Brightness rows are real
+    // and functional here but not yet visible in this bin's own draw().
+    let accent = Arc::new(theme::ThemeColor::new(theme::ACCENT_DEFAULT_HUE, theme::ACCENT_DEFAULT_SAT, theme::ACCENT_DEFAULT_VAL));
+    let background = Arc::new(theme::ThemeColor::new(theme::BG_DEFAULT_HUE, theme::BG_DEFAULT_SAT, theme::BG_DEFAULT_VAL));
     // Final gain stage applied to the whole mix, after every app's
     // processor has summed in -- see audio.rs and apps/mixer.rs.
     let master_volume = Arc::new(AtomicF32::new(1.0));
@@ -146,13 +160,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the same value, not two that need reconciling.
     let prism_cc = Arc::new(PrismCcTargets::new());
 
+    // Shared registry of modulation targets any app can expose (e.g.
+    // Plaits' Harmonics) for a modulation-source app (Pam's) to drive —
+    // see modbus.rs. Created before the MIDI listener below since it
+    // also needs a handle (a user-mapped CC can drive any of these
+    // same targets -- see midi_map.rs).
+    let modbus = Arc::new(ModBus::new());
+
     // --- MIDI input: listens on any available port (e.g. macOS IAC Driver,
     // a MIDI keyboard, or an Ableton Push 2 used as a grid/knob controller) ---
     let midi_cutoff = Arc::clone(&cutoff);
     let midi_controller = Arc::clone(&controller);
     let midi_prism_cc = Arc::clone(&prism_cc);
+    let midi_map_for_listener = Arc::clone(&midi_map);
+    let midi_modbus = Arc::clone(&modbus);
     thread::spawn(move || {
-        if let Err(e) = run_midi_listener(midi_cutoff, midi_controller, midi_prism_cc) {
+        if let Err(e) = run_midi_listener(midi_cutoff, midi_controller, midi_prism_cc, midi_map_for_listener, midi_modbus) {
             eprintln!("MIDI listener stopped: {e}");
         }
     });
@@ -162,11 +185,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // it keeps running for the program's life regardless of which app
     // is on screen (see os.rs).
     let engine = audio::new_engine(Arc::clone(&master_volume));
-
-    // Shared registry of modulation targets any app can expose (e.g.
-    // Plaits' Harmonics) for a modulation-source app (Pam's) to drive —
-    // see modbus.rs.
-    let modbus = Arc::new(ModBus::new());
 
     // Shared registry of tappable audio outputs -- lets Clouds
     // granulate another app's live signal instead of needing a
@@ -181,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Owns the live output stream; Settings can request a different
     // device and Os::run's loop (main thread) applies it — see
     // audio_devices.rs for why that has to happen there.
-    let (audio_host, device_state) = AudioHost::open_default(Arc::clone(&engine))?;
+    let (audio_host, device_state) = AudioHost::open_resilient(Arc::clone(&engine));
     let device_state = Arc::new(device_state);
 
     println!("Running. Send MIDI CC1 on any connected port to sweep the synth cutoff.");
@@ -201,6 +219,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&master_volume),
         Arc::clone(&mixer_bus),
         Arc::clone(&prism_cc),
+        Arc::clone(&show_cpu),
+        Arc::clone(&midi_map),
+        Arc::clone(&accent),
+        Arc::clone(&background),
     );
     let mut apps = registry.build(&manifests);
 
@@ -390,7 +412,14 @@ fn render_diagnostic_wav(engine: &audio::ActiveProcessor, apps: &mut [(String, B
     }
 }
 
-fn handle_midi_message(message: &[u8], cutoff: &Arc<AtomicF32>, controller: &Arc<ControllerState>, prism_cc: &Arc<PrismCcTargets>) {
+fn handle_midi_message(
+    message: &[u8],
+    cutoff: &Arc<AtomicF32>,
+    controller: &Arc<ControllerState>,
+    prism_cc: &Arc<PrismCcTargets>,
+    midi_map: &Arc<midi_map::MidiMap>,
+    modbus: &Arc<ModBus>,
+) {
     if message.len() < 2 {
         return;
     }
@@ -454,7 +483,10 @@ fn handle_midi_message(message: &[u8], cutoff: &Arc<AtomicF32>, controller: &Arc
             } else if data1 == PRISM_SPACE_CC {
                 prism_cc.space.set(data2 as f32 / 127.0);
             } else {
-                eprintln!("midi: unmapped CC {data1}={data2}");
+                // Not one of the fixed control CCs above -- check the
+                // user's own MIDI Learn mappings (see midi_map.rs)
+                // before giving up on it.
+                midi_map.observe_cc(data1, data2, modbus);
             }
         }
         _ => {}
@@ -470,6 +502,8 @@ fn run_midi_listener(
     cutoff: Arc<AtomicF32>,
     controller: Arc<ControllerState>,
     prism_cc: Arc<PrismCcTargets>,
+    midi_map: Arc<midi_map::MidiMap>,
+    modbus: Arc<ModBus>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let probe = MidiInput::new("portamax-sim-probe")?;
     let port_count = probe.ports().len();
@@ -496,10 +530,12 @@ fn run_midi_listener(
         let cutoff = Arc::clone(&cutoff);
         let controller = Arc::clone(&controller);
         let prism_cc = Arc::clone(&prism_cc);
+        let midi_map = Arc::clone(&midi_map);
+        let modbus = Arc::clone(&modbus);
         let conn = midi_in.connect(
             &port,
             "portamax-sim-in",
-            move |_stamp, message, _| handle_midi_message(message, &cutoff, &controller, &prism_cc),
+            move |_stamp, message, _| handle_midi_message(message, &cutoff, &controller, &prism_cc, &midi_map, &modbus),
             (),
         );
         match conn {

@@ -31,10 +31,10 @@
 //! `audio_processor` at all; it makes no sound.
 
 use crate::app::{App, Input};
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::led_output::LedOutput;
 use crate::modbus::ModBus;
-use crate::paramlist::{ParamList, ACCENT};
+use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
@@ -106,15 +106,33 @@ pub struct CvOutApp {
     expanded: [bool; NUM_GROUPS],
 }
 
+// --- CV Out's own palette: flat solid colors, not a device-wide
+// theme -- neutral graphite with one utilitarian amber, the color of
+// a patch bay's own indicator lamps, not an instrument's personality. ---
+
+const CV_OUT_BG: Rgb565 = Rgb565::new(3, 7, 4);
+const CV_OUT_TITLE: Rgb565 = Rgb565::new(29, 59, 29);
+const CV_OUT_ACCENT: Rgb565 = Rgb565::new(31, 42, 0);
+const CV_OUT_DIM: Rgb565 = Rgb565::new(13, 31, 16);
+/// An unlit channel bar's outline/fill -- dimmer steel, not the lit
+/// amber.
+const CV_OUT_BAR_OFF: Rgb565 = Rgb565::new(9, 20, 11);
+const CV_OUT_BAR_OUTLINE: Rgb565 = Rgb565::new(6, 13, 8);
+
 impl CvOutApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>) -> Self {
+        Self::with_output(sensitivity, nav_speed, modbus, LedOutput::open_all())
+    }
+
+    /// Render/test the real output state without opening or sending to MIDI devices.
+    pub(crate) fn with_output(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, leds: LedOutput) -> Self {
         Self {
             sensitivity,
             nav_speed,
             channels: std::array::from_fn(|_| AtomicF32::new(DEFAULT_LEVEL)),
             ext_mod: std::array::from_fn(|i| modbus.register(format!("CV Out: {}", i + 1))),
             midi_channel: AtomicU32::new(0),
-            leds: LedOutput::open_all(),
+            leds,
             last_sent: [None; NUM_CHANNELS],
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
@@ -210,10 +228,65 @@ impl CvOutApp {
     }
 }
 
+impl CvOutApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+}
+
 impl App for CvOutApp {
+    fn needs_background_audio(&self) -> bool { true }
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::CvOut(crate::app::CvOutExtra {
+            midi_channel: self.midi_channel.load(Ordering::Relaxed) + 1,
+            levels: std::array::from_fn(|i| self.combined(i)),
+        })
+    }
+
     fn tick(&mut self, input: &Input) {
+        self.leds.poll();
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -235,17 +308,26 @@ impl App for CvOutApp {
     /// change-detection logic is testable without a live MIDI
     /// connection.
     fn background_tick(&mut self) {
+        self.leds.poll();
         for (channel, cc, value) in self.pending_sends() {
             self.leds.control_change(channel, cc, value);
         }
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        // This app's own palette -- flat graphite with one utility
+        // amber, not a device-wide theme. See the palette constants'
+        // own doc comment.
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(CV_OUT_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, CV_OUT_TITLE);
         Text::new("CV Out", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, ACCENT);
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, CV_OUT_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, CV_OUT_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -258,7 +340,7 @@ impl App for CvOutApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, CV_OUT_BG, CV_OUT_DIM, CV_OUT_ACCENT);
 
         // --- Right: a bank of vertical bars, one per CV channel,
         // scrolling to keep the selected channel in view -- same
@@ -274,9 +356,9 @@ impl App for CvOutApp {
         let right_margin = 12;
 
         let mut draw_bar = |x: i32, level: f32, label: &str, lit: bool| {
-            let color = if lit { Rgb565::new(0, 63, 10) } else { Rgb565::new(0, 40, 6) };
+            let color = if lit { CV_OUT_ACCENT } else { CV_OUT_BAR_OFF };
             Rectangle::new(Point::new(x, track_top), Size::new(track_w as u32, track_h as u32))
-                .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(10, 20, 10), 1))
+                .into_styled(PrimitiveStyle::with_stroke(CV_OUT_BAR_OUTLINE, 1))
                 .draw(fb)
                 .ok();
             let fill_h = ((level / MAX_LEVEL).clamp(0.0, 1.0) * track_h as f32) as i32;
@@ -332,7 +414,7 @@ mod tests {
         let sensitivity = Arc::new(AtomicF32::new(0.1));
         let nav_speed = Arc::new(AtomicF32::new(1.0));
         let modbus = Arc::new(ModBus::new());
-        CvOutApp::new(sensitivity, nav_speed, modbus)
+        CvOutApp::with_output(sensitivity, nav_speed, modbus, LedOutput::none())
     }
 
     /// Every one of the 32 channels must actually register as its own
@@ -344,7 +426,7 @@ mod tests {
         let sensitivity = Arc::new(AtomicF32::new(0.1));
         let nav_speed = Arc::new(AtomicF32::new(1.0));
         let modbus = Arc::new(ModBus::new());
-        let _app = CvOutApp::new(sensitivity, nav_speed, Arc::clone(&modbus));
+        let _app = CvOutApp::with_output(sensitivity, nav_speed, Arc::clone(&modbus), LedOutput::none());
         assert_eq!(modbus.len(), NUM_CHANNELS);
         assert_eq!(modbus.names()[0], "CV Out: 1");
         assert_eq!(modbus.names()[31], "CV Out: 32");

@@ -1,96 +1,233 @@
-// Shared hardware-device chrome for every Slint screen POC.
-//
-// The outer shell is the real device's actual physical layout, not
-// the desktop "Portamax UI Mockup" artifact's cream tabletop-gadget
-// bezel anymore: a black, Game-Boy-proportioned body (screen on top,
-// controls stacked below), sharp-ish corners instead of that
-// mockup's soft 26px rounding, two rotary-encoder-with-push-button
-// knobs mounted on the device's left/right edges at the screen's
-// bottom height (not centered under it), then the 4 F-buttons, then
-// the 4x4 pad matrix -- matching `Input` in app.rs exactly
-// (`top: [bool; 4]`, `grid: [bool; 16]`, `knob1`/`knob2` +
-// `knob1_press`/`knob2_press`). The SCREEN's own content (title,
-// per-app body, on-screen bottom bar) is unchanged from the earlier
-// mockup port -- still Space Grotesk + JetBrains Mono, still
-// #5CF07A/#0B100C -- only the plastic around it changed.
-//
-// Each screen POC imports this and supplies its own title/body/
-// bottom-bar/pad-color state instead of re-describing the shell every
-// time -- the same "one shared chrome, each app owns its own content"
-// shape the real device firmware and this simulator both already use
-// (see os.rs).
+// Shared landscape handheld shell. The 640 x 360 module display stays unchanged.
+// Pad indices, F-key callbacks and MIDI encoder compatibility are preserved.
 
 export struct BarSegment {
     label: string,
     active: bool,
 }
 
-export component DeviceFrame inherits Window {
-    width: 940px;
-    height: 1058px;
-    background: #1A1A1A;
-    title: "Portamax -- Slint device-frame POC (scoping only)";
+// A real, windowed + scrolled param list -- the same "name | value"
+// list every live-prototype screen shows (each real app's own
+// `ParamList`, via `windowed_rows`-style pub(crate) accessors),
+// factored out here so each screen doesn't re-describe the same ~60
+// lines of Slint. See slint_plaits_live.rs for the pattern this was
+// pulled from.
+export component ParamListColumn inherits Rectangle {
+    in property <[string]> row-names: [];
+    in property <[string]> row-values: [];
+    in property <[bool]> row-is-group: [];
+    // Optional real meter fraction per row, 0..1 -- a negative value
+    // (the default for every index past what a caller sets) means "no
+    // bar for this row" (a group row, or any screen that doesn't have
+    // a meaningful level). Slint arrays have no Option type, so a
+    // sentinel is the simplest way to make this genuinely optional
+    // without a second parallel bool array.
+    in property <[float]> row-levels: [];
+    in property <int> selected-row: 0;
+    in property <bool> more-above: false;
+    in property <bool> more-below: false;
+    in property <color> accent: #5CF07A;
+    // The unselected-row/secondary text color -- white by default
+    // (every screen's old look), but overridable per-app (see
+    // `LiveHomeScreen`'s `live-ink`) so a light-bodied app (Clouds,
+    // Turing Machine, Tonestack, Plaits, ...) gets dark text instead
+    // of white-on-white.
+    in property <color> ink: #ffffff;
+    // The home/launcher list only -- larger text, per the real
+    // device's main menu being read from across a room, at the cost
+    // of fewer rows fitting on screen at once (the caller windows its
+    // data to fewer rows accordingly). Every other screen (an app's
+    // own narrow side list) stays at the normal size.
+    in property <bool> big-text: false;
+    in property <bool> instrument-style: false;
 
+    in property <color> paper: #0b100c;
+    VerticalLayout {
+        alignment: start;
+        spacing: 1px;
+        HorizontalLayout {
+            height: root.big-text ? (root.more-above ? 18px : 0px) : 22px;
+            Text {
+                text: root.big-text ? "" : "↑↓ SELECT · ◀▶ EDIT · R1 OPEN";
+                color: root.ink.with-alpha(0.55);
+                font-family: "JetBrains Mono"; font-size: 9px; letter-spacing: 1px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.more-above ? "↑" : "";
+                color: root.accent; font-size: 12px; horizontal-alignment: right;
+            }
+        }
+        for name[i] in root.row-names : row := Rectangle {
+            property <bool> selected: i == root.selected-row;
+            property <bool> group: i < root.row-is-group.length && root.row-is-group[i];
+            property <float> level: i < root.row-levels.length ? root.row-levels[i] : -1;
+            height: root.big-text ? 44px : 22px;
+            border-radius: 3px;
+            background: self.selected ? root.accent : self.group ? root.ink.with-alpha(0.035) : transparent;
+            HorizontalLayout {
+                padding-left: row.group || root.big-text ? 8px : 14px;
+                padding-right: 7px;
+                spacing: 6px;
+                Text {
+                    text: name;
+                    color: row.selected ? root.paper : root.ink.with-alpha(0.86);
+                    font-family: root.big-text ? "Space Grotesk" : "Space Grotesk";
+                    font-size: root.big-text ? 24px : 12px;
+                    font-weight: row.selected || row.group ? 600 : 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                }
+                Text {
+                    text: i < root.row-values.length ? root.row-values[i] : "";
+                    color: row.selected ? root.paper : root.ink.with-alpha(0.65);
+                    font-family: "JetBrains Mono";
+                    font-size: root.big-text ? 18px : 10px;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    max-width: root.width * 0.48;
+                    min-width: 0px;
+                    overflow: elide;
+                }
+            }
+            if row.level >= 0 : Rectangle {
+                x: 8px; y: parent.height - 2px;
+                width: (parent.width - 16px) * max(0, min(1, row.level)); height: 2px;
+                background: row.selected ? root.paper.with-alpha(0.45) : root.accent;
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        Text {
+            height: root.big-text ? 18px : 24px;
+            text: root.big-text ? (root.more-below ? "↓ MORE APPS" : "R1 OPEN") :
+                (root.selected-row < root.row-values.length && root.row-values[root.selected-row] != "" ? root.row-values[root.selected-row] : "R1 SELECT  ·  ◀ ▶ ADJUST") + (root.more-below ? "  ↓" : "");
+            color: root.ink.with-alpha(0.6);
+            font-family: "JetBrains Mono";
+            font-size: root.big-text ? 10px : 9px;
+            wrap: word-wrap; overflow: elide;
+            vertical-alignment: center;
+        }
+    }
+
+}
+
+// One step on press; repeat after 250 ms, then every 100 ms until release.
+component DirectionalButton inherits Rectangle {
+    in property <string> symbol;
+    callback activated();
+    property <bool> repeating: false;
+    width: 38px; height: 38px; border-radius: 4px;
+    background: touch.pressed ? #4b5055 : #222528;
+    Text {
+        text: root.symbol; color: #858b90; font-size: 18px;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    touch := TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.repeating = false;
+                root.activated();
+            }
+            if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                root.repeating = false;
+            }
+        }
+    }
+    Timer {
+        interval: root.repeating ? 100ms : 250ms;
+        running: touch.pressed;
+        triggered => {
+            if touch.pressed {
+                root.repeating = true;
+                root.activated();
+            }
+        }
+    }
+}
+
+export component DeviceFrame inherits Window {
+    width: 1240px;
+    height: 560px;
+    background: #252628;
+    title: "Portamax — Portable console";
     in property <string> app-name: "APP";
     in property <string> breadcrumb: "";
     in property <color> accent: #5CF07A;
     in property <color> screen-bg: #0B100C;
-    // Where the pad matrix starts, stacked below the screen/F-row --
-    // computed once here so both the Rectangle that positions it and
-    // (if ever needed) a screen POC can reference the same number.
-    property <length> pad-grid-y: 30px + 360px + 26px + 58px + 24px;
-    // Exactly 4 -- F1..F4, same as the real device's bottom bar.
-    // `active` drives the on-screen bottom bar's text only now (a
-    // screen's own persistent state, e.g. the Sequencer staying
-    // "Stop" while running) -- the physical button below is a real
-    // momentary pushbutton instead, lit by an actual press
-    // (`TouchArea.pressed`), not this.
+    in property <color> screen-ink: #ffffff;
+    in property <[bool]> function-enabled: [true, true, true, true];
     in property <[BarSegment]> bar: [
         { label: "F1  SETTINGS", active: false },
         { label: "F2  HOME", active: false },
         { label: "F3  STOP", active: false },
         { label: "F4  MIXER", active: false },
     ];
-    // Exactly 16, row-major (see `controller::GRID_NOTES`) -- the
-    // physical pad matrix's current color. Defaults to a dim, uniform
-    // "installed but idle" grey; a screen that actually uses the pads
-    // (Sequencer) overrides this the same way `App::grid_led_overlay`
-    // drives the real Push 2's LEDs in os.rs -- this is that same
-    // idea, just for the device's own built-in pads instead of an
-    // external controller.
     in property <[color]> pad-colors: [
         #232323, #232323, #232323, #232323,
         #232323, #232323, #232323, #232323,
         #232323, #232323, #232323, #232323,
         #232323, #232323, #232323, #232323,
     ];
+    // Compatibility API for existing examples and MIDI encoder state.
+    // Encoders have no visible representation on this enclosure.
+    callback knob1-dragged(float);
+    callback knob2-dragged(float);
+    in-out property <angle> knob1-angle: 0deg;
+    in-out property <angle> knob2-angle: 0deg;
+    callback knob1-pressed();
+    callback knob2-pressed();
+    callback pad-pressed(int, bool);
+    callback f-pressed(int);
+    // Directions: up, right, down, left, select. Shoulders: L1, R1.
+    callback navigation-pressed(int);
+    callback shoulder-pressed(int);
+    in-out property <float> stick-x: 0;
+    in-out property <float> stick-y: 0;
 
+    // Shoulder buttons project above the rectangular aluminium rim.
+    for side in [0, 1] : Rectangle {
+        x: side == 0 ? 45px : 1031px; y: 35.5px;
+        width: 164px; height: 23px;
+        border-radius: 6px;
+        background: shoulder-touch.pressed ? #44474a : #181a1c;
+        border-width: 1px; border-color: #505357;
+        Text {
+            x: 0px; y: 0px; width: 100%; height: 12px;
+            text: side == 0 ? "L1" : "R1";
+            color: #c5c7ca; font-size: 9px; font-weight: 700;
+            horizontal-alignment: center; vertical-alignment: center;
+            letter-spacing: 1px;
+        }
+        shoulder-touch := TouchArea { clicked => { root.shoulder-pressed(side); } }
+    }
     Rectangle {
-        x: 30px; y: 24px;
-        width: 880px; height: 1010px;
-        background: #0C0C0C;
-        border-radius: 16px;
-        border-width: 1px;
-        border-color: rgba(255, 255, 255, 0.08);
-
-        // Screen, top-mounted, thin modern bezel instead of the
-        // mockup's chunky cutout. Sits in a centered 640px-wide
-        // column -- the knobs live in the extra width to either side
-        // of it, not stacked below.
+        x: 20px; y: 48px; width: 1200px; height: 480px;
+        border-radius: 34px; background: #070809;
+        border-width: 2px; border-color: #4b4d50;
         Rectangle {
-            x: 120px; y: 30px;
-            width: 640px; height: 360px;
-            background: #000000;
-            border-radius: 8px;
-            border-width: 5px;
-            border-color: #000000;
-
+            x: 5px; y: 5px; width: parent.width - 10px; height: parent.height - 10px;
+            border-radius: 30px; border-width: 1px; border-color: #24272a;
+            background: #101113;
+        }
+        Text {
+            x: 188px; y: 12px; width: 280px; height: 20px;
+            text: "P O R T A M A X"; color: #898c90;
+            font-family: "JetBrains Mono"; font-size: 11px; font-weight: 700;
+        }
+        Rectangle {
+            x: 818px; y: 19px; width: 5px; height: 5px;
+            border-radius: 3px; background: #d0d4d2;
+        }
+        // Native-resolution screen and existing module layouts.
+        Rectangle {
+            x: 180px; y: 36px; width: 656px; height: 376px;
+            border-radius: 10px; background: #000;
+            border-width: 1px; border-color: #34373a;
             Rectangle {
-                width: 640px; height: 360px;
-                background: root.screen-bg;
-                border-radius: 4px;
-                clip: true;
-
+                x: 8px; y: 8px; width: 640px; height: 360px;
+                background: root.screen-bg; border-radius: 4px; clip: true;
                 VerticalLayout {
                     // Title row
                     HorizontalLayout {
@@ -113,7 +250,7 @@ export component DeviceFrame inherits Window {
                             font-family: "JetBrains Mono";
                             font-size: 12px;
                             letter-spacing: 0.6px;
-                            color: rgba(255, 255, 255, 0.32);
+                            color: root.screen-ink.with-alpha(0.55);
                             vertical-alignment: bottom;
                         }
                     }
@@ -143,7 +280,7 @@ export component DeviceFrame inherits Window {
                         height: 36px;
                         Rectangle {
                             y: 0px; height: 1px;
-                            background: rgba(255, 255, 255, 0.14);
+                            background: root.screen-ink.with-alpha(0.14);
                         }
                         HorizontalLayout {
                             y: 1px;
@@ -155,7 +292,7 @@ export component DeviceFrame inherits Window {
                                 font-size: 14px;
                                 letter-spacing: 0.4px;
                                 font-weight: seg.active ? 700 : 400;
-                                color: seg.active ? root.accent : rgba(255, 255, 255, 0.55);
+                                color: seg.active ? root.accent : root.accent.with-alpha(0.55);
                                 vertical-alignment: center;
                                 horizontal-alignment: left;
                             }
@@ -164,159 +301,141 @@ export component DeviceFrame inherits Window {
                 }
             }
         }
-
-        // F1-F4, directly under the screen -- momentary, real
-        // pushbuttons: the physical pill only lights *while actually
-        // held down* (a real-time press indicator), not a toggle a
-        // click leaves switched on. Persistent state (e.g. the
-        // Sequencer's F2 staying "Stop" while running) is still shown
-        // on the screen's own bottom bar text above, which reads
-        // `root.bar` as each screen initializes it -- only the
-        // physical LED itself no longer follows a click.
         HorizontalLayout {
-            x: 120px; y: 30px + 360px + 26px;
-            width: 640px; height: 58px;
-            spacing: 14px;
-            for seg[i] in root.bar: Rectangle {
-                border-radius: 8px;
-                background: f-touch.pressed ? root.accent : #1B1B1B;
-                border-width: 1px;
-                border-color: f-touch.pressed ? root.accent : rgba(255, 255, 255, 0.08);
-                animate background { duration: 60ms; }
+            x: 188px; y: 424px; width: 640px; height: 34px;
+            spacing: 12px;
+            for seg[i] in root.bar : Rectangle {
+                opacity: root.function-enabled[i] ? 1.0 : 0.35;
+                border-radius: 7px;
+                background: f-touch.pressed ? #414549 : #202225;
+                border-width: 1px; border-color: f-touch.pressed ? #82878b : #383b3e;
                 Text {
-                    text: "F" + (i + 1);
-                    font-family: "JetBrains Mono";
-                    font-weight: 700;
-                    font-size: 15px;
-                    letter-spacing: 0.5px;
-                    color: f-touch.pressed ? #0B100C : rgba(255, 255, 255, 0.4);
+                    text: "F" + (i + 1); color: #c7c9cb;
+                    font-family: "JetBrains Mono"; font-size: 12px;
+                    font-weight: 700; horizontal-alignment: center; vertical-alignment: center;
                 }
-                f-touch := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                }
+                f-touch := TouchArea { enabled: root.function-enabled[i]; clicked => { root.f-pressed(i); } }
             }
         }
-
-        // Two rotary-encoder-with-push-button knobs, mounted on the
-        // device's own left/right edges -- in the extra width outside
-        // the 640px screen/button column, vertically centered on the
-        // F-row -- "around the bottom of the screen but on the side
-        // of the device", not stacked in their own row underneath it.
-        //
-        // Real encoders spin freely (no min/max, unlike a
-        // potentiometer) -- matching that, dragging vertically just
-        // keeps adding to the angle rather than clamping, same as
-        // `Input::knob1`/`knob2` being a per-frame *delta*
-        // (app.rs/controller.rs), not an absolute position. A click
-        // darkens the cap while held, standing in for `knob1_press`/
-        // `knob2_press`.
-        knob1 := Rectangle {
-            x: 16px; y: 30px + 360px + 26px + 58px / 2 - 40px;
-            width: 80px; height: 80px;
-            border-radius: 40px;
-            background: #161616;
-            border-width: 3px;
-            border-color: rgba(255, 255, 255, 0.07);
-
-            property <angle> knob-angle: 0deg;
-            property <angle> angle-at-press: 0deg;
-
-            Rectangle {
-                x: 14px; y: 14px;
-                width: 52px; height: 52px;
-                border-radius: 26px;
-                background: knob1-touch.pressed ? #2A2A2A : #1F1F1F;
-                border-width: 1px;
-                border-color: rgba(255, 255, 255, 0.05);
-                animate background { duration: 80ms; }
+        // Recessed cross D-pad, with four separately held directions.
+        Rectangle {
+            x: 24px; y: 88px; width: 144px; height: 144px;
+            border-radius: 72px; background: #090a0b;
+            border-width: 1px; border-color: #222529;
+            Rectangle { x: 49px; y: 12px; width: 46px; height: 120px; background: #222528; border-radius: 5px; }
+            Rectangle { x: 12px; y: 49px; width: 120px; height: 46px; background: #222528; border-radius: 5px; }
+            for direction in [0, 1, 2, 3] : DirectionalButton {
+                x: direction == 1 ? 94px : (direction == 3 ? 12px : 50px);
+                y: direction == 0 ? 12px : (direction == 2 ? 94px : 50px);
+                symbol: direction == 0 ? "▴" : (direction == 1 ? "▸" : (direction == 2 ? "▾" : "◂"));
+                activated => { root.navigation-pressed(direction); }
             }
-            // Knob-position tick, rotates around the knob's center as
-            // it's dragged.
             Rectangle {
-                x: 37px; y: 6px;
-                width: 6px; height: 16px;
-                border-radius: 3px;
-                background: root.accent;
-                transform-rotation: knob1.knob-angle;
-                transform-origin: { x: 3px, y: 34px };
+                x: 53px; y: 53px; width: 38px; height: 38px;
+                border-radius: 19px; background: center-touch.pressed ? #3b4045 : #1b1e21;
+                Rectangle { x: 15px; y: 15px; width: 8px; height: 8px; border-radius: 4px; background: #44494e; }
+                center-touch := TouchArea { clicked => { root.navigation-pressed(4); } }
             }
-            knob1-touch := TouchArea {
-                width: 100%;
-                height: 100%;
+        }
+        // Spring-return stick. Normalized axes remain available to the host.
+        stick := Rectangle {
+            x: 44px; y: 280px; width: 104px; height: 104px;
+            border-radius: 52px; background: #070809;
+            border-width: 2px; border-color: #303438;
+            property <bool> dragged: false;
+            Rectangle {
+                x: 9px; y: 9px; width: 86px; height: 86px;
+                border-radius: 43px; background: #16191c; border-width: 1px; border-color: #202428;
+            }
+            Rectangle {
+                x: 21px + root.stick-x * 18px; y: 21px + root.stick-y * 18px;
+                width: 62px; height: 62px; border-radius: 31px;
+                background: stick-touch.pressed ? #343a40 : #262b30;
+                border-width: 2px; border-color: #4a5056;
+                Rectangle {
+                    x: 8px; y: 8px; width: 46px; height: 46px; border-radius: 23px;
+                    border-width: 1px; border-color: #191c20;
+                }
+            }
+            stick-touch := TouchArea {
                 pointer-event(event) => {
-                    if (event.kind == PointerEventKind.down) {
-                        knob1.angle-at-press = knob1.knob-angle;
+                    if event.kind == PointerEventKind.down { stick.dragged = false; }
+                    if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                        root.stick-x = 0; root.stick-y = 0;
                     }
                 }
                 moved => {
-                    if (self.pressed) {
-                        knob1.knob-angle = knob1.angle-at-press + (self.pressed-y - self.mouse-y) * 1.4deg / 1px;
+                    if self.pressed {
+                        if Math.abs(self.mouse-x - self.pressed-x) > 4px || Math.abs(self.mouse-y - self.pressed-y) > 4px { stick.dragged = true; }
+                        root.stick-x = max(-1, min(1, (self.mouse-x - self.pressed-x) / 26px));
+                        root.stick-y = max(-1, min(1, (self.mouse-y - self.pressed-y) / 26px));
                     }
                 }
+                clicked => { if !stick.dragged { root.navigation-pressed(4); } }
             }
         }
-        knob2 := Rectangle {
-            x: 880px - 16px - 80px; y: 30px + 360px + 26px + 58px / 2 - 40px;
-            width: 80px; height: 80px;
-            border-radius: 40px;
-            background: #161616;
-            border-width: 3px;
-            border-color: rgba(255, 255, 255, 0.07);
-
-            property <angle> knob-angle: 0deg;
-            property <angle> angle-at-press: 0deg;
-
-            Rectangle {
-                x: 14px; y: 14px;
-                width: 52px; height: 52px;
-                border-radius: 26px;
-                background: knob2-touch.pressed ? #2A2A2A : #1F1F1F;
-                border-width: 1px;
-                border-color: rgba(255, 255, 255, 0.05);
-                animate background { duration: 80ms; }
-            }
-            Rectangle {
-                x: 37px; y: 6px;
-                width: 6px; height: 16px;
-                border-radius: 3px;
-                background: root.accent;
-                transform-rotation: knob2.knob-angle;
-                transform-origin: { x: 3px, y: 34px };
-            }
-            knob2-touch := TouchArea {
-                width: 100%;
-                height: 100%;
-                pointer-event(event) => {
-                    if (event.kind == PointerEventKind.down) {
-                        knob2.angle-at-press = knob2.knob-angle;
-                    }
-                }
-                moved => {
-                    if (self.pressed) {
-                        knob2.knob-angle = knob2.angle-at-press + (self.pressed-y - self.mouse-y) * 1.4deg / 1px;
-                    }
-                }
-            }
+        // Right-hand performance deck: same row-major pad IDs and gate edges.
+        Rectangle {
+            x: 846px; y: 54px; width: 340px; height: 340px;
+            border-radius: 18px; background: #090a0b;
+            border-width: 1px; border-color: #292c2f;
         }
-
-        // The 4x4 pad matrix -- same physical layout `GRID_NOTES`
-        // addresses, row-major, no flip.
         VerticalLayout {
-            x: 120px; y: root.pad-grid-y;
-            width: 640px;
-            spacing: 14px;
+            x: 854px; y: 62px; width: 324px; height: 324px;
+            spacing: 4px;
             for row in [0, 1, 2, 3] : HorizontalLayout {
-                spacing: 14px;
+                spacing: 4px;
                 for col in [0, 1, 2, 3] : Rectangle {
                     property <int> i: row * 4 + col;
-                    height: 110px;
-                    border-radius: 10px;
-                    background: root.pad-colors[i];
-                    border-width: 1px;
-                    border-color: rgba(255, 255, 255, 0.06);
+                    property <bool> lit: root.pad-colors[i] != #232323 && root.pad-colors[i] != #000000 && root.pad-colors[i] != transparent;
+                    property <color> light: pad-touch.pressed ? root.accent : root.pad-colors[i];
+                    border-radius: 5px;
+                    background: pad-touch.pressed || self.lit ? self.light : #b8bdb4;
+                    border-width: 2px;
+                    border-color: pad-touch.pressed || self.lit ? self.light : #aeb4a9;
+                    // Broad matte silicone face, shallow bevel and softly rounded corners.
+                    Rectangle {
+                        x: 2px; y: pad-touch.pressed ? 3px : 1px;
+                        width: parent.width - 4px; height: parent.height - 5px;
+                        border-radius: 4px;
+                        background: pad-touch.pressed || parent.lit ? parent.light : #f0f2eb;
+                        border-width: 1px; border-color: #ffffff99;
+                    }
+                    Rectangle {
+                        x: 10px; y: 4px; width: parent.width - 20px; height: 1px;
+                        background: #ffffffbb;
+                    }
+                    // Full-face illumination follows the same live LED color as the rim.
+                    Rectangle {
+                        x: 9px; y: parent.height - 6px; width: parent.width - 18px; height: 2px;
+                        border-radius: 1px;
+                        background: pad-touch.pressed || parent.lit ? parent.light : #c0c6bb;
+                    }
+                    Text {
+                        x: 7px; y: parent.height - 19px; width: parent.width - 14px; height: 12px;
+                        text: i + 1; color: pad-touch.pressed || parent.lit ? #101113 : #92998c;
+                        horizontal-alignment: right;
+                        font-family: "JetBrains Mono"; font-size: 9px;
+                    }
+                    pad-touch := TouchArea {
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down { root.pad-pressed(i, true); }
+                            else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel { root.pad-pressed(i, false); }
+                        }
+                    }
                 }
             }
+        }
+        Image {
+            x: 884px; y: 410px; width: 264px; height: 54px;
+            source: @image-url("../../assets/svg_src/szyk-console-wordmark.svg");
+            image-fit: contain;
+            colorize: #808080;
+        }
+        // Small speaker slots keep the grip visually quiet.
+        for slot in [0, 1, 2, 3, 4] : Rectangle {
+            x: 67px + slot * 12px; y: 432px;
+            width: 4px; height: 14px; border-radius: 2px; background: #050607;
         }
     }
 }

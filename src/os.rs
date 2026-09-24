@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 /// app.rs) -- always visible, always live, the same on every screen.
 /// F1 (Home) is first/far-left -- the one button that always gets you
 /// somewhere known, so it gets the position your thumb lands on
-/// without thinking. F2 (Start/Stop) and F3 (MIDI-armed) are each
+/// without thinking. F3 (Start/Stop) and F2 (MIDI-armed) are each
 /// their own toggle -- they used to share one slot (doing double duty
 /// depending on whether the active app had a Start/Stop concept),
 /// which meant an app with *both* a transport and a reason to arm/
@@ -74,7 +74,7 @@ pub struct Os {
     controller: Arc<ControllerState>,
     audio_host: AudioHost,
     device_state: Arc<AudioDeviceState>,
-    /// F2 (Start/Stop) and F3 (MIDI-armed) need the *rising* edge, not
+    /// F3 (Start/Stop) and F2 (MIDI-armed) need the *rising* edge, not
     /// "currently held" -- see the const doc comment above.
     prev_top: [bool; 4],
     /// `Some((stage, deadline))` while the startup logos are still
@@ -86,7 +86,7 @@ pub struct Os {
     /// latch, index-aligned with `apps`, defaulting to *off* -- a
     /// stray Push 2 touch or another connected keyboard shouldn't be
     /// able to trigger notes in whatever app happens to be on screen
-    /// until it's explicitly armed (F3, independent of F2's Start/Stop
+    /// until it's explicitly armed (F2, independent of F3's Start/Stop
     /// -- see `toggle_midi`/`bottom_bar_labels`).
     midi_armed: Vec<bool>,
     /// MIDI output to whatever physical controller fed `controller`,
@@ -167,7 +167,7 @@ impl Os {
             }
 
             // Grid/pad input from the controller is gated by the active
-            // app's own MIDI-armed toggle (F3 -- see the `midi_armed`
+            // app's own MIDI-armed toggle (F2 -- see the `midi_armed`
             // field doc and `bottom_bar_labels`) so it can't leak notes
             // into whatever app happens to be on screen; during the
             // splash there's no active app to arm, so it stays live --
@@ -213,14 +213,14 @@ impl Os {
             // F1-F4 preempt everything else this frame, same as `home`
             // does below -- a global jump/toggle shouldn't also feed
             // this frame's input to whatever screen we're leaving.
-            if input.top[0] {
-                self.go_home();
+            if top_pressed[0] {
+                if self.active.is_some() { self.go_home(); } else { self.jump_to_role(crate::app::SystemRole::Settings); }
             } else if top_pressed[1] {
-                self.toggle_running();
-            } else if top_pressed[2] {
                 self.toggle_midi();
-            } else if input.top[3] {
-                self.jump_to("Mixer");
+            } else if top_pressed[2] {
+                self.toggle_running();
+            } else if top_pressed[3] {
+                self.jump_to_role(crate::app::SystemRole::Mixer);
             } else {
                 match self.active {
                     None => self.tick_launcher(&input),
@@ -287,6 +287,13 @@ impl Os {
     /// dev shortcut above) from wherever we currently are -- launcher or
     /// another app. A no-op if that app is already active, or if no
     /// app has that name.
+    fn jump_to_role(&mut self, role: crate::app::SystemRole) {
+        let Some(i) = self.apps.iter().position(|(_,app)| app.system_role() == Some(role)) else { return };
+        if self.active == Some(i) { return; }
+        if let Some(old) = self.active { self.apps[old].1.tick(&Input::default()); self.apps[old].1.on_exit(); }
+        self.apps[i].1.on_enter(); self.selected = i; self.active = Some(i);
+    }
+
     fn jump_to(&mut self, app_name: &str) {
         let Some(i) = self.apps.iter().position(|(n, _)| n.eq_ignore_ascii_case(app_name)) else {
             return;
@@ -306,6 +313,7 @@ impl Os {
     /// Same "back to launcher" transition `home` already does.
     fn go_home(&mut self) {
         if let Some(i) = self.active {
+            self.apps[i].1.tick(&Input::default());
             self.apps[i].1.on_exit();
             self.active = None;
         }
@@ -314,7 +322,7 @@ impl Os {
     /// Each top button's own fixed color -- distinct per button (not
     /// just "on") since each does something completely different
     /// (see `TOP_NOTES` for which physical button is which index):
-    /// yellow for Home (F1), green for Start/Stop (F2), blue for MIDI
+    /// yellow for Home (F1), green for context (F2), blue for Start/Stop
     /// (F3), red for Mixer (F4).
     const TOP_COLORS: [PadColor; 4] = [PadColor::Yellow, PadColor::Green, PadColor::Blue, PadColor::Red];
 
@@ -332,6 +340,7 @@ impl Os {
     /// border already does. Only ever sends a message when a pad's
     /// color actually changes since the last frame, not every frame.
     fn update_leds(&mut self, input: &Input) {
+        self.leds.poll();
         let overlay = match self.active {
             Some(i) => self.apps[i].1.grid_led_overlay(),
             None => [PadColor::Off; 16],
@@ -352,7 +361,7 @@ impl Os {
         }
     }
 
-    /// F2: toggles whatever the active app's Start/Stop concept
+    /// F3: toggles whatever the active app's Start/Stop concept
     /// currently controls (see `App::toggle_running`) -- a no-op on
     /// the launcher, or on an app with no such concept (most of them;
     /// `App::toggle_running`'s default is already a no-op).
@@ -362,14 +371,15 @@ impl Os {
         }
     }
 
-    /// F3: toggles whether the controller's pads are allowed to feed
+    /// F2: toggles whether the controller's pads are allowed to feed
     /// the active app (see `midi_armed`) -- independent of, and no
-    /// longer sharing a button with, Start/Stop (F2) -- an app like
+    /// longer sharing a button with, Start/Stop (F3) -- an app like
     /// the Sequencer has real uses for both at once. A no-op on the
     /// launcher.
     fn toggle_midi(&mut self) {
         if let Some(i) = self.active {
-            self.midi_armed[i] = !self.midi_armed[i];
+            if self.apps[i].1.grid_mode_label().is_some() { self.apps[i].1.toggle_grid_mode(); }
+            else if self.apps[i].1.supports_pad_lock() { self.midi_armed[i] = !self.midi_armed[i]; }
         }
     }
 
@@ -383,12 +393,11 @@ impl Os {
     /// equivalent needed for Home/Start-Stop/MIDI, none of which can
     /// go missing the way a manifest-driven jump target can.
     fn bottom_bar_labels(&self) -> [String; 4] {
-        let has = |name: &str| self.apps.iter().any(|(n, _)| n.eq_ignore_ascii_case(name));
+        let has = |role| self.apps.iter().any(|(_,app)| app.system_role() == Some(role));
         [
-            "Home".into(),
-            "Start/Stop".into(),
-            "MIDI".into(),
-            if has("Mixer") { "Mixer".into() } else { String::new() },
+            if self.active.is_some() { "Home".into() } else if has(crate::app::SystemRole::Settings) { "Settings".into() } else { String::new() },
+            String::new(), String::new(),
+            if has(crate::app::SystemRole::Mixer) { "Mixer".into() } else { String::new() },
         ]
     }
 
@@ -482,30 +491,19 @@ impl Os {
         let lit_style = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::BLACK);
 
         let mut labels = self.bottom_bar_labels();
-        // F2's label reflects the active app's actual Start/Stop state
-        // (if it has one) rather than staying a static "Start/Stop" --
-        // "Start" in green-off/dim and "Stop" in green-on tells you
-        // which way a press will go without opening that app's own
-        // menu. Blank on the launcher or on an app with no transport.
-        let running = self.active.and_then(|i| self.apps[i].1.running());
-        labels[1] = match running {
-            Some(true) => "Stop".into(),
-            Some(false) => "Start".into(),
-            None => String::new(),
-        };
-        let f2_chip_lit = running == Some(true);
-
-        // F3's label/chip reflect the active app's own MIDI-armed
-        // state (see `toggle_midi`/`midi_armed`) -- independent of F2
-        // now, so an app with both a transport and pads worth arming
-        // (e.g. the Sequencer) isn't forced to pick one. Blank on the
-        // launcher, where there's no active app to arm.
+        let active = self.active.map(|i| self.apps[i].1.as_ref());
+        labels[2] = active.and_then(|a| a.transport_action()).unwrap_or("").into();
+        let f3_chip_lit = active.and_then(|a| a.running()) == Some(true);
         let midi_on = self.active.map(|i| self.midi_armed[i]).unwrap_or(false);
-        labels[2] = match self.active {
-            Some(_) => if midi_on { "MIDI: On".into() } else { "MIDI: Off".into() },
+        labels[1] = match active {
+            Some(a) => match a.grid_mode_label() {
+                Some("STEP") => "PAD MODE".into(), Some(_) => "STEP MODE".into(),
+                None if a.supports_pad_lock() => if midi_on { "MIDI ON".into() } else { "MIDI OFF".into() },
+                _ => String::new(),
+            },
             None => String::new(),
         };
-        let f3_chip_lit = midi_on;
+        let f2_chip_lit = active.map(|a| a.grid_mode_label() == Some("PAD") || (a.supports_pad_lock() && midi_on)).unwrap_or(false);
 
         let seg_w = display::WIDTH as i32 / labels.len() as i32;
         let bar_y = display::HEIGHT as i32 - BOTTOM_BAR_HEIGHT;

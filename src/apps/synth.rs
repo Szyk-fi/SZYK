@@ -7,12 +7,13 @@
 
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::util::AtomicF32;
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::f32::consts::TAU;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -76,6 +77,15 @@ pub struct SynthApp {
     sensitivity: Arc<AtomicF32>,
 }
 
+// --- Synth's own palette: warm analog orange on charcoal, not a
+// device-wide theme -- the classic subtractive-synth panel look, for
+// the sim's most foundational, no-frills voice. ---
+
+const SYNTH_BG: Rgb565 = Rgb565::new(2, 5, 3);
+const SYNTH_TITLE: Rgb565 = Rgb565::new(29, 56, 26);
+const SYNTH_ACCENT: Rgb565 = Rgb565::new(31, 35, 7);
+const SYNTH_DIM: Rgb565 = Rgb565::new(15, 27, 11);
+
 impl SynthApp {
     pub fn new(cutoff: Arc<AtomicF32>, sensitivity: Arc<AtomicF32>) -> Self {
         Self {
@@ -89,6 +99,17 @@ impl SynthApp {
 }
 
 impl App for SynthApp {
+    fn supports_pad_lock(&self) -> bool { true }
+
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        vec![
+            ("Waveform".into(), Waveform::from_index(self.waveform.load(Ordering::Relaxed)).name().into(), false),
+            ("Cutoff".into(), format!("{:.0} Hz", self.cutoff.get()), false),
+            ("Volume".into(), format!("{:.0}%", self.volume.get() * 100.0), false),
+            ("Held notes".into(), self.held.lock().unwrap().iter().filter(|&&held| held).count().to_string(), false),
+        ]
+    }
+
     fn tick(&mut self, input: &Input) {
         *self.held.lock().unwrap() = input.grid;
 
@@ -128,11 +149,16 @@ impl App for SynthApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(SYNTH_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, SYNTH_TITLE);
         Text::new("Synth", Point::new(20, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(16, 32, 16));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, SYNTH_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, SYNTH_DIM);
 
         let waveform = Waveform::from_index(self.waveform.load(Ordering::Relaxed));
         Text::new(

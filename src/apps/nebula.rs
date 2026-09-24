@@ -37,7 +37,7 @@ use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, ROOT_NAMES, SCALE_TYPES};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -47,7 +47,7 @@ use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Circle, PrimitiveStyle};
+use embedded_graphics::primitives::{Circle, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::f32::consts::TAU;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -123,6 +123,50 @@ fn note_for_position(pos: usize, scale_idx: usize, root: u32) -> i32 {
 fn well_position(w: usize) -> (f32, f32) {
     let angle = -std::f32::consts::FRAC_PI_2 + w as f32 / NUM_WELLS as f32 * TAU;
     (angle.cos() * ARENA_RADIUS * WELL_RADIUS_FRAC, angle.sin() * ARENA_RADIUS * WELL_RADIUS_FRAC)
+}
+
+// --- Nebula's own palette: deep-space violet dust shot through with
+// hot starlight -- literally a nebula's own dust clouds and the
+// stars forming inside them, not a device-wide theme. Flat solid
+// bands, not a smooth per-pixel blend, same "poster print" design
+// language every other redesigned app now shares. Inspired by a
+// "Purple Skyline" mystical-dark reference palette (deep violet ->
+// pale lavender), pushed further toward pure black at one end and
+// hot white starlight at the other for real contrast. ---
+
+/// Deep violet-black -- the space between the dust clouds.
+const NEBULA_BG: Rgb565 = Rgb565::new(2, 2, 4);
+/// Pale lavender-white -- the title and this app's brightest text.
+const NEBULA_TITLE: Rgb565 = Rgb565::new(28, 54, 29);
+/// Violet -- this app's menu accent / status text.
+const NEBULA_ACCENT: Rgb565 = Rgb565::new(20, 34, 30);
+/// Muted plum-grey -- secondary/dim text.
+const NEBULA_DIM: Rgb565 = Rgb565::new(17, 29, 20);
+/// The selected menu row's highlight chip.
+const NEBULA_CHIP_BG: Rgb565 = Rgb565::new(7, 9, 10);
+/// The arena boundary's stroke.
+const NEBULA_RING: Rgb565 = NEBULA_CHIP_BG;
+/// A well that's toggled off entirely.
+const NEBULA_WELL_INACTIVE: Rgb565 = Rgb565::new(4, 6, 6);
+/// A well that's active but hasn't just captured a particle.
+const NEBULA_WELL_OFF: Rgb565 = Rgb565::new(7, 7, 13);
+/// A well's flash the instant it captures a particle, and a particle
+/// moving at full speed -- hot starlight igniting in the dust.
+const NEBULA_FLASH: Rgb565 = Rgb565::new(31, 61, 28);
+
+/// A particle's color by how fast it's moving (`t` = fraction of
+/// `MAX_SPEED`) -- 3 flat bands (slow dust -> mid glow -> hot
+/// starlight), not a smooth blend, so a fast-moving particle reads as
+/// a distinct "this one just got flung by a well" event rather than a
+/// continuously-shifting brightness ramp.
+fn nebula_dust_color(t: f32) -> Rgb565 {
+    if t < 0.35 {
+        Rgb565::new(9, 12, 13) // dim violet dust
+    } else if t < 0.7 {
+        Rgb565::new(17, 25, 24) // violet-lavender glow
+    } else {
+        NEBULA_FLASH // hot starlight
+    }
 }
 
 fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
@@ -450,7 +494,83 @@ impl NebulaApp {
     }
 }
 
+impl NebulaApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The real gravity-well arena -- same data `draw()`'s own
+    /// sketch reads, exposed as plain center-relative coordinates
+    /// for an alternate renderer instead of drawn directly.
+    pub(crate) fn arena_visual(&self) -> crate::app::NebulaExtra {
+        let last_fired = self.params.last_fired_well.load(Ordering::Relaxed);
+        let wells = (0..NUM_WELLS)
+            .map(|w| {
+                let (x, y) = well_position(w);
+                let active = self.params.well_active[w].load(Ordering::Relaxed);
+                (x, y, active, w == last_fired)
+            })
+            .collect();
+
+        let count = self.params.particle_count.load(Ordering::Relaxed).clamp(MIN_PARTICLES, MAX_PARTICLES);
+        let particles = (0..count)
+            .map(|i| {
+                let x = self.params.particle_x[i].get();
+                let y = self.params.particle_y[i].get();
+                let speed = self.params.particle_speed[i].get();
+                (x, y, (speed / MAX_SPEED).clamp(0.0, 1.0))
+            })
+            .collect();
+
+        crate::app::NebulaExtra { wells, particles }
+    }
+}
+
 impl App for NebulaApp {
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Nebula(self.arena_visual())
+    }
+
     fn running(&self) -> Option<bool> {
         Some(self.params.running.load(Ordering::Relaxed))
     }
@@ -462,7 +582,7 @@ impl App for NebulaApp {
 
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -491,11 +611,16 @@ impl App for NebulaApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(NEBULA_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, NEBULA_TITLE);
         Text::new("Nebula", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, NEBULA_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, NEBULA_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -508,13 +633,13 @@ impl App for NebulaApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, NEBULA_ACCENT, NEBULA_DIM, NEBULA_CHIP_BG);
 
         // --- Right: the arena -- boundary circle, wells, particles. ---
         let center = Point::new(500, 175);
         let px_radius = 105i32;
         Circle::with_center(center, (px_radius * 2) as u32)
-            .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(12, 24, 12), 1))
+            .into_styled(PrimitiveStyle::with_stroke(NEBULA_RING, 1))
             .draw(fb)
             .ok();
 
@@ -525,11 +650,11 @@ impl App for NebulaApp {
             let active = self.params.well_active[w].load(Ordering::Relaxed);
             let lit = w == last_fired;
             let color = if !active {
-                Rgb565::new(8, 8, 8)
+                NEBULA_WELL_INACTIVE
             } else if lit {
-                Rgb565::new(0, 63, 30)
+                NEBULA_FLASH
             } else {
-                Rgb565::new(0, 30, 50)
+                NEBULA_WELL_OFF
             };
             Circle::with_center(point, if lit { 14 } else { 10 })
                 .into_styled(PrimitiveStyle::with_stroke(color, if lit { 3 } else { 2 }))
@@ -542,8 +667,14 @@ impl App for NebulaApp {
             let y = self.params.particle_y[i].get();
             let speed = self.params.particle_speed[i].get();
             let point = Point::new(center.x + (x * px_radius as f32) as i32, center.y + (y * px_radius as f32) as i32);
-            let brightness = (20.0 + (speed / MAX_SPEED).clamp(0.0, 1.0) * 43.0) as u8;
-            let color = Rgb565::new(brightness / 3, brightness, brightness / 2);
+            // Dimmer, slower-moving dust drawn from the deep-violet end
+            // of the nebula's own dust-cloud gradient; brighter, faster
+            // particles shift toward hot starlight white -- the same
+            // "faster = brighter" physical intuition the original had,
+            // just recolored to this app's own cosmic-dust palette
+            // instead of a generic green/blue brightness ramp.
+            let t = (speed / MAX_SPEED).clamp(0.0, 1.0);
+            let color = nebula_dust_color(t);
             Circle::with_center(point, 5)
                 .into_styled(PrimitiveStyle::with_fill(color))
                 .draw(fb)

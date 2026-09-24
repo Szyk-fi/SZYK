@@ -33,7 +33,7 @@ use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, ROOT_NAMES, SCALE_TYPES};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -43,7 +43,7 @@ use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Circle, Line, PrimitiveStyle};
+use embedded_graphics::primitives::{Circle, Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -253,6 +253,20 @@ pub struct MadnessApp {
     last_shape: usize,
     rng: u32,
 }
+
+// --- Madness's own palette: hot magenta clashing against acid
+// chartreuse on near-black, not a device-wide theme -- a deliberately
+// jarring, hypnotic clash matching this app's own name and its
+// warping, never-quite-rigid polygon. ---
+
+const MADNESS_BG: Rgb565 = Rgb565::new(1, 1, 1);
+const MADNESS_TITLE: Rgb565 = Rgb565::new(31, 56, 30);
+const MADNESS_ACCENT: Rgb565 = Rgb565::new(31, 11, 18);
+const MADNESS_DIM: Rgb565 = Rgb565::new(15, 18, 12);
+const MADNESS_CLASH: Rgb565 = Rgb565::new(26, 63, 7);
+const MADNESS_LINE: Rgb565 = Rgb565::new(5, 5, 5);
+const MADNESS_NOTE_OFF: Rgb565 = Rgb565::new(6, 5, 6);
+const MADNESS_BAR_OFF: Rgb565 = Rgb565::new(6, 5, 6);
 
 impl MadnessApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -554,7 +568,89 @@ impl MadnessApp {
     }
 }
 
+impl MadnessApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    let name = if *g == 0 { "Master Clock".to_string() } else { format!("Shape {g}") };
+                    (format!("{arrow} {name}"), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The real one-ring note polygon + 8 fixed trigger-bar markers --
+    /// same data `draw()`'s own circle sketch reads, exposed as plain
+    /// center-relative coordinates for an alternate renderer instead
+    /// of drawn directly.
+    pub(crate) fn shape_visual(&self) -> crate::app::ShapeVisual {
+        let rows = self.visible_rows();
+        let shape = self.current_shape(&rows);
+        let sp = &self.params.shapes[shape];
+        let notes = sp.notes.load(Ordering::Relaxed).clamp(MIN_NOTES, MAX_NOTES);
+        let direction = sp.direction.load(Ordering::Relaxed);
+        let last_fired = sp.last_fired.load(Ordering::Relaxed);
+        let running = sp.running.load(Ordering::Relaxed);
+
+        let outer = (0..NUM_BARS)
+            .map(|k| {
+                let angle = (k as f32 / NUM_BARS as f32 * TAU) - FRAC_PI_2;
+                let active = sp.bars_active[k].load(Ordering::Relaxed);
+                (angle.cos(), angle.sin(), active, false)
+            })
+            .collect();
+
+        let inner = (0..notes)
+            .map(|i| {
+                let angle = display_phase(sp.phases[i].get(), direction) * TAU - FRAC_PI_2;
+                (angle.cos(), angle.sin(), i == last_fired)
+            })
+            .collect();
+
+        crate::app::ShapeVisual { shape_index: shape, running, outer, inner, closed: true }
+    }
+}
+
 impl App for MadnessApp {
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Shape(self.shape_visual())
+    }
+
     /// Same "whichever shape is currently focused" convention Bloom
     /// uses -- see its `running`/`toggle_running` for the rationale.
     fn running(&self) -> Option<bool> {
@@ -572,7 +668,7 @@ impl App for MadnessApp {
 
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -598,11 +694,16 @@ impl App for MadnessApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(MADNESS_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, MADNESS_TITLE);
         Text::new("Madness", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, MADNESS_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, MADNESS_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -616,7 +717,7 @@ impl App for MadnessApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, MADNESS_BG, MADNESS_DIM, MADNESS_ACCENT);
 
         // --- Right: the circle -- note positions (each independently
         // drifting), the 8 fixed trigger-bar markers sitting on the
@@ -637,12 +738,15 @@ impl App for MadnessApp {
         for i in 0..notes {
             let p0 = note_point(i);
             let p1 = note_point((i + 1) % notes);
-            Line::new(p0, p1).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(10, 20, 10), 1)).draw(fb).ok();
+            Line::new(p0, p1).into_styled(PrimitiveStyle::with_stroke(MADNESS_LINE, 1)).draw(fb).ok();
         }
         for i in 0..notes {
             let p = note_point(i);
             let lit = i == last_fired;
-            let (color, d) = if lit { (Rgb565::new(0, 63, 10), 8) } else { (Rgb565::new(8, 16, 8), 4) };
+            // The lit flash clashes hard against the resting magenta
+            // -- chartreuse against pink, a deliberately jarring pop
+            // rather than a smooth same-hue brighten.
+            let (color, d) = if lit { (MADNESS_CLASH, 8) } else { (MADNESS_NOTE_OFF, 4) };
             Circle::new(Point::new(p.x - d / 2, p.y - d / 2), d as u32)
                 .into_styled(PrimitiveStyle::with_fill(color))
                 .draw(fb)
@@ -650,13 +754,12 @@ impl App for MadnessApp {
         }
 
         // Trigger-bar markers -- small circles sitting directly on the
-        // ring (not a separate outward tick), same green family as
-        // everything else here.
+        // ring (not a separate outward tick).
         for k in 0..NUM_BARS {
             let a = (k as f32 / NUM_BARS as f32 * TAU) - FRAC_PI_2;
             let p = Point::new(cx + (radius * a.cos()) as i32, cy + (radius * a.sin()) as i32);
             let active = sp.bars_active[k].load(Ordering::Relaxed);
-            let (color, d) = if active { (Rgb565::new(0, 63, 10), 10) } else { (Rgb565::new(6, 12, 6), 6) };
+            let (color, d) = if active { (MADNESS_ACCENT, 10) } else { (MADNESS_BAR_OFF, 6) };
             Circle::new(Point::new(p.x - d / 2, p.y - d / 2), d as u32)
                 .into_styled(PrimitiveStyle::with_stroke(color, 2))
                 .draw(fb)

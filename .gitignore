@@ -1,2 +1,18 @@
 /target
 .DS_Store
+
+# Build / local
+target/
+.DS_Store
+.claude/
+.env
+.env.*
+*.log
+
+# Local source archives / duplicate copies
+portamax-source.zip
+portamax-source/
+portamax-github-source.zip
+
+# Large local audio libraries
+samples/Drum Loops/

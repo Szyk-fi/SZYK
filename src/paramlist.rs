@@ -28,7 +28,6 @@ pub const SELECTED_CHIP_BG: Rgb565 = Rgb565::new(3, 11, 3);
 
 pub struct ParamList {
     pub selected: usize,
-    scroll_top: usize,
     /// Accumulates raw ticks between actual moves -- see `navigate`.
     accum: i32,
 }
@@ -37,7 +36,6 @@ impl ParamList {
     pub fn new() -> Self {
         Self {
             selected: 0,
-            scroll_top: 0,
             accum: 0,
         }
     }
@@ -70,9 +68,53 @@ impl ParamList {
         }
     }
 
+    /// Applies encoder ticks and discrete button steps through separate paths.
+    pub fn navigate_input(&mut self, input: &crate::app::Input, len: usize, ticks_per_step: i32) {
+        self.navigate(input.knob1, len, ticks_per_step);
+        self.navigate_steps(input.navigation_steps, len);
+    }
+
+    /// A button action always moves a complete row, even at slow encoder settings.
+    pub fn navigate_steps(&mut self, steps: i32, len: usize) {
+        if len == 0 || steps == 0 { return; }
+        self.accum = 0;
+        self.selected = (self.selected as i64 + steps as i64).rem_euclid(len as i64) as usize;
+    }
+
+    /// Clamps `selected` to `len` and returns the `visible`-row window
+    /// around it, keeping the selection centered instead of only
+    /// nudging just enough to keep it on screen -- pins to the top
+    /// while near the start of the list (nothing to center yet),
+    /// keeps the selection mid-window while scrolling through the
+    /// middle (so upcoming rows stay visible below it), and pins to
+    /// the bottom near the end (so the last real rows fill the window
+    /// instead of leaving blank space). Every app's menu uses this,
+    /// same as the home/launcher list. A pure computed window (no
+    /// stored scroll position), so any caller can call it as often as
+    /// it likes without the two staying in sync.
+    pub fn centered_scroll_window(&self, visible: usize, len: usize) -> (usize, usize) {
+        if len == 0 || visible == 0 {
+            return (0, 0);
+        }
+        if len <= visible {
+            return (0, len);
+        }
+        let selected = self.selected.min(len - 1);
+        let half = visible / 2;
+        let start = if selected <= half {
+            0
+        } else if selected >= len - (visible - half) {
+            len - visible
+        } else {
+            selected - half
+        };
+        (start, start + visible)
+    }
+
     /// Draws `rows` (name, value) starting at (x, y), `row_h` apart,
     /// showing at most `visible` at once and scrolling to keep the
-    /// selection on screen.
+    /// selection on screen. Uses this shared list's one device-wide
+    /// palette -- see `draw_themed` for an app that wants its own.
     pub fn draw(
         &mut self,
         fb: &mut FrameBuffer,
@@ -82,23 +124,39 @@ impl ParamList {
         visible: usize,
         rows: &[(String, String)],
     ) {
+        self.draw_themed(fb, x, y, row_h, visible, rows, ACCENT, Rgb565::new(18, 36, 18), SELECTED_CHIP_BG);
+    }
+
+    /// Same as `draw`, but with the accent/dim/selected-chip colors
+    /// passed in instead of this module's shared device-wide default
+    /// -- lets one app (e.g. Bloom's own botanical palette) have a
+    /// visually distinct menu that still matches its own on-screen
+    /// personality, without changing every other app's list.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_themed(
+        &mut self,
+        fb: &mut FrameBuffer,
+        x: i32,
+        y: i32,
+        row_h: i32,
+        visible: usize,
+        rows: &[(String, String)],
+        accent_color: Rgb565,
+        dim_color: Rgb565,
+        chip_bg: Rgb565,
+    ) {
         if rows.is_empty() {
             return;
         }
         if self.selected >= rows.len() {
             self.selected = rows.len() - 1;
         }
-        if self.selected < self.scroll_top {
-            self.scroll_top = self.selected;
-        } else if self.selected >= self.scroll_top + visible {
-            self.scroll_top = self.selected + 1 - visible;
-        }
+        let (start, end) = self.centered_scroll_window(visible, rows.len());
 
-        let accent = MonoTextStyle::new(&SPLEEN_8X16, ACCENT);
-        let dim = MonoTextStyle::new(&SPLEEN_8X16, Rgb565::new(18, 36, 18));
-        let end = (self.scroll_top + visible).min(rows.len());
+        let accent = MonoTextStyle::new(&SPLEEN_8X16, accent_color);
+        let dim = MonoTextStyle::new(&SPLEEN_8X16, dim_color);
 
-        for (row_i, idx) in (self.scroll_top..end).enumerate() {
+        for (row_i, idx) in (start..end).enumerate() {
             let (name, value) = &rows[idx];
             let yy = y + row_i as i32 * row_h;
             let marker = if idx == self.selected { ">" } else { " " };
@@ -113,7 +171,7 @@ impl ParamList {
                 let text_w = text.chars().count() as u32 * SPLEEN_8X16.character_size.width;
                 let chip = Rectangle::new(Point::new(x - 3, yy - 13), Size::new(text_w + 6, 19));
                 RoundedRectangle::new(chip, CornerRadii::new(Size::new(3, 3)))
-                    .into_styled(PrimitiveStyle::with_fill(SELECTED_CHIP_BG))
+                    .into_styled(PrimitiveStyle::with_fill(chip_bg))
                     .draw(fb)
                     .ok();
             }
@@ -122,7 +180,7 @@ impl ParamList {
             Text::new(&text, Point::new(x, yy), style).draw(fb).ok();
         }
 
-        if self.scroll_top > 0 {
+        if start > 0 {
             Text::new("^ more", Point::new(x, y - row_h), dim).draw(fb).ok();
         }
         if end < rows.len() {
@@ -211,5 +269,38 @@ mod tests {
         let (row1_top, _) = lit_y_bounds(&fb1);
 
         assert!(row0_bottom < row1_top, "row 0's text (bottom={row0_bottom}) would overlap row 1's text (top={row1_top}) at row_h={row_h}");
+    }
+}
+
+#[cfg(test)]
+mod discrete_navigation_tests {
+    use super::ParamList;
+    use crate::app::Input;
+
+    #[test]
+    fn button_steps_bypass_encoder_sensitivity_and_clear_partial_ticks() {
+        for speed in [1, 3, 8] {
+            let mut list = ParamList::new();
+            for _ in 1..speed { list.navigate(1, 10, speed); }
+            list.navigate_input(&Input { navigation_steps: 1, ..Default::default() }, 10, speed);
+            assert_eq!(list.selected, 1);
+            for _ in 1..speed { list.navigate(1, 10, speed); }
+            assert_eq!(list.selected, 1, "a partial encoder turn must not leak across a button step");
+            list.navigate(1, 10, speed);
+            assert_eq!(list.selected, 2, "encoder threshold is unchanged");
+            list.navigate_input(&Input { navigation_steps: -1, ..Default::default() }, 10, speed);
+            assert_eq!(list.selected, 1);
+        }
+    }
+
+    #[test]
+    fn launcher_steps_wrap_and_preserve_batched_taps() {
+        let mut list = ParamList::new();
+        list.navigate_steps(-1, 5);
+        assert_eq!(list.selected, 4);
+        list.navigate_steps(3, 5);
+        assert_eq!(list.selected, 2);
+        list.navigate_steps(1, 0);
+        assert_eq!(list.selected, 2);
     }
 }

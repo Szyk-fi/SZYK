@@ -64,9 +64,10 @@
 
 use super::plaits_layout::LayoutWatcher;
 use crate::app::{App, Input};
+use crate::arpeggiator::{Arpeggiator, PATTERN_NAMES as ARP_PATTERN_NAMES};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -148,9 +149,9 @@ const NUM_BANKS: usize = 3;
 const BANK_SIZE: usize = 8;
 const BANK_NAMES: [&str; NUM_BANKS] = ["Bank 1 (1-8)", "Bank 2 (9-16)", "Bank 3 (17-24)"];
 const BANK_COLORS: [Rgb565; NUM_BANKS] = [
-    Rgb565::new(27, 3, 3),   // red
-    Rgb565::new(0, 50, 4),   // green
-    Rgb565::new(27, 40, 0),  // yellow
+    Rgb565::new(0, 50, 4),   // green -- Bank 1
+    Rgb565::new(27, 3, 3),   // red -- Bank 2
+    Rgb565::new(31, 41, 0),  // orange -- Bank 3
 ];
 
 /// Chord types: name + extra intervals beyond the root (root is always 0).
@@ -279,13 +280,17 @@ enum Selection {
     RootNote,
     ScaleType,
     AnalyzerType,
+    ArpOn,
+    ArpPattern,
+    ArpRate,
 }
 
-const NUM_GROUPS: usize = 6;
+const NUM_GROUPS: usize = 7;
 const ENGINE_GROUP: usize = 0;
 const ENVELOPE_GROUP: usize = 1;
 const MOD_GROUP: usize = 3;
 const ANALYZER_GROUP: usize = 5;
+const ARP_GROUP: usize = 6;
 
 fn group_name(g: usize) -> &'static str {
     match g {
@@ -294,7 +299,8 @@ fn group_name(g: usize) -> &'static str {
         2 => "Voice",
         3 => "Modulators",
         4 => "Piano Roll",
-        _ => "Analyzer",
+        5 => "Analyzer",
+        _ => "Arp",
     }
 }
 
@@ -313,6 +319,7 @@ fn group_leaves(g: usize) -> Vec<Selection> {
         2 => vec![Selection::VoiceMode, Selection::ChordMode, Selection::ChordType],
         4 => vec![Selection::RollVisible, Selection::RollHeight, Selection::RootNote, Selection::ScaleType],
         5 => vec![Selection::AnalyzerType],
+        6 => vec![Selection::ArpOn, Selection::ArpPattern, Selection::ArpRate],
         _ => Vec::new(),
     }
 }
@@ -404,6 +411,11 @@ struct Params {
     /// final output right before it's written to the device buffer.
     mix_level: Arc<AtomicF32>,
     ext_mix_level: Arc<AtomicF32>,
+    /// Real, sample-block-stepped arpeggiator -- see arpeggiator.rs.
+    /// Stepped once per audio block inside `PlaitsProcessor::process`
+    /// (the real-time thread), not `tick` -- see there for how its
+    /// output overrides the note/gate that would otherwise play.
+    arp: Arpeggiator,
 }
 
 impl Params {
@@ -449,6 +461,7 @@ impl Params {
             bus_out: audio_bus.register("Plaits"),
             mix_level,
             ext_mix_level,
+            arp: Arpeggiator::new(),
         }
     }
 
@@ -494,6 +507,30 @@ pub struct PlaitsApp {
     current_index: Option<usize>,
 }
 
+// --- Plaits' own palette: warm cream and ink, not a device-wide
+// theme -- the real Mutable Instruments panel look (a light body,
+// dark screen-printed text), for the sim's flagship voice. Light-on-
+// dark's usual "bright = lit" convention inverts here since the
+// ground is light: PLAITS_ACCENT is a deep, saturated teal rather
+// than a bright neon, so it still reads as bold against cream instead
+// of washing out. `BANK_COLORS` (real per-engine-bank hues) are left
+// untouched -- they're already this app's own distinct identity. ---
+
+const PLAITS_BG: Rgb565 = Rgb565::new(23, 46, 22);
+const PLAITS_TITLE: Rgb565 = Rgb565::new(3, 5, 2);
+const PLAITS_ACCENT: Rgb565 = Rgb565::new(4, 22, 10);
+const PLAITS_DIM: Rgb565 = Rgb565::new(9, 17, 7);
+/// Frame/axis outlines -- a light-medium warm grey line, distinct
+/// enough from `PLAITS_BG` to read as a thin outline on cream.
+const PLAITS_OUTLINE: Rgb565 = Rgb565::new(22, 42, 19);
+/// A dot/state that's off/inactive -- barely darker than the
+/// background, same "nearly invisible" intent the old dark-on-black
+/// version had, just inverted for a light ground.
+const PLAITS_FAINT: Rgb565 = Rgb565::new(25, 50, 22);
+/// A middle brightness step between `PLAITS_FAINT` and `PLAITS_ACCENT`
+/// -- used where a 3-step (off/mid/lit) ramp existed before.
+const PLAITS_MID: Rgb565 = Rgb565::new(13, 35, 15);
+
 impl PlaitsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         let layout = LayoutWatcher::new();
@@ -507,6 +544,115 @@ impl PlaitsApp {
             mod_expanded: [false; NUM_MOD_SLOTS],
             current_index: None,
         }
+    }
+
+    /// Flat `(name, value, is_group)` rows -- the same data `draw()`
+    /// builds for its own `ParamList`, just without handing out the
+    /// private `Row`/`Selection` types themselves. `pub(crate)` (not
+    /// fully private) specifically so an alternate *renderer* for
+    /// this same real app/state -- e.g. a Slint screen driving the
+    /// real `PlaitsApp` instead of `embedded_graphics` -- can read it
+    /// without needing its own reimplementation of this list's
+    /// structure. See `examples/slint_plaits_live.rs`.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+                Row::ModSlot(slot) => {
+                    let arrow = if self.mod_expanded[*slot] { "v" } else { ">" };
+                    (format!("{arrow} Mod {}", slot + 1), self.mod_slot_summary(*slot), true)
+                }
+            })
+            .collect()
+    }
+
+    /// Which row `display_rows` should show as selected.
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- same sticky scrolling `ParamList::draw`
+    /// already does for the real firmware's on-screen list (see
+    /// `ParamList::centered_scroll_window`), just handed back as data instead
+    /// of drawn. Returns `(window, selected_index_in_window,
+    /// has_more_above, has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The current engine's display name (see `ENGINE_NAMES`).
+    pub(crate) fn engine_name(&self) -> &'static str {
+        ENGINE_NAMES[self.params.engine.load(Ordering::Relaxed) as usize % ENGINE_NAMES.len()]
+    }
+
+    /// Whether a note is actually sounding right now (mono voice
+    /// gated on) -- real, not a guess: the same `current_index` the
+    /// audio processor itself reads.
+    pub(crate) fn is_sounding(&self) -> bool {
+        self.current_index.is_some()
+    }
+
+    /// The current engine's index within its bank (0..BANK_SIZE) and
+    /// its bank index (0..NUM_BANKS) -- same split `draw_engine_panel`
+    /// uses for the real firmware's bank/LED display.
+    pub(crate) fn engine_bank_and_led(&self) -> (usize, usize) {
+        let engine = self.params.engine.load(Ordering::Relaxed) as usize % ENGINE_NAMES.len();
+        (engine / BANK_SIZE, engine % BANK_SIZE)
+    }
+
+    /// The real FFT spectrum bars of Plaits' own output, normalized to
+    /// 0..1 -- same source `draw_spectrum_panel` reads (`Params.
+    /// spectrum`, filled by the audio thread), just handed back as
+    /// plain floats instead of drawn directly.
+    pub(crate) fn spectrum_levels(&self) -> Vec<f32> {
+        self.params
+            .spectrum
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|db| ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0))
+            .collect()
+    }
+
+    /// Which of `ANALYZER_TYPE_NAMES` the right panel should currently
+    /// show (0=Spectrum, 1=Oscilloscope, 2=Level Meter, 3=Pitch
+    /// Detect) plus its display name -- same selector
+    /// `draw_current_analyzer` reads (`Params.analyzer_type`).
+    pub(crate) fn analyzer_kind(&self) -> (u32, &'static str) {
+        let idx = self.params.analyzer_type.load(Ordering::Relaxed) % ANALYZER_TYPE_NAMES.len() as u32;
+        (idx, ANALYZER_TYPE_NAMES[idx as usize])
+    }
+
+    /// Real time-domain waveform, normalized -1..1 -- same source
+    /// `draw_oscilloscope_panel` reads (`Params.waveform`).
+    pub(crate) fn waveform_samples(&self) -> Vec<f32> {
+        self.params.waveform.lock().unwrap().iter().map(|v| v.clamp(-1.0, 1.0)).collect()
+    }
+
+    /// Real peak/RMS level in dB, normalized to 0..1 (same MIN_DB/
+    /// MAX_DB range `draw_level_panel` uses) -- `(peak, rms)`.
+    pub(crate) fn level_meters(&self) -> (f32, f32) {
+        let norm = |db: f32| ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0);
+        (norm(self.params.peak_db.get()), norm(self.params.rms_db.get()))
+    }
+
+    /// The autocorrelation-detected note name, or "--" if nothing is
+    /// confidently detected -- same source `draw_pitch_panel` reads.
+    pub(crate) fn detected_note_name(&self) -> String {
+        let note = self.params.detected_note.load(Ordering::Relaxed);
+        if note == NO_PITCH { "--".to_string() } else { note_name(note) }
     }
 
     fn visible_rows(&self) -> Vec<Row> {
@@ -598,6 +744,14 @@ impl PlaitsApp {
                 let idx = self.params.analyzer_type.load(Ordering::Relaxed) as usize % ANALYZER_TYPE_NAMES.len();
                 ANALYZER_TYPE_NAMES[idx].to_string()
             }
+            Selection::ArpOn => {
+                if self.params.arp.enabled.load(Ordering::Relaxed) { "On".into() } else { "Off".into() }
+            }
+            Selection::ArpPattern => {
+                let idx = self.params.arp.pattern.load(Ordering::Relaxed) as usize % ARP_PATTERN_NAMES.len();
+                ARP_PATTERN_NAMES[idx].to_string()
+            }
+            Selection::ArpRate => format!("{:.1} Hz", self.params.arp.rate_hz.get()),
         }
     }
 
@@ -629,6 +783,9 @@ impl PlaitsApp {
             Selection::RootNote => "Root".into(),
             Selection::ScaleType => "Scale".into(),
             Selection::AnalyzerType => "Type".into(),
+            Selection::ArpOn => "On/Off".into(),
+            Selection::ArpPattern => "Pattern".into(),
+            Selection::ArpRate => "Rate".into(),
         }
     }
 
@@ -643,6 +800,7 @@ impl PlaitsApp {
                     .count();
                 format!("{active} active")
             }
+            6 => self.leaf_value(Selection::ArpOn),
             _ => self.leaf_value(Selection::RollVisible),
         }
     }
@@ -716,6 +874,17 @@ impl PlaitsApp {
                 let next = (cur + step).rem_euclid(ANALYZER_TYPE_NAMES.len() as i32);
                 self.params.analyzer_type.store(next as u32, Ordering::Relaxed);
             }
+            Selection::ArpOn => self.params.arp.enabled.store(delta > 0, Ordering::Relaxed),
+            Selection::ArpPattern => {
+                let cur = self.params.arp.pattern.load(Ordering::Relaxed) as i32;
+                let next = (cur + step).rem_euclid(ARP_PATTERN_NAMES.len() as i32);
+                self.params.arp.pattern.store(next as u32, Ordering::Relaxed);
+            }
+            Selection::ArpRate => {
+                let cur = self.params.arp.rate_hz.get();
+                let next = (cur + accelerate(delta) * sensitivity * 0.2).clamp(0.5, 30.0);
+                self.params.arp.rate_hz.set(next);
+            }
         }
     }
 
@@ -742,6 +911,9 @@ impl PlaitsApp {
             Selection::RootNote => self.params.root_note.store(0, Ordering::Relaxed),
             Selection::ScaleType => self.params.scale_type.store(0, Ordering::Relaxed),
             Selection::AnalyzerType => self.params.analyzer_type.store(1, Ordering::Relaxed), // Oscilloscope
+            Selection::ArpOn => self.params.arp.enabled.store(false, Ordering::Relaxed),
+            Selection::ArpPattern => self.params.arp.pattern.store(0, Ordering::Relaxed), // Up
+            Selection::ArpRate => self.params.arp.rate_hz.set(8.0),
             Selection::Engine => {} // no sensible single "default" engine to reset to
         }
     }
@@ -766,7 +938,7 @@ impl PlaitsApp {
         for (i, name) in BANK_NAMES.iter().enumerate() {
             let sy = y + i as i32 * legend_row_h;
             let active = i == bank;
-            let color = if active { BANK_COLORS[i] } else { Rgb565::new(8, 12, 8) };
+            let color = if active { BANK_COLORS[i] } else { PLAITS_FAINT };
             let text_style = if active { MonoTextStyle::new(&SPLEEN_6X12, BANK_COLORS[i]) } else { dim };
             Circle::new(Point::new(x, sy), 8).into_styled(PrimitiveStyle::with_fill(color)).draw(fb).ok();
             Text::new(name, Point::new(x + 14, sy + 8), text_style).draw(fb).ok();
@@ -784,7 +956,7 @@ impl PlaitsApp {
         for i in 0..BANK_SIZE {
             let lx = row_x + i as i32 * (led_d + led_gap);
             let lit = i == led_index;
-            let color = if lit { BANK_COLORS[bank] } else { Rgb565::new(8, 10, 8) };
+            let color = if lit { BANK_COLORS[bank] } else { PLAITS_FAINT };
             Circle::new(Point::new(lx, leds_y), led_d as u32).into_styled(PrimitiveStyle::with_fill(color)).draw(fb).ok();
         }
 
@@ -826,8 +998,8 @@ impl PlaitsApp {
         let p3 = Point::new(x + aw + dw + sw, p2.y);
         let p4 = Point::new((x + aw + dw + sw + rw).min(x + w), base_y);
 
-        let dim_line = PrimitiveStyle::with_stroke(Rgb565::new(10, 20, 10), 1);
-        let accent_line = PrimitiveStyle::with_stroke(Rgb565::new(0, 63, 10), 2);
+        let dim_line = PrimitiveStyle::with_stroke(PLAITS_OUTLINE, 1);
+        let accent_line = PrimitiveStyle::with_stroke(PLAITS_ACCENT, 2);
 
         let segs = [
             (p0, p1, AdsrStage::Attack),
@@ -847,7 +1019,7 @@ impl PlaitsApp {
                 let level = self.params.env_level.get().clamp(0.0, 1.0);
                 let dot_y = base_y - (level * plot_h as f32) as i32;
                 Circle::new(Point::new(mid_x - 3, dot_y - 3), 6)
-                    .into_styled(PrimitiveStyle::with_fill(Rgb565::new(0, 63, 10)))
+                    .into_styled(PrimitiveStyle::with_fill(PLAITS_ACCENT))
                     .draw(fb)
                     .ok();
             }
@@ -880,14 +1052,14 @@ impl PlaitsApp {
         let plot_h = (h - 16).max(10);
         let mid_y = y + plot_h / 2;
         Line::new(Point::new(x, mid_y), Point::new(x + w, mid_y))
-            .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(8, 16, 8), 1))
+            .into_styled(PrimitiveStyle::with_stroke(PLAITS_OUTLINE, 1))
             .draw(fb)
             .ok();
 
         let history = self.params.mod_history[slot].lock().unwrap();
         if history.len() >= 2 {
             let step = w as f32 / (history.len() - 1) as f32;
-            let style = PrimitiveStyle::with_stroke(Rgb565::new(0, 63, 10), 1);
+            let style = PrimitiveStyle::with_stroke(PLAITS_ACCENT, 1);
             for i in 0..history.len() - 1 {
                 let v0 = history[i].clamp(-1.0, 1.0);
                 let v1 = history[i + 1].clamp(-1.0, 1.0);
@@ -925,7 +1097,7 @@ impl PlaitsApp {
             let bx = x + i as i32 * bar_w;
             let by = y + h - bh as i32;
             Rectangle::new(Point::new(bx, by), Size::new((bar_w - 1).max(1) as u32, bh))
-                .into_styled(PrimitiveStyle::with_fill(Rgb565::new(0, 63, 10)))
+                .into_styled(PrimitiveStyle::with_fill(PLAITS_ACCENT))
                 .draw(fb)
                 .ok();
         }
@@ -937,13 +1109,13 @@ impl PlaitsApp {
     fn draw_oscilloscope_panel(&self, fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32) {
         let mid_y = y + h / 2;
         Line::new(Point::new(x, mid_y), Point::new(x + w, mid_y))
-            .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(8, 16, 8), 1))
+            .into_styled(PrimitiveStyle::with_stroke(PLAITS_OUTLINE, 1))
             .draw(fb)
             .ok();
 
         let wf = self.params.waveform.lock().unwrap();
         let step = w as f32 / (wf.len() - 1) as f32;
-        let style = PrimitiveStyle::with_stroke(Rgb565::new(0, 63, 10), 1);
+        let style = PrimitiveStyle::with_stroke(PLAITS_ACCENT, 1);
         for i in 0..wf.len() - 1 {
             let v0 = wf[i].clamp(-1.0, 1.0);
             let v1 = wf[i + 1].clamp(-1.0, 1.0);
@@ -966,12 +1138,12 @@ impl PlaitsApp {
             let t = ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0);
             let filled = (t * w as f32) as u32;
             Rectangle::new(Point::new(x, by), Size::new(w as u32, bar_h as u32))
-                .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(10, 20, 10), 1))
+                .into_styled(PrimitiveStyle::with_stroke(PLAITS_OUTLINE, 1))
                 .draw(fb)
                 .ok();
             if filled > 0 {
                 Rectangle::new(Point::new(x, by), Size::new(filled.min(w as u32), bar_h as u32))
-                    .into_styled(PrimitiveStyle::with_fill(Rgb565::new(0, 50, 6)))
+                    .into_styled(PrimitiveStyle::with_fill(PLAITS_ACCENT))
                     .draw(fb)
                     .ok();
             }
@@ -984,7 +1156,7 @@ impl PlaitsApp {
     /// Plaits' real output instead of a demo signal.
     fn draw_pitch_panel(&self, fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32, dim: MonoTextStyle<Rgb565>) {
         let note = self.params.detected_note.load(Ordering::Relaxed);
-        let big = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::new(0, 63, 10));
+        let big = MonoTextStyle::new(&SPLEEN_16X32, PLAITS_ACCENT);
         let text = if note == NO_PITCH { "--".to_string() } else { note_name(note) };
         Text::new(&text, Point::new(x + w / 2 - 24, y + h / 2), big).draw(fb).ok();
         Text::new("(autocorrelation)", Point::new(x, y + h - 4), dim).draw(fb).ok();
@@ -1012,11 +1184,11 @@ impl PlaitsApp {
             let is_root = pc == root;
             let is_member = members.contains(&pc);
             let (color, d) = if is_root {
-                (Rgb565::new(0, 63, 10), 12)
+                (PLAITS_ACCENT, 12)
             } else if is_member {
-                (Rgb565::new(0, 40, 6), 9)
+                (PLAITS_MID, 9)
             } else {
-                (Rgb565::new(6, 10, 6), 6)
+                (PLAITS_FAINT, 6)
             };
             Circle::new(Point::new(px - d / 2, py - d / 2), d as u32)
                 .into_styled(PrimitiveStyle::with_fill(color))
@@ -1033,10 +1205,60 @@ impl PlaitsApp {
 }
 
 impl App for PlaitsApp {
+    fn supports_pad_lock(&self) -> bool { true }
+
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        let (engine_bank, engine_led) = self.engine_bank_and_led();
+        let (analyzer_kind, analyzer_name) = self.analyzer_kind();
+        let mut spectrum = Vec::new();
+        let mut waveform = crate::app::CurveSegments::default();
+        let mut peak_level = 0.0;
+        let mut rms_level = 0.0;
+        let mut pitch_name = String::new();
+        match analyzer_kind {
+            0 => spectrum = self.spectrum_levels(),
+            1 => {
+                // Preserve every captured sample, including the final endpoint.
+                // SignalTrace scales this reference geometry to the Slint panel.
+                const PANEL_W: f32 = 260.0;
+                const PANEL_H: f32 = 190.0;
+                let raw = self.waveform_samples();
+                if raw.len() >= 2 {
+                    let (mid_x, mid_y, length, angle_deg) = crate::app::polyline_segments(&raw, PANEL_W, PANEL_H, true);
+                    waveform = crate::app::CurveSegments { mid_x, mid_y, length, angle_deg };
+                }
+            }
+            2 => (peak_level, rms_level) = self.level_meters(),
+            _ => pitch_name = self.detected_note_name(),
+        }
+        crate::app::SlintExtra::Plaits(crate::app::PlaitsExtra {
+            engine_name: self.engine_name().to_string(),
+            engine_bank,
+            engine_led,
+            analyzer_kind,
+            analyzer_name: analyzer_name.to_string(),
+            spectrum,
+            waveform,
+            peak_level,
+            rms_level,
+            pitch_name,
+        })
+    }
+
     fn tick(&mut self, input: &Input) {
         self.layout.poll();
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -1114,11 +1336,16 @@ impl App for PlaitsApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(PLAITS_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, PLAITS_TITLE);
         Text::new("Plaits", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_8X16, Rgb565::new(0, 63, 10));
-        let small_dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(16, 32, 16));
+        let accent = MonoTextStyle::new(&SPLEEN_8X16, PLAITS_ACCENT);
+        let small_dim = MonoTextStyle::new(&SPLEEN_6X12, PLAITS_DIM);
 
         if let Some(i) = self.current_index {
             Text::new(
@@ -1169,7 +1396,7 @@ impl App for PlaitsApp {
         let layout = self.layout.get();
         const MENU_ROW_H: i32 = 24; // taller row to fit ParamList's SPLEEN_8X16 -- see paramlist.rs
         let visible_menu_rows = (((content_bottom - layout.menu_y) / MENU_ROW_H).max(1)) as usize;
-        self.list.draw(fb, layout.menu_x, layout.menu_y, MENU_ROW_H, visible_menu_rows, &display_rows);
+        self.list.draw_themed(fb, layout.menu_x, layout.menu_y, MENU_ROW_H, visible_menu_rows, &display_rows, PLAITS_BG, PLAITS_DIM, PLAITS_ACCENT);
 
         // --- Right: context-sensitive visualizer -- Plaits' output
         // spectrum by default, or a live view of the ADSR/modulator
@@ -1209,11 +1436,11 @@ impl App for PlaitsApp {
                 // `held` is indexed by physical pad -- pad_rank converts.
                 let on = held[pad_rank(i) as usize];
                 let fill = if on {
-                    Rgb565::new(0, 63, 10)
+                    PLAITS_ACCENT
                 } else if is_black {
-                    Rgb565::new(3, 6, 3)
+                    PLAITS_FAINT
                 } else {
-                    Rgb565::new(20, 40, 20)
+                    PLAITS_MID
                 };
                 Rectangle::new(Point::new(i * key_w, roll_y), Size::new((key_w - 1) as u32, roll_height as u32))
                     .into_styled(PrimitiveStyle::with_fill(fill))
@@ -1449,12 +1676,10 @@ impl PlaitsProcessor {
 impl AudioProcessor for PlaitsProcessor {
     fn process(&mut self, buffer: &mut [f32], channels: usize, sample_rate: f32) {
         let engine = self.params.engine.load(Ordering::Relaxed) as i32;
-        let note = self.params.note.get();
         let harmonics_base = self.params.harmonics.get();
         let timbre_base = self.params.timbre.get();
         let morph_base = self.params.morph.get();
         let decay_base = self.params.decay.get();
-        let trigger = self.params.gate.load(Ordering::Relaxed);
         let poly = self.params.poly_mode.load(Ordering::Relaxed);
         let chord_mode = self.params.chord_mode.load(Ordering::Relaxed);
         let chord_type = self.params.chord_type.load(Ordering::Relaxed) as usize % CHORD_TYPES.len();
@@ -1462,12 +1687,37 @@ impl AudioProcessor for PlaitsProcessor {
         let frames = buffer.len() / channels;
         let frames_f = frames as f32;
 
-        let mut offsets = [0.0f32; 4]; // harmonics, timbre, morph, decay
-        let any_gate = if poly {
-            self.params.held.lock().unwrap().iter().any(|h| *h)
+        // Real arpeggiator step -- sample-block-accurate (this is the
+        // real-time thread), so it's stepped here rather than in
+        // `tick`. Held pads are converted to pitch-rank order first
+        // (see `pad_rank`) so Up/Down walk ascending/descending pitch,
+        // not raw physical pad index.
+        let held_raw = *self.params.held.lock().unwrap();
+        let held_by_rank: [bool; 16] = std::array::from_fn(|r| held_raw[pad_rank(r as i32) as usize]);
+        let arp_rank = self.params.arp.step(&held_by_rank, frames_f / sample_rate);
+
+        // Mono: when the arp is on and something is held, it overrides
+        // the last-pressed-wins note/gate `tick` already set; disabled
+        // (or nothing held), behavior is unchanged.
+        let (note, trigger) = if let Some(r) = arp_rank {
+            (self.params.note_for(r as i32) as f32, true)
         } else {
-            trigger
+            (self.params.note.get(), self.params.gate.load(Ordering::Relaxed))
         };
+        // Poly: when the arp is on, only the current step's pad gates
+        // -- a chord's worth of held pads becomes a rolling arpeggio
+        // instead of all sounding at once; disabled, every held pad
+        // still gates simultaneously (unchanged chord behavior).
+        let effective_held: [bool; 16] = match arp_rank {
+            Some(r) => {
+                let idx = pad_rank(r as i32) as usize;
+                std::array::from_fn(|i| i == idx)
+            }
+            None => held_raw,
+        };
+
+        let mut offsets = [0.0f32; 4]; // harmonics, timbre, morph, decay
+        let any_gate = if poly { effective_held.iter().any(|h| *h) } else { trigger };
         // A modulator's target can be another modulator's Rate (see
         // rate_target_slot/target_name) -- snapshot every slot's output
         // from *last* block before this block overwrites any of them, so
@@ -1582,12 +1832,11 @@ impl AudioProcessor for PlaitsProcessor {
         self.mono_buf.resize(frames, 0.0);
 
         if poly {
-            let held = *self.params.held.lock().unwrap();
             self.scratch_buf.clear();
             self.scratch_buf.resize(frames, 0.0);
             let mut active = 0u32;
             for (i, voice) in self.poly_voices.iter_mut().enumerate() {
-                let gate = held[i];
+                let gate = effective_held[i];
                 if gate {
                     active += 1;
                 }

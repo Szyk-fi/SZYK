@@ -55,6 +55,8 @@ impl PadColor {
 
 pub struct LedOutput {
     connections: Vec<MidiOutputConnection>,
+    pending: Option<std::sync::mpsc::Receiver<Vec<MidiOutputConnection>>>,
+    queued: Vec<[u8; 3]>,
 }
 
 impl LedOutput {
@@ -63,12 +65,20 @@ impl LedOutput {
     /// addressable LEDs plugged in), this is just an empty set and
     /// every `note_on` below becomes a no-op.
     pub fn open_all() -> Self {
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || { let _ = send.send(Self::connect_all()); });
+        Self { connections: Vec::new(), pending: Some(receive), queued: Vec::new() }
+    }
+
+    // CoreMIDI discovery can block when the server is unavailable. Keep it
+    // off the UI thread; retain the latest control values until it completes.
+    fn connect_all() -> Vec<MidiOutputConnection> {
         let mut connections = Vec::new();
         let probe = match MidiOutput::new("portamax-sim-led-probe") {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("MIDI output unavailable ({e}) -- controller LEDs won't light, everything else is unaffected.");
-                return Self { connections };
+                return connections;
             }
         };
         let port_count = probe.ports().len();
@@ -89,20 +99,48 @@ impl LedOutput {
                 Err(e) => eprintln!("Couldn't connect to MIDI output '{name}': {e}"),
             }
         }
-        Self { connections }
+        connections
     }
 
     /// An `Os` with no real MIDI hardware (headless PNG/WAV diagnostic
     /// renders, tests) still needs an `Os::new` to hand *something* to
     /// -- an empty output set that quietly no-ops every send.
     pub fn none() -> Self {
-        Self { connections: Vec::new() }
+        Self { connections: Vec::new(), pending: None, queued: Vec::new() }
+    }
+
+    pub fn poll(&mut self) {
+        if let Some(pending) = self.pending.as_ref() {
+            match pending.try_recv() {
+                Ok(connections) => {
+                    self.connections = connections;
+                    self.pending = None;
+                    for message in self.queued.drain(..) {
+                        for conn in &mut self.connections { conn.send(&message).ok(); }
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pending = None;
+                    self.queued.clear();
+                }
+            }
+        }
+    }
+
+    fn send(&mut self, message: [u8; 3]) {
+        self.poll();
+        if self.pending.is_some() {
+            if let Some(previous) = self.queued.iter_mut().find(|m| m[..2] == message[..2]) {
+                *previous = message;
+            } else { self.queued.push(message); }
+            return;
+        }
+        for conn in &mut self.connections { conn.send(&message).ok(); }
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8) {
-        for conn in &mut self.connections {
-            conn.send(&[0x90, note, velocity]).ok();
-        }
+        self.send([0x90, note, velocity]);
     }
 
     /// A Control Change message -- what a MIDI-to-CV interface (see
@@ -112,8 +150,25 @@ impl LedOutput {
     /// goes out to the Push 2 too, same harmless no-op as the reverse.
     /// `channel` is 0-15 (MIDI channel 1-16), `cc`/`value` are 0-127.
     pub fn control_change(&mut self, channel: u8, cc: u8, value: u8) {
-        for conn in &mut self.connections {
-            conn.send(&[0xB0 | (channel & 0x0F), cc & 0x7F, value & 0x7F]).ok();
-        }
+        self.send([0xB0 | (channel & 0x0F), cc & 0x7F, value & 0x7F]);
+    }
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+    #[test]
+    fn pending_discovery_keeps_latest_values_without_blocking() {
+        let (send, receive) = std::sync::mpsc::channel();
+        let mut output = LedOutput { connections: Vec::new(), pending: Some(receive), queued: Vec::new() };
+        output.note_on(60, 127);
+        output.note_on(60, 0);
+        output.control_change(0, 1, 10);
+        output.control_change(0, 1, 20);
+        assert_eq!(output.queued, vec![[0x90, 60, 0], [0xB0, 1, 20]]);
+        send.send(Vec::new()).unwrap();
+        output.poll();
+        assert!(output.pending.is_none());
+        assert!(output.queued.is_empty());
     }
 }

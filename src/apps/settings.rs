@@ -17,24 +17,31 @@
 //! it), the same "press to act" idiom Bloom's Randomize/Clouds'
 //! Trigger already use, rather than a special selection mechanism.
 
-use crate::app::{App, Input};
+use crate::app::{App, Input, SlintExtra, ThemeExtra};
 use crate::audio_devices::{self, AudioDeviceState};
 use crate::display::FrameBuffer;
 use crate::paramlist::ParamList;
+use crate::theme::ThemeColor;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::Text;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const DEFAULT_SENSITIVITY: f32 = 0.1;
-const DEFAULT_NAV_SPEED: f32 = 6.0;
+const DEFAULT_NAV_SPEED: f32 = 3.0;
 const MIN_SENSITIVITY: f32 = 0.02;
 const MAX_SENSITIVITY: f32 = 1.0;
 const MIN_NAV_SPEED: f32 = 1.0;
 const MAX_NAV_SPEED: f32 = 10.0;
+/// The wheel's real on-screen radius (px) in the live Slint panel --
+/// shared with `slint_extra`'s marker math so a click on the wheel
+/// and the dot it leaves behind always agree (see
+/// `ThemeColor::set_from_wheel`/`wheel_marker`).
+pub const WHEEL_RADIUS_PX: f32 = 70.0;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
@@ -42,6 +49,11 @@ enum Selection {
     InputDevice(usize),
     Sensitivity,
     NavSpeed,
+    ShowCpu,
+    ColorTarget,
+    Hue,
+    Saturation,
+    Brightness,
 }
 
 #[derive(Clone, Copy)]
@@ -50,12 +62,22 @@ enum Row {
     Leaf(Selection),
 }
 
-const NUM_GROUPS: usize = 3;
+const NUM_GROUPS: usize = 4;
 
 pub struct SettingsApp {
     devices: Arc<AudioDeviceState>,
     sensitivity: Arc<AtomicF32>,
     nav_speed: Arc<AtomicF32>,
+    /// Whether the live engine-load readout should be shown in the
+    /// UI's chrome -- read directly by whatever screen owns that
+    /// chrome (see `examples/slint_home_live.rs`), this app just
+    /// flips it.
+    show_cpu: Arc<AtomicBool>,
+    accent: Arc<ThemeColor>,
+    background: Arc<ThemeColor>,
+    /// Which of `accent`/`background` the Hue/Saturation/Brightness
+    /// rows (and the wheel) currently edit -- false = accent.
+    editing_background: bool,
     outputs: Vec<String>,
     inputs: Vec<String>,
     list: ParamList,
@@ -63,11 +85,22 @@ pub struct SettingsApp {
 }
 
 impl SettingsApp {
-    pub fn new(devices: Arc<AudioDeviceState>, sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>) -> Self {
+    pub fn new(
+        devices: Arc<AudioDeviceState>,
+        sensitivity: Arc<AtomicF32>,
+        nav_speed: Arc<AtomicF32>,
+        show_cpu: Arc<AtomicBool>,
+        accent: Arc<ThemeColor>,
+        background: Arc<ThemeColor>,
+    ) -> Self {
         Self {
             devices,
             sensitivity,
             nav_speed,
+            show_cpu,
+            accent,
+            background,
+            editing_background: false,
             outputs: Vec::new(),
             inputs: Vec::new(),
             list: ParamList::new(),
@@ -75,11 +108,16 @@ impl SettingsApp {
         }
     }
 
+    fn target(&self) -> &ThemeColor {
+        if self.editing_background { &self.background } else { &self.accent }
+    }
+
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         match g {
             0 => (0..self.outputs.len()).map(Selection::OutputDevice).collect(),
             1 => (0..self.inputs.len()).map(Selection::InputDevice).collect(),
-            _ => vec![Selection::Sensitivity, Selection::NavSpeed],
+            2 => vec![Selection::Sensitivity, Selection::NavSpeed, Selection::ShowCpu],
+            _ => vec![Selection::ColorTarget, Selection::Hue, Selection::Saturation, Selection::Brightness],
         }
     }
 
@@ -100,7 +138,8 @@ impl SettingsApp {
         match g {
             0 => "Output Device",
             1 => "Input Device",
-            _ => "Preferences",
+            2 => "Preferences",
+            _ => "Theme Color",
         }
     }
 
@@ -111,7 +150,13 @@ impl SettingsApp {
                 let cur = self.devices.current_input();
                 if cur.is_empty() { "none (not wired to any app yet)".into() } else { format!("{cur} (not wired to any app yet)") }
             }
-            _ => format!("sens {:.2}, nav {:.0}", self.sensitivity.get(), self.nav_speed.get()),
+            2 => format!(
+                "sens {:.2}, nav {:.0}, cpu {}",
+                self.sensitivity.get(),
+                self.nav_speed.get(),
+                if self.show_cpu.load(Ordering::Relaxed) { "on" } else { "off" }
+            ),
+            _ => format!("accent {}, background {}", self.accent.hex(), self.background.hex()),
         }
     }
 
@@ -121,6 +166,11 @@ impl SettingsApp {
             Selection::InputDevice(i) => self.inputs.get(i).cloned().unwrap_or_default(),
             Selection::Sensitivity => "Knob Sensitivity".into(),
             Selection::NavSpeed => "List Nav Speed".into(),
+            Selection::ShowCpu => "Show CPU Usage".into(),
+            Selection::ColorTarget => "Editing".into(),
+            Selection::Hue => "Hue".into(),
+            Selection::Saturation => "Saturation".into(),
+            Selection::Brightness => "Brightness".into(),
         }
     }
 
@@ -136,6 +186,11 @@ impl SettingsApp {
             }
             Selection::Sensitivity => format!("{:.2}", self.sensitivity.get()),
             Selection::NavSpeed => format!("{:.0}", self.nav_speed.get()),
+            Selection::ShowCpu => if self.show_cpu.load(Ordering::Relaxed) { "on".into() } else { "off".into() },
+            Selection::ColorTarget => if self.editing_background { "Background".into() } else { "Accent".into() },
+            Selection::Hue => format!("{}\u{b0} ({})", self.target().hsv().0, self.target().hex()),
+            Selection::Saturation => format!("{}%", self.target().hsv().1),
+            Selection::Brightness => format!("{}%", self.target().hsv().2),
         }
     }
 
@@ -152,6 +207,20 @@ impl SettingsApp {
             Selection::NavSpeed => {
                 let next = (self.nav_speed.get() + accelerate(delta)).clamp(MIN_NAV_SPEED, MAX_NAV_SPEED);
                 self.nav_speed.set(next);
+            }
+            Selection::ShowCpu => self.show_cpu.store(delta > 0, Ordering::Relaxed),
+            Selection::ColorTarget => self.editing_background = delta > 0,
+            Selection::Hue => {
+                let cur = self.target().hsv().0 as i32;
+                self.target().set_hue((cur + delta.signum()).rem_euclid(360) as u32);
+            }
+            Selection::Saturation => {
+                let cur = self.target().hsv().1 as i32;
+                self.target().set_sat((cur + delta.signum()).clamp(0, 100) as u32);
+            }
+            Selection::Brightness => {
+                let cur = self.target().hsv().2 as i32;
+                self.target().set_val((cur + delta.signum()).clamp(0, 100) as u32);
             }
         }
     }
@@ -170,11 +239,95 @@ impl SettingsApp {
             }
             Selection::Sensitivity => self.sensitivity.set(DEFAULT_SENSITIVITY),
             Selection::NavSpeed => self.nav_speed.set(DEFAULT_NAV_SPEED),
+            Selection::ShowCpu => self.show_cpu.store(false, Ordering::Relaxed),
+            Selection::ColorTarget => self.editing_background = false,
+            Selection::Hue | Selection::Saturation | Selection::Brightness => {
+                let (h, s, v) = if self.editing_background {
+                    (crate::theme::BG_DEFAULT_HUE, crate::theme::BG_DEFAULT_SAT, crate::theme::BG_DEFAULT_VAL)
+                } else {
+                    (crate::theme::ACCENT_DEFAULT_HUE, crate::theme::ACCENT_DEFAULT_SAT, crate::theme::ACCENT_DEFAULT_VAL)
+                };
+                let target = self.target();
+                target.set_hue(h);
+                target.set_sat(s);
+                target.set_val(v);
+            }
+        }
+    }
+}
+
+impl SettingsApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+}
+
+impl SettingsApp {
+    fn theme_extra(&self) -> ThemeExtra {
+        let (h, s, v) = self.target().hsv();
+        let (mx, my) = self.target().wheel_marker(WHEEL_RADIUS_PX);
+        ThemeExtra {
+            editing_background: self.editing_background,
+            hue: h as f32,
+            saturation: s as f32,
+            brightness: v as f32,
+            marker_x: mx,
+            marker_y: my,
+            accent_rgb: self.accent.rgb(),
+            background_rgb: self.background.rgb(),
         }
     }
 }
 
 impl App for SettingsApp {
+    fn system_role(&self) -> Option<crate::app::SystemRole> { Some(crate::app::SystemRole::Settings) }
+
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+    fn slint_extra(&mut self) -> SlintExtra {
+        SlintExtra::Theme(self.theme_extra())
+    }
+    fn slint_pointer_pick(&mut self, x: f32, y: f32) {
+        self.target().set_from_wheel(x, y, WHEEL_RADIUS_PX);
+    }
+
     fn on_enter(&mut self) {
         // Re-scan every time -- cheap, and devices can change between visits.
         self.outputs = audio_devices::output_device_names();
@@ -183,7 +336,7 @@ impl App for SettingsApp {
 
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {

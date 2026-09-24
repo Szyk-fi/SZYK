@@ -1,21 +1,15 @@
-//! The audio engine: a mixing bus, not a single swappable slot. Every
-//! app that has a processor gets one, once, at startup -- and it keeps
-//! running for the life of the program, mixed together with every other
-//! app's, regardless of which app is on screen. This is what makes
-//! cross-app modulation (Pam's driving a Plaits or Sequencer parameter)
-//! actually audible even when Pam's own screen isn't the one showing --
-//! matching the intent os.rs's own header comment already stated
-//! ("the audio/MIDI pipeline keeps running regardless of what's
-//! displayed"), just now delivered for sound generation too, not only
-//! the callback itself staying alive.
-//!
-//! main.rs still owns the ring buffer bridging input->output and the
-//! `run_inference` stub — those are OS-level plumbing, not per-app.
+//! Shared mixer. Registry apps contribute dormant processor proxies at startup.
+//! Their engines are built on first use, and inactive proxies are skipped before
+//! per-app buffer clearing or DSP. Transport and explicit patch routes retain
+//! background processing; unneeded apps suspend after their release interval.
 
 use crate::util::AtomicF32;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 pub trait AudioProcessor: Send {
+    /// Cheap activity check before allocating or clearing a per-app audio block.
+    fn is_active(&self) -> bool { true }
     /// `buffer` is interleaved by `channels`. Called once per output block.
     fn process(&mut self, buffer: &mut [f32], channels: usize, sample_rate: f32);
 }
@@ -47,21 +41,38 @@ pub struct MixBus {
     processors: Mutex<Vec<ProcessorSlot>>,
     scratch: Mutex<Vec<f32>>,
     master_volume: Arc<AtomicF32>,
+    /// Real measured engine load: this block's actual wall-clock
+    /// `process()` time divided by that block's real-time budget
+    /// (frames / sample_rate), as a fraction (1.0 = exactly real-time,
+    /// >1.0 = the engine is behind). This is a genuine measurement of
+    /// this simulator's own host CPU cost, not a cycle-accurate model
+    /// of the real STM32H7 -- every app's processor runs on every
+    /// block here (see module doc comment), which the real hardware
+    /// never does (only the one active screen's DSP runs there), so
+    /// this number is deliberately a "how loaded is the simulation
+    /// engine" reading rather than a stand-in for real firmware load.
+    load_frac: AtomicF32,
 }
 
 impl MixBus {
     pub fn new(master_volume: Arc<AtomicF32>) -> Self {
-        Self { processors: Mutex::new(Vec::new()), scratch: Mutex::new(Vec::new()), master_volume }
+        Self { processors: Mutex::new(Vec::new()), scratch: Mutex::new(Vec::new()), master_volume, load_frac: AtomicF32::new(0.0) }
     }
 
-    /// Registers a processor to run for the rest of the program's life.
-    /// Called once per app at startup (see main.rs) -- apps don't get
-    /// added or removed as the user navigates between them.
+    /// This block's real measured load, as a fraction of real-time
+    /// (1.0 = exactly real-time). See `load_frac`'s own doc comment.
+    pub fn load(&self) -> f32 {
+        self.load_frac.get()
+    }
+
+    /// Registers an audio slot. Lazy slots expose their current activity and
+    /// retain state while suspended; registration itself does not start DSP.
     pub fn add(&self, processor: Box<dyn AudioProcessor>) {
         self.processors.lock().unwrap().push(ProcessorSlot { processor, consecutive_panics: 0, disabled: false });
     }
 
     pub fn process(&self, buffer: &mut [f32], channels: usize, sample_rate: f32) {
+        let start = Instant::now();
         for out in buffer.iter_mut() {
             *out = 0.0;
         }
@@ -71,7 +82,7 @@ impl MixBus {
 
         let mut processors = self.processors.lock().unwrap();
         for slot in processors.iter_mut() {
-            if slot.disabled {
+            if slot.disabled || !slot.processor.is_active() {
                 continue;
             }
             for s in scratch.iter_mut() {
@@ -159,6 +170,10 @@ impl MixBus {
         for out in buffer.iter_mut() {
             *out = out.tanh();
         }
+
+        let frames = (buffer.len() / channels.max(1)) as f32;
+        let budget_secs = (frames / sample_rate.max(1.0)).max(1e-9);
+        self.load_frac.set(start.elapsed().as_secs_f32() / budget_secs);
     }
 }
 

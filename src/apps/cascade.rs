@@ -5,16 +5,13 @@
 //! Bloom/Madness/Prism used for their own references). Honest gaps
 //! versus the real thing, stated up front rather than glossed over:
 //!
-//! - **8 algorithms, not 32** -- a representative set of classic
-//!   topologies (a deep stack, parallel pairs, one-to-many, etc.),
-//!   not the DX7's full operator-routing catalog.
-//! - **One shared envelope, not six independent ones** -- the real
-//!   DX7 gives each operator its own 4-stage rate/level envelope;
-//!   this has one ADSR shared by every operator, which loses the
-//!   "fast attack on the modulator, slow swell on the carrier" trick
-//!   a lot of classic DX7 patches lean on.
+//! - **40 algorithms** -- eight original layouts plus all 32 Yamaha
+//!   topologies. Imported patches retain their original routing.
+//! - Imported voices retain six rate/level envelopes. Their timing and
+//!   attenuation use continuous approximations, not exact Yamaha tables.
+//!   The global ADSR is an additional overall amplitude envelope.
 //! - **Continuous Ratio, not coarse+fine**-- one knob per operator
-//!   (0.5-16x) instead of the DX7's separate coarse (integer/common
+//!   (0.5-61.69x) instead of the DX7's separate coarse (integer/common
 //!   fraction) and fine (percentage) controls.
 //! - **One global Feedback amount**, applied to whichever operator
 //!   the current algorithm designates as its feedback op -- same
@@ -39,9 +36,10 @@
 //! import can and can't carry over given the simplifications above.
 
 use crate::app::{App, Input};
+use crate::arpeggiator::{Arpeggiator, PATTERN_NAMES as ARP_PATTERN_NAMES};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -50,11 +48,11 @@ use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Line, PrimitiveStyle};
+use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::f32::consts::TAU;
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Where imported DX7 patches live: `dx7_presets/*.syx`, scanned once
@@ -104,10 +102,36 @@ struct Algorithm {
     modulators: [[i8; MAX_MODS_PER_OP]; NUM_OPS],
     carriers: [bool; NUM_OPS],
     feedback_op: usize,
+    feedback_source: usize,
 }
 const NO_MOD: i8 = -1;
 
-const ALGORITHMS: [Algorithm; 8] = [
+// Copyright 2021 Emilie Gillet.
+//
+// Author: Emilie Gillet (emilie.o.gillet@gmail.com)
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+// 
+// See http://creativecommons.org/licenses/MIT/ for more information.
+//
+
+const ALGORITHMS: [Algorithm; 40] = [
     Algorithm {
         name: "Stack",
         // 6->5->4->3->2->1, only op1 (index 0) audible -- a deep,
@@ -115,6 +139,7 @@ const ALGORITHMS: [Algorithm; 8] = [
         modulators: [[1, NO_MOD, NO_MOD], [2, NO_MOD, NO_MOD], [3, NO_MOD, NO_MOD], [4, NO_MOD, NO_MOD], [5, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD]],
         carriers: [true, false, false, false, false, false],
         feedback_op: 5,
+        feedback_source: 5,
     },
     Algorithm {
         name: "Twin Stack",
@@ -123,6 +148,7 @@ const ALGORITHMS: [Algorithm; 8] = [
         modulators: [[1, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [3, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD]],
         carriers: [true, false, true, false, true, true],
         feedback_op: 1,
+        feedback_source: 1,
     },
     Algorithm {
         name: "Three Pairs",
@@ -131,6 +157,7 @@ const ALGORITHMS: [Algorithm; 8] = [
         modulators: [[1, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [3, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [5, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD]],
         carriers: [true, false, true, false, true, false],
         feedback_op: 1,
+        feedback_source: 1,
     },
     Algorithm {
         name: "One To Many",
@@ -139,6 +166,7 @@ const ALGORITHMS: [Algorithm; 8] = [
         modulators: [[5, NO_MOD, NO_MOD], [5, NO_MOD, NO_MOD], [5, NO_MOD, NO_MOD], [5, NO_MOD, NO_MOD], [5, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD]],
         carriers: [true, true, true, true, true, false],
         feedback_op: 5,
+        feedback_source: 5,
     },
     Algorithm {
         name: "Additive",
@@ -147,6 +175,7 @@ const ALGORITHMS: [Algorithm; 8] = [
         modulators: [[NO_MOD; MAX_MODS_PER_OP]; NUM_OPS],
         carriers: [true; NUM_OPS],
         feedback_op: 0,
+        feedback_source: 0,
     },
     Algorithm {
         name: "Deep Pair + Quad",
@@ -156,6 +185,7 @@ const ALGORITHMS: [Algorithm; 8] = [
         modulators: [[NO_MOD, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [3, NO_MOD, NO_MOD], [4, NO_MOD, NO_MOD], [5, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD]],
         carriers: [true, true, true, false, false, false],
         feedback_op: 5,
+        feedback_source: 5,
     },
     Algorithm {
         name: "Two Modulate One",
@@ -164,6 +194,7 @@ const ALGORITHMS: [Algorithm; 8] = [
         modulators: [[NO_MOD, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [4, 5, NO_MOD], [NO_MOD, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD]],
         carriers: [true, true, true, true, false, false],
         feedback_op: 5,
+        feedback_source: 5,
     },
     Algorithm {
         name: "Full Stack Feedback",
@@ -173,11 +204,45 @@ const ALGORITHMS: [Algorithm; 8] = [
         modulators: [[1, NO_MOD, NO_MOD], [2, NO_MOD, NO_MOD], [3, NO_MOD, NO_MOD], [4, NO_MOD, NO_MOD], [5, NO_MOD, NO_MOD], [NO_MOD, NO_MOD, NO_MOD]],
         carriers: [true, false, false, false, false, false],
         feedback_op: 0,
+        feedback_source: 0,
     },
+    // Routing translated from the MIT-licensed vendored MI FM algorithms table.
+    Algorithm { name: "DX7 01", modulators: [[1, -1, -1], [-1, -1, -1], [3, -1, -1], [4, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 02", modulators: [[1, -1, -1], [-1, -1, -1], [3, -1, -1], [4, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 1, feedback_source: 1 },
+    Algorithm { name: "DX7 03", modulators: [[1, -1, -1], [2, -1, -1], [-1, -1, -1], [4, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, false, true, false, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 04", modulators: [[1, -1, -1], [2, -1, -1], [-1, -1, -1], [4, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, false, true, false, false], feedback_op: 5, feedback_source: 3 },
+    Algorithm { name: "DX7 05", modulators: [[1, -1, -1], [-1, -1, -1], [3, -1, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, true, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 06", modulators: [[1, -1, -1], [-1, -1, -1], [3, -1, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, true, false], feedback_op: 5, feedback_source: 4 },
+    Algorithm { name: "DX7 07", modulators: [[1, -1, -1], [-1, -1, -1], [4, 3, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 08", modulators: [[1, -1, -1], [-1, -1, -1], [4, 3, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 3, feedback_source: 3 },
+    Algorithm { name: "DX7 09", modulators: [[1, -1, -1], [-1, -1, -1], [4, 3, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 1, feedback_source: 1 },
+    Algorithm { name: "DX7 10", modulators: [[1, -1, -1], [2, -1, -1], [-1, -1, -1], [5, 4, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, false, false, true, false, false], feedback_op: 2, feedback_source: 2 },
+    Algorithm { name: "DX7 11", modulators: [[1, -1, -1], [2, -1, -1], [-1, -1, -1], [5, 4, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, false, false, true, false, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 12", modulators: [[1, -1, -1], [-1, -1, -1], [5, 4, 3], [-1, -1, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 1, feedback_source: 1 },
+    Algorithm { name: "DX7 13", modulators: [[1, -1, -1], [-1, -1, -1], [5, 4, 3], [-1, -1, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 14", modulators: [[1, -1, -1], [-1, -1, -1], [3, -1, -1], [5, 4, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 15", modulators: [[1, -1, -1], [-1, -1, -1], [3, -1, -1], [5, 4, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, false], feedback_op: 1, feedback_source: 1 },
+    Algorithm { name: "DX7 16", modulators: [[4, 2, 1], [-1, -1, -1], [3, -1, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, false, false, false, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 17", modulators: [[4, 2, 1], [-1, -1, -1], [3, -1, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, false, false, false, false], feedback_op: 1, feedback_source: 1 },
+    Algorithm { name: "DX7 18", modulators: [[3, 2, 1], [-1, -1, -1], [-1, -1, -1], [4, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, false, false, false, false], feedback_op: 2, feedback_source: 2 },
+    Algorithm { name: "DX7 19", modulators: [[1, -1, -1], [2, -1, -1], [-1, -1, -1], [5, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, false, true, true, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 20", modulators: [[2, -1, -1], [2, -1, -1], [-1, -1, -1], [5, 4, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, true, false, true, false, false], feedback_op: 2, feedback_source: 2 },
+    Algorithm { name: "DX7 21", modulators: [[2, -1, -1], [2, -1, -1], [-1, -1, -1], [5, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, true, false, true, true, false], feedback_op: 2, feedback_source: 2 },
+    Algorithm { name: "DX7 22", modulators: [[1, -1, -1], [-1, -1, -1], [5, -1, -1], [5, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, false, true, true, true, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 23", modulators: [[-1, -1, -1], [2, -1, -1], [-1, -1, -1], [5, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, true, false, true, true, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 24", modulators: [[-1, -1, -1], [-1, -1, -1], [5, -1, -1], [5, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, true, true, true, true, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 25", modulators: [[-1, -1, -1], [-1, -1, -1], [-1, -1, -1], [5, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, true, true, true, true, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 26", modulators: [[-1, -1, -1], [2, -1, -1], [-1, -1, -1], [5, 4, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, true, false, true, false, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 27", modulators: [[-1, -1, -1], [2, -1, -1], [-1, -1, -1], [5, 4, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, true, false, true, false, false], feedback_op: 2, feedback_source: 2 },
+    Algorithm { name: "DX7 28", modulators: [[1, -1, -1], [-1, -1, -1], [3, -1, -1], [4, -1, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, false, true, false, false, true], feedback_op: 4, feedback_source: 4 },
+    Algorithm { name: "DX7 29", modulators: [[-1, -1, -1], [-1, -1, -1], [3, -1, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, true, true, false, true, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 30", modulators: [[-1, -1, -1], [-1, -1, -1], [3, -1, -1], [4, -1, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, true, true, false, false, true], feedback_op: 4, feedback_source: 4 },
+    Algorithm { name: "DX7 31", modulators: [[-1, -1, -1], [-1, -1, -1], [-1, -1, -1], [-1, -1, -1], [5, -1, -1], [-1, -1, -1]], carriers: [true, true, true, true, true, false], feedback_op: 5, feedback_source: 5 },
+    Algorithm { name: "DX7 32", modulators: [[-1, -1, -1], [-1, -1, -1], [-1, -1, -1], [-1, -1, -1], [-1, -1, -1], [-1, -1, -1]], carriers: [true, true, true, true, true, true], feedback_op: 5, feedback_source: 5 },
 ];
 
 const MIN_RATIO: f32 = 0.5;
-const MAX_RATIO: f32 = 16.0;
+const MAX_RATIO: f32 = 61.69;
 const DEFAULT_DECAY: f32 = 0.3;
 const DEFAULT_SUSTAIN: f32 = 0.7;
 const DEFAULT_RELEASE: f32 = 0.4;
@@ -218,6 +283,7 @@ enum Selection {
     /// current bank -- see `CascadeApp::presets`/`preset_browse`.
     Preset,
     Algorithm,
+    Octave,
     Feedback,
     Attack,
     Decay,
@@ -227,6 +293,9 @@ enum Selection {
     LfoDepth,
     OpRatio(usize),
     OpLevel(usize),
+    ArpOn,
+    ArpPattern,
+    ArpRate,
 }
 
 #[derive(Clone, Copy)]
@@ -235,7 +304,8 @@ enum Row {
     Leaf(Selection),
 }
 
-const NUM_GROUPS: usize = 2 + NUM_OPS; // Presets, Global, then one per operator
+const NUM_GROUPS: usize = 3 + NUM_OPS; // Presets, Global, one per operator, then Arp
+const ARP_GROUP: usize = 2 + NUM_OPS;
 
 struct OperatorParams {
     ratio: AtomicF32,
@@ -249,7 +319,12 @@ impl OperatorParams {
 }
 
 struct Params {
+    imported_envelopes: Mutex<Option<[[[u8; 4]; 2]; NUM_OPS]>>,
     algorithm: AtomicU32,
+    /// Transposes every pad's note by this many octaves -- same
+    /// pattern/range as Plaits' own Octave, letting the 16-pad range
+    /// reach further up or down than its fixed base register alone.
+    octave: AtomicI32,
     feedback: AtomicF32,
     ext_feedback: Arc<AtomicF32>,
     attack: AtomicF32,
@@ -263,13 +338,17 @@ struct Params {
     bus_out: Arc<Mutex<Vec<f32>>>,
     mix_level: Arc<AtomicF32>,
     ext_mix_level: Arc<AtomicF32>,
+    /// See arpeggiator.rs -- stepped once per audio block in `process`.
+    arp: Arpeggiator,
 }
 
 impl Params {
     fn new(modbus: &ModBus, audio_bus: &AudioBus, mixer_bus: &MixerBus) -> Self {
         let (mix_level, ext_mix_level) = mixer_bus.register("Cascade", modbus);
         Self {
+            imported_envelopes: Mutex::new(None),
             algorithm: AtomicU32::new(0),
+            octave: AtomicI32::new(0),
             feedback: AtomicF32::new(0.2),
             ext_feedback: modbus.register("Cascade: Feedback".to_string()),
             attack: AtomicF32::new(0.0),
@@ -283,6 +362,7 @@ impl Params {
             bus_out: audio_bus.register("Cascade"),
             mix_level,
             ext_mix_level,
+            arp: Arpeggiator::new(),
         }
     }
 }
@@ -297,8 +377,8 @@ fn pad_rank(physical_index: i32) -> i32 {
     (3 - row) * 4 + col
 }
 
-fn note_for(rank: i32) -> i32 {
-    (BASE_NOTE + rank).clamp(NOTE_MIN, NOTE_MAX)
+fn note_for(rank: i32, octave: i32) -> i32 {
+    (BASE_NOTE + rank + octave * 12).clamp(NOTE_MIN, NOTE_MAX)
 }
 
 pub struct CascadeApp {
@@ -325,6 +405,17 @@ pub struct CascadeApp {
     /// leaf in this build).
     preset_browse: usize,
 }
+
+// --- Cascade's own palette: icy glass-blue on deep navy, not a
+// device-wide theme -- crystalline FM bells and electric-piano tones,
+// the "glassy" character classic 6-op FM synthesis is known for. ---
+
+const CASCADE_BG: Rgb565 = Rgb565::new(1, 4, 3);
+const CASCADE_TITLE: Rgb565 = Rgb565::new(28, 60, 31);
+const CASCADE_ACCENT: Rgb565 = Rgb565::new(15, 54, 31);
+const CASCADE_DIM: Rgb565 = Rgb565::new(11, 26, 15);
+const CASCADE_MODULATOR: Rgb565 = Rgb565::new(7, 18, 20);
+const CASCADE_LINE: Rgb565 = Rgb565::new(5, 12, 15);
 
 impl CascadeApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -353,6 +444,7 @@ impl CascadeApp {
     /// User Presets use.
     fn load_preset(&mut self, i: usize) {
         let Some(preset) = self.presets.get(i).cloned() else { return };
+        *self.params.imported_envelopes.lock().unwrap() = preset.op_envelopes;
         self.params.algorithm.store(preset.algorithm, Ordering::Relaxed);
         self.params.feedback.set(preset.feedback);
         self.params.attack.set(preset.attack);
@@ -369,7 +461,9 @@ impl CascadeApp {
         if g == 0 {
             vec![Selection::Bank, Selection::Preset]
         } else if g == 1 {
-            vec![Selection::Algorithm, Selection::Feedback, Selection::Attack, Selection::Decay, Selection::Sustain, Selection::Release, Selection::LfoRate, Selection::LfoDepth]
+            vec![Selection::Algorithm, Selection::Octave, Selection::Feedback, Selection::Attack, Selection::Decay, Selection::Sustain, Selection::Release, Selection::LfoRate, Selection::LfoDepth]
+        } else if g == ARP_GROUP {
+            vec![Selection::ArpOn, Selection::ArpPattern, Selection::ArpRate]
         } else {
             let op = g - 2;
             vec![Selection::OpRatio(op), Selection::OpLevel(op)]
@@ -393,6 +487,7 @@ impl CascadeApp {
         match g {
             0 => "Presets".into(),
             1 => "Global".into(),
+            _ if g == ARP_GROUP => "Arp".into(),
             _ => format!("Operator {}", g - 1),
         }
     }
@@ -410,6 +505,7 @@ impl CascadeApp {
                 let idx = self.params.algorithm.load(Ordering::Relaxed) as usize % ALGORITHMS.len();
                 ALGORITHMS[idx].name.to_string()
             }
+            _ if g == ARP_GROUP => self.leaf_value(Selection::ArpOn),
             _ => {
                 let op = g - 2;
                 format!("x{:.2}, {:.0}%", self.params.ops[op].ratio.get(), self.params.ops[op].level.get() * 100.0)
@@ -422,6 +518,7 @@ impl CascadeApp {
             Selection::Bank => "Bank".into(),
             Selection::Preset => "Preset".into(),
             Selection::Algorithm => "Algorithm".into(),
+            Selection::Octave => "Octave".into(),
             Selection::Feedback => "Feedback".into(),
             Selection::Attack => "Attack".into(),
             Selection::Decay => "Decay".into(),
@@ -431,6 +528,9 @@ impl CascadeApp {
             Selection::LfoDepth => "LFO Depth".into(),
             Selection::OpRatio(_) => "Ratio".into(),
             Selection::OpLevel(_) => "Level".into(),
+            Selection::ArpOn => "On/Off".into(),
+            Selection::ArpPattern => "Pattern".into(),
+            Selection::ArpRate => "Rate".into(),
         }
     }
 
@@ -464,6 +564,7 @@ impl CascadeApp {
                 let idx = self.params.algorithm.load(Ordering::Relaxed) as usize % ALGORITHMS.len();
                 ALGORITHMS[idx].name.to_string()
             }
+            Selection::Octave => format!("{:+}", self.params.octave.load(Ordering::Relaxed)),
             Selection::Feedback => format!("{:.2}", self.params.feedback.get()),
             Selection::Attack => format!("{:.0} ms", adsr_time(self.params.attack.get(), MAX_ENV_SECONDS) * 1000.0),
             Selection::Decay => format!("{:.0} ms", adsr_time(self.params.decay.get(), MAX_ENV_SECONDS) * 1000.0),
@@ -473,6 +574,14 @@ impl CascadeApp {
             Selection::LfoDepth => format!("{:.2}", self.params.lfo_depth.get()),
             Selection::OpRatio(op) => format!("{:.2}x", self.params.ops[op].ratio.get()),
             Selection::OpLevel(op) => format!("{:.0}%", self.params.ops[op].level.get() * 100.0),
+            Selection::ArpOn => {
+                if self.params.arp.enabled.load(Ordering::Relaxed) { "On".into() } else { "Off".into() }
+            }
+            Selection::ArpPattern => {
+                let idx = self.params.arp.pattern.load(Ordering::Relaxed) as usize % ARP_PATTERN_NAMES.len();
+                ARP_PATTERN_NAMES[idx].to_string()
+            }
+            Selection::ArpRate => format!("{:.1} Hz", self.params.arp.rate_hz.get()),
         }
     }
 
@@ -505,6 +614,10 @@ impl CascadeApp {
                 let next = (cur + step).rem_euclid(ALGORITHMS.len() as i32);
                 self.params.algorithm.store(next as u32, Ordering::Relaxed);
             }
+            Selection::Octave => {
+                let cur = self.params.octave.load(Ordering::Relaxed);
+                self.params.octave.store(cur + step, Ordering::Relaxed);
+            }
             Selection::Feedback => bump(&self.params.feedback, delta, sensitivity, 0.0, 1.0),
             Selection::Attack => bump(&self.params.attack, delta, sensitivity, 0.0, 1.0),
             Selection::Decay => bump(&self.params.decay, delta, sensitivity, 0.0, 1.0),
@@ -514,6 +627,17 @@ impl CascadeApp {
             Selection::LfoDepth => bump(&self.params.lfo_depth, delta, sensitivity, 0.0, 1.0),
             Selection::OpRatio(op) => bump(&self.params.ops[op].ratio, delta, sensitivity, MIN_RATIO, MAX_RATIO),
             Selection::OpLevel(op) => bump(&self.params.ops[op].level, delta, sensitivity, 0.0, 1.0),
+            Selection::ArpOn => self.params.arp.enabled.store(delta > 0, Ordering::Relaxed),
+            Selection::ArpPattern => {
+                let cur = self.params.arp.pattern.load(Ordering::Relaxed) as i32;
+                let next = (cur + step).rem_euclid(ARP_PATTERN_NAMES.len() as i32);
+                self.params.arp.pattern.store(next as u32, Ordering::Relaxed);
+            }
+            Selection::ArpRate => {
+                let cur = self.params.arp.rate_hz.get();
+                let next = (cur + accelerate(delta) * sensitivity * 0.2).clamp(0.5, 30.0);
+                self.params.arp.rate_hz.set(next);
+            }
         }
     }
 
@@ -525,6 +649,7 @@ impl CascadeApp {
                     self.load_preset(idx);
                 }
             }
+            Selection::Octave => self.params.octave.store(0, Ordering::Relaxed),
             Selection::Feedback => self.params.feedback.set(0.2),
             Selection::Attack => self.params.attack.set(0.0),
             Selection::Decay => self.params.decay.set((DEFAULT_DECAY / MAX_ENV_SECONDS).clamp(0.0, 1.0)),
@@ -535,14 +660,94 @@ impl CascadeApp {
             Selection::OpRatio(op) => self.params.ops[op].ratio.set(1.0),
             Selection::OpLevel(op) => self.params.ops[op].level.set(if op == 0 { 0.9 } else { 0.5 }),
             Selection::Algorithm => {} // no single sensible default among equal choices
+            Selection::ArpOn => self.params.arp.enabled.store(false, Ordering::Relaxed),
+            Selection::ArpPattern => self.params.arp.pattern.store(0, Ordering::Relaxed), // Up
+            Selection::ArpRate => self.params.arp.rate_hz.set(8.0),
         }
     }
 }
 
+impl CascadeApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The current algorithm's real operator routing -- same data
+    /// `draw()`'s own node-graph sketch reads (`ALGORITHMS[idx]`),
+    /// exposed for an alternate renderer instead of drawn directly.
+    pub(crate) fn operator_graph(&self) -> (String, [bool; NUM_OPS], Vec<(usize, usize)>, usize) {
+        let idx = self.params.algorithm.load(Ordering::Relaxed) as usize % ALGORITHMS.len();
+        let algo = &ALGORITHMS[idx];
+        let mut connections = Vec::new();
+        for op in 0..NUM_OPS {
+            for &m in algo.modulators[op].iter() {
+                if m >= 0 {
+                    connections.push((m as usize, op));
+                }
+            }
+        }
+        (algo.name.to_string(), algo.carriers, connections, algo.feedback_op)
+    }
+}
+
 impl App for CascadeApp {
+    fn supports_pad_lock(&self) -> bool { true }
+
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        let (algorithm_name, carriers, connections, feedback_op) = self.operator_graph();
+        let connection_lines = crate::app::cascade_connection_lines(&connections);
+        crate::app::SlintExtra::Cascade(crate::app::CascadeExtra {
+            algorithm_name,
+            carriers: carriers.to_vec(),
+            connections,
+            feedback_op,
+            connection_lines,
+        })
+    }
+
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -574,15 +779,21 @@ impl App for CascadeApp {
             params: Arc::clone(&self.params),
             voices: std::array::from_fn(|_| FmVoice::new()),
             mono_buf: Vec::new(),
+            chord_headroom: 1,
         }))
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(CASCADE_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, CASCADE_TITLE);
         Text::new("Cascade", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, CASCADE_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, CASCADE_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -595,7 +806,7 @@ impl App for CascadeApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, CASCADE_BG, CASCADE_DIM, CASCADE_ACCENT);
 
         // --- Right: the current algorithm's operator routing, drawn
         // as a small node graph -- carriers on the bottom row, higher
@@ -611,12 +822,12 @@ impl App for CascadeApp {
         for op in 0..NUM_OPS {
             for &m in algo.modulators[op].iter() {
                 if m >= 0 {
-                    Line::new(positions[m as usize], positions[op]).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(0, 30, 40), 1)).draw(fb).ok();
+                    Line::new(positions[m as usize], positions[op]).into_styled(PrimitiveStyle::with_stroke(CASCADE_LINE, 1)).draw(fb).ok();
                 }
             }
         }
         for op in 0..NUM_OPS {
-            let color = if algo.carriers[op] { Rgb565::new(0, 63, 10) } else { Rgb565::new(0, 30, 50) };
+            let color = if algo.carriers[op] { CASCADE_ACCENT } else { CASCADE_MODULATOR };
             let label = if op == algo.feedback_op { format!("Op{} FB", op + 1) } else { format!("Op{}", op + 1) };
             Text::new(&label, positions[op], MonoTextStyle::new(&SPLEEN_6X12, color)).draw(fb).ok();
         }
@@ -693,8 +904,28 @@ impl AdsrState {
     }
 }
 
+// DX-style attenuation, rather than treating output level as linear gain.
+// This is a continuous approximation; the hardware's discrete EG tables differ.
+fn dx7_level(level:u8)->f32 { if level == 0 { 0.0 } else { 2.0f32.powf((level.min(99) as f32-99.0)*0.125) } }
+#[derive(Clone, Copy, Default)]
+struct ImportedEnvelope { stage:usize, level:f32, was_held:bool }
+impl ImportedEnvelope {
+    fn step(&mut self, gate:bool, data:[[u8;4];2], dt:f32)->f32 {
+        if gate && !self.was_held { self.stage=0; }
+        if !gate && self.was_held { self.stage=3; }
+        self.was_held=gate;
+        let target=dx7_level(data[1][self.stage]);
+        let speed=dt/dx7_rate_to_seconds(data[0][self.stage]);
+        let difference=target-self.level;
+        self.level += difference.clamp(-speed,speed);
+        if (self.level-target).abs()<1e-6 && self.stage<2 && gate { self.stage+=1; }
+        self.level
+    }
+}
+
 struct FmVoice {
     ops: [OperatorState; NUM_OPS],
+    operator_env: [ImportedEnvelope; NUM_OPS],
     env: AdsrState,
     /// Independent per-voice LFO phase -- since every voice starts at
     /// the same phase and advances by the same rate every block,
@@ -707,7 +938,7 @@ struct FmVoice {
 
 impl FmVoice {
     fn new() -> Self {
-        Self { ops: std::array::from_fn(|_| OperatorState::new()), env: AdsrState::default(), lfo_phase: 0.0, buf: Vec::new() }
+        Self { ops: std::array::from_fn(|_| OperatorState::new()), operator_env: [ImportedEnvelope::default(); NUM_OPS], env: AdsrState::default(), lfo_phase: 0.0, buf: Vec::new() }
     }
 }
 
@@ -715,6 +946,7 @@ struct CascadeProcessor {
     params: Arc<Params>,
     voices: [FmVoice; 16],
     mono_buf: Vec<f32>,
+    chord_headroom: usize,
 }
 
 impl AudioProcessor for CascadeProcessor {
@@ -726,6 +958,7 @@ impl AudioProcessor for CascadeProcessor {
 
         let algo_idx = self.params.algorithm.load(Ordering::Relaxed) as usize % ALGORITHMS.len();
         let algo = &ALGORITHMS[algo_idx];
+        let octave = self.params.octave.load(Ordering::Relaxed);
         let feedback = (self.params.feedback.get() + self.params.ext_feedback.get()).clamp(0.0, 1.0);
         let attack = adsr_time(self.params.attack.get(), MAX_ENV_SECONDS);
         let decay = adsr_time(self.params.decay.get(), MAX_ENV_SECONDS);
@@ -735,7 +968,22 @@ impl AudioProcessor for CascadeProcessor {
         let lfo_depth = self.params.lfo_depth.get();
         let ratios: [f32; NUM_OPS] = std::array::from_fn(|op| self.params.ops[op].ratio.get().clamp(MIN_RATIO, MAX_RATIO));
         let levels: [f32; NUM_OPS] = std::array::from_fn(|op| self.params.ops[op].level.get().clamp(0.0, 1.0));
-        let held = *self.params.held.lock().unwrap();
+        let imported_envelopes = *self.params.imported_envelopes.lock().unwrap();
+        let held_raw = *self.params.held.lock().unwrap();
+        // Real arp step -- see Plaits' `process` for the fuller
+        // explanation of why this runs here (sample-block-accurate,
+        // real-time thread) rather than in `tick`. `held` is reordered
+        // to pitch-rank first so Up/Down walk ascending/descending
+        // pitch, not raw physical pad index.
+        let held_by_rank: [bool; 16] = std::array::from_fn(|r| held_raw[pad_rank(r as i32) as usize]);
+        let arp_rank = self.params.arp.step(&held_by_rank, frames as f32 / sample_rate);
+        let held: [bool; 16] = match arp_rank {
+            Some(r) => {
+                let idx = pad_rank(r as i32) as usize;
+                std::array::from_fn(|i| i == idx)
+            }
+            None => held_raw,
+        };
 
         // Same active-voice headroom normalization Bloom's voice pool
         // needed: render every one of the 16 pad-voices' full block,
@@ -745,10 +993,12 @@ impl AudioProcessor for CascadeProcessor {
         let mut active_voices: usize = 0;
         for i in 0..16 {
             let gate = held[i];
-            let base_freq = 440.0 * 2f32.powf((note_for(pad_rank(i as i32)) as f32 - 69.0) / 12.0);
+            let base_freq = 440.0 * 2f32.powf((note_for(pad_rank(i as i32), octave) as f32 - 69.0) / 12.0);
             let voice = &mut self.voices[i];
             voice.buf.clear();
             voice.buf.resize(frames, 0.0);
+
+            if !gate && voice.env.stage == 0 { continue; }
 
             for n in 0..frames {
                 voice.lfo_phase = (voice.lfo_phase + lfo_rate * dt).rem_euclid(1.0);
@@ -757,6 +1007,10 @@ impl AudioProcessor for CascadeProcessor {
 
                 let env = voice.env.step(gate, attack, decay, sustain, release, dt);
 
+                let op_env: [f32; NUM_OPS] = std::array::from_fn(|op| match imported_envelopes {
+                    Some(envelopes) => voice.operator_env[op].step(gate, envelopes[op], dt),
+                    None => 1.0,
+                });
                 let mut op_out = [0.0f32; NUM_OPS];
                 for op in (0..NUM_OPS).rev() {
                     let mut mod_input = 0.0f32;
@@ -772,13 +1026,13 @@ impl AudioProcessor for CascadeProcessor {
                     // only actually compresses when multiple
                     // modulators stack into one operator.
                     mod_input = MOD_INPUT_CEILING * (mod_input / MOD_INPUT_CEILING).tanh();
-                    let fb = if op == algo.feedback_op { voice.ops[op].prev_output * feedback * 2.0 } else { 0.0 };
+                    let fb = if op == algo.feedback_op { voice.ops[algo.feedback_source].prev_output * feedback * 2.0 } else { 0.0 };
                     let freq = carrier_freq * ratios[op];
                     let phase = voice.ops[op].phase;
                     let out = (phase * TAU + mod_input + fb).sin();
                     voice.ops[op].phase = (phase + freq * dt).rem_euclid(1.0);
                     voice.ops[op].prev_output = out;
-                    op_out[op] = out;
+                    op_out[op] = out * op_env[op];
                 }
 
                 let mut sample = 0.0f32;
@@ -803,7 +1057,11 @@ impl AudioProcessor for CascadeProcessor {
                 *m += *s;
             }
         }
-        let headroom = active_voices.max(1) as f32;
+        // Do not raise a sustained note's gain when another voice's release
+        // crosses the silence threshold. Keep headroom for the whole phrase.
+        if active_voices == 0 { self.chord_headroom = 1; }
+        else { self.chord_headroom = self.chord_headroom.max(active_voices); }
+        let headroom = self.chord_headroom as f32;
         for m in self.mono_buf.iter_mut() {
             *m /= headroom;
         }
@@ -833,6 +1091,7 @@ struct Dx7Preset {
     feedback: f32,
     op_ratio: [f32; NUM_OPS],
     op_level: [f32; NUM_OPS],
+    op_envelopes: Option<[[[u8;4];2];NUM_OPS]>,
     attack: f32,
     decay: f32,
     sustain: f32,
@@ -872,17 +1131,17 @@ fn dx7_ratio(coarse: u8, fine: u8) -> f32 {
 /// Maps 6 raw operators (already reordered so index 0 is DX7's own
 /// "Operator 1", the usual primary carrier -- see the two parse
 /// functions below) plus algorithm/feedback into a `Dx7Preset`. The
-/// shared envelope comes from Operator 1 alone; the other five
-/// operators' envelope shapes have nowhere to go in this synth's
-/// one-envelope-for-everything model, so they're discarded.
+/// global envelope comes from Operator 1; all six original envelopes are
+/// retained separately for the operators, including modulator decay.
 fn map_dx7_voice(name: String, algorithm: u8, feedback: u8, ops: &[Dx7RawOp; NUM_OPS]) -> Dx7Preset {
     let op1 = &ops[0];
     Dx7Preset {
         name,
-        algorithm: algorithm as u32 % ALGORITHMS.len() as u32,
+        algorithm: 8 + (algorithm as u32 & 31),
         feedback: feedback as f32 / 7.0,
         op_ratio: std::array::from_fn(|i| dx7_ratio(ops[i].freq_coarse, ops[i].freq_fine)),
-        op_level: std::array::from_fn(|i| ops[i].output_level as f32 / 99.0),
+        op_level: std::array::from_fn(|i| dx7_level(ops[i].output_level)),
+        op_envelopes: Some(std::array::from_fn(|i| [ops[i].eg_rate, ops[i].eg_level])),
         attack: dx7_rate_to_seconds(op1.eg_rate[0]) / MAX_ENV_SECONDS,
         decay: dx7_rate_to_seconds(op1.eg_rate[1]) / MAX_ENV_SECONDS,
         sustain: op1.eg_level[2] as f32 / 99.0,
@@ -903,7 +1162,7 @@ fn parse_packed_voice(b: &[u8]) -> Dx7Preset {
             eg_rate: [b[base], b[base + 1], b[base + 2], b[base + 3]],
             eg_level: [b[base + 4], b[base + 5], b[base + 6], b[base + 7]],
             output_level: b[base + 14] & 0x7f,
-            freq_coarse: b[base + 15] & 0x1f,
+            freq_coarse: (b[base + 15] >> 1) & 0x1f,
             freq_fine: b[base + 16] & 0x7f,
         }
     });
@@ -913,9 +1172,8 @@ fn parse_packed_voice(b: &[u8]) -> Dx7Preset {
         Dx7RawOp { eg_rate: src.eg_rate, eg_level: src.eg_level, output_level: src.output_level, freq_coarse: src.freq_coarse, freq_fine: src.freq_fine }
     });
     let algorithm = b[110] & 0x1f;
-    // Feedback is bits [6:4] of byte 111, not [2:0] -- bit 3 there is
-    // Oscillator Key Sync (unused here).
-    let feedback = (b[111] >> 4) & 0x07;
+    // Yamaha packed format: feedback bits 0..2; oscillator sync is bit 3.
+    let feedback = b[111] & 0x07;
     let name = decode_voice_name(&b[118..128]);
     map_dx7_voice(name, algorithm, feedback, &ops)
 }
@@ -1086,7 +1344,7 @@ mod tests {
     use super::*;
 
     fn new_processor(params: Arc<Params>) -> CascadeProcessor {
-        CascadeProcessor { params, voices: std::array::from_fn(|_| FmVoice::new()), mono_buf: Vec::new() }
+        CascadeProcessor { params, voices: std::array::from_fn(|_| FmVoice::new()), mono_buf: Vec::new(), chord_headroom: 1 }
     }
 
     fn hold_pad(params: &Params, i: usize, down: bool) {
@@ -1237,10 +1495,10 @@ mod tests {
         v[op1_base + 6] = 70; // EG level 3 (sustain)
         v[op1_base + 7] = 0; // EG level 4
         v[op1_base + 14] = op1_level; // output level
-        v[op1_base + 15] = op1_coarse; // freq coarse (oscillator mode bit left 0 = ratio mode)
+        v[op1_base + 15] = op1_coarse << 1; // freq coarse (oscillator mode bit left 0 = ratio mode)
         v[op1_base + 16] = 0; // freq fine
         v[110] = algorithm;
-        v[111] = feedback << 4; // feedback lives in bits [6:4], not [2:0]
+        v[111] = feedback; // feedback occupies bits 0..2
         for (i, b) in name.bytes().take(10).enumerate() {
             v[118 + i] = b;
         }
@@ -1278,10 +1536,10 @@ mod tests {
 
         let p = &presets[3];
         assert_eq!(p.name, "TESTPATCH");
-        assert_eq!(p.algorithm, 5, "algorithm 5 is within Cascade's 8, so should map unchanged");
+        assert_eq!(p.algorithm, 13, "Yamaha algorithm 6 keeps its topology after the eight original Cascade layouts");
         assert!((p.feedback - 6.0 / 7.0).abs() < 1e-6, "feedback 6/7 (from the packed nibble), got {}", p.feedback);
         assert!((p.op_ratio[0] - 12.0).abs() < 1e-6, "coarse=12 with fine=0 should be a plain 12x ratio, got {}", p.op_ratio[0]);
-        assert!((p.op_level[0] - 70.0 / 99.0).abs() < 1e-6, "output level 70/99, got {}", p.op_level[0]);
+        assert!((p.op_level[0] - dx7_level(70)).abs() < 1e-6, "output level 70/99, got {}", p.op_level[0]);
         assert!((p.sustain - 70.0 / 99.0).abs() < 1e-6, "sustain should come from Operator 1's EG level 3 (70), got {}", p.sustain);
 
         // A voice with algorithm >= 8 must still map somewhere valid
@@ -1308,6 +1566,7 @@ mod tests {
             feedback: 0.5,
             op_ratio: [2.0, 3.0, 1.0, 1.0, 1.0, 1.0],
             op_level: [0.9, 0.4, 0.4, 0.4, 0.4, 0.4],
+            op_envelopes: None,
             attack: 0.1,
             decay: 0.2,
             sustain: 0.6,
@@ -1416,6 +1675,7 @@ mod tests {
             feedback: 0.0,
             op_ratio: [1.0; NUM_OPS],
             op_level: [0.5; NUM_OPS],
+            op_envelopes: None,
             attack: 0.0,
             decay: 0.3,
             sustain: 0.7,
@@ -1491,5 +1751,28 @@ mod tests {
             }
         }
         assert!(checked > 0);
+    }
+}
+
+#[cfg(test)]
+mod imported_patch_regressions {
+    use super::*;
+    #[test]
+    fn steelcans_operator_five_uses_yamaha_frequency_bitfield() {
+        let data = include_bytes!("../../dx7_presets/Giorgio Robino/PERCDANZ.SYX");
+        let presets = parse_syx_file(data);
+        let patch = presets.iter().find(|p| p.name.eq_ignore_ascii_case("SteelCans")).unwrap();
+        assert_eq!(patch.op_ratio[4],5.0);
+        assert_eq!(patch.op_ratio[0],1.0);
+        assert_eq!(patch.feedback,0.0);
+    }
+    #[test]
+    fn packed_frequency_mode_and_sync_do_not_pollute_ratio_or_feedback() {
+        let mut data = [0u8;128];
+        data[85+15] = (7 << 1) | 1;
+        data[111] = 0b0110_1011;
+        let patch = parse_packed_voice(&data);
+        assert_eq!(patch.op_ratio[0],7.0);
+        assert!((patch.feedback-3.0/7.0).abs()<1e-6);
     }
 }

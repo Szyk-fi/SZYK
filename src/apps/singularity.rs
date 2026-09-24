@@ -30,7 +30,7 @@
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -39,7 +39,7 @@ use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Circle, PrimitiveStyle};
+use embedded_graphics::primitives::{Circle, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::f32::consts::TAU;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -51,7 +51,7 @@ use std::sync::{Arc, Mutex};
 /// after the 8th (alphabetically, already losing Tape and Voltage)
 /// from this app's input list -- bumped with real headroom so the
 /// next few apps added to `apps/` don't quietly hit the same ceiling.
-const MAX_INPUTS: usize = 32;
+const MAX_INPUTS: usize = 128;
 const DELAY_BUFFER_SECONDS: f32 = 2.5;
 const MAX_FEEDBACK: f32 = 0.92; // headroom below 1.0 -- always a contraction
 const DEFAULT_FEEDBACK: f32 = 0.5;
@@ -170,6 +170,17 @@ pub struct SingularityApp {
     expanded: [bool; NUM_GROUPS],
 }
 
+// --- Singularity's own palette: near-black void with acid chartreuse,
+// not a device-wide theme -- deliberately alien and toxic-looking,
+// matching this app's own "unconventional, deliberately alien" DSP. ---
+
+const SINGULARITY_BG: Rgb565 = Rgb565::new(0, 1, 0);
+const SINGULARITY_TITLE: Rgb565 = Rgb565::new(28, 63, 25);
+const SINGULARITY_ACCENT: Rgb565 = Rgb565::new(23, 63, 5);
+const SINGULARITY_DIM: Rgb565 = Rgb565::new(11, 30, 7);
+const SINGULARITY_RING: Rgb565 = Rgb565::new(3, 7, 2);
+const SINGULARITY_FLASH: Rgb565 = Rgb565::new(25, 63, 12);
+
 impl SingularityApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self { params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)), sensitivity, nav_speed, audio_bus, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
@@ -262,10 +273,71 @@ impl SingularityApp {
     }
 }
 
+impl SingularityApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The real chaotic orbiting point -- same math `draw()`'s own
+    /// sketch uses, exposed as a plain center-relative coordinate for
+    /// an alternate renderer instead of drawn directly.
+    pub(crate) fn orbit_visual(&self) -> crate::app::OrbitExtra {
+        let x = self.params.chaos_value.get();
+        let angle = x * TAU * 3.0;
+        let r_frac = (20.0 + x * 85.0) / 210.0;
+        crate::app::OrbitExtra { x: angle.cos() * r_frac, y: angle.sin() * r_frac, value: x }
+    }
+}
+
 impl App for SingularityApp {
+    fn needs_background_audio(&self) -> bool { self.params.input_levels.iter().any(|v| v.get() > 0.0) || self.params.ext_input_level.iter().any(|v| v.get() > 0.0) }
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Orbit(self.orbit_visual())
+    }
+
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -304,11 +376,16 @@ impl App for SingularityApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(SINGULARITY_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, SINGULARITY_TITLE);
         Text::new("Singularity", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, SINGULARITY_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, SINGULARITY_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -321,18 +398,18 @@ impl App for SingularityApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, SINGULARITY_BG, SINGULARITY_DIM, SINGULARITY_ACCENT);
 
         // --- Right: the chaotic value, drawn as an orbiting point --
         // radius driven by the logistic map's current value, so its
         // never-repeating trajectory is visible, not just numeric. ---
         let center = Point::new(500, 175);
-        Circle::with_center(center, 210).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(12, 24, 12), 1)).draw(fb).ok();
+        Circle::with_center(center, 210).into_styled(PrimitiveStyle::with_stroke(SINGULARITY_RING, 1)).draw(fb).ok();
         let x = self.params.chaos_value.get();
         let angle = x * TAU * 3.0;
         let r = 20.0 + x * 85.0;
         let point = Point::new(center.x + (angle.cos() * r) as i32, center.y + (angle.sin() * r) as i32);
-        Circle::with_center(point, 8).into_styled(PrimitiveStyle::with_fill(Rgb565::new(0, 63, 30))).draw(fb).ok();
+        Circle::with_center(point, 8).into_styled(PrimitiveStyle::with_fill(SINGULARITY_FLASH)).draw(fb).ok();
         Text::new(&format!("chaos: {:.4}", x), Point::new(360, 300), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {

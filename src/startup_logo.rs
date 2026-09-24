@@ -48,16 +48,16 @@ impl Logo {
 /// The parent brand, shown first in the boot sequence (see os.rs).
 pub const SZYK: Logo = Logo {
     width: 400,
-    height: 95,
+    height: 94,
     bytes_per_row: (400 + 7) / 8,
     bits: include_bytes!("../assets/raw/szyk_logo.raw"),
 };
 
 /// The product/device name, shown second in the boot sequence.
 pub const MX1: Logo = Logo {
-    width: 396,
-    height: 153,
-    bytes_per_row: (396 + 7) / 8,
+    width: 400,
+    height: 155,
+    bytes_per_row: (400 + 7) / 8,
     bits: include_bytes!("../assets/raw/mx1_logo.raw"),
 };
 
