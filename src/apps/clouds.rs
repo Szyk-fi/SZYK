@@ -22,7 +22,7 @@ use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
 use crate::clouds_ffi::{CloudsParams, Granulator};
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -31,7 +31,7 @@ use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Line, PrimitiveStyle};
+use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -49,7 +49,7 @@ use std::sync::{Arc, Mutex};
 /// this app's input list. Bumped with real headroom rather than to
 /// exactly today's count, so the next few apps someone adds don't
 /// quietly hit the same ceiling again.
-const MAX_INPUTS: usize = 32;
+const MAX_INPUTS: usize = 128;
 const PLAYBACK_MODE_NAMES: [&str; 4] = ["Granular", "Stretch", "Looping Delay", "Spectral"];
 const MONITOR_LEN: usize = 150;
 
@@ -176,6 +176,17 @@ pub struct CloudsApp {
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
 }
+
+// --- Clouds' own palette: pale sky blue on a light ground, not a
+// device-wide theme -- airy and drifting, the opposite of a dark
+// instrument screen, matching this app's own name and character. ---
+
+const CLOUDS_BG: Rgb565 = Rgb565::new(21, 47, 25);
+const CLOUDS_TITLE: Rgb565 = Rgb565::new(3, 10, 7);
+const CLOUDS_ACCENT: Rgb565 = Rgb565::new(5, 20, 16);
+const CLOUDS_DIM: Rgb565 = Rgb565::new(7, 18, 10);
+const CLOUDS_FROZEN: Rgb565 = Rgb565::new(9, 20, 20);
+const CLOUDS_MIDLINE: Rgb565 = Rgb565::new(20, 40, 26);
 
 impl CloudsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -314,10 +325,86 @@ impl CloudsApp {
     }
 }
 
+impl CloudsApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The real granular output monitor -- same `Params.
+    /// monitor_history` `draw()`'s own scrolling-waveform panel
+    /// reads, resampled to `n` points and converted to connected
+    /// line-segment geometry (see `crate::app::polyline_segments`)
+    /// instead of drawn directly.
+    pub(crate) fn output_visual(&self, n: usize) -> crate::app::CloudsExtra {
+        let mode = self.params.playback_mode.load(Ordering::Relaxed) as usize % PLAYBACK_MODE_NAMES.len();
+        let history = self.params.monitor_history.lock().unwrap();
+        let raw: Vec<f32> = history.iter().copied().collect();
+        drop(history);
+        let waveform = if raw.len() >= 2 {
+            let step = (raw.len() as f32 / n as f32).max(1.0);
+            let resampled: Vec<f32> = (0..n).map(|i| raw[((i as f32 * step) as usize).min(raw.len() - 1)]).collect();
+            let (mid_x, mid_y, length, angle_deg) = crate::app::polyline_segments(&resampled, 260.0, 190.0, true);
+            crate::app::CurveSegments { mid_x, mid_y, length, angle_deg }
+        } else {
+            crate::app::CurveSegments::default()
+        };
+        crate::app::CloudsExtra {
+            playback_mode: mode,
+            playback_mode_name: PLAYBACK_MODE_NAMES[mode].to_string(),
+            frozen: self.params.freeze.load(Ordering::Relaxed),
+            waveform,
+        }
+    }
+}
+
 impl App for CloudsApp {
+    fn needs_background_audio(&self) -> bool { self.params.input_levels.iter().any(|v| v.get() > 0.0) || self.params.ext_input_level.iter().any(|v| v.get() > 0.0) || self.params.freeze.load(Ordering::Relaxed) }
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Clouds(self.output_visual(60))
+    }
+
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -346,11 +433,16 @@ impl App for CloudsApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(CLOUDS_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, CLOUDS_TITLE);
         Text::new("Clouds", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, CLOUDS_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, CLOUDS_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -363,7 +455,7 @@ impl App for CloudsApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, CLOUDS_BG, CLOUDS_DIM, CLOUDS_ACCENT);
 
         // --- Right: live output monitor, same scrolling-waveform
         // technique as Plaits'/Pam's/Bloom's panels. ---
@@ -377,14 +469,14 @@ impl App for CloudsApp {
 
         let mid_y = panel_y + panel_h / 2;
         Line::new(Point::new(panel_x, mid_y), Point::new(panel_x + panel_w, mid_y))
-            .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(8, 16, 8), 1))
+            .into_styled(PrimitiveStyle::with_stroke(CLOUDS_MIDLINE, 1))
             .draw(fb)
             .ok();
 
         let history = self.params.monitor_history.lock().unwrap();
         if history.len() >= 2 {
             let step = panel_w as f32 / (history.len() - 1) as f32;
-            let color = if frozen { Rgb565::new(0, 40, 50) } else { Rgb565::new(0, 63, 10) };
+            let color = if frozen { CLOUDS_FROZEN } else { CLOUDS_ACCENT };
             let style = PrimitiveStyle::with_stroke(color, 1);
             for i in 0..history.len() - 1 {
                 let v0 = history[i].clamp(-1.0, 1.0);

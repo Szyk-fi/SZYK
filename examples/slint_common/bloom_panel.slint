@@ -1,0 +1,191 @@
+// Bloom's orbital instrument: bounded vector primitives, fed by the real sequencer.
+export global BloomTheme {
+    out property <color> ground: #0c1918;
+    out property <color> surface: #122522;
+    out property <color> rule: #2a4138;
+    out property <color> ink: #e7edda;
+    out property <color> muted: #829b8a;
+    out property <color> lime: #d8f580;
+    out property <color> coral: #ff9c79;
+}
+component Caption inherits Text {
+    color: BloomTheme.muted;
+    font-family: "JetBrains Mono";
+    font-size: 9px;
+    letter-spacing: 1px;
+    vertical-alignment: center;
+}
+export component BloomPanel inherits Rectangle {
+    in property <[string]> row-names;
+    in property <[string]> row-values;
+    in property <[bool]> row-is-group;
+    in property <int> selected-row;
+    in property <bool> more-above;
+    in property <bool> more-below;
+    in property <bool> running;
+    in property <int> shape-index;
+    in property <string> pattern-name;
+    in property <[float]> outer-x;
+    in property <[float]> outer-y;
+    in property <[bool]> outer-active;
+    in property <[bool]> outer-lit;
+    in property <[float]> outer-flash-angle;
+    in property <[float]> inner-x;
+    in property <[float]> inner-y;
+    in property <[bool]> inner-lit;
+    in property <[float]> inner-frac;
+    in property <[float]> line-mid-x;
+    in property <[float]> line-mid-y;
+    in property <[float]> line-length;
+    in property <[float]> line-angle;
+    callback toggle-running();
+    background: BloomTheme.ground;
+    HorizontalLayout {
+        spacing: 16px;
+        VerticalLayout {
+            width: 244px;
+            spacing: 4px;
+            HorizontalLayout {
+                height: 23px;
+                Caption { text: "SEQUENCE / PARAMETERS"; }
+                Caption { text: root.more-above ? "↑" : ""; width: 12px; }
+            }
+            Rectangle { height: 1px; background: BloomTheme.rule; }
+            VerticalLayout {
+                spacing: 1px;
+                alignment: start;
+                for name[i] in root.row-names : row := Rectangle {
+                    property <bool> chosen: i == root.selected-row;
+                    property <bool> group: root.row-is-group[i];
+                    height: 22px;
+                    border-radius: 3px;
+                    background: self.chosen ? BloomTheme.lime : (self.group ? BloomTheme.surface : transparent);
+                    Rectangle { x: 0px; y: 6px; width: 2px; height: 10px; background: parent.chosen ? BloomTheme.ground : transparent; }
+                    HorizontalLayout {
+                        padding-left: parent.group ? 8px : 15px;
+                        padding-right: 7px;
+                        spacing: 3px;
+                        Text {
+                            text: name;
+                            color: row.chosen ? BloomTheme.ground : BloomTheme.ink;
+                            font-family: "Space Grotesk"; font-size: 12px;
+                            font-weight: row.group ? 600 : 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: root.row-values[i];
+                            color: row.chosen ? BloomTheme.ground : BloomTheme.muted;
+                            font-family: "JetBrains Mono"; font-size: 10px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            Caption { height: 15px; text: root.more-below ? "↓ MORE PARAMETERS" : "R1 EXPAND  ·  ◀ ▶ ADJUST"; font-size: 8px; }
+        }
+        Rectangle { width: 1px; background: BloomTheme.rule; }
+        VerticalLayout {
+            spacing: 0px;
+            HorizontalLayout {
+                height: 33px;
+                Text {
+                    text: root.pattern-name;
+                    color: BloomTheme.ink;
+                    font-family: "Space Grotesk"; font-size: 22px; font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    width: 70px; height: 22px;
+                    border-radius: 11px;
+                    background: root.running ? BloomTheme.lime : BloomTheme.surface;
+                    Text {
+                        text: root.running ? "● LIVE" : "Ⅱ PAUSED";
+                        font-family: "JetBrains Mono"; font-size: 9px; font-weight: 700;
+                        color: root.running ? BloomTheme.ground : BloomTheme.muted;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    TouchArea { clicked => { root.toggle-running(); } }
+                }
+            }
+            field := Rectangle {
+                vertical-stretch: 1;
+                property <length> cx: self.width / 2;
+                property <length> cy: self.height / 2;
+                property <length> radius: min(self.width - 58px, self.height - 24px) / 2;
+                // Quiet orbit bands give the moving notes a legible pitch reference.
+                for fraction in [0.25, 0.5, 0.75, 1.0] : Rectangle {
+                    width: field.radius * fraction * 2; height: self.width;
+                    x: field.cx - self.width / 2; y: field.cy - self.height / 2;
+                    border-radius: self.width / 2;
+                    border-width: 1px;
+                    border-color: BloomTheme.rule;
+                    background: fraction == 1.0 ? #162b2318 : transparent;
+                }
+                for i in 48 : Rectangle {
+                    width: i / 4 * 4 == i ? 5px : 2px; height: 1px;
+                    x: field.cx + (field.radius + 9px) * cos(i * 7.5deg);
+                    y: field.cy + (field.radius + 9px) * sin(i * 7.5deg);
+                    background: BloomTheme.muted.with-alpha(0.4);
+                    transform-rotation: i * 7.5deg;
+                }
+                for i in root.outer-x.length : Path {
+                    x: field.cx - field.radius; y: field.cy - field.radius;
+                    width: field.radius * 2; height: self.width;
+                    viewbox-x: 0; viewbox-y: 0; viewbox-width: 200; viewbox-height: 200;
+                    stroke: root.outer-active[i] ? BloomTheme.rule : transparent;
+                    stroke-width: 1px;
+                    MoveTo { x: 100; y: 100; }
+                    LineTo { x: 100 + root.outer-x[i] * 100; y: 100 + root.outer-y[i] * 100; }
+                }
+                for i in root.line-length.length : Path {
+                    x: field.cx - field.radius; y: field.cy - field.radius;
+                    width: field.radius * 2; height: self.width;
+                    viewbox-x: 0; viewbox-y: 0; viewbox-width: 200; viewbox-height: 200;
+                    stroke: BloomTheme.lime.with-alpha(0.45);
+                    stroke-width: 1px;
+                    MoveTo { x: 100 + root.inner-x[i] * 100; y: 100 + root.inner-y[i] * 100; }
+                    LineTo { x: 100 + root.inner-x[i + 1] * 100; y: 100 + root.inner-y[i + 1] * 100; }
+                }
+                for i in root.outer-x.length : Rectangle {
+                    width: 10px; height: 10px; border-radius: 2px;
+                    x: field.cx + root.outer-x[i] * field.radius - self.width / 2;
+                    y: field.cy + root.outer-y[i] * field.radius - self.height / 2;
+                    border-width: 1px;
+                    border-color: root.outer-active[i] ? BloomTheme.lime : BloomTheme.rule;
+                    background: root.outer-lit[i] ? BloomTheme.coral : root.outer-active[i] ? BloomTheme.lime : BloomTheme.ground;
+                    transform-rotation: 45deg;
+                }
+                for i in root.inner-x.length : Rectangle {
+                    property <bool> lit: root.inner-lit[i];
+                    width: self.lit ? 17px : 9px; height: self.width;
+                    x: field.cx + root.inner-x[i] * field.radius - self.width / 2;
+                    y: field.cy + root.inner-y[i] * field.radius - self.height / 2;
+                    border-radius: self.width / 2;
+                    border-width: self.lit ? 1px : 0px;
+                    border-color: BloomTheme.coral.with-alpha(0.5);
+                    background: self.lit ? BloomTheme.coral.with-alpha(0.10) : transparent;
+                    Rectangle {
+                        width: parent.lit ? 9px : (root.inner-x.length > 16 ? 4px : 6px); height: self.width;
+                        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                        border-radius: self.width / 2;
+                        background: parent.lit ? BloomTheme.coral : root.inner-frac[i] < 0.5 ? #84bea1 : BloomTheme.lime;
+                    }
+                }
+                Rectangle { x: field.cx - 2px; y: field.cy - 2px; width: 4px; height: 4px; border-radius: 2px; background: BloomTheme.ink; }
+                Caption { x: 0px; y: 5px; text: "SHAPE"; font-size: 8px; }
+                Text { x: 0px; y: 19px; text: "0" + (root.shape-index + 1); color: BloomTheme.lime; font-family: "Space Grotesk"; font-size: 26px; }
+                Caption { x: parent.width - 25px; y: parent.height - 22px; text: "/ 08"; font-size: 8px; }
+            }
+            Rectangle { height: 1px; background: BloomTheme.rule; }
+            HorizontalLayout {
+                height: 24px;
+                Caption { text: root.inner-x.length + " NOTES"; color: BloomTheme.lime; }
+                Caption { text: root.outer-x.length + " GATES"; }
+                Caption { text: "● LAST HIT"; color: BloomTheme.coral; font-size: 8px; horizontal-alignment: right; }
+            }
+        }
+    }
+}

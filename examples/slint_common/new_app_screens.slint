@@ -1,0 +1,368 @@
+import { DeviceFrame } from "device_frame.slint";
+import { VectorSegment } from "instrument_widgets.slint";
+
+// All motion and data in this collection are explicitly UI demonstration state.
+component DemoWave inherits Rectangle {
+    in property <color> ink;
+    in property <float> phase;
+    in property <float> amount: 0.6;
+    in property <int> seed: 0;
+    for i in 96 : Rectangle {
+        property <float> wave: sin((i * 11 + root.phase * 120 + root.seed * 31) * 1deg) * 0.6 + sin((i * 29 + root.seed * 19) * 1deg) * 0.3;
+        x: i * root.width / 96;
+        width: max(1px, root.width / 96 - 1px);
+        height: max(2px, abs(self.wave) * root.height * root.amount);
+        y: (root.height - self.height) / 2;
+        background: root.ink;
+        border-radius: 1px;
+    }
+}
+component SmallLabel inherits Text {
+    in property <color> ink;
+    color: root.ink;
+    font-family: "JetBrains Mono"; font-size: 9px;
+    letter-spacing: 0.5px;
+    vertical-alignment: center;
+}
+
+export component NewAppScreen inherits DeviceFrame {
+    in property <string> name;
+    in property <color> paper;
+    in property <color> ink;
+    in property <color> highlight;
+    in property <[color]> pad-lights;
+    in-out property <float> live-stick-x <=> self.stick-x;
+    in-out property <float> live-stick-y <=> self.stick-y;
+    app-name: root.name; screen-bg: root.paper; screen-ink: root.ink; accent: root.highlight; pad-colors: root.pad-lights;
+    in property <int> kind;
+    in property <string> category;
+    in property <string> headline;
+    in property <string> subtitle;
+    in property <string> hint;
+    in property <color> secondary;
+    in property <[string]> labels;
+    in property <[string]> values;
+    in property <[float]> controls;
+    in property <[bool]> enabled;
+    in property <int> selected;
+    in property <int> generation;
+    in property <int> app-index;
+    in property <int> app-count;
+    in property <float> phase;
+    in property <bool> playing;
+    in property <bool> detail;
+    callback navigate(int);
+    callback choose(int);
+    callback function(int);
+    callback xy(float, float);
+    callback pad(int, bool);
+    breadcrumb: "UI STUDY / NO AUDIO";
+    bar: [
+        { label: "F1  PREVIOUS", active: false },
+        { label: "F2  VARIATION", active: false },
+        { label: root.playing ? "F3  PAUSE" : "F3  MOTION", active: root.playing },
+        { label: "F4  NEXT", active: false },
+    ];
+    navigation-pressed(i) => { root.navigate(i); }
+    shoulder-pressed(i) => { if i == 0 { root.function(0); } else { root.navigate(4); } }
+    f-pressed(i) => { root.function(i); }
+    pad-pressed(i, down) => { root.pad(i, down); }
+    HorizontalLayout {
+        padding-left: 18px; padding-right: 18px; padding-top: 6px; padding-bottom: 8px;
+        spacing: 18px;
+        VerticalLayout {
+            width: 170px; spacing: 5px;
+            SmallLabel { text: "EXPLORE / " + (root.app-index + 1) + " OF " + root.app-count; ink: root.screen-ink.with-alpha(0.55); height: 20px; }
+            for label[i] in root.labels : Rectangle {
+                height: 27px;
+                border-radius: 3px;
+                background: root.selected == i ? root.accent : root.screen-ink.with-alpha(0.035);
+                HorizontalLayout {
+                    padding-left: 8px; padding-right: 8px;
+                    Text { text: label; font-family: "Space Grotesk"; font-size: 12px; color: root.selected == i ? root.screen-bg : root.screen-ink; vertical-alignment: center; }
+                    Text { text: root.values[i]; font-family: "JetBrains Mono"; font-size: 10px; horizontal-alignment: right; vertical-alignment: center; color: root.selected == i ? root.screen-bg : root.screen-ink.with-alpha(0.65); }
+                }
+                TouchArea { clicked => { root.choose(i); } }
+            }
+            Rectangle { vertical-stretch: 1; }
+            Text {
+                text: root.detail ? root.labels[root.selected] + " / " + root.values[root.selected] + "\nLeft / right to adjust" : root.hint;
+                color: root.screen-ink.with-alpha(0.65); font-family: "Space Grotesk"; font-size: 11px; wrap: word-wrap;
+                height: 38px;
+            }
+        }
+        VerticalLayout {
+            spacing: 7px;
+            VerticalLayout {
+                height: 48px; spacing: 2px;
+                SmallLabel { text: root.category; ink: root.accent; font-size: 8px; }
+                Text { text: root.headline; color: root.screen-ink; font-family: "Space Grotesk"; font-size: 24px; font-weight: 600; overflow: elide; }
+            }
+            scene := Rectangle {
+                vertical-stretch: 1;
+                background: root.screen-ink.with-alpha(0.025);
+                border-radius: 5px;
+                border-width: 1px; border-color: root.screen-ink.with-alpha(0.1);
+                clip: true;
+                // Morph: continuous XY selection, with two source spectra meeting.
+                if root.kind == 0 : Rectangle {
+                    for i in 32 : Rectangle {
+                        x: 10px + i * (parent.width - 20px) / 32;
+                        y: parent.height / 2 - self.height / 2;
+                        width: (parent.width - 20px) / 32 - 3px;
+                        height: 25px + abs(sin((i * 14 + root.phase * 40) * 1deg)) * (50px + root.controls[1] * 90px);
+                        background: i / 32.0 < root.controls[0] ? root.accent.with-alpha(0.65) : root.secondary.with-alpha(0.6);
+                        border-radius: 3px;
+                    }
+                    Rectangle { x: root.controls[0] * (parent.width - 22px) + 10px; width: 2px; height: 100%; background: root.screen-ink; }
+                    SmallLabel { x: 12px; y: 8px; text: "A / HARMONIC"; ink: root.accent; }
+                    SmallLabel { x: parent.width - 92px; y: parent.height - 22px; text: "B / TEXTURE"; ink: root.secondary; }
+                    TouchArea { moved => { if self.pressed { root.xy(self.mouse-x / self.width, self.mouse-y / self.height); } } clicked => { root.xy(self.mouse-x / self.width, self.mouse-y / self.height); } }
+                }
+                // Orbit: enabled nodes move on independent parametric paths.
+                if root.kind == 1 : Rectangle {
+                    for i in [0,1,2,3] : Rectangle {
+                        width: 55px + i * 37px; height: self.width * (0.55 + root.controls[1] * 0.45);
+                        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                        border-radius: self.width / 2; border-width: 1px; border-color: root.screen-ink.with-alpha(0.16);
+                    }
+                    Rectangle { x: parent.width / 2; y: 12px; width: 1px; height: parent.height - 24px; background: root.secondary.with-alpha(0.5); }
+                    for i in 12 : Rectangle {
+                        property <float> angle: i * 137.5 + root.phase * (12 + i * 3) * (0.3 + root.controls[3]);
+                        width: root.enabled[i] ? 9px : 4px; height: self.width; border-radius: self.width / 2;
+                        x: parent.width / 2 + cos(self.angle * 1deg) * (30px + mod(i,4) * 21px) - self.width / 2;
+                        y: parent.height / 2 + sin(self.angle * 1deg) * (30px + mod(i,4) * 21px) * (0.55 + root.controls[1] * 0.45) - self.height / 2;
+                        background: root.enabled[i] ? root.accent : root.screen-ink.with-alpha(0.2);
+                    }
+                    Rectangle { x: parent.width / 2 - 5px; y: parent.height / 2 - 5px; width: 10px; height: 10px; border-radius: 5px; background: root.secondary; }
+                }
+                // Fracture: a sliced buffer and reversible cells.
+                if root.kind == 2 : Rectangle {
+                    for i in 16 : Rectangle {
+                        x: mod(i,8) * parent.width / 8 + 3px; y: floor(i / 8) * parent.height / 2 + 3px;
+                        width: parent.width / 8 - 6px; height: parent.height / 2 - 6px;
+                        background: root.enabled[i] ? root.accent.with-alpha(0.23) : root.screen-ink.with-alpha(0.035);
+                        DemoWave { y: 17px; height: parent.height - 28px; width: 100%; ink: root.enabled[i] ? root.accent : root.secondary.with-alpha(0.5); phase: root.phase; amount: 0.4 + root.controls[0] * 0.5; seed: i + root.generation; }
+                        SmallLabel { x: 4px; y: 2px; text: i + 1; ink: root.screen-ink.with-alpha(0.55); font-size: 8px; }
+                        TouchArea { clicked => { root.pad(i, true); } }
+                    }
+                }
+                // Ghosts: successive decaying generations.
+                if root.kind == 3 : Rectangle {
+                    for i in [3,2,1,0] : Rectangle {
+                        x: 15px + i * 18px; y: 20px + i * 27px; width: parent.width - 40px - i * 23px; height: 56px;
+                        background: root.screen-bg;
+                        border-width: 1px; border-color: root.accent.with-alpha(0.15 + (3-i) * 0.12);
+                        DemoWave { x: 5px; y: 5px; width: parent.width - 10px; height: parent.height - 10px; ink: root.accent.with-alpha((0.35 + root.controls[0] * 0.55) / (i+1)); phase: root.phase * (1 + i * 0.07); seed: i; }
+                        SmallLabel { x: parent.width - 36px; y: 1px; text: "0" + (i+1); ink: root.secondary; }
+                    }
+                }
+                // Swarm: steerable population; density and cohesion affect positions.
+                if root.kind == 4 : Rectangle {
+                    for i in 48 : Rectangle {
+                        property <float> theta: i * 137.5 + root.phase * 9;
+                        property <float> r: sqrt(i / 48.0) * (0.3 + root.controls[1] * 0.7);
+                        visible: i < 8 + root.controls[0] * 40;
+                        x: parent.width * (0.25 + root.controls[2] * 0.5) + cos(self.theta * 1deg) * self.r * 140px;
+                        y: parent.height * (0.25 + root.controls[3] * 0.5) + sin(self.theta * 1deg) * self.r * 75px;
+                        width: 4px + mod(i,3) * 2px; height: self.width; border-radius: self.width / 2;
+                        background: mod(i,4) == 0 ? root.secondary : root.accent.with-alpha(0.45 + mod(i,5) * 0.1);
+                    }
+                    TouchArea { moved => { if self.pressed { root.xy(self.mouse-x / self.width, self.mouse-y / self.height); } } }
+                }
+                // Mutant: two genomes and four selectable offspring.
+                if root.kind == 5 : Rectangle {
+                    for i in 6 : Rectangle {
+                        x: mod(i,3) * parent.width / 3 + 6px; y: floor(i / 3) * parent.height / 2 + 6px;
+                        width: parent.width / 3 - 12px; height: parent.height / 2 - 12px; border-radius: 4px;
+                        background: root.enabled[i] ? root.accent.with-alpha(0.15) : root.screen-ink.with-alpha(0.035);
+                        border-width: 1px; border-color: root.enabled[i] ? root.accent : root.screen-ink.with-alpha(0.12);
+                        for j in 12 : Rectangle {
+                            x: 7px + j * (parent.width - 14px) / 12; width: 3px;
+                            height: 8px + abs(sin((j*37+i*63+root.generation*29) * 1deg)) * (22px + root.controls[1] * 22px);
+                            y: parent.height - self.height - 18px; background: i < 2 ? root.secondary : root.accent;
+                        }
+                        SmallLabel { x: 7px; y: parent.height - 16px; text: i == 0 ? "PARENT A" : i == 1 ? "PARENT B" : "CHILD " + (i - 1); ink: root.screen-ink.with-alpha(0.65); font-size: 8px; }
+                        TouchArea { clicked => { root.pad(i,true); } }
+                    }
+                }
+                // Constellation: pitch-space map with selectable chord tones.
+                if root.kind == 6 : Rectangle {
+                    for i in 12 : Rectangle {
+                        property <float> theta: i * 30 - 90 + root.controls[0] * 30;
+                        x: parent.width / 2 + cos(self.theta * 1deg) * (65px + root.controls[1] * 30px) - 13px;
+                        y: parent.height / 2 + sin(self.theta * 1deg) * 70px - 13px;
+                        width: 26px; height: 26px; border-radius: 13px;
+                        background: root.enabled[i] ? root.accent : root.screen-ink.with-alpha(0.06);
+                        Text { text: ["C","C♯","D","E♭","E","F","F♯","G","A♭","A","B♭","B"][i]; color: root.enabled[i] ? root.screen-bg : root.screen-ink.with-alpha(0.6); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.pad(i,true); } }
+                    }
+                    Text { text: root.values[0] + " / ROOT"; color: root.secondary; font-family: "Space Grotesk"; font-size: 26px; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                // Tape Machine: running tape and four movable playback heads.
+                if root.kind == 7 : Rectangle {
+                    Rectangle { y: 55px; height: 80px; width: 100%; background: root.accent.with-alpha(0.13);
+                        DemoWave { width: 100%; height: 100%; ink: root.accent; phase: root.phase * (0.5 + root.controls[0]); amount: 0.65; }
+                    }
+                    for i in [0,1,2,3] : Rectangle {
+                        x: 20px + mod((i * 0.23 + root.controls[1] * 0.3 + root.phase * 0.015), 0.94) * (parent.width - 40px);
+                        width: 2px; height: 128px; y: 24px; background: root.enabled[i] ? root.secondary : root.screen-ink.with-alpha(0.25);
+                        Rectangle { x: -9px; y: 0px; width: 20px; height: 16px; background: root.secondary; Text { text: i+1; color: root.screen-bg; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; } }
+                    }
+                    SmallLabel { x: 12px; y: parent.height - 23px; text: "← REVERSE                    FORWARD →"; ink: root.screen-ink.with-alpha(0.5); }
+                }
+                // Dream: state graph and changing active state.
+                if root.kind == 8 : Rectangle {
+                    for i in [0,1,2] : VectorSegment {
+                        center-x: 90px + i * 76px; center-y: 93px;
+                        delta-x: 76; delta-y: i == 1 ? 70 : -70;
+                        trace: root.accent.with-alpha(0.4); line-width: 2px;
+                    }
+                    for i in 4 : Rectangle {
+                        x: 22px + i * 92px; y: mod(i,2) == 0 ? 80px : 25px;
+                        width: 74px; height: 65px; border-radius: 6px;
+                        background: mod(floor(root.phase * (0.3 + root.controls[2])),4) == i ? root.accent : root.screen-bg;
+                        border-width: 1px; border-color: root.accent.with-alpha(0.5);
+                        Text { text: ["CALM","TENSION","CHAOS","RELEASE"][i]; color: mod(floor(root.phase * (0.3 + root.controls[2])),4) == i ? root.screen-bg : root.screen-ink; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.pad(i,true); } }
+                    }
+                }
+                // Portal: route nodes and visible on/off connections.
+                if root.kind == 9 : Rectangle {
+                    for i in [0,1,2,3] : VectorSegment {
+                        center-x: parent.width / 2; center-y: 48px + i * 30px;
+                        delta-x: 170; delta-y: i < 2 ? 45 : -45;
+                        trace: root.enabled[i] ? (mod(i,2)==0 ? root.accent : root.secondary) : root.screen-ink.with-alpha(0.08); line-width: root.enabled[i] ? 2px : 1px;
+                    }
+                    for i in 6 : Rectangle {
+                        x: mod(i,2) == 0 ? 12px : parent.width - 112px; y: 15px + floor(i/2) * 58px;
+                        width: 100px; height: 42px; border-radius: 4px; background: root.screen-bg;
+                        border-width: 1px; border-color: root.enabled[i] ? root.accent : root.screen-ink.with-alpha(0.25);
+                        Text { text: ["PLAITS","BEADS","ORBIT","BLACK HOLE","PAM'S","MASTER"][i]; color: root.screen-ink; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.pad(i,true); } }
+                    }
+                }
+                // Reference / Vinyl: original vector album art, explicitly demo content.
+                if root.kind == 10 || root.kind == 15 : Rectangle {
+                    for i in (root.kind == 15 ? 3 : 1) : Rectangle {
+                        property <length> size: root.kind == 15 ? 118px : 160px;
+                        x: root.kind == 15 ? 10px + i * 128px : 12px;
+                        y: root.kind == 15 ? 22px + (i == 1 ? -10px : 0px) : 12px;
+                        width: self.size; height: self.size;
+                        background: i == 1 ? root.secondary : root.accent;
+                        clip: true;
+                        for j in [0,1,2,3,4,5] : Rectangle {
+                            width: parent.width * (0.4 + j * 0.15); height: self.width;
+                            x: parent.width * (0.2 + root.controls[4] * 0.35) - self.width / 2; y: parent.height / 2 - self.height / 2;
+                            border-radius: self.width / 2; border-width: 2px; border-color: root.screen-bg.with-alpha(0.65);
+                        }
+                        SmallLabel { x: 8px; y: parent.height - 21px; text: root.kind == 15 ? ["SLOW LIGHT","STILL / LIFE","BLUE HOURS"][mod(i+root.generation,3)] : "THE SPACE BETWEEN"; ink: root.screen-bg; font-size: 8px; }
+                        TouchArea { clicked => { root.pad(i,true); } }
+                    }
+                    if root.kind == 10 : VerticalLayout {
+                        x: 185px; y: 17px; width: parent.width - 198px; height: 154px;
+                        spacing: 7px;
+                        SmallLabel { text: "DEMO RELEASE / 2026"; ink: root.screen-ink.with-alpha(0.5); font-size: 8px; }
+                        Text { text: "A slower\nkind of light"; color: root.screen-ink; font-family: "Space Grotesk"; font-size: 22px; font-weight: 600; }
+                        SmallLabel { text: root.values[0] + " / The space between"; ink: root.accent; font-size: 8px; }
+                        Rectangle { height: 3px; background: root.screen-ink.with-alpha(0.1); Rectangle { width: parent.width * root.controls[1]; height: 100%; background: root.accent; } }
+                        SmallLabel { text: "POSITION " + root.values[1] + " / DEMO"; ink: root.screen-ink.with-alpha(0.55); font-size: 8px; }
+                    }
+                    if root.kind == 15 : SmallLabel { x: 12px; y: parent.height - 20px; text: "← BROWSE       DEMO COLLECTION       BROWSE →"; ink: root.screen-ink.with-alpha(0.55); font-size: 8px; }
+                }
+                // Field: generous stereo meters, timeline, and pre-roll indicator.
+                if root.kind == 11 : Rectangle {
+                    for i in [0,1] : Rectangle {
+                        x: 14px; y: 25px + i * 45px; width: parent.width - 28px; height: 25px;
+                        background: root.screen-ink.with-alpha(0.06);
+                        for j in 36 : Rectangle {
+                            x: j * parent.width / 36; width: parent.width / 36 - 2px; height: 100%;
+                            background: j / 36.0 < (0.3 + abs(sin((root.phase * 70 + i*25) * 1deg)) * root.controls[0] * 0.7) ? (j > 29 ? root.secondary : root.accent) : root.screen-ink.with-alpha(0.06);
+                        }
+                        SmallLabel { y: -17px; text: i == 0 ? "LEFT / DEMO" : "RIGHT / DEMO"; ink: root.screen-ink.with-alpha(0.6); font-size: 8px; }
+                    }
+                    DemoWave { x: 14px; y: 108px; width: parent.width - 28px; height: 35px; ink: root.accent.with-alpha(0.6); phase: root.phase; }
+                    SmallLabel { x: 14px; y: parent.height - 25px; text: "PRE-ROLL  " + round(root.controls[1]*30) + "s     ●  INPUT PREVIEW"; ink: root.secondary; }
+                }
+                // Sample Hunter and Practice: editable A–B region over a waveform.
+                if root.kind == 12 || root.kind == 16 : Rectangle {
+                    SmallLabel { x: 12px; y: 9px; text: root.kind == 12 ? "FOUND SOUND / DEMO SAMPLE" : "PHRASE 04 / DEMO LOOP"; ink: root.accent; }
+                    DemoWave { x: 12px; y: 35px; width: parent.width - 24px; height: 92px; ink: root.screen-ink.with-alpha(0.28); phase: root.phase * 0.2; seed: root.generation; }
+                    Rectangle {
+                        x: 12px + root.controls[0] * (parent.width - 24px) * 0.55;
+                        y: 32px; height: 100px;
+                        width: (0.25 + root.controls[1] * 0.4) * (parent.width - 24px);
+                        background: root.accent.with-alpha(0.15); border-width: 1px; border-color: root.accent;
+                        SmallLabel { x: 4px; y: 2px; text: "A"; ink: root.accent; }
+                        SmallLabel { x: parent.width - 13px; y: 2px; text: "B"; ink: root.accent; }
+                    }
+                    SmallLabel { x: 12px; y: 151px; text: root.kind == 12 ? "TRIM     NORMALIZE     TAG     SEND" : "TEMPO " + root.values[0] + "     KEY LOCK / ON"; ink: root.secondary; }
+                    TouchArea { moved => { if self.pressed { root.xy(self.mouse-x / self.width, self.mouse-y / self.height); } } }
+                }
+                // Studio: eight independently armed track lanes.
+                if root.kind == 13 : Rectangle {
+                    for i in 8 : Rectangle {
+                        x: 6px; y: 5px + i * (parent.height - 10px) / 8;
+                        width: parent.width - 12px; height: (parent.height - 10px) / 8 - 2px;
+                        background: root.enabled[i] ? root.accent.with-alpha(0.16) : root.screen-ink.with-alpha(0.03);
+                        SmallLabel { x: 5px; text: "0" + (i+1); ink: root.enabled[i] ? root.secondary : root.screen-ink.with-alpha(0.45); font-size: 8px; }
+                        DemoWave { x: 40px + mod(i*17,40) * 1px; width: parent.width - 100px; height: 100%; ink: root.enabled[i] ? root.accent : root.screen-ink.with-alpha(0.22); phase: root.phase * 0.1; seed: i+root.generation; }
+                        TouchArea { clicked => { root.pad(i,true); } }
+                    }
+                    Rectangle { x: 45px + root.controls[1] * (parent.width - 55px); height: 100%; width: 1px; background: root.secondary; }
+                }
+                // Scope: laboratory reference grid and procedural test-signal study.
+                if root.kind == 14 : Rectangle {
+                    for i in [1,2,3,4,5,6,7] : Rectangle { x: i * parent.width / 8; width: 1px; height: 100%; background: root.screen-ink.with-alpha(0.08); }
+                    for i in [1,2,3] : Rectangle { y: i * parent.height / 4; height: 1px; width: 100%; background: root.screen-ink.with-alpha(0.08); }
+                    for i in 95 : VectorSegment {
+                        property <float> a: (i * (4 + root.controls[0] * 14) + root.phase * 50);
+                        center-x: (i + 0.5) * parent.width / 96;
+                        center-y: parent.height / 2 + (sin(self.a * 1deg) + sin((self.a + 4 + root.controls[0] * 14) * 1deg)) / 2 * parent.height * (0.12 + root.controls[1] * 0.3);
+                        delta-x: parent.width / 96px;
+                        delta-y: (sin((self.a + 4 + root.controls[0] * 14) * 1deg) - sin(self.a * 1deg)) * parent.height / 1px * (0.12 + root.controls[1] * 0.3);
+                        trace: root.accent; line-width: 2px;
+                    }
+                    SmallLabel { x: 10px; y: 8px; text: "TEST SIGNAL / DEMO"; ink: root.secondary; }
+                }
+                // Radio: stations are labeled examples; no connection is implied.
+                if root.kind == 17 : Rectangle {
+                    Text { x: 16px; y: 10px; text: "ELSEWHERE"; color: root.screen-ink; font-family: "Space Grotesk"; font-size: 31px; font-weight: 600; }
+                    SmallLabel { x: 17px; y: 53px; text: "EXAMPLE STATION / AMBIENT + EXPERIMENTAL"; ink: root.accent; font-size: 8px; }
+                    for i in 48 : Rectangle {
+                        x: 13px + i * (parent.width - 26px) / 48;
+                        y: 80px; width: 1px; height: mod(i,4)==0 ? 24px : 10px;
+                        background: root.screen-ink.with-alpha(0.25);
+                    }
+                    Rectangle { x: 13px + root.controls[1] * (parent.width - 26px); y: 76px; width: 3px; height: 40px; background: root.secondary; }
+                    SmallLabel { x: 16px; y: 137px; text: "NO NETWORK SESSION"; ink: root.screen-ink.with-alpha(0.5); }
+                }
+                // Master: A/B spectrum comparison study.
+                if root.kind == 18 : Rectangle {
+                    for i in 40 : Rectangle {
+                        property <float> profile: 0.25 + abs(sin((i*9+root.generation*11) * 1deg)) * 0.55;
+                        x: 12px + i * (parent.width - 24px) / 40; width: (parent.width - 24px) / 40 - 2px;
+                        height: self.profile * (parent.height - 55px); y: parent.height - 30px - self.height;
+                        background: root.accent.with-alpha(0.65);
+                        Rectangle { width: 100%; height: 2px; y: (root.controls[2] - 0.5) * 25px + sin((i*22) * 1deg) * 10px; background: root.secondary; }
+                    }
+                    SmallLabel { x: 12px; y: 7px; text: "A / MIX     B / REFERENCE     DEMO"; ink: root.secondary; font-size: 8px; }
+                    SmallLabel { x: 12px; y: parent.height - 19px; text: "LOW                MID                HIGH"; ink: root.screen-ink.with-alpha(0.5); font-size: 8px; }
+                }
+                // Memories: selectable example entries on a sonic timeline.
+                if root.kind == 19 : Rectangle {
+                    Rectangle { x: 32px; y: 10px; width: 1px; height: parent.height - 20px; background: root.accent.with-alpha(0.3); }
+                    for i in 3 : Rectangle {
+                        x: 18px; y: 12px + i * 56px; width: parent.width - 30px; height: 48px;
+                        background: root.enabled[i] ? root.accent.with-alpha(0.1) : transparent;
+                        Rectangle { x: 10px; y: 17px; width: 8px; height: 8px; border-radius: 4px; background: root.accent; }
+                        SmallLabel { x: 29px; y: 4px; text: ["MORNING / RAIN ON GLASS","IDEA / A SMALL MELODY","PLACE / THE LAST TRAIN"][i]; ink: root.screen-ink; font-size: 9px; }
+                        DemoWave { x: 30px; y: 22px; width: parent.width - 50px; height: 18px; ink: root.secondary.with-alpha(0.65); seed: i; phase: 0; }
+                        TouchArea { clicked => { root.pad(i,true); } }
+                    }
+                }
+            }
+            SmallLabel { height: 16px; text: root.subtitle; ink: root.screen-ink.with-alpha(0.5); font-size: 8px; overflow: elide; }
+        }
+    }
+}

@@ -2,8 +2,10 @@
 
 Same pipeline as convert_logo.py (MX1) -- see its docstring for the
 full explanation of why this is a pre-thresholded 1bpp raw bitmap
-instead of an SVG rendered live. Re-run if the source artwork or
-target size changes:
+(and why it's rendered at SUPERSAMPLE_FACTOR x the target size and
+box-filtered down before thresholding, rather than thresholded
+straight off a render at the target size) instead of an SVG rendered
+live. Re-run if the source artwork or target size changes:
     pip install resvg_py Pillow
     python3 convert_szyk_logo.py
 """
@@ -12,11 +14,15 @@ import resvg_py
 from PIL import Image
 
 TARGET_WIDTH = 400  # resvg preserves aspect ratio -- actual output may be a pixel or two narrower
+SUPERSAMPLE_FACTOR = 4
 
 
 def main():
-    data = resvg_py.svg_to_bytes(svg_path="szyk_logo.svg", width=TARGET_WIDTH)
-    img = Image.open(__import__("io").BytesIO(bytes(data))).convert("RGBA")
+    data = resvg_py.svg_to_bytes(svg_path="szyk_logo.svg", width=TARGET_WIDTH * SUPERSAMPLE_FACTOR)
+    hi_res = Image.open(__import__("io").BytesIO(bytes(data))).convert("RGBA")
+    hi_w, hi_h = hi_res.size
+    target_h = round(hi_h / SUPERSAMPLE_FACTOR)
+    img = hi_res.resize((TARGET_WIDTH, target_h), Image.Resampling.BOX)
     w, h = img.size
     px = img.load()
 

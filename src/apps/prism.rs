@@ -125,7 +125,7 @@
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -134,7 +134,7 @@ use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Line, PrimitiveStyle};
+use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::f32::consts::{PI, TAU};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -147,7 +147,7 @@ use std::sync::{Arc, Mutex};
 /// Voltage) from this app's input list -- bumped with real headroom
 /// so the next few apps added to `apps/` don't quietly hit the same
 /// ceiling.
-const MAX_INPUTS: usize = 32;
+const MAX_INPUTS: usize = 128;
 const MAX_TAPS: usize = 8;
 const MIN_TAPS: usize = 1;
 const DEFAULT_TAPS: usize = 4;
@@ -705,6 +705,24 @@ pub struct PrismApp {
     expanded: [bool; NUM_GROUPS],
 }
 
+// --- Prism's own palette: electric violet on near-black glass, not a
+// device-wide theme -- light refracting through cut glass, one bold
+// jewel tone rather than a literal rainbow smear. ---
+
+const PRISM_BG: Rgb565 = Rgb565::new(1, 1, 2);
+const PRISM_TITLE: Rgb565 = Rgb565::new(29, 56, 31);
+const PRISM_ACCENT: Rgb565 = Rgb565::new(22, 25, 31);
+const PRISM_DIM: Rgb565 = Rgb565::new(13, 22, 15);
+const PRISM_AXIS: Rgb565 = Rgb565::new(5, 4, 7);
+
+/// A tap/layer bar's color by its gain (0..1) -- a violet brightness
+/// ramp instead of the shared green, so a stronger tap glows a purer
+/// electric violet rather than just "brighter green."
+fn prism_tap_color(gain: f32) -> Rgb565 {
+    let g = gain.clamp(0.0, 1.0);
+    Rgb565::new((4.0 + g * 20.0) as u8, (4.0 + g * 22.0) as u8, (6.0 + g * 25.0) as u8)
+}
+
 impl PrismApp {
     /// A Prism with its own private, unshared CC targets -- convenient
     /// for tests and any caller that doesn't need MIDI CC to reach it.
@@ -964,10 +982,149 @@ impl PrismApp {
     }
 }
 
+impl PrismApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building (including the preset-dependent
+    /// group 1 name), exposed for an alternate renderer (a live Slint
+    /// screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        let preset = self.params.preset.load(Ordering::Relaxed) as usize % PRESET_NAMES.len();
+        let (effect, _variant) = effect_for_preset(preset);
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    let name = match *g {
+                        0 => "Mixer",
+                        1 => category_name(effect),
+                        2 => "Utility",
+                        _ => "User Presets",
+                    };
+                    (format!("{arrow} {name}"), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The real tap-time/rate map -- same computation `draw()`'s own
+    /// tick sketch uses, exposed as normalized `(x_frac, height_frac)`
+    /// pairs for an alternate renderer instead of drawn directly.
+    pub(crate) fn tap_map(&self) -> crate::app::PrismExtra {
+        let preset = self.params.preset.load(Ordering::Relaxed) as usize % PRESET_NAMES.len();
+        let (effect, _variant) = effect_for_preset(preset);
+        let num_taps = self.params.taps.load(Ordering::Relaxed).clamp(MIN_TAPS, MAX_TAPS);
+        let time = self.params.time.get();
+        let shape = self.params.shape.get();
+
+        let (values, caption): (Vec<f32>, String) = match effect {
+            Effect::Pattern | Effect::Warp => {
+                let ratios = tap_ratios_for(preset);
+                let vals: Vec<f32> = ratios[..num_taps].to_vec();
+                let longest = vals.iter().cloned().fold(0.0f32, f32::max);
+                (vals, format!("{} taps -- longest {:.0} ms", num_taps, time * longest * 1000.0))
+            }
+            Effect::Mosaic | Effect::Seq => {
+                let rate_set = if effect == Effect::Mosaic { MOSAIC_RATES[preset % VARIANTS_PER_EFFECT] } else { [SEQ_RATES[0], SEQ_RATES[1], SEQ_RATES[0], SEQ_RATES[1]] };
+                let vals: Vec<f32> = (0..num_taps).map(|t| rate_set[t % rate_set.len()]).collect();
+                (vals, format!("{} layers -- loop {:.0} ms", num_taps, time * 1000.0))
+            }
+            Effect::Glide => {
+                let (rate_lo, rate_hi, _) = glide_rates_for(preset % VARIANTS_PER_EFFECT);
+                (vec![rate_lo, rate_hi], format!("gliding {:.2}x <-> {:.2}x", rate_lo, rate_hi))
+            }
+            Effect::Haze => {
+                let vals: Vec<f32> = (0..num_taps).map(|t| t as f32 + 1.0).collect();
+                (vals, format!("{} grain slots -- {:.0} ms each", num_taps, time * 1000.0))
+            }
+            Effect::Tunnel => (vec![1.0], format!("drone loop -- {:.0} ms", time * 1000.0)),
+            Effect::Strum => {
+                let vals: Vec<f32> = (0..num_taps).map(|t| t as f32 + 1.0).collect();
+                (vals, format!("{} onset layers", num_taps))
+            }
+            Effect::Blocks => {
+                let vals: Vec<f32> = (0..num_taps).map(|t| t as f32 + 1.0).collect();
+                (vals, format!("{} staggered blocks -- {:.0} ms loop", num_taps, time * 1000.0))
+            }
+            Effect::Interrupt => (vec![1.0], format!("burst rate {:.0}% -- {:.0} ms loop", self.params.repeats.get() * 100.0, time * 1000.0)),
+            Effect::Arp => {
+                let vals: Vec<f32> = (0..num_taps).map(|t| t as f32 + 1.0).collect();
+                (vals, format!("{} step arp -- {:.0} ms/step", num_taps, time * 1000.0))
+            }
+        };
+        let max_val = values.iter().cloned().fold(0.0f32, f32::max).max(0.001);
+
+        let ticks = values
+            .iter()
+            .enumerate()
+            .map(|(t, &v)| {
+                let x_frac = v / max_val;
+                let gain = match effect {
+                    Effect::Pattern => (1.0 - (t as f32 / num_taps.max(1) as f32) * shape).max(0.05),
+                    _ => flat_tap_gain(t, values.len().max(1)),
+                };
+                (x_frac, gain)
+            })
+            .collect();
+
+        crate::app::PrismExtra { ticks, caption }
+    }
+}
+
 impl App for PrismApp {
+    fn needs_background_audio(&self) -> bool { self.params.input_levels.iter().any(|v| v.get() > 0.0) || self.params.ext_input_level.iter().any(|v| v.get() > 0.0) }
+    fn running(&self) -> Option<bool> {
+        match UtilityMode::from_u32(self.params.utility_mode.load(Ordering::Relaxed)) {
+            UtilityMode::Off => None,
+            UtilityMode::Looper => Some(self.params.looper_state.load(Ordering::Relaxed) != 0),
+            UtilityMode::Sampler => Some(self.params.sampler_state.load(Ordering::Relaxed) != 0),
+        }
+    }
+    fn transport_action(&self) -> Option<&'static str> {
+        match UtilityMode::from_u32(self.params.utility_mode.load(Ordering::Relaxed)) {
+            UtilityMode::Off => None,
+            UtilityMode::Looper => Some(match self.params.looper_state.load(Ordering::Relaxed) { 0 => "RECORD", 1 => "PLAY", _ => "CLEAR" }),
+            UtilityMode::Sampler => Some(if self.params.sampler_state.load(Ordering::Relaxed) == 0 { "HOLD" } else { "RELEASE" }),
+        }
+    }
+    fn toggle_running(&mut self) { self.advance_utility_trigger(); }
+
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Prism(self.tap_map())
+    }
+
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -1021,11 +1178,16 @@ impl App for PrismApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(PRISM_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, PRISM_TITLE);
         Text::new("Prism", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, PRISM_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, PRISM_DIM);
 
         let preset = self.params.preset.load(Ordering::Relaxed) as usize % PRESET_NAMES.len();
         let (effect, _variant) = effect_for_preset(preset);
@@ -1047,7 +1209,7 @@ impl App for PrismApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, PRISM_BG, PRISM_DIM, PRISM_ACCENT);
 
         // --- Right: for Multidelay, a tap-time map (unchanged); for
         // Micro Loop, the same axis repurposed to show each layer's
@@ -1060,7 +1222,7 @@ impl App for PrismApp {
         let axis_x1 = 600;
         let axis_y = 200;
         Line::new(Point::new(axis_x0, axis_y), Point::new(axis_x1, axis_y))
-            .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(12, 24, 12), 1))
+            .into_styled(PrimitiveStyle::with_stroke(PRISM_AXIS, 1))
             .draw(fb)
             .ok();
 
@@ -1113,9 +1275,8 @@ impl App for PrismApp {
                 _ => flat_tap_gain(t, values.len().max(1)),
             };
             let h = (gain * 60.0) as i32;
-            let bright = (gain * 63.0) as u8;
             Line::new(Point::new(x, axis_y), Point::new(x, axis_y - h))
-                .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(0, bright, bright / 6), 2))
+                .into_styled(PrimitiveStyle::with_stroke(prism_tap_color(gain), 2))
                 .draw(fb)
                 .ok();
         }
@@ -2802,5 +2963,26 @@ mod tests {
         }
         const AXIS_X0: i32 = 380;
         assert!(max_x < AXIS_X0, "list text reached x={max_x}, at or past axis_x0 ({AXIS_X0})");
+    }
+}
+
+#[cfg(test)]
+mod transport_contract_tests {
+    use super::*;
+    #[test]
+    fn button_describes_the_next_utility_action() {
+        let mut app = PrismApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()));
+        assert_eq!(app.transport_action(), None);
+        app.params.utility_mode.store(1, Ordering::Relaxed);
+        for label in ["RECORD", "PLAY", "CLEAR", "RECORD"] {
+            assert_eq!(app.transport_action(), Some(label));
+            app.toggle_running();
+        }
+        app.params.utility_mode.store(2, Ordering::Relaxed);
+        assert_eq!(app.transport_action(), Some("HOLD"));
+        app.toggle_running();
+        assert_eq!(app.transport_action(), Some("RELEASE"));
+        app.toggle_running();
+        assert_eq!(app.transport_action(), Some("HOLD"));
     }
 }

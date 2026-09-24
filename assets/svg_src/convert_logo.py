@@ -1,11 +1,24 @@
 """One-time conversion: mx1_logo_white.svg -> ../raw/mx1_logo.raw.
 
-Renders the vector logo at a fixed target size with resvg (`pip install
-resvg_py`), then thresholds on alpha (>127 = lit) and packs it 1bpp,
-MSB-first per row -- the same raw-bitmap convention
+Renders the vector logo with resvg (`pip install resvg_py`) at a much
+higher resolution than the target (supersampling), downsamples with a
+proper box filter, *then* thresholds on alpha (>127 = lit) and packs
+it 1bpp, MSB-first per row -- the same raw-bitmap convention
 src/spleen_fonts.rs's fonts use, for the same reason: this has to blit
 on real firmware exactly the way it does here, no runtime SVG
 rasterizer or alpha blending in the loop on an STM32N6.
+
+The supersample-then-threshold step matters: resvg already
+anti-aliases at whatever resolution it renders, but thresholding
+straight off a render *at* the target size throws that gradient
+information away per-pixel, leaving visibly jagged diagonals/curves at
+1bpp. Rendering at SUPERSAMPLE_FACTOR x the target and box-filtering
+down first lets each final pixel's lit/unlit call be based on real
+coverage (how much of that pixel's area the glyph actually fills)
+instead of one sample point -- the standard supersample-then-threshold
+technique for sharp binary output, same idea `spleen_fonts.rs`'s own
+hand-drawn 1bpp glyphs get "for free" from being authored at their
+exact target resolution to begin with.
 
 Re-run this if the source artwork or target size changes:
     pip install resvg_py Pillow
@@ -16,11 +29,15 @@ import resvg_py
 from PIL import Image
 
 TARGET_WIDTH = 400  # resvg preserves aspect ratio -- actual output may be a pixel or two narrower
+SUPERSAMPLE_FACTOR = 4
 
 
 def main():
-    data = resvg_py.svg_to_bytes(svg_path="mx1_logo_white.svg", width=TARGET_WIDTH)
-    img = Image.open(__import__("io").BytesIO(bytes(data))).convert("RGBA")
+    data = resvg_py.svg_to_bytes(svg_path="mx1_logo_white.svg", width=TARGET_WIDTH * SUPERSAMPLE_FACTOR)
+    hi_res = Image.open(__import__("io").BytesIO(bytes(data))).convert("RGBA")
+    hi_w, hi_h = hi_res.size
+    target_h = round(hi_h / SUPERSAMPLE_FACTOR)
+    img = hi_res.resize((TARGET_WIDTH, target_h), Image.Resampling.BOX)
     w, h = img.size
     px = img.load()
 

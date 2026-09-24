@@ -145,12 +145,12 @@ fn render_to_png(path: &str) {
     }
     slint::platform::set_platform(Box::new(HeadlessPlatform)).expect("platform already set");
     let window = WINDOW.with(Rc::clone);
-    window.set_size(PhysicalSize::new(940, 1058));
+    window.set_size(PhysicalSize::new(1240, 560));
 
     let ui = PrismScreen::new().unwrap();
     ui.show().unwrap();
 
-    let mut buffer = SharedPixelBuffer::<Rgb8Pixel>::new(940, 1058);
+    let mut buffer = SharedPixelBuffer::<Rgb8Pixel>::new(1240, 560);
     let stride = buffer.width() as usize;
     window.draw_if_needed(|renderer| {
         renderer.render(buffer.make_mut_slice(), stride);

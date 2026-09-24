@@ -21,7 +21,7 @@
 
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::paramlist::ParamList;
 use crate::util::{note_name, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_8X16};
@@ -98,6 +98,17 @@ pub struct AnalyzerApp {
     list: ParamList,
 }
 
+// --- Analyzer's own palette: clinical phosphor cyan on near-black,
+// not a device-wide theme -- the look of a real CRT lab scope, cold
+// and precise, matching this app's own "measure the truth of a
+// signal" character. A real clip warning still flashes red
+// (`draw_db_bar`) -- that's a functional alert, not this palette. ---
+
+const ANALYZER_BG: Rgb565 = Rgb565::new(0, 2, 1);
+const ANALYZER_TITLE: Rgb565 = Rgb565::new(26, 60, 31);
+const ANALYZER_ACCENT: Rgb565 = Rgb565::new(0, 56, 31);
+const ANALYZER_DIM: Rgb565 = Rgb565::new(9, 22, 12);
+
 impl AnalyzerApp {
     pub fn new() -> Self {
         Self {
@@ -105,16 +116,114 @@ impl AnalyzerApp {
             list: ParamList::new(),
         }
     }
+
+    /// Real `(name, value)` rows for this flat 3-row list -- exposed
+    /// for an alternate renderer (a live Slint screen) instead of
+    /// drawn. No groups here (unlike every other app), so there's no
+    /// `is_group`/windowing to do -- always all 3 rows.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String)> {
+        let mode = self.shared.mode.load(Ordering::Relaxed) as usize % MODE_NAMES.len();
+        let demo = self.shared.demo_kind.load(Ordering::Relaxed) as usize % DEMO_NAMES.len();
+        vec![
+            ("Mode".to_string(), MODE_NAMES[mode].to_string()),
+            ("Demo Signal".to_string(), DEMO_NAMES[demo].to_string()),
+            ("Frequency".to_string(), format!("{:.0} Hz", self.shared.frequency.get())),
+        ]
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// Which of `MODE_NAMES` the display should currently render.
+    pub(crate) fn mode_kind(&self) -> (u32, &'static str) {
+        let idx = self.shared.mode.load(Ordering::Relaxed) % MODE_NAMES.len() as u32;
+        (idx, MODE_NAMES[idx as usize])
+    }
+
+    /// Real FFT spectrum bars, normalized 0..1 -- same source the
+    /// real Spectrum/Spectrogram panels read.
+    pub(crate) fn spectrum_levels(&self) -> Vec<f32> {
+        self.shared.spectrum.lock().unwrap().iter().map(|db| ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0)).collect()
+    }
+
+    /// Real time-domain waveform, -1..1.
+    pub(crate) fn waveform_samples(&self) -> Vec<f32> {
+        self.shared.waveform.lock().unwrap().iter().map(|v| v.clamp(-1.0, 1.0)).collect()
+    }
+
+    /// Real peak/RMS level, normalized 0..1 -- `(peak, rms)`.
+    pub(crate) fn level_meters(&self) -> (f32, f32) {
+        let norm = |db: f32| ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0);
+        (norm(self.shared.peak_db.get()), norm(self.shared.rms_db.get()))
+    }
+
+    /// The autocorrelation-detected note name, or "--".
+    pub(crate) fn detected_note_name(&self) -> String {
+        let note = self.shared.detected_note.load(Ordering::Relaxed);
+        if note == NO_PITCH { "--".to_string() } else { crate::util::note_name(note) }
+    }
 }
 
 impl App for AnalyzerApp {
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows().into_iter().map(|(n, v)| (n, v, false)).collect()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        let (analyzer_kind, analyzer_name) = self.mode_kind();
+        let mut spectrum = Vec::new();
+        let mut waveform = crate::app::CurveSegments::default();
+        let mut peak_level = 0.0;
+        let mut rms_level = 0.0;
+        let mut pitch_name = String::new();
+        match analyzer_kind {
+            0 => spectrum = self.spectrum_levels(),
+            1 => {
+                // Real connected-line-segment geometry (see
+                // `polyline_segments`), not a bar chart -- the fixed
+                // canvas size here must match what the live screen
+                // actually draws this panel at.
+                const SCOPE_POINTS: usize = 60;
+                const PANEL_W: f32 = 260.0;
+                const PANEL_H: f32 = 190.0;
+                let raw = self.waveform_samples();
+                if !raw.is_empty() {
+                    let step = (raw.len() as f32 / SCOPE_POINTS as f32).max(1.0);
+                    let resampled: Vec<f32> = (0..SCOPE_POINTS).map(|i| raw[((i as f32 * step) as usize).min(raw.len() - 1)]).collect();
+                    let (mid_x, mid_y, length, angle_deg) = crate::app::polyline_segments(&resampled, PANEL_W, PANEL_H, true);
+                    waveform = crate::app::CurveSegments { mid_x, mid_y, length, angle_deg };
+                }
+            }
+            // 2 = Spectrogram -- not rendered live here (see
+            // slint_analyzer_live.rs's own copy of this same
+            // scope-cut decision); falls through with everything
+            // empty, which the Slint side shows as a plain label.
+            3 => (peak_level, rms_level) = self.level_meters(),
+            4 => pitch_name = self.detected_note_name(),
+            _ => {}
+        }
+        crate::app::SlintExtra::Analyzer(crate::app::AnalyzerExtra {
+            analyzer_kind,
+            analyzer_name: analyzer_name.to_string(),
+            spectrum,
+            waveform,
+            peak_level,
+            rms_level,
+            pitch_name,
+        })
+    }
+
     fn tick(&mut self, input: &Input) {
         // No groups to expand/collapse here -- unlike every other
         // app's menu, this one is a flat 3-row list, so knob1_press
         // (which elsewhere toggles a group) simply does nothing,
         // rather than the surprising "jump back to row 0" this used
         // to do.
-        self.list.navigate(input.knob1, NUM_ROWS, 1);
+        self.list.navigate_input(input, NUM_ROWS, 1);
 
         if input.knob2 != 0 {
             match selection_for(self.list.selected) {
@@ -158,11 +267,16 @@ impl App for AnalyzerApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(ANALYZER_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, ANALYZER_TITLE);
         Text::new("Analyzer", Point::new(16, 26), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_8X16, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_8X16, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_8X16, ANALYZER_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_8X16, ANALYZER_DIM);
 
         let mode = self.shared.mode.load(Ordering::Relaxed) as usize % MODE_NAMES.len();
         let demo = self.shared.demo_kind.load(Ordering::Relaxed) as usize % DEMO_NAMES.len();
@@ -171,7 +285,7 @@ impl App for AnalyzerApp {
             ("Demo Signal".to_string(), DEMO_NAMES[demo].to_string()),
             ("Frequency".to_string(), format!("{:.0} Hz", self.shared.frequency.get())),
         ];
-        self.list.draw(fb, 16, 56, 26, 3, &rows);
+        self.list.draw_themed(fb, 16, 56, 26, 3, &rows, ANALYZER_BG, ANALYZER_DIM, ANALYZER_ACCENT);
 
         let plot_x = 16;
         let plot_y = 150;
@@ -201,7 +315,7 @@ impl AnalyzerApp {
             let bx = x + i as i32 * bar_w;
             let by = y + h - bar_h as i32;
             Rectangle::new(Point::new(bx, by), Size::new((bar_w - 1).max(1) as u32, bar_h))
-                .into_styled(PrimitiveStyle::with_fill(Rgb565::new(0, 63, 10)))
+                .into_styled(PrimitiveStyle::with_fill(ANALYZER_ACCENT))
                 .draw(fb)
                 .ok();
         }
@@ -216,7 +330,7 @@ impl AnalyzerApp {
             let py = mid - (sample.clamp(-1.0, 1.0) * (h as f32 / 2.0)) as i32;
             let point = Point::new(px, py);
             if let Some(p0) = prev {
-                draw_line(fb, p0, point, Rgb565::new(0, 63, 10));
+                draw_line(fb, p0, point, ANALYZER_ACCENT);
             }
             prev = Some(point);
         }
@@ -236,10 +350,13 @@ impl AnalyzerApp {
                     continue;
                 }
                 let cy = y + h - (ri as i32 + 1) * row_h;
+                // Cyan heat instead of green -- both G and B climb
+                // with intensity so a hot cell reads white-cyan, not
+                // acid green, matching this app's own scope palette.
                 let g = (intensity as u32 * 63 / 255) as u8;
-                let r = (intensity as u32 * 20 / 255) as u8;
+                let b = (intensity as u32 * 31 / 255) as u8;
                 Rectangle::new(Point::new(cx, cy), Size::new(col_w as u32, row_h as u32))
-                    .into_styled(PrimitiveStyle::with_fill(Rgb565::new(r, g, 5)))
+                    .into_styled(PrimitiveStyle::with_fill(Rgb565::new(1, g, b)))
                     .draw(fb)
                     .ok();
             }
@@ -274,7 +391,7 @@ impl AnalyzerApp {
         if note == NO_PITCH {
             Text::new("No pitch detected", Point::new(x, y + 40), dim).draw(fb).ok();
         } else {
-            let big = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::new(0, 63, 10));
+            let big = MonoTextStyle::new(&SPLEEN_16X32, ANALYZER_ACCENT);
             Text::new(&note_name(note), Point::new(x, y + 40), big).draw(fb).ok();
             let _ = accent;
         }
@@ -283,13 +400,16 @@ impl AnalyzerApp {
 
 fn draw_db_bar(fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32, db: f32) {
     Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32))
-        .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(16, 32, 16), 1))
+        .into_styled(PrimitiveStyle::with_stroke(ANALYZER_DIM, 1))
         .draw(fb)
         .ok();
     let t = ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0);
     let fill_w = (t * w as f32) as u32;
     if fill_w > 0 {
-        let color = if db > -3.0 { Rgb565::new(31, 10, 10) } else { Rgb565::new(0, 63, 10) };
+        // A real clip warning still flashes red regardless of this
+        // app's own cyan palette -- that's a functional alert, not
+        // personality styling.
+        let color = if db > -3.0 { Rgb565::new(31, 10, 10) } else { ANALYZER_ACCENT };
         Rectangle::new(Point::new(x, y), Size::new(fill_w, h as u32))
             .into_styled(PrimitiveStyle::with_fill(color))
             .draw(fb)

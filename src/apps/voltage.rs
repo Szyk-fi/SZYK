@@ -16,9 +16,10 @@
 //! and Cascade both use.
 
 use crate::app::{App, Input};
+use crate::arpeggiator::{Arpeggiator, PATTERN_NAMES as ARP_PATTERN_NAMES};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -30,7 +31,7 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::f32::consts::{PI, TAU};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 const BASE_NOTE: i32 = 48;
@@ -76,13 +77,14 @@ fn pad_rank(physical_index: i32) -> i32 {
     (3 - row) * 4 + col
 }
 
-fn note_for(rank: i32) -> i32 {
-    (BASE_NOTE + rank).clamp(NOTE_MIN, NOTE_MAX)
+fn note_for(rank: i32, octave: i32) -> i32 {
+    (BASE_NOTE + rank + octave * 12).clamp(NOTE_MIN, NOTE_MAX)
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
     Osc1Wave,
+    Octave,
     Osc2Wave,
     Osc2Detune,
     OscMix,
@@ -105,6 +107,9 @@ enum Selection {
     LfoDepth,
     LfoDest,
     UserPreset(usize),
+    ArpOn,
+    ArpPattern,
+    ArpRate,
 }
 
 #[derive(Clone, Copy)]
@@ -113,7 +118,8 @@ enum Row {
     Leaf(Selection),
 }
 
-const NUM_GROUPS: usize = 5;
+const NUM_GROUPS: usize = 6;
+const ARP_GROUP: usize = 5;
 const NUM_USER_PRESETS: usize = 8;
 
 /// One saved snapshot of every Voltage knob -- see
@@ -148,6 +154,9 @@ struct UserPresetData {
 
 struct Params {
     osc1_wave: AtomicU32,
+    /// Transposes every pad's note by this many octaves -- same
+    /// pattern/range as Plaits' own Octave.
+    octave: AtomicI32,
     osc2_wave: AtomicU32,
     osc2_detune: AtomicF32, // semitones
     osc_mix: AtomicF32,     // 0 = all osc1, 1 = all osc2
@@ -178,6 +187,8 @@ struct Params {
     /// and `UserPresetData`. UI-thread-only; the audio thread never
     /// touches this.
     user_presets: [Mutex<Option<UserPresetData>>; NUM_USER_PRESETS],
+    /// See arpeggiator.rs -- stepped once per audio block in `process`.
+    arp: Arpeggiator,
 }
 
 impl Params {
@@ -185,6 +196,7 @@ impl Params {
         let (mix_level, ext_mix_level) = mixer_bus.register("Voltage", modbus);
         Self {
             osc1_wave: AtomicU32::new(0),
+            octave: AtomicI32::new(0),
             osc2_wave: AtomicU32::new(0),
             osc2_detune: AtomicF32::new(0.15),
             osc_mix: AtomicF32::new(0.5),
@@ -220,6 +232,7 @@ impl Params {
             mix_level,
             ext_mix_level,
             user_presets: std::array::from_fn(|_| Mutex::new(None)),
+            arp: Arpeggiator::new(),
         }
     }
 }
@@ -232,6 +245,19 @@ pub struct VoltageApp {
     expanded: [bool; NUM_GROUPS],
 }
 
+// --- Voltage's own palette: vintage teal on charcoal, not a
+// device-wide theme -- a classic subtractive-synth panel look,
+// distinct from Synth's own warm orange. The filter panel's cutoff
+// (red) and env-sweep (amber) markers stay their own hues -- they're
+// functional distinct markers already outside the shared green
+// family, not this palette's job to touch. ---
+
+const VOLTAGE_BG: Rgb565 = Rgb565::new(2, 6, 3);
+const VOLTAGE_TITLE: Rgb565 = Rgb565::new(27, 60, 29);
+const VOLTAGE_ACCENT: Rgb565 = Rgb565::new(9, 51, 20);
+const VOLTAGE_DIM: Rgb565 = Rgb565::new(9, 26, 12);
+const VOLTAGE_OUTLINE: Rgb565 = Rgb565::new(5, 10, 6);
+
 impl VoltageApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self { params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)), sensitivity, nav_speed, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
@@ -241,6 +267,7 @@ impl VoltageApp {
         match g {
             0 => vec![
                 Selection::Osc1Wave,
+                Selection::Octave,
                 Selection::Osc2Wave,
                 Selection::Osc2Detune,
                 Selection::OscMix,
@@ -260,6 +287,7 @@ impl VoltageApp {
             ],
             2 => vec![Selection::AmpAttack, Selection::AmpDecay, Selection::AmpSustain, Selection::AmpRelease],
             3 => vec![Selection::LfoRate, Selection::LfoDepth, Selection::LfoDest],
+            g if g == ARP_GROUP => vec![Selection::ArpOn, Selection::ArpPattern, Selection::ArpRate],
             _ => (0..NUM_USER_PRESETS).map(Selection::UserPreset).collect(),
         }
     }
@@ -283,6 +311,7 @@ impl VoltageApp {
             1 => "Filter",
             2 => "Amp Envelope",
             3 => "LFO",
+            g if g == ARP_GROUP => "Arp",
             _ => "Presets",
         }
     }
@@ -298,6 +327,7 @@ impl VoltageApp {
             1 => format!("cutoff {:.2}, res {:.2}", self.params.filter_cutoff.get(), self.params.filter_resonance.get()),
             2 => format!("A{:.2} D{:.2} S{:.2} R{:.2}", self.params.amp_attack.get(), self.params.amp_decay.get(), self.params.amp_sustain.get(), self.params.amp_release.get()),
             3 => LFO_DEST_NAMES[self.params.lfo_dest.load(Ordering::Relaxed) as usize % 2].to_string(),
+            g if g == ARP_GROUP => self.leaf_value(Selection::ArpOn),
             _ => {
                 let saved = self.params.user_presets.iter().filter(|s| s.lock().unwrap().is_some()).count();
                 format!("{saved}/{NUM_USER_PRESETS} saved")
@@ -308,6 +338,7 @@ impl VoltageApp {
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::Osc1Wave => "Osc 1 Wave".into(),
+            Selection::Octave => "Octave".into(),
             Selection::Osc2Wave => "Osc 2 Wave".into(),
             Selection::Osc2Detune => "Osc 2 Detune".into(),
             Selection::OscMix => "Osc Mix".into(),
@@ -330,12 +361,16 @@ impl VoltageApp {
             Selection::LfoDepth => "Depth".into(),
             Selection::LfoDest => "Destination".into(),
             Selection::UserPreset(i) => format!("Slot {}", i + 1),
+            Selection::ArpOn => "On/Off".into(),
+            Selection::ArpPattern => "Pattern".into(),
+            Selection::ArpRate => "Rate".into(),
         }
     }
 
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
             Selection::Osc1Wave => WAVE_NAMES[self.params.osc1_wave.load(Ordering::Relaxed) as usize % 4].to_string(),
+            Selection::Octave => format!("{:+}", self.params.octave.load(Ordering::Relaxed)),
             Selection::Osc2Wave => WAVE_NAMES[self.params.osc2_wave.load(Ordering::Relaxed) as usize % 4].to_string(),
             Selection::Osc2Detune => format!("{:+.2} st", self.params.osc2_detune.get()),
             Selection::OscMix => format!("{:.2}", self.params.osc_mix.get()),
@@ -360,6 +395,14 @@ impl VoltageApp {
             Selection::UserPreset(i) => {
                 if self.params.user_presets[i].lock().unwrap().is_some() { "saved".into() } else { "empty".into() }
             }
+            Selection::ArpOn => {
+                if self.params.arp.enabled.load(Ordering::Relaxed) { "On".into() } else { "Off".into() }
+            }
+            Selection::ArpPattern => {
+                let idx = self.params.arp.pattern.load(Ordering::Relaxed) as usize % ARP_PATTERN_NAMES.len();
+                ARP_PATTERN_NAMES[idx].to_string()
+            }
+            Selection::ArpRate => format!("{:.1} Hz", self.params.arp.rate_hz.get()),
         }
     }
 
@@ -373,6 +416,10 @@ impl VoltageApp {
             Selection::Osc1Wave => {
                 let cur = self.params.osc1_wave.load(Ordering::Relaxed) as i32;
                 self.params.osc1_wave.store((cur + step).rem_euclid(4) as u32, Ordering::Relaxed);
+            }
+            Selection::Octave => {
+                let cur = self.params.octave.load(Ordering::Relaxed);
+                self.params.octave.store(cur + step, Ordering::Relaxed);
             }
             Selection::Osc2Wave => {
                 let cur = self.params.osc2_wave.load(Ordering::Relaxed) as i32;
@@ -411,6 +458,17 @@ impl VoltageApp {
                 } else {
                     self.load_user_preset(i);
                 }
+            }
+            Selection::ArpOn => self.params.arp.enabled.store(delta > 0, Ordering::Relaxed),
+            Selection::ArpPattern => {
+                let cur = self.params.arp.pattern.load(Ordering::Relaxed) as i32;
+                let next = (cur + step).rem_euclid(ARP_PATTERN_NAMES.len() as i32);
+                self.params.arp.pattern.store(next as u32, Ordering::Relaxed);
+            }
+            Selection::ArpRate => {
+                let cur = self.params.arp.rate_hz.get();
+                let next = (cur + accelerate(delta) * sensitivity * 0.2).clamp(0.5, 30.0);
+                self.params.arp.rate_hz.set(next);
             }
         }
     }
@@ -475,6 +533,7 @@ impl VoltageApp {
 
     fn reset(&mut self, sel: Selection) {
         match sel {
+            Selection::Octave => self.params.octave.store(0, Ordering::Relaxed),
             Selection::Osc2Detune => self.params.osc2_detune.set(0.15),
             Selection::OscMix => self.params.osc_mix.set(0.5),
             Selection::SubLevel => self.params.sub_level.set(0.3),
@@ -496,6 +555,9 @@ impl VoltageApp {
             Selection::LfoDepth => self.params.lfo_depth.set(0.0),
             Selection::UserPreset(i) => *self.params.user_presets[i].lock().unwrap() = None,
             Selection::Osc1Wave | Selection::Osc2Wave | Selection::LfoDest => {} // no single sensible default
+            Selection::ArpOn => self.params.arp.enabled.store(false, Ordering::Relaxed),
+            Selection::ArpPattern => self.params.arp.pattern.store(0, Ordering::Relaxed), // Up
+            Selection::ArpRate => self.params.arp.rate_hz.set(8.0),
         }
     }
 
@@ -505,7 +567,7 @@ impl VoltageApp {
     fn draw_panel_frame(&self, fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32, title: &str, accent: MonoTextStyle<Rgb565>, dim: MonoTextStyle<Rgb565>) -> (i32, i32, i32, i32) {
         Text::new(title, Point::new(x, y + 9), accent).draw(fb).ok();
         let box_y = y + 14;
-        Rectangle::new(Point::new(x, box_y), Size::new(w as u32, h as u32)).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(10, 20, 10), 1)).draw(fb).ok();
+        Rectangle::new(Point::new(x, box_y), Size::new(w as u32, h as u32)).into_styled(PrimitiveStyle::with_stroke(VOLTAGE_OUTLINE, 1)).draw(fb).ok();
         let _ = dim;
         (x + 3, box_y + 3, x + w - 3, box_y + h - 3)
     }
@@ -540,7 +602,7 @@ impl VoltageApp {
             let v = ((osc_sum + sub) / (1.0 + sub_level)).clamp(-1.5, 1.5);
             let point = Point::new(x0 + i, mid_y - (v * amp) as i32);
             if let Some(p) = prev {
-                Line::new(p, point).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(0, 50, 20), 1)).draw(fb).ok();
+                Line::new(p, point).into_styled(PrimitiveStyle::with_stroke(VOLTAGE_ACCENT, 1)).draw(fb).ok();
             }
             prev = Some(point);
         }
@@ -575,7 +637,7 @@ impl VoltageApp {
             let hgt = (response(frac) / 2.2 * top_h) as i32;
             let point = Point::new(x0 + i, base_y - hgt);
             if let Some(p) = prev {
-                Line::new(p, point).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(0, 50, 20), 1)).draw(fb).ok();
+                Line::new(p, point).into_styled(PrimitiveStyle::with_stroke(VOLTAGE_ACCENT, 1)).draw(fb).ok();
             }
             prev = Some(point);
         }
@@ -614,7 +676,7 @@ impl VoltageApp {
         let level_y = |level: f32| y1 - (level.clamp(0.0, 1.0) * top_h) as i32;
         let points = [Point::new(x0, y1), Point::new(ax, level_y(1.0)), Point::new(dx, level_y(s)), Point::new(sx, level_y(s)), Point::new(rx, y1)];
         for pair in points.windows(2) {
-            Line::new(pair[0], pair[1]).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(0, 50, 20), 1)).draw(fb).ok();
+            Line::new(pair[0], pair[1]).into_styled(PrimitiveStyle::with_stroke(VOLTAGE_ACCENT, 1)).draw(fb).ok();
         }
     }
 
@@ -639,11 +701,11 @@ impl VoltageApp {
             let v = (t * cycles * TAU).sin() * depth;
             let point = Point::new(x0 + i, mid_y - (v * amp) as i32);
             if let Some(p) = prev {
-                Line::new(p, point).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(0, 50, 20), 1)).draw(fb).ok();
+                Line::new(p, point).into_styled(PrimitiveStyle::with_stroke(VOLTAGE_ACCENT, 1)).draw(fb).ok();
             }
             prev = Some(point);
         }
-        Line::new(Point::new(x0, mid_y), Point::new(x1, mid_y)).into_styled(PrimitiveStyle::with_stroke(Rgb565::new(10, 20, 10), 1)).draw(fb).ok();
+        Line::new(Point::new(x0, mid_y), Point::new(x1, mid_y)).into_styled(PrimitiveStyle::with_stroke(VOLTAGE_OUTLINE, 1)).draw(fb).ok();
     }
 }
 
@@ -652,10 +714,161 @@ fn cutoff_hz(knob: f32) -> f32 {
     MIN_CUTOFF_HZ * (MAX_CUTOFF_HZ / MIN_CUTOFF_HZ).powf(knob.clamp(0.0, 1.0))
 }
 
+impl VoltageApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// Real sketches of all 4 panels (Oscillators/Filter/Amp Envelope/
+    /// LFO), sampled at `n` points each -- the exact same pure-
+    /// function-of-the-current-params math `draw_oscillator_panel`/
+    /// `draw_filter_panel`/`draw_amp_env_panel`/`draw_lfo_panel`
+    /// already use for the real embedded_graphics screen, just
+    /// evaluated at `n` steps instead of pixel width, for an
+    /// alternate renderer to plot however it likes.
+    pub(crate) fn voltage_panels(&self, n: usize) -> VoltagePanels {
+        let osc1_wave = self.params.osc1_wave.load(Ordering::Relaxed);
+        let osc2_wave = self.params.osc2_wave.load(Ordering::Relaxed);
+        let osc_mix = self.params.osc_mix.get().clamp(0.0, 1.0);
+        let sub_level = self.params.sub_level.get().clamp(0.0, 1.0);
+        let oscillator: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / n as f32;
+                let s1 = wave_sample(osc1_wave, (t * 2.0).fract());
+                let s2 = wave_sample(osc2_wave, (t * 2.0).fract());
+                let osc_sum = s1 * (1.0 - osc_mix) + s2 * osc_mix;
+                let sub = wave_sample(1, t) * sub_level;
+                ((osc_sum + sub) / (1.0 + sub_level)).clamp(-1.5, 1.5) / 1.5
+            })
+            .collect();
+
+        let cutoff = self.params.filter_cutoff.get();
+        let res = self.params.filter_resonance.get();
+        let env_amount = self.params.filter_env_amount.get();
+        let response = |frac: f32| -> f32 {
+            let dist = (frac - cutoff) * 8.0;
+            let peak = (1.0 + res * 3.0) * (-dist * dist).exp();
+            let base = if frac < cutoff { 1.0 } else { (-(frac - cutoff) * 4.0).exp() };
+            (base + peak).min(2.2)
+        };
+        let filter: Vec<f32> = (0..n).map(|i| response(i as f32 / n as f32) / 2.2).collect();
+        let filter_cutoff_frac = cutoff.clamp(0.0, 1.0);
+        let filter_swept_frac = if env_amount.abs() > 0.01 { Some((cutoff + env_amount * 0.5).clamp(0.0, 1.0)) } else { None };
+
+        let a = self.params.amp_attack.get().max(0.03);
+        let d = self.params.amp_decay.get().max(0.03);
+        let s = self.params.amp_sustain.get().clamp(0.0, 1.0);
+        let r = self.params.amp_release.get().max(0.03);
+        const SUSTAIN_FRAC: f32 = 0.3;
+        let scale = (1.0 - SUSTAIN_FRAC) / (a + d + r);
+        let a_frac = a * scale;
+        let d_frac = a_frac + d * scale;
+        let s_frac = d_frac + SUSTAIN_FRAC;
+        let amp_env: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / n as f32;
+                if t < a_frac {
+                    t / a_frac.max(0.001)
+                } else if t < d_frac {
+                    1.0 - (1.0 - s) * (t - a_frac) / (d_frac - a_frac).max(0.001)
+                } else if t < s_frac {
+                    s
+                } else {
+                    s * (1.0 - (t - s_frac) / (1.0 - s_frac).max(0.001))
+                }
+            })
+            .collect();
+
+        let rate = self.params.lfo_rate.get();
+        let depth = self.params.lfo_depth.get().clamp(0.0, 1.0);
+        let cycles = 1.0 + (rate - MIN_LFO_RATE) / (MAX_LFO_RATE - MIN_LFO_RATE) * 5.0;
+        let lfo: Vec<f32> = (0..n).map(|i| (i as f32 / n as f32 * cycles * TAU).sin() * depth).collect();
+
+        VoltagePanels { oscillator, filter, filter_cutoff_frac, filter_swept_frac, amp_env, lfo }
+    }
+}
+
+/// See `VoltageApp::voltage_panels`.
+pub(crate) struct VoltagePanels {
+    pub oscillator: Vec<f32>,
+    pub filter: Vec<f32>,
+    pub filter_cutoff_frac: f32,
+    pub filter_swept_frac: Option<f32>,
+    pub amp_env: Vec<f32>,
+    pub lfo: Vec<f32>,
+}
+
 impl App for VoltageApp {
+    fn supports_pad_lock(&self) -> bool { true }
+
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        // Real curve *shape* only needs a modest sample count once
+        // it's rendered as genuine connected line segments (not a bar
+        // chart) -- see `polyline_segments`. The fixed canvas size
+        // here must match what the live screen actually draws these
+        // panels at (see slint_home_live.rs's own copy of this size),
+        // or the segment angles come out stretched.
+        const CURVE_POINTS: usize = 48;
+        const PANEL_W: f32 = 130.0;
+        const PANEL_H: f32 = 95.0;
+        let p = self.voltage_panels(CURVE_POINTS);
+        let seg = |samples: &[f32], centered: bool| {
+            let (mid_x, mid_y, length, angle_deg) = crate::app::polyline_segments(samples, PANEL_W, PANEL_H, centered);
+            crate::app::CurveSegments { mid_x, mid_y, length, angle_deg }
+        };
+        crate::app::SlintExtra::Voltage(crate::app::VoltageExtra {
+            oscillator: seg(&p.oscillator, true),
+            filter: seg(&p.filter, false),
+            filter_cutoff_frac: p.filter_cutoff_frac,
+            filter_swept_frac: p.filter_swept_frac,
+            amp_env: seg(&p.amp_env, false),
+            lfo: seg(&p.lfo, true),
+        })
+    }
+
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -681,11 +894,16 @@ impl App for VoltageApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(VOLTAGE_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, VOLTAGE_TITLE);
         Text::new("Voltage", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, VOLTAGE_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, VOLTAGE_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -698,7 +916,7 @@ impl App for VoltageApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, VOLTAGE_BG, VOLTAGE_DIM, VOLTAGE_ACCENT);
 
         // --- Right: one small illustrative panel per menu group --
         // oscillators, filter, amp envelope, LFO -- each a live sketch
@@ -862,13 +1080,28 @@ impl AudioProcessor for VoltageProcessor {
         let lfo_rate = self.params.lfo_rate.get();
         let lfo_depth = self.params.lfo_depth.get();
         let lfo_dest = self.params.lfo_dest.load(Ordering::Relaxed);
-        let held = *self.params.held.lock().unwrap();
+        let held_raw = *self.params.held.lock().unwrap();
+        // Real arp step -- see Plaits' `process` for the fuller
+        // explanation of why this runs here (sample-block-accurate,
+        // real-time thread) rather than in `tick`. `held` is reordered
+        // to pitch-rank first so Up/Down walk ascending/descending
+        // pitch, not raw physical pad index.
+        let held_by_rank: [bool; 16] = std::array::from_fn(|r| held_raw[pad_rank(r as i32) as usize]);
+        let arp_rank = self.params.arp.step(&held_by_rank, frames as f32 / sample_rate);
+        let held: [bool; 16] = match arp_rank {
+            Some(r) => {
+                let idx = pad_rank(r as i32) as usize;
+                std::array::from_fn(|i| i == idx)
+            }
+            None => held_raw,
+        };
         let q = 0.5 + (1.0 - resonance) * 9.5; // higher Q value = *less* resonant in this recurrence
+        let octave = self.params.octave.load(Ordering::Relaxed);
 
         let mut active_voices: usize = 0;
         for i in 0..16 {
             let gate = held[i];
-            let note = note_for(pad_rank(i as i32)) as f32;
+            let note = note_for(pad_rank(i as i32), octave) as f32;
             let base_freq = 440.0 * 2f32.powf((note - 69.0) / 12.0);
             let voice = &mut self.voices[i];
             voice.buf.clear();

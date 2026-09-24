@@ -14,17 +14,27 @@
 //!     project root (decoded once at startup via the `hound` crate; new
 //!     files need an app/sim restart to be picked up -- no live-reload).
 //!
-//! Explicitly not included yet: per-step probability/rolls/delay,
-//! humanize, pattern banks/chaining, mute/choke groups, a mod matrix,
-//! remix/auto-fill, MIDI export. All real DrumComputer features
-//! (confirmed against sugar-bytes.de/drumcomputer), all natural
-//! follow-ups, being added slowly one at a time. First one in:
-//! per-track trigger Probability -- a track-wide chance (not yet
-//! per-step) that an active step actually sounds, DrumComputer's
-//! "probability sequencer" simplified to one knob for now.
+//! MPC-leaning additions on top of that DrumComputer core (this is
+//! where the "groovebox" side of the sim leans more MPC than
+//! DrumComputer, which has neither of these): **Pattern** banks (8
+//! independently-savable step patterns per the same 8 tracks --
+//! switching one in copies its saved step/pitch/rolls/delay data over
+//! the live one, see `PatternSnapshot`/`switch_pattern`), a **Song**
+//! mode that chains patterns in order with a per-slot repeat count and
+//! loops the whole arrangement, and a **Pads** performance bank -- 16
+//! one-shot WAV pads (same `SampleSlot`/`decode_wav` sample library
+//! as a Sample-instrument track), playable live off the grid
+//! independent of the step-sequenced tracks, each choking itself on
+//! retrigger.
+//!
+//! Explicitly not included yet: per-pad velocity (this sim's `Input`
+//! has no velocity, only held/not-held), multiple pad banks (A-D),
+//! sample chopping/slicing, note repeat, a mod matrix, remix/
+//! auto-fill, MIDI export. All natural follow-ups, being added slowly
+//! one at a time.
 //!
 //! Control surface: knob1 browses the menu (Global BPM/Swing, or one of
-//! the 4 Track groups -- each track's own leaf set depends on its
+//! the 8 Track groups -- each track's own leaf set depends on its
 //! current Instrument, same idea as Plaits' per-engine parameter
 //! labels). knob2 edits the selected leaf; both knobs reset on press.
 //! The 4x4 grid always shows/edits the 16 steps of whichever track
@@ -40,7 +50,7 @@ use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, NUM_ENGINES};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
@@ -56,19 +66,49 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-const NUM_TRACKS: usize = 4;
+const NUM_TRACKS: usize = 8;
 const NUM_STEPS: usize = 16;
 const MIN_BPM: f32 = 40.0;
 const MAX_BPM: f32 = 300.0;
 const DEFAULT_BPM: f32 = 120.0;
 const MAX_SWING: f32 = 0.6; // higher starts to feel broken rather than "groovy"
-const NUM_GROUPS: usize = 1 + NUM_TRACKS; // Global, then one per track
+/// How many independently-savable 8-track step patterns exist --
+/// switching (`Selection::Pattern`) swaps every track's live step
+/// data for a saved snapshot, MPC-style ("Sequence" in their
+/// terminology), instead of this app only ever having the one pattern
+/// it started with. See `PatternSnapshot`/`switch_pattern`.
+const NUM_PATTERNS: usize = 8;
+/// How many pattern slots a Song arrangement can chain together
+/// before looping back to the first -- see `Selection::SongSlotPattern`
+/// /`SongSlotRepeats`/`Params::song_length`.
+const NUM_SONG_SLOTS: usize = 8;
+/// The live-performance sample pads -- a single 16-pad bank (one-shot,
+/// choke-per-pad) playable directly off the grid, independent of the
+/// 8 step-sequenced tracks above. Real MPCs offer 4 banks (A-D, 64
+/// pads); one bank is the honest scope for a first pass here -- see
+/// the module doc comment.
+const NUM_PADS: usize = 16;
+const NUM_GROUPS: usize = 4 + NUM_TRACKS; // Global, Song, Pads, Kits, then one per track
 
 /// (label, steps-per-beat). Index 3 ("1/16") is the default, matching
 /// this app's original fixed behavior exactly, so existing patterns
 /// don't change tempo/feel unless this is touched.
 const SUBDIVISIONS: [(&str, f32); 7] = [("1/4", 1.0), ("1/8", 2.0), ("1/8T", 3.0), ("1/16", 4.0), ("1/16T", 6.0), ("1/32", 8.0), ("1/32T", 12.0)];
 const DEFAULT_SUBDIVISION: usize = 3;
+/// A per-track clock divider (`Selection::TrackRate`): stretches this
+/// track's own steps to last N global pulses instead of one, on top
+/// of the same shared `Params::subdivision`/BPM clock every track
+/// already advances against -- the same idea `TrackParams::length`
+/// already applies to the *count* of steps a track plays, just
+/// applied to each step's *duration* instead. A synth-pad track set
+/// to "4x" and a Length of 4 covers the same 16-pulse bar as a normal
+/// 16-step drum track, but with 4 long-held notes instead of 16 short
+/// ones -- program long pads with a handful of pads instead of typing
+/// out the same sustained note across 16 fast steps. Index 0 ("1x")
+/// is the default, matching every track's original fixed timing
+/// exactly.
+const TRACK_RATES: [(&str, usize); 6] = [("1x", 1), ("2x", 2), ("3x", 3), ("4x", 4), ("6x", 6), ("8x", 8)];
+const DEFAULT_TRACK_RATE_INDEX: usize = 0;
 const MIN_ROLLS: u32 = 1;
 const MAX_ROLLS: u32 = 4;
 const DEFAULT_ROLLS: u32 = 1;
@@ -242,6 +282,39 @@ fn resolve_sample(packs: &[SamplePack], pack: usize, ty: usize, file: usize) -> 
     packs.get(pack)?.types.get(ty)?.sample_indices.get(file).copied()
 }
 
+/// How many on-disk kit slots exist -- same size as `NUM_PATTERNS`,
+/// no particular reason they need to match beyond both being a
+/// reasonable, knob-browsable count.
+const NUM_KITS: usize = 8;
+const KITS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kits");
+
+/// A saved pad bank -- every pad's sample (by *name*, not flat index:
+/// indices shift if the sample library changes between saving and
+/// loading a kit, but a real file's name is stable) plus its chop
+/// points and volume. Serialized as plain TOML via `serde` (already a
+/// dependency for `manifest.rs`'s own app manifests), one file per
+/// slot under `kits/`.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Kit {
+    pads: Vec<KitPad>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+struct KitPad {
+    /// `None` for an empty pad -- matches `Params::pad_sample`'s own
+    /// `NO_SOURCE` meaning, just spelled as an absent value instead of
+    /// a sentinel int since this is a human-readable file, not a
+    /// packed atomic.
+    sample: Option<String>,
+    start: f32,
+    end: f32,
+    volume: f32,
+}
+
+fn kit_path(dir: &Path, slot: usize) -> std::path::PathBuf {
+    dir.join(format!("kit_{}.toml", slot + 1))
+}
+
 fn decode_wav(path: &Path) -> Result<(Vec<f32>, f32), Box<dyn std::error::Error>> {
     let mut reader = hound::WavReader::open(path)?;
     let spec = reader.spec();
@@ -307,6 +380,9 @@ enum Selection {
     /// 0 -- see `TrackParams::length`'s doc comment for the polymeter
     /// effect a length shorter than another track's creates.
     Length(usize),
+    /// How many global pulses each of this track's steps lasts -- see
+    /// `TrackParams::rate_div`'s doc comment.
+    TrackRate(usize),
     /// Refills this track's whole 16-step pattern with a fresh random
     /// on/off pattern -- press-only action, same "press knob2" idiom
     /// as Bloom/Madness's Randomize.
@@ -314,6 +390,69 @@ enum Selection {
     /// Turns every one of this track's 16 steps off -- press-only
     /// action, same idiom as `RandomizePattern`.
     ClearPattern(usize),
+
+    // --- Pattern banks ---
+    /// Which of the `NUM_PATTERNS` saved patterns is currently live --
+    /// see `switch_pattern`.
+    Pattern,
+
+    // --- Song mode ---
+    SongMode,
+    /// How many of the `NUM_SONG_SLOTS` song slots are part of the
+    /// arrangement before it loops.
+    SongLength,
+    /// Which pattern song slot `s` plays -- "last touched" convention
+    /// doesn't apply here (there's no grid to touch a song slot with),
+    /// so these are real per-slot leaves, same as a track's own
+    /// per-track leaves.
+    SongSlotPattern(usize),
+    SongSlotRepeats(usize),
+
+    // --- Pad performance bank ---
+    /// Toggles Pad Perform mode -- while on, the grid stops editing
+    /// whatever track/step it normally would and instead triggers the
+    /// 16 pads directly (see `SequencerApp::tick_pad_perform`), same
+    /// "takes over the grid" convention as `GridEdit`.
+    PadPerform,
+    /// The focused pad's sample -- one flat browse across every
+    /// sample this build found (see `Params::samples`), not a
+    /// pack/type/file drill-down like a track's own Sample instrument
+    /// uses. Acts on `SequencerApp::last_touched_pad`, same "last
+    /// touched" convention `StepPitch` etc. use for steps. While Pad
+    /// Perform is on, knob2 also cycles this directly whenever the
+    /// menu is sitting on a Group row (not drilled into a specific
+    /// leaf) -- see `tick_pad_perform` -- so setting up a pad never
+    /// strictly requires opening this menu at all.
+    PadFile,
+    /// Chop points into the focused pad's resolved sample, 0..1 --
+    /// see `Params::pad_start`/`pad_end`.
+    PadStart,
+    PadEnd,
+    PadVolume,
+    /// Re-chops the *whole* pad bank: takes whichever sample is on the
+    /// focused pad and assigns that same sample to all 16 pads, each
+    /// with a different 1/16th Start/End slice -- press-only action,
+    /// same idiom as `RandomizePattern`.
+    AutoChopToPads,
+    /// Spreads 16 consecutive samples (starting from whichever one is
+    /// on the focused pad) across all 16 pads in order, each at its
+    /// full length (Start 0%/End 100%) -- the fast way to load a
+    /// whole folder of one-shots without dialing in each pad one at a
+    /// time: browse to the first sample you want, press this, done.
+    /// Press-only action, same idiom as `AutoChopToPads`.
+    FillBankFromHere,
+
+    // --- Kits: saved/recalled pad-bank presets (see `Kit`) ---
+    /// Which of the `NUM_KITS` on-disk kit slots `SaveKit`/`LoadKit`
+    /// act on.
+    KitSlot,
+    /// Writes the pad bank's current samples/chop points/volumes to
+    /// the browsed kit slot -- press-only action.
+    SaveKit,
+    /// Loads the browsed kit slot's saved pad bank over the live one
+    /// -- press-only action. A slot that's never been saved, or whose
+    /// file no longer parses, does nothing (see `Kit::load`).
+    LoadKit,
 }
 
 impl Selection {
@@ -340,8 +479,24 @@ impl Selection {
             | Selection::Mute(t)
             | Selection::Solo(t)
             | Selection::Length(t)
+            | Selection::TrackRate(t)
             | Selection::RandomizePattern(t)
             | Selection::ClearPattern(t) => Some(t),
+            Selection::Pattern
+            | Selection::SongMode
+            | Selection::SongLength
+            | Selection::SongSlotPattern(_)
+            | Selection::SongSlotRepeats(_)
+            | Selection::PadPerform
+            | Selection::PadFile
+            | Selection::PadStart
+            | Selection::PadEnd
+            | Selection::PadVolume
+            | Selection::AutoChopToPads
+            | Selection::FillBankFromHere
+            | Selection::KitSlot
+            | Selection::SaveKit
+            | Selection::LoadKit => None,
         }
     }
 }
@@ -402,6 +557,11 @@ struct TrackParams {
     /// skips them, so shortening and later lengthening a track
     /// doesn't lose anything you'd already programmed.
     length: AtomicUsize,
+    /// How many global pulses each of this track's steps lasts -- see
+    /// `TRACK_RATES`/`Selection::TrackRate`. `1` (default) means this
+    /// track advances a step every pulse, exactly as before this
+    /// existed.
+    rate_div: AtomicUsize,
     /// External modulation input (see modbus.rs) -- added on top of
     /// `volume` every block, live regardless of whether this app's own
     /// screen is the one showing, since every app's processor always
@@ -431,9 +591,80 @@ impl TrackParams {
             mute: AtomicBool::new(false),
             solo: AtomicBool::new(false),
             length: AtomicUsize::new(NUM_STEPS),
+            rate_div: AtomicUsize::new(TRACK_RATES[DEFAULT_TRACK_RATE_INDEX].1),
             ext_volume: modbus.register(format!("Sequencer: Track {track_num} Volume")),
         }
     }
+}
+
+/// One saved copy of every track's step-level programming (on/off +
+/// the three per-step modifiers) -- a plain, non-atomic snapshot, not
+/// the live playing state itself. `Params::pattern_bank` holds
+/// `NUM_PATTERNS` of these; switching the active pattern
+/// (`switch_pattern`) copies the outgoing pattern's *live* atomics
+/// into its slot here, then copies the incoming slot's saved values
+/// back into those same live atomics -- so every other part of this
+/// app (the processor's step-check loop, `tick()`'s grid toggling,
+/// `draw()`'s grid sketch) keeps reading `TrackParams` exactly as it
+/// always has, completely unaware patterns exist. Deliberately a
+/// snapshot-swap rather than widening `TrackParams`'s own arrays with
+/// a pattern dimension -- the latter would touch (and re-index) every
+/// site in this file that already reads `tracks[t].steps[i]` directly,
+/// this doesn't touch any of them.
+#[derive(Clone, Copy)]
+struct PatternSnapshot {
+    steps: [bool; NUM_STEPS],
+    step_pitch: [i32; NUM_STEPS],
+    step_rolls: [u32; NUM_STEPS],
+    step_delay: [f32; NUM_STEPS],
+}
+
+impl Default for PatternSnapshot {
+    fn default() -> Self {
+        Self { steps: [false; NUM_STEPS], step_pitch: [0; NUM_STEPS], step_rolls: [DEFAULT_ROLLS; NUM_STEPS], step_delay: [0.0; NUM_STEPS] }
+    }
+}
+
+impl PatternSnapshot {
+    fn capture(track: &TrackParams) -> Self {
+        Self {
+            steps: std::array::from_fn(|i| track.steps[i].load(Ordering::Relaxed)),
+            step_pitch: std::array::from_fn(|i| track.step_pitch[i].load(Ordering::Relaxed)),
+            step_rolls: std::array::from_fn(|i| track.step_rolls[i].load(Ordering::Relaxed)),
+            step_delay: std::array::from_fn(|i| track.step_delay[i].get()),
+        }
+    }
+
+    fn apply(&self, track: &TrackParams) {
+        for i in 0..NUM_STEPS {
+            track.steps[i].store(self.steps[i], Ordering::Relaxed);
+            track.step_pitch[i].store(self.step_pitch[i], Ordering::Relaxed);
+            track.step_rolls[i].store(self.step_rolls[i], Ordering::Relaxed);
+            track.step_delay[i].set(self.step_delay[i]);
+        }
+    }
+}
+
+/// Swaps the live step data for a different saved pattern -- a no-op
+/// if `new_pattern` is already current. Fixed-size arrays/`Mutex`
+/// only (no allocation), so this is safe to call from the audio
+/// thread too (Song mode's automatic pattern changes, see
+/// `SequencerProcessor::process`), not just from the UI thread
+/// (`Selection::Pattern`).
+fn switch_pattern(params: &Params, new_pattern: usize) {
+    let new_pattern = new_pattern.min(NUM_PATTERNS - 1);
+    let old_pattern = params.current_pattern.load(Ordering::Relaxed);
+    if old_pattern == new_pattern {
+        return;
+    }
+    let mut bank = params.pattern_bank.lock().unwrap();
+    for t in 0..NUM_TRACKS {
+        bank[old_pattern][t] = PatternSnapshot::capture(&params.tracks[t]);
+    }
+    for t in 0..NUM_TRACKS {
+        bank[new_pattern][t].apply(&params.tracks[t]);
+    }
+    params.current_pattern.store(new_pattern, Ordering::Relaxed);
 }
 
 struct Params {
@@ -483,6 +714,63 @@ struct Params {
     /// modulation input -- see mixer_bus.rs.
     mix_level: Arc<AtomicF32>,
     ext_mix_level: Arc<AtomicF32>,
+
+    // --- Pattern banks (see `PatternSnapshot`/`switch_pattern`) ---
+    /// Every pattern's saved step data, `[pattern][track]`. The
+    /// *currently playing* pattern's data instead lives directly in
+    /// `tracks` -- this only holds the other, currently-inactive
+    /// patterns' saved copies (plus, transiently, the active one's,
+    /// the instant before a switch overwrites it -- see
+    /// `switch_pattern`).
+    pattern_bank: Mutex<[[PatternSnapshot; NUM_TRACKS]; NUM_PATTERNS]>,
+    current_pattern: AtomicUsize,
+
+    // --- Song mode (see `SequencerProcessor::process`'s song-advance
+    // logic) ---
+    song_mode: AtomicBool,
+    /// Which pattern each song slot plays.
+    song_slot_pattern: [AtomicUsize; NUM_SONG_SLOTS],
+    /// How many times each slot's pattern repeats (a full 16-step bar
+    /// each, regardless of that pattern's own per-track polymeter
+    /// lengths -- see the processor's own doc comment) before Song
+    /// mode advances to the next slot.
+    song_slot_repeats: [AtomicUsize; NUM_SONG_SLOTS],
+    /// How many of the `NUM_SONG_SLOTS` are actually part of the
+    /// arrangement before it loops back to slot 0.
+    song_length: AtomicUsize,
+    /// Which slot is currently playing -- written by the audio thread
+    /// (`SequencerProcessor`), read by the UI for the Song strip's
+    /// live highlight. Meaningless (and unread) while `song_mode` is
+    /// off.
+    song_pos: AtomicUsize,
+
+    // --- Pad performance bank (see `SequencerApp::tick_pad_perform`) ---
+    /// Flat index into `samples` -- `crate::audio_bus::NO_SOURCE`
+    /// (the default) means "empty". One flat browse rather than a
+    /// pack/type/file drill-down (unlike a track's own Sample
+    /// instrument): setting up a pad is meant to be fast, and 16 pads
+    /// each needing 3 menu levels was exactly the "menu-divey" setup
+    /// flow this build moved away from -- see also
+    /// `Selection::FillBankFromHere` and `tick_pad_perform`'s
+    /// always-live knob2 shortcut.
+    pad_sample: [AtomicUsize; NUM_PADS],
+    /// Trim points into the resolved sample, 0..1 of its total length
+    /// -- how a sample gets "chopped" across pads: assign the same
+    /// sample to several pads with different Start/End, or use
+    /// `Selection::AutoChopToPads` to do that automatically in 16
+    /// equal slices. `end <= start` plays nothing (see
+    /// `SamplePlayer::trigger_chop`).
+    pad_start: [AtomicF32; NUM_PADS],
+    pad_end: [AtomicF32; NUM_PADS],
+    pad_volume: [AtomicF32; NUM_PADS],
+    /// One-shot "trigger this pad now" pulse, same convention as
+    /// `audition_pending` -- set by a grid press while
+    /// `Selection::PadPerform` is on, consumed once by the audio
+    /// thread.
+    pad_pending: [AtomicBool; NUM_PADS],
+
+    // --- Kits: saved/recalled pad-bank presets (see `Kit`) ---
+    kit_slot: AtomicUsize,
 }
 
 impl Params {
@@ -496,7 +784,7 @@ impl Params {
             humanize: AtomicF32::new(0.0),
             running: AtomicBool::new(false),
             pulse: AtomicUsize::new(0),
-            tracks: std::array::from_fn(|i| TrackParams::new(i.min(3) as u32, i + 1, modbus)),
+            tracks: std::array::from_fn(|i| TrackParams::new((i % DRUM_KIND_NAMES.len()) as u32, i + 1, modbus)),
             audition_pending: std::array::from_fn(|_| AtomicBool::new(false)),
             audition_step: std::array::from_fn(|_| AtomicUsize::new(0)),
             samples,
@@ -504,6 +792,22 @@ impl Params {
             bus_out: audio_bus.register("Sequencer"),
             mix_level,
             ext_mix_level,
+            pattern_bank: Mutex::new(std::array::from_fn(|_| std::array::from_fn(|_| PatternSnapshot::default()))),
+            current_pattern: AtomicUsize::new(0),
+            song_mode: AtomicBool::new(false),
+            // Slot `s` defaults to pattern `s` -- an untouched song
+            // still does *something* sensible (plays patterns 0..7 in
+            // order once each) rather than looping silence.
+            song_slot_pattern: std::array::from_fn(|s| AtomicUsize::new(s % NUM_PATTERNS)),
+            song_slot_repeats: std::array::from_fn(|_| AtomicUsize::new(1)),
+            song_length: AtomicUsize::new(NUM_SONG_SLOTS),
+            song_pos: AtomicUsize::new(0),
+            pad_sample: std::array::from_fn(|_| AtomicUsize::new(crate::audio_bus::NO_SOURCE)),
+            pad_start: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            pad_end: std::array::from_fn(|_| AtomicF32::new(1.0)),
+            pad_volume: std::array::from_fn(|_| AtomicF32::new(0.8)),
+            pad_pending: std::array::from_fn(|_| AtomicBool::new(false)),
+            kit_slot: AtomicUsize::new(0),
         }
     }
 }
@@ -534,7 +838,28 @@ pub struct SequencerApp {
     /// need to be shared with the audio thread, unlike the per-track
     /// RNGs `TrackVoice` uses for Humanize/probability.
     rng: u32,
+    /// `true` while Pad Perform mode is active -- see
+    /// `Selection::PadPerform` and `tick_pad_perform`.
+    pad_perform: bool,
+    /// The pad a grid press most recently focused -- what
+    /// `Selection::PadFile/Start/End/Volume` all edit.
+    last_touched_pad: usize,
 }
+
+// --- Sequencer's own palette: punchy hot red on near-black, not a
+// device-wide theme -- classic drum-machine energy (the red accent
+// lighting of a TR-style rhythm machine), matching this app's own
+// groovebox/DrumComputer character. ---
+
+const SEQUENCER_BG: Rgb565 = Rgb565::new(1, 1, 1);
+const SEQUENCER_TITLE: Rgb565 = Rgb565::new(31, 56, 27);
+const SEQUENCER_ACCENT: Rgb565 = Rgb565::new(31, 14, 7);
+const SEQUENCER_DIM: Rgb565 = Rgb565::new(15, 20, 10);
+const SEQUENCER_STEP_TRIMMED: Rgb565 = Rgb565::new(1, 2, 1);
+const SEQUENCER_STEP_ACTIVE: Rgb565 = Rgb565::new(12, 6, 3);
+const SEQUENCER_STEP_OFF: Rgb565 = Rgb565::new(3, 3, 3);
+const SEQUENCER_BORDER_DIM: Rgb565 = Rgb565::new(10, 8, 8);
+const SEQUENCER_LABEL_TRIMMED: Rgb565 = Rgb565::new(5, 4, 4);
 
 impl SequencerApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -550,6 +875,8 @@ impl SequencerApp {
             grid_edit_track: None,
             grid_edit_accum: 0,
             rng: 0x9E3779B9,
+            pad_perform: false,
+            last_touched_pad: 0,
         }
     }
 
@@ -572,10 +899,12 @@ impl SequencerApp {
     }
 
     fn group_name(&self, g: usize) -> String {
-        if g == 0 {
-            "Global".into()
-        } else {
-            format!("Track {g}")
+        match g {
+            0 => "Global".into(),
+            1 => "Song".into(),
+            2 => "Pads".into(),
+            3 => "Kits".into(),
+            _ => format!("Track {}", g - 3),
         }
     }
 
@@ -584,9 +913,31 @@ impl SequencerApp {
     /// just changing leaf *count* here instead of just labels.
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         if g == 0 {
-            return vec![Selection::Running, Selection::Bpm, Selection::Swing, Selection::Subdivision, Selection::Humanize];
+            return vec![Selection::Running, Selection::Bpm, Selection::Swing, Selection::Subdivision, Selection::Humanize, Selection::Pattern];
         }
-        let t = g - 1;
+        if g == 1 {
+            let mut leaves = vec![Selection::SongMode, Selection::SongLength];
+            for s in 0..NUM_SONG_SLOTS {
+                leaves.push(Selection::SongSlotPattern(s));
+                leaves.push(Selection::SongSlotRepeats(s));
+            }
+            return leaves;
+        }
+        if g == 2 {
+            return vec![
+                Selection::PadPerform,
+                Selection::PadFile,
+                Selection::PadStart,
+                Selection::PadEnd,
+                Selection::PadVolume,
+                Selection::AutoChopToPads,
+                Selection::FillBankFromHere,
+            ];
+        }
+        if g == 3 {
+            return vec![Selection::KitSlot, Selection::SaveKit, Selection::LoadKit];
+        }
+        let t = g - 4;
         let mut leaves = vec![Selection::Instrument(t), Selection::GridEdit(t)];
         match self.params.tracks[t].instrument.load(Ordering::Relaxed) {
             1 => {
@@ -618,6 +969,7 @@ impl SequencerApp {
             }
         }
         leaves.push(Selection::Length(t));
+        leaves.push(Selection::TrackRate(t));
         leaves.push(Selection::Volume(t));
         leaves.push(Selection::Probability(t));
         leaves.push(Selection::Mute(t));
@@ -642,7 +994,7 @@ impl SequencerApp {
 
     fn current_track(&self, rows: &[Row]) -> usize {
         match rows.get(self.list.selected) {
-            Some(Row::Group(g)) if *g >= 1 => *g - 1,
+            Some(Row::Group(g)) if *g >= 4 => *g - 4,
             Some(Row::Leaf(sel)) => sel.track().unwrap_or(self.last_track),
             _ => self.last_track,
         }
@@ -674,8 +1026,24 @@ impl SequencerApp {
             Selection::Mute(_) => "Mute".into(),
             Selection::Solo(_) => "Solo".into(),
             Selection::Length(_) => "Length".into(),
+            Selection::TrackRate(_) => "Rate".into(),
             Selection::RandomizePattern(_) => "Randomize Pattern".into(),
             Selection::ClearPattern(_) => "Clear Pattern".into(),
+            Selection::Pattern => "Pattern".into(),
+            Selection::SongMode => "Song Mode".into(),
+            Selection::SongLength => "Song Length".into(),
+            Selection::SongSlotPattern(s) => format!("Slot {} Pattern", s + 1),
+            Selection::SongSlotRepeats(s) => format!("Slot {} Repeats", s + 1),
+            Selection::PadPerform => "Pad Perform".into(),
+            Selection::PadFile => format!("Pad {} Sample", self.last_touched_pad + 1),
+            Selection::PadStart => format!("Pad {} Chop Start", self.last_touched_pad + 1),
+            Selection::PadEnd => format!("Pad {} Chop End", self.last_touched_pad + 1),
+            Selection::PadVolume => format!("Pad {} Volume", self.last_touched_pad + 1),
+            Selection::AutoChopToPads => "Auto-Chop To 16 Pads".into(),
+            Selection::FillBankFromHere => "Fill Bank From Here".into(),
+            Selection::KitSlot => "Kit".into(),
+            Selection::SaveKit => "Save Kit".into(),
+            Selection::LoadKit => "Load Kit".into(),
         }
     }
 
@@ -754,16 +1122,56 @@ impl SequencerApp {
                 if self.params.tracks[t].solo.load(Ordering::Relaxed) { "SOLO".into() } else { "off".into() }
             }
             Selection::Length(t) => format!("{} steps", self.params.tracks[t].length.load(Ordering::Relaxed)),
+            Selection::TrackRate(t) => {
+                let div = self.params.tracks[t].rate_div.load(Ordering::Relaxed);
+                TRACK_RATES.iter().find(|(_, d)| *d == div).map(|(name, _)| name.to_string()).unwrap_or_else(|| format!("{div}x"))
+            }
             Selection::RandomizePattern(_) => "press knob2".into(),
             Selection::ClearPattern(_) => "press knob2".into(),
+            Selection::Pattern => format!("{}", self.params.current_pattern.load(Ordering::Relaxed) + 1),
+            Selection::SongMode => {
+                if self.params.song_mode.load(Ordering::Relaxed) { "ON".into() } else { "off".into() }
+            }
+            Selection::SongLength => format!("{} slots", self.params.song_length.load(Ordering::Relaxed)),
+            Selection::SongSlotPattern(s) => format!("Pattern {}", self.params.song_slot_pattern[s].load(Ordering::Relaxed) + 1),
+            Selection::SongSlotRepeats(s) => format!("{}x", self.params.song_slot_repeats[s].load(Ordering::Relaxed)),
+            Selection::PadPerform => {
+                if self.pad_perform { "ON -- press knob1 to exit".into() } else { "off".into() }
+            }
+            Selection::PadFile => match self.resolved_pad_sample(self.last_touched_pad).and_then(|i| self.params.samples.get(i)) {
+                Some(slot) => truncate_display(&slot.name, 18),
+                None => "(empty)".into(),
+            },
+            Selection::PadStart => format!("{:.0}%", self.params.pad_start[self.last_touched_pad].get() * 100.0),
+            Selection::PadEnd => format!("{:.0}%", self.params.pad_end[self.last_touched_pad].get() * 100.0),
+            Selection::PadVolume => format!("{:.2}", self.params.pad_volume[self.last_touched_pad].get()),
+            Selection::AutoChopToPads => "press knob2".into(),
+            Selection::FillBankFromHere => "press knob2".into(),
+            Selection::KitSlot => format!("{}", self.params.kit_slot.load(Ordering::Relaxed) + 1),
+            Selection::SaveKit => "press knob2".into(),
+            Selection::LoadKit => "press knob2".into(),
         }
     }
 
     fn group_summary(&self, g: usize) -> String {
         if g == 0 {
-            return format!("{:.0} BPM", self.params.bpm.get());
+            return format!("{:.0} BPM, pattern {}", self.params.bpm.get(), self.params.current_pattern.load(Ordering::Relaxed) + 1);
         }
-        let t = g - 1;
+        if g == 1 {
+            return if self.params.song_mode.load(Ordering::Relaxed) {
+                format!("ON, slot {}/{}", self.params.song_pos.load(Ordering::Relaxed) + 1, self.params.song_length.load(Ordering::Relaxed))
+            } else {
+                "off".into()
+            };
+        }
+        if g == 2 {
+            let loaded = (0..NUM_PADS).filter(|&p| self.pad_resolves(p)).count();
+            return if self.pad_perform { format!("ON, {loaded}/{NUM_PADS} loaded") } else { format!("{loaded}/{NUM_PADS} loaded") };
+        }
+        if g == 3 {
+            return format!("slot {}", self.params.kit_slot.load(Ordering::Relaxed) + 1);
+        }
+        let t = g - 4;
         let inst_idx = self.params.tracks[t].instrument.load(Ordering::Relaxed) as usize % INSTRUMENT_NAMES.len();
         let detail = match inst_idx {
             1 => self.leaf_value(Selection::PlaitsEngine(t)),
@@ -787,7 +1195,9 @@ impl SequencerApp {
             detail
         };
         let len = self.params.tracks[t].length.load(Ordering::Relaxed);
-        if len != NUM_STEPS { format!("{detail} {len}st") } else { detail }
+        let detail = if len != NUM_STEPS { format!("{detail} {len}st") } else { detail };
+        let rate_div = self.params.tracks[t].rate_div.load(Ordering::Relaxed);
+        if rate_div != TRACK_RATES[DEFAULT_TRACK_RATE_INDEX].1 { format!("{detail} {rate_div}x") } else { detail }
     }
 
     /// Decodes whichever sample a track's Pack/Type/File selection
@@ -804,6 +1214,40 @@ impl SequencerApp {
         if let Some(slot) =
             resolve_sample(&self.params.sample_packs, pack_idx, type_idx, file_idx).and_then(|i| self.params.samples.get(i))
         {
+            slot.decoded();
+        }
+    }
+
+    /// The flat sample index pad `p` is currently assigned, if any --
+    /// `Params::pad_sample`'s `NO_SOURCE` sentinel resolves to `None`
+    /// the same way an unpatched `Selection::Source` does elsewhere.
+    fn resolved_pad_sample(&self, p: usize) -> Option<usize> {
+        let idx = self.params.pad_sample[p].load(Ordering::Relaxed);
+        if idx == crate::audio_bus::NO_SOURCE { None } else { Some(idx) }
+    }
+
+    /// Steps pad `p`'s sample by one, through every real sample this
+    /// build found plus an "empty" position -- the exact same
+    /// symmetric, both-directions "real options + one None" cycling
+    /// every `Selection::Source` picker in this codebase already uses
+    /// (see `crate::audio_bus::cycle_source`), just walking
+    /// `Params::samples` instead of an `AudioBus`.
+    fn cycle_pad_sample(&self, p: usize, step: i32) {
+        if step == 0 {
+            return;
+        }
+        let cur = self.params.pad_sample[p].load(Ordering::Relaxed);
+        let next = crate::audio_bus::cycle_source(cur, step, self.params.samples.len());
+        self.params.pad_sample[p].store(next, Ordering::Relaxed);
+        self.warm_selected_pad_sample(p);
+    }
+
+    fn pad_resolves(&self, p: usize) -> bool {
+        self.resolved_pad_sample(p).is_some()
+    }
+
+    fn warm_selected_pad_sample(&self, p: usize) {
+        if let Some(slot) = self.resolved_pad_sample(p).and_then(|i| self.params.samples.get(i)) {
             slot.decoded();
         }
     }
@@ -920,8 +1364,165 @@ impl SequencerApp {
                 let next = (cur + step).clamp(1, NUM_STEPS as i32);
                 self.params.tracks[t].length.store(next as usize, Ordering::Relaxed);
             }
+            Selection::TrackRate(t) => {
+                let cur_div = self.params.tracks[t].rate_div.load(Ordering::Relaxed);
+                let cur_idx = TRACK_RATES.iter().position(|(_, d)| *d == cur_div).unwrap_or(DEFAULT_TRACK_RATE_INDEX) as i32;
+                let next_idx = (cur_idx + step).rem_euclid(TRACK_RATES.len() as i32) as usize;
+                self.params.tracks[t].rate_div.store(TRACK_RATES[next_idx].1, Ordering::Relaxed);
+            }
             Selection::RandomizePattern(_) | Selection::ClearPattern(_) => {} // press-only, see `reset`
+            Selection::Pattern => {
+                let cur = self.params.current_pattern.load(Ordering::Relaxed) as i32;
+                let next = (cur + step).rem_euclid(NUM_PATTERNS as i32) as usize;
+                switch_pattern(&self.params, next);
+            }
+            Selection::SongMode => self.params.song_mode.store(delta > 0, Ordering::Relaxed),
+            Selection::SongLength => {
+                let cur = self.params.song_length.load(Ordering::Relaxed) as i32;
+                let next = (cur + step).clamp(1, NUM_SONG_SLOTS as i32);
+                self.params.song_length.store(next as usize, Ordering::Relaxed);
+            }
+            Selection::SongSlotPattern(s) => {
+                let cur = self.params.song_slot_pattern[s].load(Ordering::Relaxed) as i32;
+                let next = (cur + step).rem_euclid(NUM_PATTERNS as i32);
+                self.params.song_slot_pattern[s].store(next as usize, Ordering::Relaxed);
+            }
+            Selection::SongSlotRepeats(s) => {
+                let cur = self.params.song_slot_repeats[s].load(Ordering::Relaxed) as i32;
+                let next = (cur + step).clamp(1, 32);
+                self.params.song_slot_repeats[s].store(next as usize, Ordering::Relaxed);
+            }
+            Selection::PadPerform => self.pad_perform = delta > 0,
+            Selection::PadFile => self.cycle_pad_sample(self.last_touched_pad, step),
+            Selection::PadStart => {
+                let p = self.last_touched_pad;
+                let next = (self.params.pad_start[p].get() + accelerate(delta) * sensitivity * 0.05).clamp(0.0, 1.0);
+                self.params.pad_start[p].set(next);
+            }
+            Selection::PadEnd => {
+                let p = self.last_touched_pad;
+                let next = (self.params.pad_end[p].get() + accelerate(delta) * sensitivity * 0.05).clamp(0.0, 1.0);
+                self.params.pad_end[p].set(next);
+            }
+            Selection::PadVolume => bump(&self.params.pad_volume[self.last_touched_pad], delta, sensitivity),
+            Selection::AutoChopToPads | Selection::FillBankFromHere | Selection::SaveKit | Selection::LoadKit => {} // press-only, see `reset`
+            Selection::KitSlot => {
+                let cur = self.params.kit_slot.load(Ordering::Relaxed) as i32;
+                let next = (cur + step).rem_euclid(NUM_KITS as i32);
+                self.params.kit_slot.store(next as usize, Ordering::Relaxed);
+            }
         }
+    }
+
+    /// Slices whichever sample is on `last_touched_pad` into `NUM_PADS`
+    /// equal parts and assigns that same sample to every pad, one
+    /// slice each -- the "Chop-N-Slice" idiom real MPCs offer, minus
+    /// transient detection (equal division only). Silently does
+    /// nothing if the focused pad has no sample resolved yet.
+    fn auto_chop_to_pads(&mut self) {
+        let Some(sample_idx) = self.resolved_pad_sample(self.last_touched_pad) else { return };
+        for p in 0..NUM_PADS {
+            self.params.pad_sample[p].store(sample_idx, Ordering::Relaxed);
+            self.params.pad_start[p].set(p as f32 / NUM_PADS as f32);
+            self.params.pad_end[p].set((p + 1) as f32 / NUM_PADS as f32);
+        }
+    }
+
+    /// Spreads 16 consecutive samples across the whole pad bank in
+    /// order, each at full length -- see `Selection::FillBankFromHere`.
+    /// Wraps around `Params::samples` if there are fewer than 16 of
+    /// them left from the starting point. Silently does nothing if
+    /// there are no samples at all (nothing to spread).
+    fn fill_bank_from_here(&mut self) {
+        let n = self.params.samples.len();
+        if n == 0 {
+            return;
+        }
+        let start = self.resolved_pad_sample(self.last_touched_pad).unwrap_or(0);
+        for p in 0..NUM_PADS {
+            self.params.pad_sample[p].store((start + p) % n, Ordering::Relaxed);
+            self.params.pad_start[p].set(0.0);
+            self.params.pad_end[p].set(1.0);
+        }
+    }
+
+    /// Writes the live pad bank to `Params::kit_slot`'s file --
+    /// creates `kits/` on first use. Failure (a read-only disk, say)
+    /// is logged, not fatal -- same "never let a save/load action take
+    /// down the app" convention `manifest.rs`'s own TOML loading uses.
+    /// Takes the kits directory explicitly (rather than always using
+    /// `KITS_DIR`) purely so tests can point it at a scratch directory
+    /// instead of writing into the real project's `kits/` folder --
+    /// `save_kit`/`load_kit` are what real code calls.
+    fn save_kit_to(&self, dir: &Path) {
+        let pads: Vec<KitPad> = (0..NUM_PADS)
+            .map(|p| KitPad {
+                sample: self.resolved_pad_sample(p).and_then(|i| self.params.samples.get(i)).map(|s| s.name.clone()),
+                start: self.params.pad_start[p].get(),
+                end: self.params.pad_end[p].get(),
+                volume: self.params.pad_volume[p].get(),
+            })
+            .collect();
+        let kit = Kit { pads };
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            eprintln!("sequencer: couldn't create {}: {e}", dir.display());
+            return;
+        }
+        let path = kit_path(dir, self.params.kit_slot.load(Ordering::Relaxed));
+        match toml::to_string_pretty(&kit) {
+            Ok(text) => {
+                if let Err(e) = std::fs::write(&path, text) {
+                    eprintln!("sequencer: couldn't save {}: {e}", path.display());
+                }
+            }
+            Err(e) => eprintln!("sequencer: couldn't serialize kit: {e}"),
+        }
+    }
+
+    fn save_kit(&self) {
+        self.save_kit_to(Path::new(KITS_DIR));
+    }
+
+    /// Loads `Params::kit_slot`'s file over the live pad bank. A slot
+    /// that's never been saved (no file yet), or a sample name the
+    /// current library no longer has, degrades to an empty pad rather
+    /// than erroring -- the same "fail closed, not fatal" convention
+    /// `resolve_sample`'s own out-of-range handling uses. See
+    /// `save_kit_to` for why `dir` is a parameter.
+    fn load_kit_from(&self, dir: &Path) {
+        let path = kit_path(dir, self.params.kit_slot.load(Ordering::Relaxed));
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("sequencer: couldn't load {}: {e}", path.display());
+                return;
+            }
+        };
+        let kit: Kit = match toml::from_str(&text) {
+            Ok(kit) => kit,
+            Err(e) => {
+                eprintln!("sequencer: couldn't parse {}: {e}", path.display());
+                return;
+            }
+        };
+        for (p, pad) in kit.pads.iter().take(NUM_PADS).enumerate() {
+            let sample_idx = pad
+                .sample
+                .as_deref()
+                .and_then(|name| self.params.samples.iter().position(|s| s.name == name))
+                .unwrap_or(crate::audio_bus::NO_SOURCE);
+            self.params.pad_sample[p].store(sample_idx, Ordering::Relaxed);
+            self.params.pad_start[p].set(pad.start);
+            self.params.pad_end[p].set(pad.end);
+            self.params.pad_volume[p].set(pad.volume);
+            if sample_idx != crate::audio_bus::NO_SOURCE {
+                self.warm_selected_pad_sample(p);
+            }
+        }
+    }
+
+    fn load_kit(&self) {
+        self.load_kit_from(Path::new(KITS_DIR));
     }
 
     fn reset(&mut self, sel: Selection) {
@@ -943,6 +1544,7 @@ impl SequencerApp {
             Selection::Mute(t) => self.params.tracks[t].mute.store(false, Ordering::Relaxed),
             Selection::Solo(t) => self.params.tracks[t].solo.store(false, Ordering::Relaxed),
             Selection::Length(t) => self.params.tracks[t].length.store(NUM_STEPS, Ordering::Relaxed),
+            Selection::TrackRate(t) => self.params.tracks[t].rate_div.store(TRACK_RATES[DEFAULT_TRACK_RATE_INDEX].1, Ordering::Relaxed),
             Selection::RandomizePattern(t) => self.randomize_pattern(t),
             Selection::ClearPattern(t) => {
                 for i in 0..NUM_STEPS {
@@ -950,13 +1552,28 @@ impl SequencerApp {
                 }
             }
             Selection::GridEdit(_) => self.grid_edit_track = None,
+            Selection::Pattern => switch_pattern(&self.params, 0),
+            Selection::SongMode => self.params.song_mode.store(false, Ordering::Relaxed),
+            Selection::SongLength => self.params.song_length.store(NUM_SONG_SLOTS, Ordering::Relaxed),
+            Selection::SongSlotPattern(s) => self.params.song_slot_pattern[s].store(s % NUM_PATTERNS, Ordering::Relaxed),
+            Selection::SongSlotRepeats(s) => self.params.song_slot_repeats[s].store(1, Ordering::Relaxed),
+            Selection::PadPerform => self.pad_perform = false,
+            Selection::PadStart => self.params.pad_start[self.last_touched_pad].set(0.0),
+            Selection::PadEnd => self.params.pad_end[self.last_touched_pad].set(1.0),
+            Selection::PadVolume => self.params.pad_volume[self.last_touched_pad].set(0.8),
+            Selection::AutoChopToPads => self.auto_chop_to_pads(),
+            Selection::FillBankFromHere => self.fill_bank_from_here(),
+            Selection::KitSlot => self.params.kit_slot.store(0, Ordering::Relaxed),
+            Selection::SaveKit => self.save_kit(),
+            Selection::LoadKit => self.load_kit(),
             // No sensible single "default" to reset these to.
             Selection::Instrument(_)
             | Selection::DrumKind(_)
             | Selection::PlaitsEngine(_)
             | Selection::SamplePack(_)
             | Selection::SampleType(_)
-            | Selection::SampleFile(_) => {}
+            | Selection::SampleFile(_)
+            | Selection::PadFile => {}
         }
     }
 
@@ -1015,9 +1632,170 @@ impl SequencerApp {
         }
         self.prev_grid = input.grid;
     }
+
+    /// Pad Perform mode's entire input handling, replacing the normal
+    /// menu-navigation + grid-toggle `tick()` body while active (see
+    /// `pad_perform`) -- every pad press both focuses that pad (for
+    /// the Sample/Start/End/Volume leaves) and triggers it live,
+    /// immediately, independent of the step sequencer's transport.
+    /// Knobs still browse/edit the menu as normal (unlike Grid Edit,
+    /// which repurposes them) -- with one addition: whenever the menu
+    /// is sitting on a Group row rather than a specific leaf, knob2
+    /// directly cycles the focused pad's sample instead of doing
+    /// nothing. That's the fast setup path this mode exists for --
+    /// enter Pad Perform, press a pad, turn knob2, done, with never
+    /// having to open a menu at all; drilling into the Pads group's
+    /// own leaves is only needed for Start/End/Volume fine-tuning.
+    fn tick_pad_perform(&mut self, input: &Input) {
+        let rows = self.visible_rows();
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
+        let current = rows.get(self.list.selected).copied();
+        if input.knob1_press {
+            if let Some(Row::Group(g)) = current {
+                self.expanded[g] = !self.expanded[g];
+            } else {
+                self.pad_perform = false;
+            }
+        }
+        match current {
+            Some(Row::Leaf(sel)) => {
+                self.edit(sel, input.knob2);
+                if input.knob2_press {
+                    self.reset(sel);
+                }
+            }
+            Some(Row::Group(_)) => self.cycle_pad_sample(self.last_touched_pad, input.knob2),
+            None => {}
+        }
+
+        for i in 0..NUM_PADS {
+            if input.grid[i] && !self.prev_grid[i] {
+                self.last_touched_pad = i;
+                self.params.pad_pending[i].store(true, Ordering::Relaxed);
+            }
+        }
+        self.prev_grid = input.grid;
+    }
+}
+
+impl SequencerApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// Whether `grid_edit_track` (per-step pitch editing) is currently
+    /// active -- a live screen needs this to show the same "editing,
+    /// not toggling" hint the real device's on-screen hint bar shows.
+    pub(crate) fn grid_edit_active(&self) -> bool {
+        self.grid_edit_track.is_some()
+    }
+
+    /// The real on-screen 4x4 step grid for whichever track is
+    /// currently browsed -- same data `draw()`'s own grid sketch
+    /// reads, exposed for an alternate renderer instead of drawn
+    /// directly.
+    pub(crate) fn step_grid_visual(&self) -> crate::app::SequencerExtra {
+        let rows = self.visible_rows();
+        let track = self.current_track(&rows);
+        let rate_div = self.params.tracks[track].rate_div.load(Ordering::Relaxed).max(1);
+        let rate_tag = if rate_div != 1 { format!(" ({rate_div}x rate)") } else { String::new() };
+        let header = if self.pad_perform {
+            format!("PAD PERFORM -- pad {} focused", self.last_touched_pad + 1)
+        } else if self.grid_edit_track == Some(track) {
+            format!("Track {} -- GRID EDIT: knob1 pad, knob2 note{rate_tag}", track + 1)
+        } else {
+            format!("Track {} -- grid edits this{rate_tag}", track + 1)
+        };
+
+        let track_len = self.params.tracks[track].length.load(Ordering::Relaxed).clamp(1, NUM_STEPS);
+        let playhead_step = (self.params.pulse.load(Ordering::Relaxed) / rate_div) % track_len;
+        let focused_step = self.last_touched_step[track];
+
+        let steps = (0..16)
+            .map(|i| {
+                let active = self.params.tracks[track].steps[i].load(Ordering::Relaxed);
+                let trimmed = i >= track_len;
+                let is_playhead = i == playhead_step && !trimmed;
+                let is_focused = i == focused_step;
+                let step_pitch = self.params.tracks[track].step_pitch[i].load(Ordering::Relaxed);
+                let rolls = self.params.tracks[track].step_rolls[i].load(Ordering::Relaxed);
+                let mut label = format!("{}", i + 1);
+                if step_pitch != 0 {
+                    label.push_str(&format!(" {step_pitch:+}"));
+                }
+                if rolls > 1 {
+                    label.push_str(&format!(" x{rolls}"));
+                }
+                (active, trimmed, is_playhead, is_focused, label)
+            })
+            .collect();
+
+        let song_slots = (0..NUM_SONG_SLOTS)
+            .map(|s| (self.params.song_slot_pattern[s].load(Ordering::Relaxed), self.params.song_slot_repeats[s].load(Ordering::Relaxed)))
+            .collect();
+        let pad_loaded = (0..NUM_PADS).map(|p| self.pad_resolves(p)).collect();
+
+        crate::app::SequencerExtra {
+            header,
+            steps,
+            current_pattern: self.params.current_pattern.load(Ordering::Relaxed),
+            num_patterns: NUM_PATTERNS,
+            song_mode: self.params.song_mode.load(Ordering::Relaxed),
+            song_pos: self.params.song_pos.load(Ordering::Relaxed),
+            song_length: self.params.song_length.load(Ordering::Relaxed),
+            song_slots,
+            pad_perform: self.pad_perform,
+            last_touched_pad: self.last_touched_pad,
+            pad_loaded,
+        }
+    }
 }
 
 impl App for SequencerApp {
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Sequencer(self.step_grid_visual())
+    }
+
     /// The transport -- global to the whole app, unlike Bloom/
     /// Madness's per-shape Running, so there's no "which one" to pick.
     fn running(&self) -> Option<bool> {
@@ -1027,6 +1805,18 @@ impl App for SequencerApp {
     fn toggle_running(&mut self) {
         let cur = self.params.running.load(Ordering::Relaxed);
         self.params.running.store(!cur, Ordering::Relaxed);
+    }
+
+    /// F2 flips the whole grid between Step-sequencing (the default)
+    /// and Pad Perform -- the same two states `Selection::PadPerform`
+    /// already toggles from the menu, just reachable in one press
+    /// instead of browsing into the Pads group first.
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(if self.pad_perform { "PAD" } else { "STEP" })
+    }
+
+    fn toggle_grid_mode(&mut self) {
+        self.pad_perform = !self.pad_perform;
     }
 
     /// Mirrors the currently-browsed track's step grid on a physical
@@ -1044,7 +1834,8 @@ impl App for SequencerApp {
         let track = self.current_track(&rows);
         let track_len = self.params.tracks[track].length.load(Ordering::Relaxed).clamp(1, NUM_STEPS);
         let running = self.params.running.load(Ordering::Relaxed);
-        let playhead_step = self.params.pulse.load(Ordering::Relaxed) % track_len;
+        let rate_div = self.params.tracks[track].rate_div.load(Ordering::Relaxed).max(1);
+        let playhead_step = (self.params.pulse.load(Ordering::Relaxed) / rate_div) % track_len;
 
         std::array::from_fn(|i| {
             let active = self.params.tracks[track].steps[i].load(Ordering::Relaxed);
@@ -1063,9 +1854,13 @@ impl App for SequencerApp {
             self.tick_grid_edit(track, input);
             return;
         }
+        if self.pad_perform {
+            self.tick_pad_perform(input);
+            return;
+        }
 
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -1104,15 +1899,24 @@ impl App for SequencerApp {
             voices: std::array::from_fn(|i| TrackVoice::new(i as u32)),
             mono_buf: Vec::new(),
             pending_fires: std::array::from_fn(|_| Vec::new()),
+            pad_voices: std::array::from_fn(|_| SamplePlayer::default()),
+            song_active: false,
+            song_pos: 0,
+            song_reps_done: 0,
         }))
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(SEQUENCER_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, SEQUENCER_TITLE);
         Text::new("Sequencer", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, SEQUENCER_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, SEQUENCER_DIM);
 
         // --- Left: the dropdown menu (same shape as Plaits') ---
         let rows = self.visible_rows();
@@ -1126,17 +1930,19 @@ impl App for SequencerApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, SEQUENCER_BG, SEQUENCER_DIM, SEQUENCER_ACCENT);
 
         // --- Right: the current track's 16 steps, as a 4x4 grid
         // matching the physical pad layout 1:1 (row-major, no flip --
         // unlike Plaits' pitch grid, step order has no "low/high"
         // sense that would call for one). ---
         let track = self.current_track(&rows);
+        let rate_div = self.params.tracks[track].rate_div.load(Ordering::Relaxed).max(1);
+        let rate_tag = if rate_div != 1 { format!(" ({rate_div}x rate)") } else { String::new() };
         let header = if self.grid_edit_track == Some(track) {
-            format!("Track {} -- GRID EDIT: knob1 pad, knob2 note", track + 1)
+            format!("Track {} -- GRID EDIT: knob1 pad, knob2 note{rate_tag}", track + 1)
         } else {
-            format!("Track {} -- grid edits this", track + 1)
+            format!("Track {} -- grid edits this{rate_tag}", track + 1)
         };
         Text::new(&header, Point::new(360, 60), accent).draw(fb).ok();
 
@@ -1151,7 +1957,7 @@ impl App for SequencerApp {
         // are dimmed to show they're programmed-but-not-played rather
         // than looking identical to ones that just haven't fired yet.
         let track_len = self.params.tracks[track].length.load(Ordering::Relaxed).clamp(1, NUM_STEPS);
-        let playhead_step = self.params.pulse.load(Ordering::Relaxed) % track_len;
+        let playhead_step = (self.params.pulse.load(Ordering::Relaxed) / rate_div) % track_len;
 
         let focused_step = self.last_touched_step[track];
         for row in 0..4 {
@@ -1165,11 +1971,11 @@ impl App for SequencerApp {
                 let y = grid_y + row as i32 * (cell_h + gap);
 
                 let fill = if trimmed {
-                    Rgb565::new(1, 2, 1)
+                    SEQUENCER_STEP_TRIMMED
                 } else if active {
-                    Rgb565::new(0, 40, 6)
+                    SEQUENCER_STEP_ACTIVE
                 } else {
-                    Rgb565::new(3, 6, 3)
+                    SEQUENCER_STEP_OFF
                 };
                 Rectangle::new(Point::new(x, y), Size::new(cell_w as u32, cell_h as u32))
                     .into_styled(PrimitiveStyle::with_fill(fill))
@@ -1178,20 +1984,23 @@ impl App for SequencerApp {
 
                 // Playhead takes priority (brighter/thicker); a
                 // focused-but-not-playing step still gets a dim
-                // outline so it's clear which step Step Pitch edits.
+                // outline so it's clear which step Step Pitch edits
+                // -- kept as a cool blue, deliberately outside this
+                // app's own red family, so it reads as a distinct
+                // "this one's different" marker rather than more red.
                 let (border_color, border_weight) = if is_playhead {
-                    (Rgb565::new(0, 63, 10), 2)
+                    (SEQUENCER_ACCENT, 2)
                 } else if is_focused {
                     (Rgb565::new(20, 40, 63), 2)
                 } else {
-                    (Rgb565::new(10, 20, 10), 1)
+                    (SEQUENCER_BORDER_DIM, 1)
                 };
                 Rectangle::new(Point::new(x, y), Size::new(cell_w as u32, cell_h as u32))
                     .into_styled(PrimitiveStyle::with_stroke(border_color, border_weight))
                     .draw(fb)
                     .ok();
 
-                let trimmed_style = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(8, 12, 8));
+                let trimmed_style = MonoTextStyle::new(&SPLEEN_6X12, SEQUENCER_LABEL_TRIMMED);
                 let label_style = if trimmed { trimmed_style } else if active || is_playhead { accent } else { dim };
                 let step_pitch = self.params.tracks[track].step_pitch[i].load(Ordering::Relaxed);
                 let rolls = self.params.tracks[track].step_rolls[i].load(Ordering::Relaxed);
@@ -1302,15 +2111,39 @@ impl DrumVoice {
 /// One-shot playback with the same linear-interpolation resampling
 /// PlaitsVoice's own resampler uses, so a sample's native rate doesn't
 /// have to match the device's.
-#[derive(Default)]
 struct SamplePlayer {
     pos: f32,
+    /// The sample-frame position playback stops at -- `f32::MAX` (the
+    /// default, via `trigger`) means "play to the buffer's natural
+    /// end," same as before chopping existed. `trigger_chop` sets a
+    /// real stop point instead, for a pad "chopped" to a slice of a
+    /// longer sample -- see `Params::pad_start`/`pad_end`.
+    end_pos: f32,
     playing: bool,
+}
+
+impl Default for SamplePlayer {
+    fn default() -> Self {
+        Self { pos: 0.0, end_pos: f32::MAX, playing: false }
+    }
 }
 
 impl SamplePlayer {
     fn trigger(&mut self) {
         self.pos = 0.0;
+        self.end_pos = f32::MAX;
+        self.playing = true;
+    }
+
+    /// Starts playback at `start_frac` of `len` sample-frames and
+    /// stops at `end_frac` -- both 0..1, `end_frac` clamped to always
+    /// be at least one frame past `start_frac` so a chop with
+    /// `end <= start` still plays a single frame rather than silently
+    /// doing nothing.
+    fn trigger_chop(&mut self, start_frac: f32, end_frac: f32, len: usize) {
+        let len_f = (len.max(1) - 1) as f32;
+        self.pos = (start_frac.clamp(0.0, 1.0) * len_f).min(len_f);
+        self.end_pos = ((end_frac.clamp(0.0, 1.0) * len_f).max(self.pos + 1.0)).min(len_f + 1.0);
         self.playing = true;
     }
 
@@ -1320,7 +2153,7 @@ impl SamplePlayer {
         }
         let ratio = (native_rate / device_rate) * 2f32.powf(pitch_semitones as f32 / 12.0);
         let i = self.pos as usize;
-        if i + 1 >= data.len() {
+        if i + 1 >= data.len() || self.pos >= self.end_pos {
             self.playing = false;
             return 0.0;
         }
@@ -1392,6 +2225,21 @@ struct SequencerProcessor {
     /// last -- a real but minor precision limit at high BPM/roll
     /// counts, shared with Plaits' existing block-batched triggering.
     pending_fires: [Vec<(f32, f32)>; NUM_TRACKS],
+    pad_voices: [SamplePlayer; NUM_PADS],
+    /// Song mode's own audio-thread-only playback state -- not shared
+    /// with `Params` except through `song_pos`'s one-way status write
+    /// and the `switch_pattern` calls this drives (see `process`'s
+    /// bar-boundary logic). `song_active` tracks whether `Params::
+    /// song_mode` was on as of the *previous* block, so turning it on
+    /// this block is detected as a fresh transition (reset song_pos to
+    /// slot 0) rather than resuming wherever this state happened to be
+    /// left from the last time it was on.
+    song_active: bool,
+    song_pos: usize,
+    /// How many full bars of the current song slot's pattern have
+    /// played so far -- compared against that slot's own Repeats to
+    /// decide when to advance.
+    song_reps_done: usize,
 }
 
 impl AudioProcessor for SequencerProcessor {
@@ -1435,6 +2283,20 @@ impl AudioProcessor for SequencerProcessor {
         // already in `pending_fires` (and the per-track render loop
         // below) still runs either way, so anything already
         // triggered keeps decaying naturally instead of being cut off.
+        // Song mode just switched on (this block, or since the last
+        // one processed) -- jump straight to slot 0 instead of
+        // waiting for the next bar boundary below, so turning it on
+        // always starts the arrangement from the top.
+        let song_mode = self.params.song_mode.load(Ordering::Relaxed);
+        if song_mode && !self.song_active {
+            self.song_pos = 0;
+            self.song_reps_done = 0;
+            let target = self.params.song_slot_pattern[0].load(Ordering::Relaxed);
+            switch_pattern(&self.params, target);
+            self.params.song_pos.store(0, Ordering::Relaxed);
+        }
+        self.song_active = song_mode;
+
         if self.params.running.load(Ordering::Relaxed) {
             self.step_timer -= dt;
         }
@@ -1448,13 +2310,42 @@ impl AudioProcessor for SequencerProcessor {
             let swung = if next % 2 == 1 { base_step * (1.0 + swing) } else { base_step * (1.0 - swing) };
             self.step_timer += swung.max(0.001);
 
+            // Song mode's automatic pattern advance, keyed to every
+            // 16-step bar of the *shared* pulse regardless of any
+            // individual track's own (shorter, polymeter) Length --
+            // patterns still change on a clean, predictable bar
+            // boundary rather than at a different moment for every
+            // possible track-length combination.
+            if song_mode && next % NUM_STEPS == 0 {
+                self.song_reps_done += 1;
+                let target_reps = self.params.song_slot_repeats[self.song_pos].load(Ordering::Relaxed).max(1);
+                if self.song_reps_done >= target_reps {
+                    self.song_reps_done = 0;
+                    let song_len = self.params.song_length.load(Ordering::Relaxed).clamp(1, NUM_SONG_SLOTS);
+                    self.song_pos = (self.song_pos + 1) % song_len;
+                    let target = self.params.song_slot_pattern[self.song_pos].load(Ordering::Relaxed);
+                    switch_pattern(&self.params, target);
+                    self.params.song_pos.store(self.song_pos, Ordering::Relaxed);
+                }
+            }
+
             for t in 0..NUM_TRACKS {
+                // Track Rate: this track only advances (and
+                // evaluates) a step once every `rate_div` pulses --
+                // every other pulse it's still mid-way through
+                // holding its current step, so there's nothing new to
+                // trigger. `1` (default) passes every pulse, exactly
+                // as before this existed. See `TrackParams::rate_div`.
+                let rate_div = self.params.tracks[t].rate_div.load(Ordering::Relaxed).max(1);
+                if next % rate_div != 0 {
+                    continue;
+                }
                 // Polymeter: this track plays through only its own
                 // first `length` steps before wrapping, against the
                 // *same* shared `next` every other track also
                 // advances by -- see `TrackParams::length`.
                 let track_len = self.params.tracks[t].length.load(Ordering::Relaxed).clamp(1, NUM_STEPS);
-                let step = next % track_len;
+                let step = (next / rate_div) % track_len;
                 if !self.params.tracks[t].steps[step].load(Ordering::Relaxed) {
                     continue;
                 }
@@ -1481,11 +2372,18 @@ impl AudioProcessor for SequencerProcessor {
                 let delay_frac = self.params.tracks[t].step_delay[step].get().clamp(0.0, MAX_STEP_DELAY_FRAC);
                 let rolls = self.params.tracks[t].step_rolls[step].load(Ordering::Relaxed).clamp(MIN_ROLLS, MAX_ROLLS);
                 let humanize = self.params.humanize.get().clamp(0.0, 1.0);
-                let roll_interval = swung / rolls as f32;
+                // Rolls/Delay/Humanize's timing are all fractions of
+                // this step's own *real* duration -- `swung` is just
+                // one pulse's worth, so a Rate > 1x track (whose step
+                // spans several pulses) scales it up first, or a
+                // roll/delay/jitter would only ever land within the
+                // first pulse of a much longer held note.
+                let step_duration = swung * rate_div as f32;
+                let roll_interval = step_duration / rolls as f32;
                 for r in 0..rolls {
-                    let base_offset = delay_frac * swung + roll_interval * r as f32;
+                    let base_offset = delay_frac * step_duration + roll_interval * r as f32;
                     let time_jitter = if humanize > 0.0 {
-                        (self.voices[t].next_rand01() * 2.0 - 1.0) * MAX_HUMANIZE_TIME_FRAC * humanize * swung
+                        (self.voices[t].next_rand01() * 2.0 - 1.0) * MAX_HUMANIZE_TIME_FRAC * humanize * step_duration
                     } else {
                         0.0
                     };
@@ -1590,6 +2488,38 @@ impl AudioProcessor for SequencerProcessor {
                         *m += voice.drum.render(kind, decay, pitch, sample_rate) * volume;
                     }
                 }
+            }
+        }
+
+        // The pad performance bank -- independent of the step
+        // sequencer's transport (pads trigger live regardless of
+        // `running`), each choking itself on retrigger (`trigger_chop`
+        // just restarts the same voice, same as every one-shot in
+        // this app).
+        for p in 0..NUM_PADS {
+            if !self.params.pad_pending[p].swap(false, Ordering::Relaxed) {
+                continue;
+            }
+            let sample_idx = self.params.pad_sample[p].load(Ordering::Relaxed);
+            if let Some(slot) = self.params.samples.get(sample_idx) {
+                let (data, _) = slot.decoded();
+                let start = self.params.pad_start[p].get();
+                let end = self.params.pad_end[p].get();
+                self.pad_voices[p].trigger_chop(start, end, data.len());
+            }
+        }
+        for p in 0..NUM_PADS {
+            if !self.pad_voices[p].playing {
+                continue;
+            }
+            let sample_idx = self.params.pad_sample[p].load(Ordering::Relaxed);
+            let Some(slot) = self.params.samples.get(sample_idx) else {
+                continue;
+            };
+            let (data, rate) = slot.decoded();
+            let volume = self.params.pad_volume[p].get();
+            for m in self.mono_buf.iter_mut() {
+                *m += self.pad_voices[p].render(data, rate, sample_rate, 0) * volume;
             }
         }
 
@@ -1748,6 +2678,10 @@ mod tests {
             voices: std::array::from_fn(|i| TrackVoice::new(i as u32)),
             mono_buf: Vec::new(),
             pending_fires: std::array::from_fn(|_| Vec::new()),
+            pad_voices: std::array::from_fn(|_| SamplePlayer::default()),
+            song_active: false,
+            song_pos: 0,
+            song_reps_done: 0,
         };
         (params, proc)
     }
@@ -2087,6 +3021,37 @@ mod tests {
         assert!(!params.audition_pending[0].load(Ordering::Relaxed), "the one-shot audition pulse should be consumed after firing");
     }
 
+    /// A track set to `4x` must hold each step for 4 pulses (not
+    /// advance every pulse like the `1x` default), and the step it's
+    /// actually holding must match `(pulse / 4) % length` -- the
+    /// whole point of Track Rate: stretch a track's steps to cover a
+    /// longer span of the same shared clock every other track still
+    /// advances against one pulse at a time.
+    #[test]
+    fn track_rate_stretches_steps_across_multiple_pulses() {
+        let (params, mut proc) = new_processor();
+        params.tracks[0].rate_div.store(4, Ordering::Relaxed);
+        params.tracks[0].length.store(4, Ordering::Relaxed);
+        for i in 0..4 {
+            params.tracks[0].steps[i].store(true, Ordering::Relaxed);
+            params.tracks[0].step_pitch[i].store((i as i32 + 1) * 10, Ordering::Relaxed);
+        }
+
+        let mut buffer = vec![0.0f32; 512 * 2];
+        for _ in 0..64 {
+            proc.process(&mut buffer, 2, 48000.0);
+        }
+
+        let pulse = params.pulse.load(Ordering::Relaxed);
+        assert!(pulse >= 4, "expected the clock to have crossed at least one 4-pulse step, got pulse={pulse}");
+        let expected_step = (pulse / 4) % 4;
+        let expected_pitch = expected_step as i32 * 10 + 10;
+        assert_eq!(
+            proc.voices[0].current_pitch, expected_pitch,
+            "at pulse={pulse} a 4x track should be holding step {expected_step} (pulse/4 % length), not the 1x step pulse % length would give"
+        );
+    }
+
     /// Two tracks with different Lengths must each wrap at their own
     /// length against the *same* shared clock (`Params::pulse`), not
     /// share one global step index -- that's the whole polymeter
@@ -2290,5 +3255,226 @@ mod tests {
         assert_eq!(running[3], PadColor::Green, "an activated step not under the playhead stays green");
         assert_eq!(running[5], PadColor::Red, "pulse=5 landing on activated step 5 must turn it red while running");
         assert_eq!(running[0], PadColor::Off, "an unprogrammed step under no playhead stays off");
+    }
+
+    /// Switching patterns must save the outgoing pattern's step data
+    /// and load the incoming pattern's -- round-tripping back to a
+    /// pattern must restore exactly what was there before, and a
+    /// pattern never visited before must start empty (not garbage or
+    /// a leftover copy of whatever was live before it).
+    #[test]
+    fn switching_patterns_saves_and_restores_step_data() {
+        let mut app = new_app();
+        app.params.tracks[0].steps[2].store(true, Ordering::Relaxed);
+        app.params.tracks[0].step_pitch[2].store(7, Ordering::Relaxed);
+
+        app.edit(Selection::Pattern, 1);
+        assert_eq!(app.params.current_pattern.load(Ordering::Relaxed), 1);
+        assert!(!app.params.tracks[0].steps[2].load(Ordering::Relaxed), "a fresh pattern must start with every step off, not inherit the previous one's");
+
+        app.params.tracks[0].steps[9].store(true, Ordering::Relaxed);
+
+        app.edit(Selection::Pattern, -1); // back to pattern 0
+        assert_eq!(app.params.current_pattern.load(Ordering::Relaxed), 0);
+        assert!(app.params.tracks[0].steps[2].load(Ordering::Relaxed), "pattern 0's step 2 must be restored exactly as left");
+        assert_eq!(app.params.tracks[0].step_pitch[2].load(Ordering::Relaxed), 7);
+        assert!(!app.params.tracks[0].steps[9].load(Ordering::Relaxed), "pattern 0 must not have picked up pattern 1's step 9");
+
+        app.edit(Selection::Pattern, 1); // forward to pattern 1 again
+        assert!(app.params.tracks[0].steps[9].load(Ordering::Relaxed), "pattern 1's step 9 must still be there after round-tripping through pattern 0");
+    }
+
+    /// A Song arrangement must advance to the next slot's pattern once
+    /// its Repeats count of full bars has played, and loop back to
+    /// slot 0 after the last configured slot -- the whole point of
+    /// Song mode over just leaving Pattern on one value.
+    #[test]
+    fn song_mode_advances_through_slots_and_loops() {
+        let (params, mut proc) = new_processor();
+        // Distinguish pattern 0 from pattern 1 so a switch is
+        // observable: pattern 0 (already live) gets step 0 on track 0;
+        // pattern 1 gets a *different* step once switched to.
+        params.tracks[0].steps[0].store(true, Ordering::Relaxed);
+
+        params.song_slot_pattern[0].store(0, Ordering::Relaxed);
+        params.song_slot_repeats[0].store(1, Ordering::Relaxed);
+        params.song_slot_pattern[1].store(1, Ordering::Relaxed);
+        params.song_slot_repeats[1].store(1, Ordering::Relaxed);
+        params.song_length.store(2, Ordering::Relaxed);
+        params.song_mode.store(true, Ordering::Relaxed);
+
+        // One full 16-step bar at the default 120 BPM/1-16 subdivision
+        // is 2.0s -- 512-frame blocks at 48kHz need ~187.5 of them to
+        // cross that; 220 comfortably clears one bar boundary without
+        // reaching a second.
+        let mut buffer = vec![0.0f32; 512 * 2];
+        for _ in 0..220 {
+            proc.process(&mut buffer, 2, 48000.0);
+        }
+        assert_eq!(params.current_pattern.load(Ordering::Relaxed), 1, "one full bar at slot 0's Repeats=1 must advance to slot 1's pattern");
+        assert_eq!(params.song_pos.load(Ordering::Relaxed), 1);
+        assert!(!params.tracks[0].steps[0].load(Ordering::Relaxed), "pattern 1 must be a fresh pattern, not still showing pattern 0's step 0");
+
+        for _ in 0..220 {
+            proc.process(&mut buffer, 2, 48000.0);
+        }
+        assert_eq!(params.current_pattern.load(Ordering::Relaxed), 0, "after slot 1 (the last of a 2-slot song) the arrangement must loop back to slot 0's pattern");
+        assert_eq!(params.song_pos.load(Ordering::Relaxed), 0);
+        assert!(params.tracks[0].steps[0].load(Ordering::Relaxed), "looping back to pattern 0 must restore its step 0");
+    }
+
+    /// `SamplePlayer::trigger_chop` must confine playback to the
+    /// requested slice: it starts partway into the buffer (not at 0,
+    /// like a plain `trigger`) and stops at the requested end point
+    /// even though the underlying buffer continues past it.
+    #[test]
+    fn trigger_chop_confines_playback_to_the_requested_slice() {
+        let data: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        let mut player = SamplePlayer::default();
+
+        player.trigger_chop(0.5, 0.6, data.len()); // frames ~49..~59 of 100
+        assert!(player.pos > 40.0 && player.pos < 55.0, "expected pos to start around the 50% mark, got {}", player.pos);
+
+        let mut rendered = 0;
+        while player.playing && rendered < 1000 {
+            player.render(&data, 48000.0, 48000.0, 0);
+            rendered += 1;
+        }
+        assert!(rendered < 20, "a ~10%-of-buffer chop should stop well before reaching the buffer's natural end, rendered {rendered} frames");
+    }
+
+    /// A pad's `pad_pending` flag must actually trigger its resolved
+    /// sample -- the same "one-shot fires this block" mechanism every
+    /// other trigger path in this app uses (see `audition_pending`).
+    /// Uses this project's own real `samples/` directory (like
+    /// `load_samples_builds_expected_pack_tree`'s sibling tests), so
+    /// pad 0's default (pack 0, type 0, file 0) selection resolves to
+    /// a real, decodable sample without any extra setup.
+    #[test]
+    fn pad_pending_triggers_its_resolved_sample() {
+        let (params, mut proc) = new_processor();
+        assert!(!params.samples.is_empty(), "expected the real samples/ directory to have at least one sample for this test to mean anything");
+
+        params.pad_sample[0].store(0, Ordering::Relaxed);
+        params.pad_pending[0].store(true, Ordering::Relaxed);
+        let mut buffer = vec![0.0f32; 512 * 2];
+        proc.process(&mut buffer, 2, 48000.0);
+
+        assert!(buffer.iter().any(|&s| s != 0.0), "triggering pad 0 should have produced real audio output");
+        assert!(!params.pad_pending[0].load(Ordering::Relaxed), "pad_pending must be consumed (one-shot), not left set");
+    }
+
+    /// F2 (see `App::grid_mode_label`/`toggle_grid_mode`) must flip
+    /// Pad Perform exactly like browsing to `Selection::PadPerform`
+    /// and turning knob2 would -- a shortcut onto the same state, not
+    /// a separate flag that could drift out of sync with it.
+    #[test]
+    fn grid_mode_button_toggles_pad_perform_and_labels_it() {
+        let mut app = new_app();
+        assert_eq!(app.grid_mode_label(), Some("STEP"), "a fresh app must default to Step mode");
+
+        app.toggle_grid_mode();
+        assert!(app.pad_perform, "toggling the grid mode must turn Pad Perform on");
+        assert_eq!(app.grid_mode_label(), Some("PAD"));
+
+        app.toggle_grid_mode();
+        assert!(!app.pad_perform, "toggling again must turn it back off");
+        assert_eq!(app.grid_mode_label(), Some("STEP"));
+    }
+
+    /// While Pad Perform is on and the menu is sitting on a Group row
+    /// (not drilled into a specific leaf), knob2 must cycle the
+    /// focused pad's sample directly -- the whole point of the
+    /// simplified setup flow (see `tick_pad_perform`'s doc comment):
+    /// no menu-diving required to assign a pad.
+    #[test]
+    fn pad_perform_quick_knob2_assigns_a_sample_without_opening_a_menu() {
+        let mut app = new_app();
+        assert!(app.params.samples.len() >= 2, "expected the real samples/ directory to have at least 2 samples for this test to mean anything");
+        app.pad_perform = true;
+        assert!(matches!(app.visible_rows().get(app.list.selected), Some(Row::Group(_))), "a fresh app's menu should start on a Group row");
+
+        let input = Input { knob2: 1, ..Default::default() };
+        app.tick_pad_perform(&input);
+        assert_eq!(app.params.pad_sample[0].load(Ordering::Relaxed), 0, "the first knob2 tick from empty should land on the first real sample");
+
+        app.tick_pad_perform(&input);
+        assert_eq!(app.params.pad_sample[0].load(Ordering::Relaxed), 1, "a second tick should advance to the next sample");
+    }
+
+    /// `Fill Bank From Here` must spread consecutive samples across
+    /// every pad in order, starting from whichever sample is on the
+    /// focused pad -- the fast way to load a whole folder of one-shots
+    /// without dialing in each of the 16 pads individually.
+    #[test]
+    fn fill_bank_from_here_spreads_consecutive_samples_across_all_pads() {
+        let mut app = new_app();
+        let n = app.params.samples.len();
+        assert!(n >= 3, "expected the real samples/ directory to have at least 3 samples for this test to mean anything");
+
+        app.params.pad_sample[app.last_touched_pad].store(0, Ordering::Relaxed);
+        app.fill_bank_from_here();
+
+        for p in 0..NUM_PADS {
+            assert_eq!(app.params.pad_sample[p].load(Ordering::Relaxed), p % n, "pad {p} should hold sample {p} % {n}, wrapping if there are fewer than 16 samples");
+            assert_eq!(app.params.pad_start[p].get(), 0.0, "Fill Bank should reset any prior chop, not inherit it");
+            assert_eq!(app.params.pad_end[p].get(), 1.0);
+        }
+    }
+
+    /// Saving then loading a kit (into/from a scratch directory, not
+    /// the real project's `kits/`) must round-trip every pad's sample
+    /// *by name* -- not by flat index, which the doc comment on `Kit`
+    /// explicitly says would be fragile -- plus its chop points and
+    /// volume, and must not disturb pads a saved kit never touched
+    /// (fewer than 16 real samples means some pads legitimately stay
+    /// empty).
+    #[test]
+    fn saving_and_loading_a_kit_round_trips_by_sample_name() {
+        let scratch = ScratchDir::new("kit_round_trip");
+        let mut app = new_app();
+        assert!(app.params.samples.len() >= 2, "expected the real samples/ directory to have at least 2 samples for this test to mean anything");
+
+        app.params.pad_sample[0].store(0, Ordering::Relaxed);
+        app.params.pad_start[0].set(0.1);
+        app.params.pad_end[0].set(0.9);
+        app.params.pad_volume[0].set(0.5);
+        app.params.pad_sample[1].store(1, Ordering::Relaxed);
+        // Pad 2 deliberately left empty (NO_SOURCE) -- must load back
+        // empty too, not accidentally pick up something.
+
+        app.save_kit_to(&scratch.0);
+
+        // Scramble the live state so loading is the only thing that
+        // could put it back.
+        app.params.pad_sample[0].store(crate::audio_bus::NO_SOURCE, Ordering::Relaxed);
+        app.params.pad_start[0].set(0.0);
+        app.params.pad_end[0].set(1.0);
+        app.params.pad_volume[0].set(0.8);
+        app.params.pad_sample[1].store(crate::audio_bus::NO_SOURCE, Ordering::Relaxed);
+
+        app.load_kit_from(&scratch.0);
+
+        assert_eq!(app.params.pad_sample[0].load(Ordering::Relaxed), 0, "pad 0's sample must round-trip by name back to the same flat index");
+        assert_eq!(app.params.pad_start[0].get(), 0.1);
+        assert_eq!(app.params.pad_end[0].get(), 0.9);
+        assert_eq!(app.params.pad_volume[0].get(), 0.5);
+        assert_eq!(app.params.pad_sample[1].load(Ordering::Relaxed), 1);
+        assert_eq!(app.params.pad_sample[2].load(Ordering::Relaxed), crate::audio_bus::NO_SOURCE, "a pad the saved kit never had a sample on must load back empty");
+    }
+
+    /// Loading a kit slot that was never saved (no file on disk) must
+    /// be a harmless no-op, not a panic -- the same "fail closed"
+    /// convention every other missing/invalid on-disk resource in
+    /// this app already gets (see `resolve_sample`).
+    #[test]
+    fn loading_a_never_saved_kit_slot_does_not_panic_or_change_state() {
+        let scratch = ScratchDir::new("kit_missing");
+        let mut app = new_app();
+        app.params.pad_sample[0].store(0, Ordering::Relaxed);
+
+        app.load_kit_from(&scratch.0); // nothing was ever saved here
+
+        assert_eq!(app.params.pad_sample[0].load(Ordering::Relaxed), 0, "a missing kit file must leave the live pad bank untouched");
     }
 }

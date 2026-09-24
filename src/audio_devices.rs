@@ -20,7 +20,7 @@ pub struct AudioDeviceState {
 }
 
 impl AudioDeviceState {
-    fn new(initial_output: String) -> Self {
+    pub(crate) fn new(initial_output: String) -> Self {
         Self {
             current_output: Mutex::new(initial_output),
             current_input: Mutex::new(String::new()),
@@ -60,7 +60,7 @@ impl AudioDeviceState {
 /// the main thread -- see the module doc for why.
 pub struct AudioHost {
     host: Host,
-    stream: Stream,
+    stream: Option<Stream>,
     engine: ActiveProcessor,
 }
 
@@ -70,15 +70,37 @@ impl AudioHost {
     ) -> Result<(Self, AudioDeviceState), Box<dyn std::error::Error>> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or("no output device found")?;
-        let name = device.name()?;
+        let name = device.name().unwrap_or_else(|_| "Default output".into());
         println!("Output device: {name}");
 
         let stream = build_stream(&device, Arc::clone(&engine))?;
         stream.play()?;
 
         let state = AudioDeviceState::new(name);
-        Ok((Self { host, stream, engine }, state))
+        Ok((Self { host, stream: Some(stream), engine }, state))
     }
+
+    /// Keep device failure separate from app/UI startup. The same host can
+    /// later acquire a real stream through Settings without restarting apps.
+    pub fn open_resilient(engine: ActiveProcessor) -> (Self, AudioDeviceState) {
+        Self::open_or_offline(engine, Self::open_default)
+    }
+
+    fn open_or_offline(
+        engine: ActiveProcessor,
+        open: impl FnOnce(ActiveProcessor) -> Result<(Self, AudioDeviceState), Box<dyn std::error::Error>>,
+    ) -> (Self, AudioDeviceState) {
+        match open(Arc::clone(&engine)) {
+            Ok(opened) => opened,
+            Err(error) => {
+                eprintln!("audio: output unavailable; continuing without audio: {error}");
+                (Self { host: cpal::default_host(), stream: None, engine },
+                 AudioDeviceState::new("Unavailable — select output".into()))
+            }
+        }
+    }
+
+    pub fn is_connected(&self) -> bool { self.stream.is_some() }
 
     /// Call once per frame from the main thread. If Settings has
     /// requested a different output device, tears down the old stream
@@ -94,14 +116,16 @@ impl AudioHost {
     }
 
     fn switch_to(&mut self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let device = self
-            .host
-            .output_devices()?
-            .find(|d| d.name().map(|n| n == name).unwrap_or(false))
-            .ok_or("device not found")?;
+        let device = if name == DEFAULT_OUTPUT {
+            self.host.default_output_device().ok_or("no default output device found")?
+        } else {
+            self.host.output_devices()?
+                .find(|d| d.name().map(|n| n == name).unwrap_or(false))
+                .ok_or("device not found")?
+        };
         let stream = build_stream(&device, Arc::clone(&self.engine))?;
         stream.play()?;
-        self.stream = stream; // dropping the old stream stops it
+        self.stream = Some(stream); // dropping the old stream stops it
         Ok(())
     }
 }
@@ -123,11 +147,15 @@ fn build_stream(device: &Device, engine: ActiveProcessor) -> Result<Stream, Box<
     Ok(stream)
 }
 
+pub const DEFAULT_OUTPUT: &str = "System default (retry)";
+
 pub fn output_device_names() -> Vec<String> {
     let host = cpal::default_host();
-    host.output_devices()
-        .map(|it| it.filter_map(|d| d.name().ok()).collect())
-        .unwrap_or_default()
+    let mut names = vec![DEFAULT_OUTPUT.to_string()];
+    if let Ok(devices) = host.output_devices() {
+        names.extend(devices.filter_map(|d| d.name().ok()));
+    }
+    names
 }
 
 pub fn input_device_names() -> Vec<String> {
@@ -135,4 +163,21 @@ pub fn input_device_names() -> Vec<String> {
     host.input_devices()
         .map(|it| it.filter_map(|d| d.name().ok()).collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    #[test]
+    fn unavailable_audio_preserves_engine_and_accepts_reconnection_request() {
+        let engine = crate::audio::new_engine(Arc::new(crate::util::AtomicF32::new(1.0)));
+        let (mut host, state) = AudioHost::open_or_offline(Arc::clone(&engine), |_| Err("test unavailable device".into()));
+        assert!(!host.is_connected());
+        assert!(Arc::ptr_eq(&host.engine, &engine));
+        assert!(state.current_output().contains("Unavailable"));
+        host.poll(&state); // no request: no driver access, no crash
+        state.request_output(DEFAULT_OUTPUT.into());
+        assert_eq!(state.take_output_request().as_deref(), Some(DEFAULT_OUTPUT));
+        assert!(state.take_output_request().is_none());
+    }
 }

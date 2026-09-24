@@ -29,7 +29,7 @@
 use crate::app::{App, Input};
 use crate::apps::plaits::{ROOT_NAMES, SCALE_TYPES};
 use crate::audio::AudioProcessor;
-use crate::display::FrameBuffer;
+use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
@@ -37,7 +37,7 @@ use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Line, PrimitiveStyle};
+use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -208,13 +208,14 @@ impl ChannelParams {
 }
 
 struct Params {
+    running: AtomicBool,
     bpm: AtomicF32,
     channels: [ChannelParams; NUM_CHANNELS],
 }
 
 impl Params {
     fn new() -> Self {
-        Self { bpm: AtomicF32::new(DEFAULT_BPM), channels: std::array::from_fn(|_| ChannelParams::new()) }
+        Self { running: AtomicBool::new(true), bpm: AtomicF32::new(DEFAULT_BPM), channels: std::array::from_fn(|_| ChannelParams::new()) }
     }
 }
 
@@ -227,6 +228,16 @@ pub struct PamsApp {
     expanded: [bool; NUM_GROUPS],
     last_channel: usize,
 }
+
+// --- Pam's own palette: industrial amber on graphite, not a
+// device-wide theme -- the color of a utility module's own indicator
+// lamps, a precise workhorse clock rather than an instrument. ---
+
+const PAMS_BG: Rgb565 = Rgb565::new(2, 6, 3);
+const PAMS_TITLE: Rgb565 = Rgb565::new(29, 58, 27);
+const PAMS_ACCENT: Rgb565 = Rgb565::new(31, 43, 4);
+const PAMS_DIM: Rgb565 = Rgb565::new(15, 27, 11);
+const PAMS_MIDLINE: Rgb565 = Rgb565::new(5, 10, 4);
 
 impl PamsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>) -> Self {
@@ -499,10 +510,77 @@ impl PamsApp {
     }
 }
 
+impl PamsApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// The currently-browsed channel's real CV monitor scope -- same
+    /// data `draw()`'s own line-plot reads, exposed for an alternate
+    /// renderer instead of drawn directly.
+    pub(crate) fn channel_monitor(&self) -> crate::app::PamsExtra {
+        let rows = self.visible_rows();
+        let channel = self.current_channel(&rows);
+        let history: Vec<f32> = self.params.channels[channel].monitor_history.lock().unwrap().iter().map(|v| v.clamp(-1.0, 1.0)).collect();
+        let value = self.params.channels[channel].monitor.get();
+        crate::app::PamsExtra { channel_index: channel, history, value }
+    }
+}
+
 impl App for PamsApp {
+    fn running(&self) -> Option<bool> { Some(self.params.running.load(Ordering::Relaxed)) }
+    fn toggle_running(&mut self) {
+        let was_running = self.params.running.load(Ordering::Relaxed);
+        self.params.running.store(!was_running, Ordering::Relaxed);
+    }
+
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Pams(self.channel_monitor())
+    }
+
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -531,11 +609,16 @@ impl App for PamsApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(PAMS_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, PAMS_TITLE);
         Text::new("Pam's Workout", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(0, 63, 10));
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, PAMS_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, PAMS_DIM);
 
         let rows = self.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -548,7 +631,7 @@ impl App for PamsApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, PAMS_BG, PAMS_DIM, PAMS_ACCENT);
 
         // --- Right: the current channel's live output, scrolling --
         // "CV Monitoring", same line-plot technique as Plaits' mod panel.
@@ -563,14 +646,14 @@ impl App for PamsApp {
 
         let mid_y = panel_y + panel_h / 2;
         Line::new(Point::new(panel_x, mid_y), Point::new(panel_x + panel_w, mid_y))
-            .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(8, 16, 8), 1))
+            .into_styled(PrimitiveStyle::with_stroke(PAMS_MIDLINE, 1))
             .draw(fb)
             .ok();
 
         let history = self.params.channels[channel].monitor_history.lock().unwrap();
         if history.len() >= 2 {
             let step = panel_w as f32 / (history.len() - 1) as f32;
-            let style = PrimitiveStyle::with_stroke(Rgb565::new(0, 63, 10), 1);
+            let style = PrimitiveStyle::with_stroke(PAMS_ACCENT, 1);
             for i in 0..history.len() - 1 {
                 let v0 = history[i].clamp(-1.0, 1.0);
                 let v1 = history[i + 1].clamp(-1.0, 1.0);
@@ -640,6 +723,15 @@ impl AudioProcessor for PamsProcessor {
         // correct, not a bug: the mix bus just adds zero.
         for out in buffer.iter_mut() {
             *out = 0.0;
+        }
+
+        if !self.params.running.load(Ordering::Relaxed) {
+            for channel in &self.params.channels {
+                channel.monitor.set(0.0);
+                let target = channel.target.load(Ordering::Relaxed);
+                if target > 0 { if let Some(value) = self.modbus.get(target - 1) { value.set(0.0); } }
+            }
+            return;
         }
 
         let frames = (buffer.len() / channels) as f32;
@@ -723,5 +815,29 @@ impl AudioProcessor for PamsProcessor {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod transport_contract_tests {
+    use super::*;
+    #[test]
+    fn clock_stop_silences_routes_and_play_resumes() {
+        let bus = Arc::new(ModBus::new());
+        let target = bus.register("test: clock");
+        let mut app = PamsApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), bus);
+        app.params.channels[0].target.store(1, Ordering::Relaxed);
+        let mut processor = app.audio_processor().unwrap();
+        let mut audio = [0.0; 1024];
+        processor.process(&mut audio, 2, 48000.0);
+        assert_eq!(app.transport_action(), Some("STOP"));
+        app.toggle_running(); target.set(1.0);
+        processor.process(&mut audio, 2, 48000.0);
+        assert_eq!(target.get(), 0.0);
+        assert_eq!(app.transport_action(), Some("PLAY"));
+        app.toggle_running();
+        processor.process(&mut audio, 2, 48000.0);
+        assert_eq!(app.running(), Some(true));
+        assert_ne!(target.get(), 0.0);
     }
 }

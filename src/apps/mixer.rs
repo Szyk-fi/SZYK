@@ -19,9 +19,10 @@
 //! Prism of signal if Prism happens to be granulating it.
 
 use crate::app::{App, Input};
-use crate::display::{self, FrameBuffer};
+use crate::audio_bus::AudioBus;
+use crate::display::{self, FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
-use crate::paramlist::{ParamList, ACCENT};
+use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
@@ -57,6 +58,11 @@ const NUM_GROUPS: usize = 2;
 pub struct MixerApp {
     master_volume: Arc<AtomicF32>,
     mixer_bus: Arc<MixerBus>,
+    /// For the real live per-channel VU meters (matched to a mixer
+    /// channel by name -- a channel registers into both buses under
+    /// the same name, see mixer_bus.rs's own doc comment) -- not used
+    /// for anything that affects the actual mix, only the visual.
+    audio_bus: Arc<AudioBus>,
     /// List *browsing* speed still follows the shared Nav Speed
     /// setting, same as every other app -- only the fader *edit*
     /// sensitivity below is fixed, deliberately ignoring Settings'
@@ -69,9 +75,48 @@ pub struct MixerApp {
     expanded: [bool; NUM_GROUPS],
 }
 
+// --- Mixer's own palette: cool console blue-grey, not a device-wide
+// theme -- the neutral, professional "control room" look of a real
+// mixing console, deliberately understated next to every other app's
+// stronger personality (this is the one screen meant to feel like
+// plain infrastructure everything else passes through). ---
+
+const MIXER_BG: Rgb565 = Rgb565::new(2, 6, 4);
+const MIXER_TITLE: Rgb565 = Rgb565::new(25, 56, 30);
+const MIXER_ACCENT: Rgb565 = Rgb565::new(9, 25, 17);
+const MIXER_DIM: Rgb565 = Rgb565::new(13, 31, 16);
+const MIXER_FADER_OUTLINE: Rgb565 = Rgb565::new(5, 10, 7);
+
 impl MixerApp {
-    pub fn new(master_volume: Arc<AtomicF32>, mixer_bus: Arc<MixerBus>, nav_speed: Arc<AtomicF32>) -> Self {
-        Self { master_volume, mixer_bus, nav_speed, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
+    pub fn new(master_volume: Arc<AtomicF32>, mixer_bus: Arc<MixerBus>, nav_speed: Arc<AtomicF32>, audio_bus: Arc<AudioBus>) -> Self {
+        Self { master_volume, mixer_bus, nav_speed, audio_bus, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
+    }
+
+    /// This channel's real live peak amplitude this block (0..~1.5),
+    /// matched by name against `audio_bus` -- `0.0` if this channel's
+    /// app doesn't also publish to `audio_bus` (not every app that
+    /// registers a mixer channel taps/publishes raw audio for other
+    /// apps to read, e.g. a pure CV/gate generator).
+    fn channel_live_level(&self, mixer_idx: usize) -> f32 {
+        let Some(name) = self.mixer_bus.names().get(mixer_idx).cloned() else { return 0.0 };
+        let names = self.audio_bus.names();
+        let Some(audio_idx) = names.iter().position(|n| *n == name) else { return 0.0 };
+        let Some(buf) = self.audio_bus.get(audio_idx) else { return 0.0 };
+        let guard = buf.lock().unwrap();
+        guard.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
+    }
+
+    /// Real per-channel (name, fader level 0..1.5, live peak 0..~1.5,
+    /// modbus-modulation indicator) plus the master, for a bespoke
+    /// mixer-strip panel -- see `App::slint_extra`.
+    pub(crate) fn output_visual(&self) -> Vec<(String, f32, f32)> {
+        (0..self.mixer_bus.len())
+            .map(|i| {
+                let name = self.mixer_bus.names().get(i).cloned().unwrap_or_else(|| format!("Ch{}", i + 1));
+                let fader = self.mixer_bus.level(i).map(|l| l.get()).unwrap_or(DEFAULT_LEVEL).clamp(MIN_LEVEL, MAX_LEVEL);
+                (name, fader, self.channel_live_level(i))
+            })
+            .collect()
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
@@ -149,10 +194,91 @@ impl MixerApp {
     }
 }
 
+impl MixerApp {
+    /// Real, windowed `(name, value, is_group)` rows -- mirrors this
+    /// app's own `draw()` row-building, exposed for an alternate
+    /// renderer (a live Slint screen) instead of drawn.
+    pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
+        self.visible_rows()
+            .iter()
+            .map(|row| match row {
+                Row::Group(g) => {
+                    let arrow = if self.expanded[*g] { "v" } else { ">" };
+                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                }
+                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        self.list.selected
+    }
+
+    /// `display_rows`, windowed to at most `visible` rows around the
+    /// current selection -- see `ParamList::centered_scroll_window`. Returns
+    /// `(window, selected_index_in_window, has_more_above,
+    /// has_more_below)`.
+    pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        let rows = self.display_rows();
+        if rows.is_empty() || visible == 0 {
+            return (rows, 0, false, false);
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        let window = rows[start..end].to_vec();
+        (window, self.list.selected - start, start > 0, end < rows.len())
+    }
+
+    /// Real fader level (0..1, clamped) for whichever leaf row this
+    /// is, or `None` for a group row -- lets a live screen draw an
+    /// actual meter bar next to the row instead of just its printed
+    /// percentage. Windowed the same way `windowed_rows` is, so the
+    /// two stay index-aligned.
+    pub(crate) fn windowed_levels(&mut self, visible: usize) -> Vec<Option<f32>> {
+        let rows = self.visible_rows();
+        if rows.is_empty() || visible == 0 {
+            return Vec::new();
+        }
+        let (start, end) = self.list.centered_scroll_window(visible, rows.len());
+        rows[start..end]
+            .iter()
+            .map(|row| match row {
+                Row::Leaf(Selection::MasterVolume) => Some((self.master_volume.get() / MAX_LEVEL).clamp(0.0, 1.0)),
+                Row::Leaf(Selection::ChannelLevel(i)) => {
+                    self.mixer_bus.level(*i).map(|l| (l.get() / MAX_LEVEL).clamp(0.0, 1.0))
+                }
+                Row::Group(_) => None,
+            })
+            .collect()
+    }
+}
+
 impl App for MixerApp {
+    fn system_role(&self) -> Option<crate::app::SystemRole> { Some(crate::app::SystemRole::Mixer) }
+
+    fn slint_rows(&self) -> Vec<(String, String, bool)> {
+        self.display_rows()
+    }
+    fn slint_selected(&self) -> usize {
+        self.selected_row()
+    }
+    fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
+        self.windowed_rows(visible)
+    }
+    fn slint_levels(&mut self, visible: usize) -> Vec<Option<f32>> {
+        self.windowed_levels(visible)
+    }
+
+    fn slint_extra(&mut self) -> crate::app::SlintExtra {
+        crate::app::SlintExtra::Mixer(crate::app::MixerExtra {
+            master: self.master_volume.get().clamp(MIN_LEVEL, MAX_LEVEL),
+            channels: self.output_visual(),
+        })
+    }
+
     fn tick(&mut self, input: &Input) {
         let rows = self.visible_rows();
-        self.list.navigate(input.knob1, rows.len(), self.nav_speed.get() as i32);
+        self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
@@ -169,11 +295,16 @@ impl App for MixerApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let title = MonoTextStyle::new(&SPLEEN_16X32, Rgb565::WHITE);
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(MIXER_BG))
+            .draw(fb)
+            .ok();
+
+        let title = MonoTextStyle::new(&SPLEEN_16X32, MIXER_TITLE);
         Text::new("Mixer", Point::new(16, 30), title).draw(fb).ok();
 
-        let accent = MonoTextStyle::new(&SPLEEN_6X12, ACCENT);
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18));
+        let accent = MonoTextStyle::new(&SPLEEN_6X12, MIXER_ACCENT);
+        let dim = MonoTextStyle::new(&SPLEEN_6X12, MIXER_DIM);
 
         // Same shared list widget (font, row height, selected-row chip,
         // scroll-if-it-doesn't-fit) every other app's menu already
@@ -191,7 +322,7 @@ impl App for MixerApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw(fb, 16, 44, 24, 10, &display_rows);
+        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, MIXER_BG, MIXER_DIM, MIXER_ACCENT);
 
         // --- Right: a bank of small vertical faders -- Master (always
         // shown, fixed in place) plus a scrolling window of channels
@@ -216,9 +347,9 @@ impl App for MixerApp {
         let right_margin = 12;
 
         let mut draw_fader = |x: i32, level: f32, label: &str, lit: bool| {
-            let color = if lit { Rgb565::new(0, 63, 10) } else { Rgb565::new(0, 40, 6) };
+            let color = if lit { MIXER_ACCENT } else { MIXER_FADER_OUTLINE };
             Rectangle::new(Point::new(x, track_top), Size::new(track_w as u32, track_h as u32))
-                .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(10, 20, 10), 1))
+                .into_styled(PrimitiveStyle::with_stroke(MIXER_FADER_OUTLINE, 1))
                 .draw(fb)
                 .ok();
             let fill_h = ((level / MAX_LEVEL).clamp(0.0, 1.0) * track_h as f32) as i32;
@@ -228,7 +359,7 @@ impl App for MixerApp {
                 .ok();
             let unity_y = track_top + track_h - ((DEFAULT_LEVEL / MAX_LEVEL) * track_h as f32) as i32;
             Rectangle::new(Point::new(x - 2, unity_y), Size::new((track_w + 4) as u32, 1))
-                .into_styled(PrimitiveStyle::with_fill(Rgb565::new(0, 63, 10)))
+                .into_styled(PrimitiveStyle::with_fill(MIXER_ACCENT))
                 .draw(fb)
                 .ok();
             let short: String = label.chars().take(4).collect();
@@ -300,7 +431,7 @@ mod tests {
         for i in 0..15 {
             mixer_bus.register(format!("App {i}"), &modbus);
         }
-        let app = MixerApp::new(master_volume, mixer_bus, nav_speed);
+        let app = MixerApp::new(master_volume, mixer_bus, nav_speed, Arc::new(AudioBus::new()));
 
         let leaves = app.group_leaves(1);
         assert_eq!(leaves.len(), 15, "expected all 15 registered channels to be reachable, got {}", leaves.len());
@@ -320,7 +451,7 @@ mod tests {
         for i in 0..15 {
             mixer_bus.register(format!("App {i}"), &modbus);
         }
-        let mut app = MixerApp::new(master_volume, mixer_bus, nav_speed);
+        let mut app = MixerApp::new(master_volume, mixer_bus, nav_speed, Arc::new(AudioBus::new()));
         app.expanded[1] = true; // Channels group expanded, so its leaves are in visible_rows
         let rows = app.visible_rows();
         let last_channel_row = rows.iter().position(|r| matches!(r, Row::Leaf(Selection::ChannelLevel(14)))).expect("channel 14 should be a row");
