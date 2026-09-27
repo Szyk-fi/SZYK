@@ -50,11 +50,12 @@
 //! protection chip (`Protection::SmaMslug3` -- 68000 program
 //! decryption and bankswitching, reimplemented from MAME's own BSD-3
 //! source; see `sma_decrypt_68k`'s own doc comment; verified against a
-//! real 100,000,000-instruction run with no CPU fault at all). Still
-//! missing: the sprite/fix-layer graphics decryption Metal Slug 3 also
-//! needs (a different chip, CMC42, not yet reimplemented) and sprite
-//! auto-animation. See the module's own test coverage for exactly
-//! what is and isn't verified so far.
+//! real 100,000,000-instruction run with no CPU fault at all) and its
+//! separate CMC42 graphics-decryption chip (sprite/fix-layer C-ROM
+//! data, also reimplemented from MAME's own source -- see `cmc42`'s
+//! own module doc comment). Still missing: sprite auto-animation. See
+//! the module's own test coverage for exactly what is and isn't
+//! verified so far.
 
 use m68k::{AddressBus, CpuCore, CpuType, StepResult};
 use std::cell::Cell;
@@ -373,6 +374,18 @@ impl NeoGeoBus {
             Protection::None => (word_swap(p1_rom), word_swap(p2_rom)),
             Protection::SmaMslug3 => sma_decrypt_68k(word_swap(p1_rom), word_swap(p2_rom), &SMA_MSLUG3_DATA_BITSWAP, &SMA_MSLUG3_FIXED_ADDR_BITSWAP, SMA_MSLUG3_FIXED_SOURCE, &SMA_MSLUG3_BANKED_ADDR_BITSWAP),
         };
+        // Metal Slug 3's C-ROMs (sprites/fix-layer graphics) need their
+        // own separate real decryption (CMC42, a different chip from
+        // NEO-SMA) -- see `cmc42`'s own module doc comment for the
+        // real interleave/decrypt/de-interleave pipeline this requires.
+        let (odd_c_rom, even_c_rom) = match protection {
+            Protection::None => (concat_c_roms(c_roms, true), concat_c_roms(c_roms, false)),
+            Protection::SmaMslug3 => {
+                let mut combined = interleave_c_rom_pairs(c_roms);
+                cmc42::gfx_decrypt(&mut combined, cmc42::MSLUG3_GFX_KEY);
+                deinterleave_c_rom_pairs(&combined, c_roms.len().div_ceil(2))
+            }
+        };
         Self {
             work_ram: vec![0; WORK_RAM_SIZE],
             p1_rom,
@@ -383,8 +396,8 @@ impl NeoGeoBus {
             lspc: Lspc::new(),
             palette_ram: vec![0; 256 * 16],
             s1_rom,
-            odd_c_rom: concat_c_roms(c_roms, true),
-            even_c_rom: concat_c_roms(c_roms, false),
+            odd_c_rom,
+            even_c_rom,
         }
     }
 
@@ -1134,6 +1147,130 @@ fn concat_c_roms(c_roms: &[Vec<u8>], odd: bool) -> Vec<u8> {
     c_roms.iter().enumerate().filter(|(i, _)| (i % 2 == 0) == odd).flat_map(|(_, rom)| rom.iter().copied()).collect()
 }
 
+/// Metal Slug 3's real CMC42 sprite/fix-layer graphics decryption,
+/// reimplemented from MAME's own BSD-3-licensed source
+/// (`src/devices/bus/neogeo/prot_cmc.cpp`, `gfx_decrypt`/`decrypt`) --
+/// a real, fully-specified (if genuinely intricate) XOR scheme
+/// involving 9 correlated 256-byte tables, not a guess. Metal Slug 3
+/// uses the shared "kof99" tables every CMC42 game except KOF2000/MS4
+/// uses (per that source's own comment) plus its own key,
+/// `MSLUG3_GFX_KEY` = 0xad.
+///
+/// Real hardware/MAME operate on ONE combined buffer built by
+/// interleaving each numbered pair of C-ROMs byte-by-byte (C1's bytes
+/// at even positions, C2's at odd, forming one block; C3/C4 form the
+/// next block; and so on -- confirmed against MAME's own cartridge ROM
+/// loading for `mslug3`, which uses exactly this `ROM_LOAD16_BYTE`
+/// pairing), NOT this module's own `odd_c_rom`/`even_c_rom` split
+/// (which concatenates all odd-numbered and all even-numbered ROMs
+/// separately -- a different, though tile-addressing-equivalent,
+/// organization used only for `decode_sprite_tile`). `interleave_c_rom_pairs`
+/// and `deinterleave_c_rom_pairs` convert between the two.
+mod cmc42 {
+    include!("neogeo_cmc42_tables.rs");
+
+    /// One byte-pair's data XOR, per MAME's own `cmc_prot_device::decrypt`.
+    fn decrypt_pair(c0: u8, c1: u8, table0hi: &[u8; 256], table0lo: &[u8; 256], table1: &[u8; 256], base: u32, invert: bool) -> (u8, u8) {
+        let tmp = table1[((base & 0xff) ^ CMC42_KOF99_ADDRESS_0_7_XOR[((base >> 8) & 0xff) as usize] as u32) as usize];
+        let xor0 = (table0hi[((base >> 8) & 0xff) as usize] & 0xfe) | (tmp & 0x01);
+        let xor1 = (tmp & 0xfe) | (table0lo[((base >> 8) & 0xff) as usize] & 0x01);
+        if invert {
+            (c1 ^ xor0, c0 ^ xor1)
+        } else {
+            (c0 ^ xor0, c1 ^ xor1)
+        }
+    }
+
+    /// The real algorithm, per MAME's own `cmc_prot_device::gfx_decrypt`:
+    /// a data-XOR pass over every 4-byte group, then an address-XOR
+    /// pass that shuffles those (now data-decrypted) 4-byte groups
+    /// into their real positions.
+    pub fn gfx_decrypt(rom: &mut [u8], extra_xor: u32) {
+        let rom_size = rom.len();
+        let mut buf = vec![0u8; rom_size];
+
+        // Data xor.
+        for rpos in 0..(rom_size / 4) {
+            let (b0, b3) = decrypt_pair(rom[4 * rpos], rom[4 * rpos + 3], &CMC42_KOF99_TYPE0_T03, &CMC42_KOF99_TYPE0_T12, &CMC42_KOF99_TYPE1_T03, rpos as u32, ((rpos >> 8) & 1) != 0);
+            buf[4 * rpos] = b0;
+            buf[4 * rpos + 3] = b3;
+            let (b1, b2) = decrypt_pair(
+                rom[4 * rpos + 1],
+                rom[4 * rpos + 2],
+                &CMC42_KOF99_TYPE0_T12,
+                &CMC42_KOF99_TYPE0_T03,
+                &CMC42_KOF99_TYPE1_T12,
+                rpos as u32,
+                (((rpos >> 16) as u32) ^ (CMC42_KOF99_ADDRESS_16_23_XOR2[(rpos >> 8) & 0xff] as u32)) & 1 != 0,
+            );
+            buf[4 * rpos + 1] = b1;
+            buf[4 * rpos + 2] = b2;
+        }
+
+        // Address xor.
+        for rpos in 0..(rom_size / 4) {
+            let mut baser = rpos as u32;
+            baser ^= extra_xor;
+            baser ^= (CMC42_KOF99_ADDRESS_8_15_XOR1[((baser >> 16) & 0xff) as usize] as u32) << 8;
+            baser ^= (CMC42_KOF99_ADDRESS_8_15_XOR2[(baser & 0xff) as usize] as u32) << 8;
+            baser ^= (CMC42_KOF99_ADDRESS_16_23_XOR1[(baser & 0xff) as usize] as u32) << 16;
+            baser ^= (CMC42_KOF99_ADDRESS_16_23_XOR2[((baser >> 8) & 0xff) as usize] as u32) << 16;
+            baser ^= CMC42_KOF99_ADDRESS_0_7_XOR[((baser >> 8) & 0xff) as usize] as u32;
+            baser &= (rom_size as u32 / 4) - 1;
+            let baser = baser as usize;
+            rom[4 * rpos] = buf[4 * baser];
+            rom[4 * rpos + 1] = buf[4 * baser + 1];
+            rom[4 * rpos + 2] = buf[4 * baser + 2];
+            rom[4 * rpos + 3] = buf[4 * baser + 3];
+        }
+    }
+
+    pub const MSLUG3_GFX_KEY: u32 = 0xad;
+}
+
+/// Builds the real combined sprite-ROM buffer `cmc42::gfx_decrypt`
+/// operates on: each numbered pair of C-ROMs (C1/C2, C3/C4, ...)
+/// interleaved byte-by-byte into its own block, blocks concatenated in
+/// cartridge order -- see `cmc42`'s own module doc comment for why
+/// this differs from `concat_c_roms`.
+fn interleave_c_rom_pairs(c_roms: &[Vec<u8>]) -> Vec<u8> {
+    let pair_len = c_roms.chunks(2).map(|pair| pair.iter().map(|r| r.len()).max().unwrap_or(0)).max().unwrap_or(0);
+    let mut out = vec![0u8; c_roms.len().div_ceil(2) * pair_len * 2];
+    for (pair_index, pair) in c_roms.chunks(2).enumerate() {
+        let base = pair_index * pair_len * 2;
+        if let Some(even_rom) = pair.first() {
+            for (i, &b) in even_rom.iter().enumerate() {
+                out[base + i * 2] = b;
+            }
+        }
+        if let Some(odd_rom) = pair.get(1) {
+            for (i, &b) in odd_rom.iter().enumerate() {
+                out[base + i * 2 + 1] = b;
+            }
+        }
+    }
+    out
+}
+
+/// The inverse of `interleave_c_rom_pairs`, splitting a decrypted
+/// combined buffer back into this module's own `odd_c_rom`/`even_c_rom`
+/// representation (all even-position bytes across every pair-block
+/// concatenated in order = the "odd-numbered-ROM" virtual buffer
+/// `decode_sprite_tile` expects, and vice versa).
+fn deinterleave_c_rom_pairs(combined: &[u8], pair_count: usize) -> (Vec<u8>, Vec<u8>) {
+    let pair_len = if pair_count == 0 { 0 } else { combined.len() / pair_count / 2 };
+    let mut odd_rom = Vec::with_capacity(pair_len * pair_count);
+    let mut even_rom = Vec::with_capacity(pair_len * pair_count);
+    for pair_index in 0..pair_count {
+        let base = pair_index * pair_len * 2;
+        for i in 0..pair_len {
+            odd_rom.push(combined[base + i * 2]);
+            even_rom.push(combined[base + i * 2 + 1]);
+        }
+    }
+    (odd_rom, even_rom)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1614,6 +1751,64 @@ mod tests {
         assert_eq!(concat_c_roms(&roms, false), vec![2, 2, 2, 2, 4, 4, 4, 4], "even ROMs (C2, C4) must concatenate in order");
     }
 
+    /// `interleave_c_rom_pairs` must byte-interleave each numbered
+    /// pair (C1 at even positions, C2 at odd, forming one block; C3/C4
+    /// forming the next), matching MAME's own `ROM_LOAD16_BYTE`
+    /// pairing for real `mslug3` -- and `deinterleave_c_rom_pairs` must
+    /// exactly invert it, since the real pipeline round-trips through
+    /// both (interleave -> `cmc42::gfx_decrypt` -> de-interleave).
+    #[test]
+    fn interleave_and_deinterleave_c_rom_pairs_round_trip() {
+        let c1 = vec![0xAAu8; 4];
+        let c2 = vec![0xBBu8; 4];
+        let c3 = vec![0xCCu8; 4];
+        let c4 = vec![0xDDu8; 4];
+        let roms = vec![c1, c2, c3, c4];
+
+        let combined = interleave_c_rom_pairs(&roms);
+        assert_eq!(combined, vec![0xAA, 0xBB, 0xAA, 0xBB, 0xAA, 0xBB, 0xAA, 0xBB, 0xCC, 0xDD, 0xCC, 0xDD, 0xCC, 0xDD, 0xCC, 0xDD], "C1/C2 must interleave into the first block, C3/C4 into the second, matching MAME's real ROM_LOAD16_BYTE layout");
+
+        let (odd_rom, even_rom) = deinterleave_c_rom_pairs(&combined, 2);
+        assert_eq!(odd_rom, vec![0xAA, 0xAA, 0xAA, 0xAA, 0xCC, 0xCC, 0xCC, 0xCC], "de-interleaving must recover exactly C1++C3 (the odd-numbered-ROM virtual buffer)");
+        assert_eq!(even_rom, vec![0xBB, 0xBB, 0xBB, 0xBB, 0xDD, 0xDD, 0xDD, 0xDD], "de-interleaving must recover exactly C2++C4 (the even-numbered-ROM virtual buffer)");
+    }
+
+    /// If real Metal Slug 3 C-ROMs are present, running them through
+    /// the full real pipeline (interleave -> CMC42 decrypt -> de-
+    /// interleave -> `decode_sprite_tile`) must produce structured,
+    /// non-degenerate output -- the same "does it produce something
+    /// coherent, not garbage or a crash" bar the pre-decryption sprite
+    /// test met, now against what should be the *actually correct*
+    /// graphics data instead of still-encrypted bytes.
+    #[test]
+    fn real_c_roms_decrypt_via_cmc42_to_structured_non_degenerate_sprites_if_present() {
+        let mut c_roms = Vec::new();
+        for n in 1..=8 {
+            let Some(rom) = load_real_rom(&format!("256-c{n}.rom")) else {
+                eprintln!("skipping: no ROM in {ROM_DIR} (this is expected in a fresh checkout)");
+                return;
+            };
+            c_roms.push(rom);
+        }
+        let mut combined = interleave_c_rom_pairs(&c_roms);
+        cmc42::gfx_decrypt(&mut combined, cmc42::MSLUG3_GFX_KEY);
+        let (odd_rom, even_rom) = deinterleave_c_rom_pairs(&combined, c_roms.len().div_ceil(2));
+
+        let mut distinct_colors = std::collections::HashSet::new();
+        let mut all_zero_count = 0;
+        for tile in 0..20u32 {
+            let pixels = decode_sprite_tile(&odd_rom, &even_rom, tile);
+            if pixels.iter().flatten().all(|&c| c == 0) {
+                all_zero_count += 1;
+            }
+            for &color in pixels.iter().flatten() {
+                distinct_colors.insert(color);
+            }
+        }
+        assert!(all_zero_count < 20, "real decrypted sprite tile data across the first 20 tiles shouldn't decode to entirely blank output");
+        assert!(distinct_colors.len() > 1, "real decrypted sprite tile data should use more than one color index across 20 tiles, got {distinct_colors:?}");
+    }
+
     /// If a real Metal Slug 3 cartridge dump is present, decode its
     /// real S1 ROM's tile 0: checking its raw bytes directly (all 32
     /// are 0x11) confirms it's a genuinely uniform solid-color tile,
@@ -1681,8 +1876,11 @@ mod tests {
     /// as unverified can be checked visually: real game sprite tiles
     /// should show recognizable silhouettes/shading, not visual noise,
     /// if the decode is broadly right, even before palette or exact
-    /// left/right mirroring is confirmed. `#[ignore]`d since it's a
-    /// human-inspection tool, not an assertion -- run explicitly with
+    /// left/right mirroring is confirmed. Runs the real CMC42 decrypt
+    /// pipeline first (Metal Slug 3 needs it -- undecrypted C-ROM data
+    /// would never resemble real sprites no matter how correct the
+    /// tile-format decode itself is). `#[ignore]`d since it's a human-
+    /// inspection tool, not an assertion -- run explicitly with
     /// `cargo test --bin portamax-sim real_c_roms_visual_dump -- --ignored --nocapture`.
     #[test]
     #[ignore]
@@ -1695,8 +1893,9 @@ mod tests {
             };
             c_roms.push(rom);
         }
-        let odd_rom = concat_c_roms(&c_roms, true);
-        let even_rom = concat_c_roms(&c_roms, false);
+        let mut combined = interleave_c_rom_pairs(&c_roms);
+        cmc42::gfx_decrypt(&mut combined, cmc42::MSLUG3_GFX_KEY);
+        let (odd_rom, even_rom) = deinterleave_c_rom_pairs(&combined, c_roms.len().div_ceil(2));
 
         const GRID: usize = 16; // 16x16 tiles = 256 tiles total
         const SIZE: usize = GRID * 16;
@@ -1726,12 +1925,13 @@ mod tests {
     /// (`Protection::SmaMslug3`), to prove the memory map, word-swap,
     /// header/entry handling, and SMA transform are right against real
     /// hardware/software, not just synthetic bytes. This can't prove
-    /// full compatibility (no sprite/fix-layer graphics decryption via
-    /// CMC42 yet, which real Metal Slug 3 also needs -- see the module
-    /// doc comment), but millions of real instructions executing
-    /// without faulting, deep into genuinely SMA-decrypted code, is a
-    /// meaningful signal the transform is right. Skips (doesn't fail)
-    /// when no ROM is present.
+    /// full compatibility (sprite auto-animation isn't implemented, and
+    /// the C-ROM/fix-layer CMC42 decryption's left/right sprite
+    /// orientation is still flagged unverified -- see this module's own
+    /// doc comment and `decode_sprite_tile`'s), but millions of real
+    /// instructions executing without faulting, deep into genuinely
+    /// SMA-decrypted code, is a meaningful signal the transform is
+    /// right. Skips (doesn't fail) when no ROM is present.
     ///
     /// **Real bug found and fixed here**: an earlier version of
     /// `sma_decrypt_68k` truncated the decrypted fixed bank to just the

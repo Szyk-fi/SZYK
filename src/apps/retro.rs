@@ -82,11 +82,10 @@
 //! documentation instead of borrowed, a deliberate, flagged exception
 //! to this file's usual "vendor a real implementation" rule. Video
 //! (fix/text layer and sprites), sound, VBlank, and Metal Slug 3's own
-//! NEO-SMA protection (real 68000 decryption and bankswitching,
-//! reimplemented from MAME's own source) all work; still missing is
-//! the separate CMC42 chip Metal Slug 3 also needs for sprite/fix-
-//! layer graphics decryption, and most other real cartridges'
-//! protection chips aren't implemented at all yet.
+//! NEO-SMA and CMC42 protection chips (real 68000 program decryption/
+//! bankswitching and real sprite/fix-layer graphics decryption, both
+//! reimplemented from MAME's own source) all work; most other real
+//! cartridges' own protection chips aren't implemented at all yet.
 //!
 //! **What's real here**: ROM scanning per console (ROMs are
 //! copyrighted and must stay user-supplied -- see `.gitignore`'s
@@ -222,11 +221,13 @@ enum Console {
     /// are real, vendored implementations, but the memory map and
     /// video are hand-written against public hardware documentation.
     /// Metal Slug 3's real NEO-SMA protection (68000 decryption and
-    /// bankswitching) is implemented, verified against a real
-    /// 100,000,000-instruction run with no CPU fault; its separate
-    /// CMC42 graphics-decryption chip is not, so sprite/fix-layer
-    /// visuals for that specific cart won't look right yet. Most other
-    /// real cartridges' own protection chips aren't implemented at
+    /// bankswitching, verified against a real 100,000,000-instruction
+    /// run with no CPU fault) and its separate CMC42 graphics-
+    /// decryption chip (sprite/fix-layer C-ROM data) are both
+    /// implemented, reimplemented from MAME's own source. Sprite auto-
+    /// animation isn't, and CMC42's exact left/right sprite orientation
+    /// is still flagged unverified in `neogeo_core.rs`. Most other real
+    /// cartridges' own protection chips aren't implemented at
     /// all -- those will surface the same "emulation error, reload the
     /// ROM" this app already shows for any other core's crash.
     NeoGeo,
