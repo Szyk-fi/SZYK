@@ -28,7 +28,7 @@ mod radio;
 #[path = "collection_portal.rs"]
 pub mod portal;
 #[path = "collection_decode.rs"]
-mod decode;
+pub(crate) mod decode;
 #[path="collection_visuals.rs"]
 mod visuals;
 const VOICE_NAMES: [&str; 8] = [
@@ -439,11 +439,11 @@ impl Kind {
     }
 }
 #[derive(Clone, Debug)]
-struct Clip {
-    samples: Arc<Vec<[f32; 2]>>,
-    rate: f32,
-    name: String,
-    peak: f32,
+pub(crate) struct Clip {
+    pub(crate) samples: Arc<Vec<[f32; 2]>>,
+    pub(crate) rate: f32,
+    pub(crate) name: String,
+    pub(crate) peak: f32,
 }
 // Bounded peak sampling avoids zero-crossing aliasing in take thumbnails.
 fn take_overview(samples: &[[f32; 2]], count: usize) -> Vec<f32> {

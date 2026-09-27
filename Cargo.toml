@@ -114,6 +114,16 @@ symphonia = { version = "0.5.5", default-features = false, features = ["aac", "a
 # CPUs inside it.
 m68k = "0.14"
 z80 = "2.0"
+# The YM2610 sound chip -- unlike the rest of the Neo Geo's hardware
+# (see neogeo_core.rs's own module doc comment), this one genuinely
+# has a real, vendorable implementation to borrow: `ymfm-sys` wraps
+# Aaron Giles' real `ymfm` C++ library (MAME's own FM-chip emulation
+# core) via `cxx`, the same "wrap real, proven C++ DSP" approach this
+# project already uses for Mutable Instruments' Plaits/Clouds. BSD-3
+# licensed, and `ymfm` explicitly supports YM2610/YM2610B as first-
+# class chip types, not an approximation via a similar-but-different
+# chip.
+ymfm-sys = "0.2"
 
 
 # GameController.framework bindings -- the correct, native macOS API

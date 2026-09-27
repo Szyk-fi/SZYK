@@ -1,13 +1,14 @@
 //! Launcher metadata and navigation never construct an app or start DSP.
 pub const CATEGORIES:[&str;7]=["All apps","Instruments","Effects","Sequencing","Library","Utilities","Recent"];
 pub fn category(name:&str)->usize {match name {
-    "Orbit"|"Swarm"|"Mutant"|"Constellation"|"Dream"|"Plaits"|"Synth"|"Cascade"|"Sample Drum"|"Queen of Pentacles"=>1,
+    "Forge"|"Orbit"|"Swarm"|"Mutant"|"Constellation"|"Dream"|"Plaits"|"Synth"|"Cascade"|"Sample Drum"|"Queen of Pentacles"=>1,
     "Fracture"|"Ghosts"|"Tape Machine"|"Beads"|"Black Hole"|"Clouds"|"Magnito"|"Natural Gate"|"Nautilus"|"Prism"|"Rainmaker"|"Singularity"|"Starlab"|"Tonestack"|"Warps"|"Morph"|"Master"|"Vector Filter"=>2,
     "Bloom"|"Madness"|"Nebula"|"Sequencer"|"Turing Machine"|"Pam's Workout"|"Pams Workout"|"Voltage"=>3,
     "Reference"|"Vinyl"|"Practice"|"Radio"|"Memories"|"Tape"|"Field"|"Sample Hunter"|"Studio"=>4,
     _=>5,
 }}
 pub fn description(name:&str)->&'static str {match name {
+    "Forge"=>"Turn recorded sounds into playable, editable instruments.",
     "Vector Filter"=>"Sculpt audio in three dimensions: cutoff, resonance and drive.",
     "Portal"=>"Patch audio and modulation between your devices.","Retro"=>"Your cartridge library. Four systems, one console.","Bloom"=>"Create evolving melodies with intersecting orbits.","Reference"|"Vinyl"=>"Listen, browse and compare your audio collection.","Studio"=>"Record, layer and mix eight independent takes.","Settings"=>"Audio, controllers and system preferences.","Mixer"=>"Balance every active instrument and effect.","Scope"|"Analyzer"=>"See and measure the signals in your session.","Sample Hunter"=>"Capture a sound and turn it into an instrument.","Constellation"=>"Explore scales, chord voicings and harmonic motion.","Mutant"=>"Breed timbres and play evolving harmonic instruments.",_=>match category(name){1=>"Play an instrument. Shape its voice and musical motion.",2=>"Transform a source with an independent audio processor.",3=>"Generate patterns, triggers and musical movement.",4=>"Record, explore and play your sound library.",_=>"A dedicated tool for your Portamax session."},}}
 #[derive(Default)] pub struct Launcher {pub category:usize,pub recent:Vec<usize>}

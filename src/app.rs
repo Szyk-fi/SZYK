@@ -371,6 +371,7 @@ pub enum SlintExtra {
     SampleDrum(SampleDrumExtra),
     Visualizer(VisualizerExtra),
     VectorFilter(VectorFilterExtra),
+    Forge(ForgeExtra),
     Retro(RetroExtra),
     Collection(CollectionExtra),
     Portal(PortalExtra),
@@ -916,3 +917,5 @@ pub struct CollectionExtra {
 pub struct PortalExtra {pub sources:Vec<String>,pub targets:Vec<String>,pub amounts:Vec<f32>,pub enabled:Vec<bool>,pub levels:Vec<f32>,pub selected:i32,pub active:bool,pub status:String}
 
 pub struct VectorFilterExtra {pub xyz:Vec<f32>,pub wave:Vec<f32>,pub source:String,pub mode:String,pub enabled:bool}
+
+pub struct ForgeExtra{pub wave:Vec<f32>,pub starts:Vec<f32>,pub ends:Vec<f32>,pub labels:Vec<String>,pub levels:Vec<f32>,pub name:String,pub status:String,pub mode:String,pub source:String,pub selected:i32,pub busy:bool,pub recording:bool,pub duration:f32}

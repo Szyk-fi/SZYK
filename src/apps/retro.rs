@@ -218,15 +218,15 @@ enum Console {
     Gb,
     /// Neo Geo -- unlike the other four, no complete vendorable system
     /// emulator exists to borrow (see `neogeo_core.rs`'s own module
-    /// doc comment); the 68000/Z80 CPU cores are real and vendored,
-    /// but the memory map, video, and sound are hand-written against
-    /// public hardware documentation and are still incomplete: the
-    /// fix/text layer and sprites both render, but there is no audio
-    /// at all yet, and cartridges using a protection chip for P2
-    /// bankswitching (Metal Slug 3 among them) will run real code for
-    /// well under a second before hitting code this core can't decrypt
-    /// and surfacing the same "emulation error, reload the ROM" this
-    /// app already shows for any other core's crash.
+    /// doc comment); the 68000/Z80 CPU cores and the YM2610 sound chip
+    /// are real, vendored implementations, but the memory map and
+    /// video are hand-written against public hardware documentation.
+    /// The fix/text layer, sprites, and real YM2610 audio all render;
+    /// cartridges using a protection chip for P2 bankswitching (Metal
+    /// Slug 3 among them) will still run real code for well under a
+    /// second before hitting code this core can't decrypt and
+    /// surfacing the same "emulation error, reload the ROM" this app
+    /// already shows for any other core's crash.
     NeoGeo,
 }
 const CONSOLE_NAMES: [&str; 5] = ["NES", "SNES", "Arcade", "Game Boy", "Neo Geo"];
@@ -441,14 +441,13 @@ fn scan_neogeo_roms(dir: &Path) -> Vec<RomEntry> {
 /// Loads the specific ROM files `neogeo_core::NeoGeoMachine::new`
 /// needs out of a cartridge folder `scan_neogeo_roms` already
 /// confirmed contains at least a P1 ROM -- matching by filename suffix
-/// (`p1.rom`, `p2.rom`, `m1.rom`, `s1.rom`, and `c1.rom` through
-/// `c8.rom`, case-insensitive) rather than requiring an exact naming
-/// convention, since the numeric prefix varies by cart. Missing files
-/// (P2, or any C-ROM) simply come back empty -- `NeoGeoMachine::new`
-/// and `neogeo_core`'s decode functions already treat an empty ROM as
-/// "no data for this yet" rather than panicking, matching sprites/
-/// audio genuinely not being implemented yet regardless.
-fn load_neogeo_cartridge(dir: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<Vec<u8>>) {
+/// (`p1.rom`, `p2.rom`, `m1.rom`, `s1.rom`, `c1.rom` through `c8.rom`,
+/// and `v1.rom` through `v4.rom`, case-insensitive) rather than
+/// requiring an exact naming convention, since the numeric prefix
+/// varies by cart. Missing files simply come back empty --
+/// `NeoGeoMachine::new` and `neogeo_core`'s decode functions already
+/// treat an empty ROM as "no data for this yet" rather than panicking.
+fn load_neogeo_cartridge(dir: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<Vec<u8>>, Vec<u8>) {
     let find = |suffix: &str| -> Vec<u8> {
         std::fs::read_dir(dir)
             .into_iter()
@@ -463,7 +462,10 @@ fn load_neogeo_cartridge(dir: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec
     let m1 = find("m1.rom");
     let s1 = find("s1.rom");
     let c_roms = (1..=8).map(|n| find(&format!("c{n}.rom"))).collect();
-    (p1, p2, m1, s1, c_roms)
+    // V-ROMs (ADPCM sample data) concatenate in order, same convention
+    // as the C-ROMs' odd/even split in `concat_c_roms`.
+    let v_rom = (1..=4).flat_map(|n| find(&format!("v{n}.rom"))).collect();
+    (p1, p2, m1, s1, c_roms, v_rom)
 }
 
 fn save_state_path(console: Console, rom_name: &str, slot: usize) -> PathBuf {
@@ -832,11 +834,19 @@ impl RetroApp {
                 })
             }),
             Console::NeoGeo => {
-                let (p1, p2, m1, s1, c_roms) = load_neogeo_cartridge(&rom_path);
+                let (p1, p2, m1, s1, c_roms, v_rom) = load_neogeo_cartridge(&rom_path);
                 if p1.is_empty() {
                     Err("no P1 ROM found in this cartridge folder".into())
                 } else {
-                    Ok(Deck::NeoGeo(Box::new(NeoGeoMachine::new(p1, p2, m1, s1, c_roms))))
+                    // No per-game registry exists (see `scan_neogeo_roms`'s
+                    // own doc comment) -- detecting a cartridge's real
+                    // protection chip by its folder name is the same
+                    // pragmatic convention already used there. Only
+                    // Metal Slug 3/3A's NEO-SMA is implemented so far
+                    // (see `neogeo_core::Protection`'s own doc comment).
+                    let name_lower = rom_name.to_ascii_lowercase();
+                    let protection = if name_lower.contains("mslug3") { crate::apps::neogeo_core::Protection::SmaMslug3 } else { crate::apps::neogeo_core::Protection::None };
+                    Ok(Deck::NeoGeo(Box::new(NeoGeoMachine::new(p1, p2, m1, s1, c_roms, v_rom, protection))))
                 }
             }
         };
@@ -1292,10 +1302,10 @@ impl App for RetroApp {
                     // comment) -- a fixed instruction budget per video
                     // frame stands in for it instead, close to a real
                     // 68000's actual per-frame instruction throughput
-                    // at this frame rate. No sprites or sound render
-                    // yet (see `neogeo_core`'s own module doc comment)
-                    // -- only whatever the fix/text layer's own VRAM
-                    // currently holds.
+                    // at this frame rate. Real YM2610 audio (see
+                    // `neogeo_core`'s own module doc comment); no
+                    // protection-chip decryption for cartridges that
+                    // need it yet.
                     Some(Deck::NeoGeo(machine)) => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         machine.vblank();
                         for _ in 0..50_000 {
@@ -1306,10 +1316,24 @@ impl App for RetroApp {
                         for _ in 0..10_000 {
                             machine.step_sound();
                         }
-                        machine.bus.render_frame()
+                        let frame = machine.bus.render_frame();
+                        let audio = machine.generate_audio_seconds(NEOGEO_FRAME_SECONDS);
+                        (frame, audio, machine.audio_sample_rate())
                     })) {
-                        Ok((w, h, rgba)) => {
+                        Ok(((w, h, rgba), (left, right), native_rate)) => {
                             self.last_frame = Some((w, h, rgba));
+                            let mut interleaved = Vec::with_capacity(left.len() * 2);
+                            for (l, r) in left.into_iter().zip(right) {
+                                interleaved.push(l);
+                                interleaved.push(r);
+                            }
+                            let resampled = self.resampler.resample(&interleaved, native_rate, self.configured_sample_rate.max(1.0), 2);
+                            let mut queue = self.bridge.queue.lock().unwrap();
+                            for s in resampled {
+                                if queue.len() + 1 < MAX_QUEUED_AUDIO_SAMPLES {
+                                    queue.push_back(s);
+                                }
+                            }
                             Ok(())
                         }
                         Err(panic) => Err(panic_message(panic)),
@@ -1969,11 +1993,11 @@ mod tests {
     /// (`scan_neogeo_roms`), real multi-file ROM loading
     /// (`load_neogeo_cartridge`), and real frame stepping through
     /// `tick`'s `Deck::NeoGeo` arm (68000 + Z80 execution, VBlank
-    /// delivery, fix-layer rendering). Unlike every other console's
-    /// equivalent test, this doesn't assert on audio (none exists yet)
-    /// or save states (not supported yet -- checked explicitly, since
-    /// that's real, current, documented behavior, not an oversight).
-    /// Skips (doesn't fail) when no cartridge folder is present.
+    /// delivery, fix-layer rendering, real YM2610 audio). Unlike every
+    /// other console's equivalent test, this doesn't assert save states
+    /// work (not supported yet -- checked explicitly, since that's
+    /// real, current, documented behavior, not an oversight). Skips
+    /// (doesn't fail) when no cartridge folder is present.
     #[test]
     fn a_real_neogeo_cartridge_actually_runs_if_one_is_present() {
         let mut app = new_app();
@@ -1987,9 +2011,16 @@ mod tests {
         assert!(app.deck.is_some(), "a real Neo Geo cartridge folder must load successfully: {}", app.status);
         assert_eq!(app.running(), Some(true), "loading a cartridge should leave it running");
 
+        let mut proc = app.audio_processor().unwrap();
+        let mut saw_audio = false;
         for i in 0..30 {
             std::thread::sleep(std::time::Duration::from_millis(17));
             app.tick(&Input { grid: std::array::from_fn(|pad| pad == i % 8), ..Default::default() });
+            let mut buffer = vec![0.0f32; 256 * 2];
+            proc.process(&mut buffer, 2, 48_000.0);
+            if buffer.iter().any(|&s| s != 0.0) {
+                saw_audio = true;
+            }
             if app.deck.is_none() {
                 // The known PVC-protection limitation (see this
                 // module's own doc comment) surfaces as exactly this
@@ -2002,6 +2033,12 @@ mod tests {
             }
         }
         assert!(app.last_frame.is_some(), "frame-stepping should have produced real video output before any crash");
+        // Not asserted as a hard failure: a real cart's sound driver
+        // might not have triggered anything audible in these first 30
+        // frames (e.g. still in a silent boot/init sequence), so this
+        // is a soft signal logged for visibility, not a correctness
+        // requirement the way video output is.
+        eprintln!("saw real YM2610 audio through the mix: {saw_audio}");
 
         // Metal Slug 3 specifically is expected to hit its PVC
         // limitation and crash out (see this module's own doc

@@ -41,13 +41,22 @@
 //! real cartridge dump (see the `roms/neogeo/` convention): the memory
 //! map, cartridge header parsing, CPU wiring (68000 + Z80, including
 //! the sound-command handshake between them), VBlank interrupt
-//! delivery, generic P2 bankswitching, VRAM/palette RAM, and video --
-//! both the fix/text layer and sprites (tile decode, position, flip,
-//! and shrink; see `render_sprites_onto`'s own doc comment for the
-//! specific shrink caveat). Still missing: sound (YM2610), Metal Slug
-//! 3's own PVC protection-chip decryption, and sprite auto-animation.
-//! See the module's own test coverage for exactly what is and isn't
-//! verified so far.
+//! delivery, generic P2 bankswitching, VRAM/palette RAM, video (both
+//! the fix/text layer and sprites -- tile decode, position, flip, and
+//! shrink; see `render_sprites_onto`'s own doc comment for the
+//! specific shrink caveat), sound (the real YM2610 chip, via the
+//! `ymfm-sys` crate -- see `Ym2610`'s own doc comment and Cargo.toml's
+//! doc comment on that dependency), and Metal Slug 3's real NEO-SMA
+//! protection chip (`Protection::SmaMslug3` -- 68000 program
+//! decryption and bankswitching, reimplemented from MAME's own BSD-3
+//! source; see `sma_decrypt_68k`'s own doc comment). Still missing:
+//! the sprite/fix-layer graphics decryption Metal Slug 3 also needs
+//! (a different chip, CMC42, not yet reimplemented), sprite auto-
+//! animation, and a real crash still under investigation partway
+//! through a longer real Metal Slug 3 run even with SMA active (see
+//! `a_real_metal_slug_3_cartridge_boots_into_its_own_code_if_present`'s
+//! own doc comment for exactly where and what). See the module's own
+//! test coverage for exactly what is and isn't verified so far.
 
 use m68k::{AddressBus, CpuCore, CpuType, StepResult};
 use std::cell::Cell;
@@ -158,6 +167,115 @@ fn word_swap(mut rom: Vec<u8>) -> Vec<u8> {
     rom
 }
 
+/// Rearranges `value`'s bits per `bits`: output bit `bits.len()-1-k`
+/// comes from input bit `bits[k]` -- the same argument order as
+/// MAME's own `bitswap<N>(value, b_msb, ..., b_lsb)` template (each
+/// argument names which *input* bit position feeds that output bit,
+/// listed from the output's MSB down to its LSB), so a bitswap array
+/// copied straight out of MAME source behaves identically here.
+fn bitswap(value: u32, bits: &[u8]) -> u32 {
+    let n = bits.len();
+    let mut out = 0u32;
+    for (k, &b) in bits.iter().enumerate() {
+        out |= ((value >> b) & 1) << (n - 1 - k);
+    }
+    out
+}
+
+/// Metal Slug 3's NEO-SMA bank-number-unscrambling formula and lookup
+/// table, reimplemented from MAME's `sma_prot_device::mslug3_bank_base`
+/// (`src/devices/bus/neogeo/prot_sma.cpp`, BSD-3-Clause). Returns a
+/// *byte offset* into the combined P1+P2 region (already including
+/// the `+0x100000` MAME's own version adds), matching this module's
+/// `p2_rom` layout where index 0 corresponds to combined offset
+/// `0x100000` -- so the real caller subtracts `0x100000` before using
+/// this as a `p2_rom` index (see `NeoGeoBus::write_word`).
+fn sma_mslug3_bank_base(written_value: u16) -> u32 {
+    const BANK_OFFSET: [u32; 49] = [
+        0x000000, 0x020000, 0x040000, 0x060000, 0x070000, 0x090000, 0x0b0000, 0x0d0000, 0x0e0000, 0x0f0000, 0x120000, 0x130000, 0x140000, 0x150000, 0x180000, 0x190000, 0x1a0000, 0x1b0000, 0x1e0000, 0x1f0000, 0x200000, 0x210000, 0x240000, 0x250000, 0x260000, 0x270000, 0x2a0000, 0x2b0000, 0x2c0000, 0x2d0000, 0x300000, 0x310000, 0x320000, 0x330000, 0x360000, 0x370000, 0x380000, 0x390000, 0x3c0000, 0x3d0000, 0x400000, 0x410000, 0x440000, 0x450000, 0x460000, 0x470000, 0x4a0000, 0x4b0000, 0x4c0000,
+    ];
+    let index = bitswap(written_value as u32, &[9, 3, 6, 15, 12, 14]) as usize;
+    0x100000 + BANK_OFFSET.get(index).copied().unwrap_or(0)
+}
+
+/// Metal Slug 3's NEO-SMA 68000 program decryption, reimplemented from
+/// MAME's `sma_prot_device::mslug3_decrypt_68k` (same source as
+/// `sma_mslug3_bank_base`, credited there to Razoola and Mr.K's
+/// original decode work). Three real transforms, applied in this
+/// exact order against a combined P1+P2 buffer (P1 first 0x100000
+/// bytes, P2 concatenated after, zero-padded to a full 8MB P2 region
+/// the way MAME's own fixed-size ROM region is): a per-word bitplane
+/// rearrangement across the whole P2 area, an address-line rearranged
+/// *copy* of already-transformed P2 data into the fixed bank (P1's
+/// real content on a NEO-SMA cart isn't its own on-disk file -- it's
+/// extracted out of P2 this way), and a within-64KB-chunk word-
+/// position permutation across the rest of P2.
+///
+/// Returns `(p1_rom, p2_rom)`: `p1_rom` is the decrypted fixed bank
+/// (0xC0000 bytes); `p2_rom` is the combined region from byte offset
+/// 0x100000 onward, so `sma_mslug3_bank_base`'s returned offset (which
+/// already includes that `+0x100000`) needs `0x100000` subtracted
+/// before indexing into it.
+fn sma_decrypt_68k(p1_rom: Vec<u8>, p2_rom: Vec<u8>, data_bitswap: &[u8; 16], fixed_addr_bitswap: &[u8; 19], fixed_source_word: usize, banked_addr_bitswap: &[u8; 15]) -> (Vec<u8>, Vec<u8>) {
+    const P1_SIZE: usize = 0x100000;
+    const P2_SIZE: usize = 0x800000;
+    let mut combined = vec![0u8; P1_SIZE + P2_SIZE];
+    let p1_len = p1_rom.len().min(P1_SIZE);
+    combined[..p1_len].copy_from_slice(&p1_rom[..p1_len]);
+    let p2_len = p2_rom.len().min(P2_SIZE);
+    combined[P1_SIZE..P1_SIZE + p2_len].copy_from_slice(&p2_rom[..p2_len]);
+
+    let word_at = |buf: &[u8], i: usize| u16::from_be_bytes([buf[i * 2], buf[i * 2 + 1]]);
+    let set_word_at = |buf: &mut [u8], i: usize, v: u16| {
+        let bytes = v.to_be_bytes();
+        buf[i * 2] = bytes[0];
+        buf[i * 2 + 1] = bytes[1];
+    };
+
+    // Step 1: per-word bitplane rearrangement across the whole P2 area
+    // (word index 0x100000/2 .. (0x100000+0x800000)/2).
+    let p2_word_base = P1_SIZE / 2;
+    for i in 0..(P2_SIZE / 2) {
+        let w = word_at(&combined, p2_word_base + i);
+        set_word_at(&mut combined, p2_word_base + i, bitswap(w as u32, data_bitswap) as u16);
+    }
+
+    // Step 2: relocate the fixed bank -- its real content is extracted
+    // out of the (now bitplane-rearranged) P2 data via an address-line
+    // permutation, not read from the raw on-disk P1 file.
+    for i in 0..(0x0c0000 / 2) {
+        let source = fixed_source_word + bitswap(i as u32, fixed_addr_bitswap) as usize;
+        let w = word_at(&combined, source);
+        set_word_at(&mut combined, i, w);
+    }
+
+    // Step 3: within each 64KB chunk of the banked part, permute word
+    // *positions* (not their bit content) per the same address-line
+    // scrambling real hardware's address bus wiring produces.
+    let chunk_words = 0x10000 / 2;
+    let mut chunk_index = 0;
+    while chunk_index < P2_SIZE / 2 {
+        let base = p2_word_base + chunk_index;
+        let original: Vec<u16> = (0..chunk_words).map(|j| word_at(&combined, base + j)).collect();
+        for j in 0..chunk_words {
+            let source_j = bitswap(j as u32, banked_addr_bitswap) as usize;
+            set_word_at(&mut combined, base + j, original[source_j]);
+        }
+        chunk_index += chunk_words;
+    }
+
+    let new_p1 = combined[..0x0c0000].to_vec();
+    let new_p2 = combined[P1_SIZE..].to_vec();
+    (new_p1, new_p2)
+}
+
+const SMA_MSLUG3_DATA_BITSWAP: [u8; 16] = [4, 11, 14, 3, 1, 13, 0, 7, 2, 8, 12, 15, 10, 9, 5, 6];
+const SMA_MSLUG3_FIXED_ADDR_BITSWAP: [u8; 19] = [18, 15, 2, 1, 13, 3, 0, 9, 6, 16, 4, 11, 5, 7, 12, 17, 14, 10, 8];
+/// `0x5d0000/2` -- the fixed bank's real content is sourced from this
+/// word offset onward within the combined P1+P2 region.
+const SMA_MSLUG3_FIXED_SOURCE: usize = 0x5d0000 / 2;
+const SMA_MSLUG3_BANKED_ADDR_BITSWAP: [u8; 15] = [2, 11, 0, 14, 6, 4, 13, 8, 9, 3, 10, 7, 5, 12, 1];
+
 /// The Neo Geo's 68000 address space, decoded per the real, documented
 /// hardware memory map (see this module's doc comment for the source
 /// and how it was verified):
@@ -171,8 +289,9 @@ fn word_swap(mut rom: Vec<u8>) -> Vec<u8> {
 ///   cartridge's program ROM (P2 and beyond). The generic bankswitch
 ///   scheme most cartridges use is implemented (any write in this
 ///   range latches the value's low bits as the new 1MB bank -- see
-///   `write_byte`); the custom protection-chip schemes some games use
-///   instead (Metal Slug 3's PVC among them) are not.
+///   `write_byte`); cartridges using a real protection chip instead
+///   (NEO-SMA, which Metal Slug 3 uses) get their own real bankswitch
+///   formula and 68000 program decryption -- see `Protection`.
 /// - `0x300000-0x3FFFFF`: I/O and memory-mapped registers. The sound
 ///   comm latch (`REG_SOUND`, $320000) is real -- see `SoundLatch`.
 ///   Input/DIP/coin/service registers ($300000, $300001, $300081,
@@ -185,18 +304,43 @@ fn word_swap(mut rom: Vec<u8>) -> Vec<u8> {
 ///   protocol). Double-buffering (a second bank selected by a
 ///   register) isn't implemented yet -- see `decode_palette_color` for
 ///   how each 16-bit word becomes an actual RGB color.
+///
+/// Which cartridge protection chip (if any) governs P-ROM decryption
+/// and bankswitching. `None` is the generic scheme most cartridges
+/// use (any write in $200000-$2FFFFF latches a plain 1MB bank index).
+/// `SmaMslug3` is Metal Slug 3's real NEO-SMA chip: a specific write
+/// address, a bank-number-unscrambling formula against a fixed lookup
+/// table, and a real 68000 program decryption transform -- all
+/// reimplemented from MAME's own `sma_prot_device`
+/// (`src/devices/bus/neogeo/prot_sma.cpp`, BSD-3-Clause,
+/// <https://github.com/mamedev/mame>), which documents this chip
+/// exactly (credited to Razoola and Mr.K's original decode work) --
+/// not guessed at from partial/conflicting wiki summaries the way
+/// earlier parts of this module were. `NeoGeoBus::new` runs the
+/// decryption once at construction (matching MAME's own `decrypt_all`
+/// timing, immediately after loading), not on every access.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Protection {
+    None,
+    SmaMslug3,
+}
+
 pub struct NeoGeoBus {
     work_ram: Vec<u8>,
     /// P1 -- the cartridge's fixed-bank program ROM, always visible at
     /// 0x000000-0x0FFFFF (mirrored/truncated if smaller than 1MB).
+    /// For `Protection::SmaMslug3`, this is the *decrypted* fixed bank
+    /// (extracted out of the larger P2 pool by the real SMA transform,
+    /// not the raw on-disk P1 file's own bytes -- see `sma_decrypt`).
     p1_rom: Vec<u8>,
     /// P2 (and beyond, concatenated) -- the cartridge's banked program
-    /// ROM, windowed into 0x200000-0x2FFFFF by `bank`.
+    /// ROM, windowed into 0x200000-0x2FFFFF at byte offset `bank`.
     p2_rom: Vec<u8>,
-    /// Which 1MB bank of `p2_rom` is currently windowed into
-    /// 0x200000-0x2FFFFF. Bankswitching isn't implemented yet (see
-    /// this struct's own doc comment), so this always stays 0.
+    /// Byte offset into `p2_rom` currently windowed into
+    /// 0x200000-0x2FFFFF (not a bank *index* -- SMA's real bank
+    /// offsets aren't uniform 1MB multiples, see `sma_mslug3_bank_base`).
     bank: usize,
+    protection: Protection,
     sound_latch: SoundLatch,
     lspc: Lspc,
     /// 256 palettes x 16 colors x 1 word, visible at $400000-$401FFF
@@ -217,12 +361,17 @@ pub struct NeoGeoBus {
 }
 
 impl NeoGeoBus {
-    fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: &[Vec<u8>], sound_latch: SoundLatch) -> Self {
+    fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: &[Vec<u8>], sound_latch: SoundLatch, protection: Protection) -> Self {
+        let (p1_rom, p2_rom) = match protection {
+            Protection::None => (word_swap(p1_rom), word_swap(p2_rom)),
+            Protection::SmaMslug3 => sma_decrypt_68k(word_swap(p1_rom), word_swap(p2_rom), &SMA_MSLUG3_DATA_BITSWAP, &SMA_MSLUG3_FIXED_ADDR_BITSWAP, SMA_MSLUG3_FIXED_SOURCE, &SMA_MSLUG3_BANKED_ADDR_BITSWAP),
+        };
         Self {
             work_ram: vec![0; WORK_RAM_SIZE],
-            p1_rom: word_swap(p1_rom),
-            p2_rom: word_swap(p2_rom),
+            p1_rom,
+            p2_rom,
             bank: 0,
+            protection,
             sound_latch,
             lspc: Lspc::new(),
             palette_ram: vec![0; 256 * 16],
@@ -434,8 +583,10 @@ impl NeoGeoBus {
         if self.p2_rom.is_empty() {
             return 0;
         }
-        let bank_base = self.bank * 0x100000;
-        let offset = bank_base + (addr as usize % 0x100000);
+        // `bank` is already a real byte offset (not a bank index) --
+        // see this struct's own doc comment on why, for SMA carts,
+        // real bank offsets aren't uniform 1MB multiples.
+        let offset = self.bank + (addr as usize % 0x100000);
         self.p2_rom[offset % self.p2_rom.len()]
     }
 
@@ -479,6 +630,11 @@ impl AddressBus for NeoGeoBus {
             // auto-increments -- see `Lspc`'s own doc comment).
             0x3C0000 => self.lspc.vram_addr,
             0x3C0002 => self.lspc.read_data(),
+            // NEO-SMA's "chip present" check: always replies $9A37,
+            // per MAME's own `sma_prot_device::prot_9a37_r` and the
+            // real hardware address neogeo.cpp installs it at for
+            // Metal Slug 3/3A specifically ($2FE446).
+            0x2FE446 if self.protection == Protection::SmaMslug3 => 0x9A37,
             0x400000..=0x7FFFFF => self.palette_ram[self.palette_index(address)],
             _ => {
                 let hi = self.read_byte(address) as u16;
@@ -498,15 +654,18 @@ impl AddressBus for NeoGeoBus {
         let address = address & 0xFF_FFFF;
         match address {
             0x100000..=0x1FFFFF => self.write_work_ram(address, value),
-            // The generic P2 bankswitch scheme most cartridges use
-            // (not the special protection-chip schemes some games,
-            // including Metal Slug 3, use instead -- see this struct's
-            // own doc comment): any write anywhere in this window
-            // latches the value's low bits as the new 1MB bank number,
-            // per <https://wiki.neogeodev.org/index.php?title=Bankswitching>.
-            0x200000..=0x2FFFFF => {
+            // The generic P2 bankswitch scheme most cartridges use --
+            // any write anywhere in this window latches the value's
+            // low bits as the new 1MB bank number, per
+            // <https://wiki.neogeodev.org/index.php?title=Bankswitching>.
+            // Cartridges with a real protection chip (`Protection::
+            // SmaMslug3`) use their own specific address and formula
+            // instead -- see `write_word`'s own SMA arm -- and treat
+            // every other address in this window as plain read-only
+            // ROM, same as real SMA hardware does.
+            0x200000..=0x2FFFFF if self.protection == Protection::None => {
                 let num_banks = (self.p2_rom.len() / 0x100000).max(1);
-                self.bank = (value as usize) % num_banks;
+                self.bank = ((value as usize) % num_banks) * 0x100000;
             }
             // REG_SOUND: send a command byte to the Z80.
             0x320000 => {
@@ -525,6 +684,13 @@ impl AddressBus for NeoGeoBus {
             0x3C0000 => self.lspc.vram_addr = value,
             0x3C0002 => self.lspc.write_data(value),
             0x3C0004 => self.lspc.vram_mod = value as i16,
+            // NEO-SMA bankswitch write, Metal Slug 3/3A's real address
+            // ($2FFFE4, per MAME's own memory map install for
+            // `NEOGEO_MSLUG3`/`NEOGEO_MSLUG3A`) -- real unscrambling
+            // formula and lookup table, not the generic scheme.
+            0x2FFFE4 if self.protection == Protection::SmaMslug3 => {
+                self.bank = sma_mslug3_bank_base(value) as usize - 0x100000;
+            }
             0x400000..=0x7FFFFF => {
                 let index = self.palette_index(address);
                 self.palette_ram[index] = value;
@@ -563,12 +729,12 @@ pub struct NeoGeoMachine {
 }
 
 impl NeoGeoMachine {
-    pub fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, m1_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: Vec<Vec<u8>>) -> Self {
+    pub fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, m1_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: Vec<Vec<u8>>, v_rom: Vec<u8>, protection: Protection) -> Self {
         let sound_latch = SoundLatch::new();
 
         let mut cpu = CpuCore::new();
         cpu.set_cpu_type(CpuType::M68000);
-        let mut bus = NeoGeoBus::new(p1_rom, p2_rom, s1_rom, &c_roms, sound_latch.clone());
+        let mut bus = NeoGeoBus::new(p1_rom, p2_rom, s1_rom, &c_roms, sound_latch.clone(), protection);
         // `reset` reads the cartridge's own initial SSP from address 0
         // (real, meaningful data -- see the module doc comment) but
         // its initial PC is not how real hardware enters cartridge
@@ -584,7 +750,7 @@ impl NeoGeoMachine {
         // reset, which is real M1 ROM data (unlike the 68k side, M1 is
         // an 8-bit-wide device and is not word-swapped on real dumps).
         let sound_cpu = Z80::new();
-        let sound_bus = SoundBus::new(m1_rom, sound_latch);
+        let sound_bus = SoundBus::new(m1_rom, v_rom, sound_latch);
 
         Self { cpu, bus, sound_cpu, sound_bus }
     }
@@ -630,6 +796,22 @@ impl NeoGeoMachine {
         }
         self.sound_cpu.step(&mut self.sound_bus);
     }
+
+    /// Generates real YM2610 audio (interleaved stereo, one `f32` pair
+    /// per sample) for `seconds` of chip time. See `Ym2610`'s own doc
+    /// comment for the mixdown formula and sample scaling.
+    pub fn generate_audio_seconds(&self, seconds: f32) -> (Vec<f32>, Vec<f32>) {
+        self.sound_bus.ym2610.generate_seconds(seconds)
+    }
+
+    /// The YM2610's real native output rate at the Neo Geo's real 8MHz
+    /// clock -- callers resample from this to whatever rate their own
+    /// audio device actually runs at, the same convention this
+    /// project's other cores already use for their own fixed/native
+    /// rates (see `retro.rs`'s `LinearResampler`).
+    pub fn audio_sample_rate(&self) -> f32 {
+        self.sound_bus.ym2610.chip.borrow().sample_rate().max(1) as f32
+    }
 }
 
 /// The Z80 sound CPU's memory map, per
@@ -648,17 +830,18 @@ impl NeoGeoMachine {
 ///
 /// The 68k/Z80 sound-command handshake is implemented (`SoundLatch`,
 /// shared with `NeoGeoBus`) -- port $00 reads the 68k's command byte,
-/// port $0C writes a reply back. Bankswitching (ports $08-$0B) and the
-/// YM2610 chip (ports $04-$07) are not implemented yet.
+/// port $0C writes a reply back. The YM2610 (ports $04-$07) is real --
+/// see `Ym2610`. Bankswitching (ports $08-$0B) is not implemented yet.
 pub struct SoundBus {
     m1_rom: Vec<u8>,
     work_ram: [u8; 0x800],
     sound_latch: SoundLatch,
+    ym2610: Ym2610,
 }
 
 impl SoundBus {
-    pub fn new(m1_rom: Vec<u8>, sound_latch: SoundLatch) -> Self {
-        Self { m1_rom, work_ram: [0; 0x800], sound_latch }
+    pub fn new(m1_rom: Vec<u8>, v_rom: Vec<u8>, sound_latch: SoundLatch) -> Self {
+        Self { m1_rom, work_ram: [0; 0x800], sound_latch, ym2610: Ym2610::new(v_rom) }
     }
 
     fn read_rom(&self, addr: u16) -> u8 {
@@ -666,6 +849,102 @@ impl SoundBus {
             return 0;
         }
         self.m1_rom[(addr as usize) % self.m1_rom.len()]
+    }
+}
+
+/// The real YM2610 sound chip, via `ymfm-sys` (see Cargo.toml's own
+/// doc comment on that dependency). Register access is the documented
+/// Z80 port interface
+/// (<https://wiki.neogeodev.org/index.php?title=Z80/YM2610_interface>):
+/// port $04 = address register for part 0 (SSG, ADPCM-B, FM channels
+/// 1-2), $05 = data for part 0, $06 = address for part 1 (ADPCM-A, FM
+/// channels 3-4), $07 = data for part 1 -- which maps onto `ymfm`'s
+/// own `offset` parameter as `2 * part + (0 for address, 1 for data)`,
+/// confirmed against `ymfm-sys`'s own `vgmrender` example (the same
+/// convention MAME's own YM2610 device uses internally, which `ymfm`
+/// is built to match).
+///
+/// Wrapped in a `RefCell` because `ymfm_sys::ffi::Chip::read` needs a
+/// pinned mutable reference (real hardware register reads can latch
+/// internal busy-flag state, so it's not a pure read), but this
+/// module's `Z80_io::port_in` trait method only gets `&self`.
+///
+/// **ADPCM ROM loading is a documented assumption, not directly
+/// verified**: real Neo Geo hardware feeds both the ADPCM-A and
+/// ADPCM-B channels from the same physical V-ROM sockets (unlike some
+/// other systems' YM2610 wiring, which use genuinely separate ROMs
+/// for each), so the cartridge's full V1-V4 ROM data is served to both
+/// of `ymfm`'s AdpcmA and AdpcmB access classes at offset 0, via the
+/// `read_data` interface callback (the real mechanism `ymfm-sys`
+/// expects a host to serve ROM data through -- see its own
+/// `vgmrender` example, which loads a similar shared ADPCM ROM for
+/// the related YM2608 chip the same way).
+struct Ym2610 {
+    chip: std::cell::RefCell<ymfm_sys::ChipPtr>,
+}
+
+impl Ym2610 {
+    /// The Neo Geo's real YM2610 clock, per
+    /// <https://wiki.neogeodev.org/index.php?title=YM2610>.
+    const CLOCK_HZ: u32 = 8_000_000;
+
+    fn new(v_rom: Vec<u8>) -> Self {
+        let v_rom = std::rc::Rc::new(v_rom);
+        let handler = ymfm_sys::InterfaceHandler {
+            read_data: Some(Box::new(move |access, base, length| {
+                use ymfm_sys::ffi::AccessClass;
+                if !matches!(access, AccessClass::AdpcmA | AccessClass::AdpcmB) || v_rom.is_empty() {
+                    return vec![0; length as usize];
+                }
+                (0..length).map(|i| v_rom.get((base + i) as usize).copied().unwrap_or(0)).collect()
+            })),
+            ..Default::default()
+        };
+        let chip = ymfm_sys::ffi::create_chip_with_callbacks(ymfm_sys::ffi::ChipType::Ym2610, Self::CLOCK_HZ, Box::new(ymfm_sys::InterfaceCallbacks::new(handler)));
+        Self { chip: std::cell::RefCell::new(chip) }
+    }
+
+    fn register_offset(z80_port: u16) -> u32 {
+        // Part 0 = ports 4/5, part 1 = ports 6/7; each part is an
+        // (address, data) pair two `ymfm` offsets apart, address first.
+        let part = (z80_port - 4) / 2;
+        let is_data = (z80_port - 4) % 2;
+        (2 * part + is_data) as u32
+    }
+
+    fn read(&self, z80_port: u16) -> u8 {
+        self.chip.borrow_mut().pin_mut().read(Self::register_offset(z80_port))
+    }
+
+    fn write(&self, z80_port: u16, value: u8) {
+        self.chip.borrow_mut().pin_mut().write(Self::register_offset(z80_port), value);
+    }
+
+    /// Generates real audio through the chip's own native mixdown,
+    /// resampled to `out_rate`. `ymfm`'s YM2610 raw output is 3
+    /// channels per native sample (FM left, FM right, SSG/ADPCM mono);
+    /// `left = out[0] + out[2]`, `right = out[1] + out[2]` is the exact
+    /// mixdown `ymfm-sys`'s own `vgmrender` example uses for this chip.
+    /// Real samples are scaled from ymfm's i32 range by the same
+    /// `/32768.0` convention this module's other cores already use for
+    /// their own 16-bit-range audio.
+    fn generate_seconds(&self, seconds: f32) -> (Vec<f32>, Vec<f32>) {
+        let mut chip = self.chip.borrow_mut();
+        let native_rate = chip.sample_rate().max(1) as f32;
+        let samples = (seconds * native_rate).round().max(0.0) as usize;
+        let channels = chip.channels().max(1) as usize;
+        let mut native = vec![0i32; channels];
+        let mut left = Vec::with_capacity(samples);
+        let mut right = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            native.fill(0);
+            chip.pin_mut().generate(&mut native);
+            let l = native[0] + native[2 % channels];
+            let r = native[1 % channels] + native[2 % channels];
+            left.push(l as f32 / 32768.0);
+            right.push(r as f32 / 32768.0);
+        }
+        (left, right)
     }
 }
 
@@ -690,16 +969,18 @@ impl Z80_io for SoundBus {
         // why the high byte varies by addressing mode).
         match addr & 0xFF {
             0x00 => self.sound_latch.command.get(),
+            port @ 0x04..=0x07 => self.ym2610.read(port),
             _ => 0xFF,
         }
     }
 
     fn port_out(&mut self, addr: u16, value: u8) {
-        if addr & 0xFF == 0x0C {
-            self.sound_latch.reply.set(value);
+        match addr & 0xFF {
+            0x0C => self.sound_latch.reply.set(value),
+            port @ 0x04..=0x07 => self.ym2610.write(port, value),
+            _ => {}
         }
-        // Bankswitch ports ($08-$0B) and the YM2610 ($04-$07) aren't
-        // implemented yet.
+        // Bankswitch ports ($08-$0B) aren't implemented yet.
     }
 }
 
@@ -935,7 +1216,7 @@ mod tests {
     #[test]
     fn new_loads_the_cartridges_own_stack_pointer_and_starts_at_the_header_trampoline() {
         let rom = synthetic_cartridge_with_entry_point(0x000180);
-        let machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
         assert_eq!(machine.cpu.dar[15], 0x0010F000, "SSP (A7) must be exactly what the cartridge's own header at offset 0 specifies");
         assert_eq!(machine.cpu.pc, HEADER_ENTRY_TRAMPOLINE, "PC must start at the documented header entry trampoline");
     }
@@ -948,7 +1229,7 @@ mod tests {
     #[test]
     fn the_header_trampoline_jumps_to_the_cartridges_own_declared_entry_point() {
         let rom = synthetic_cartridge_with_entry_point(0x0001C4);
-        let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
         assert!(machine.step(), "the header's own JMP.L must execute cleanly");
         assert_eq!(machine.cpu.pc, 0x0001C4, "PC must land exactly on the cartridge's own declared entry point");
     }
@@ -967,7 +1248,7 @@ mod tests {
         rom[HEADER_ENTRY_TRAMPOLINE as usize + 2..HEADER_ENTRY_TRAMPOLINE as usize + 6].copy_from_slice(&0x00000180u32.to_be_bytes());
         let rom = word_swap(rom);
 
-        let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
         machine.cpu.int_mask = 0; // simulate the game's own code having unmasked interrupts
         machine.vblank();
         assert!(machine.step(), "taking the interrupt must not fault the CPU");
@@ -992,7 +1273,7 @@ mod tests {
         m1_rom[0x69] = 0x0C;
         m1_rom[0x6A] = 0xED;
         m1_rom[0x6B] = 0x45;
-        let mut machine = NeoGeoMachine::new(rom, Vec::new(), m1_rom, Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(rom, Vec::new(), m1_rom, Vec::new(), Vec::new(), Vec::new(), Protection::None);
 
         // The 68k sends a real command byte.
         machine.bus.write_byte(0x320000, 0x42);
@@ -1016,7 +1297,7 @@ mod tests {
     /// real cartridge code down input-handling paths it shouldn't take.
     #[test]
     fn unwired_input_registers_read_idle_not_all_buttons_held() {
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
         for addr in [0x300000u32, 0x300001, 0x300081, 0x320001, 0x340000, 0x380000, 0x380001] {
             assert_eq!(machine.bus.read_byte(addr), 0xFF, "register 0x{addr:06X} must read idle (0xFF), not 0");
         }
@@ -1029,7 +1310,7 @@ mod tests {
     /// rendered.
     #[test]
     fn vram_write_then_read_back_at_the_same_address_round_trips() {
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
         machine.bus.write_word(0x3C0000, 0x1234); // REG_VRAMADDR
         machine.bus.write_word(0x3C0002, 0xBEEF); // REG_VRAMRW
         machine.bus.write_word(0x3C0000, 0x1234); // re-seek: REG_VRAMRW just auto-incremented past it
@@ -1042,7 +1323,7 @@ mod tests {
     /// layer via repeated accesses instead of re-seeking every word.
     #[test]
     fn vram_mod_auto_increments_the_address_after_each_access() {
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
         machine.bus.write_word(0x3C0000, 0x0100); // REG_VRAMADDR
         machine.bus.write_word(0x3C0004, 1); // REG_VRAMMOD: +1 per access
         machine.bus.write_word(0x3C0002, 0xAAAA);
@@ -1062,7 +1343,7 @@ mod tests {
     /// not alias each other.
     #[test]
     fn palette_ram_write_then_read_back_round_trips_without_aliasing() {
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
         machine.bus.write_word(0x400000, 0x7FFF);
         machine.bus.write_word(0x400002, 0x1234);
         assert_eq!(machine.bus.read_word(0x400000), 0x7FFF, "the word written to color 0 of palette 0 must read back unchanged");
@@ -1085,7 +1366,7 @@ mod tests {
         // uses for P1) cancels that out, so the logical byte values
         // set above land exactly where intended.
         let p2 = word_swap(p2);
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], p2, Vec::new(), Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], p2, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
 
         assert_eq!(machine.bus.read_byte(0x200000), 0xAA, "bank 0 must be visible by default after reset");
         machine.bus.write_byte(0x250000, 2); // write anywhere in the window, not just its base
@@ -1107,7 +1388,7 @@ mod tests {
         // `a_solid_fill_sprite_tile_decodes_to_a_uniform_block`.
         let odd_c_rom = vec![0xFFu8; 64];
         let even_c_rom = vec![0x00u8; 64];
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom]);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None);
 
         // SCB1 sprite 0: tile 0, palette 5.
         machine.bus.write_word(0x3C0000, 0x0000); // REG_VRAMADDR: SCB1 even word (tile LSBs)
@@ -1166,7 +1447,7 @@ mod tests {
         let mut odd_c_rom = vec![0u8; 64];
         odd_c_rom[32..48].fill(0xFF);
         let even_c_rom = vec![0u8; 64];
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom]);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None);
 
         machine.bus.write_word(0x3C0000, 0x0000);
         machine.bus.write_word(0x3C0002, 0x0000); // tile 0
@@ -1204,7 +1485,7 @@ mod tests {
     fn scb2_horizontal_shrink_narrows_the_sprite_to_the_documented_width() {
         let odd_c_rom = vec![0xFFu8; 64];
         let even_c_rom = vec![0x00u8; 64];
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom]);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None);
 
         machine.bus.write_word(0x3C0000, 0x0000);
         machine.bus.write_word(0x3C0002, 0x0000); // tile 0
@@ -1434,25 +1715,29 @@ mod tests {
 
     /// If a real Metal Slug 3 cartridge dump is present (user-supplied,
     /// never committed -- see `.gitignore`), boot far enough into its
-    /// real code to prove the memory map, word-swap, and header/entry
-    /// handling are correct against real hardware/software, not just
-    /// synthetic bytes. This can't prove full compatibility (no
-    /// sprites/audio/PVC decryption yet -- see the module doc
-    /// comment), but a real cartridge's 68000 code executing for
-    /// hundreds of thousands of real instructions without faulting is
-    /// a genuine, meaningful signal the fixed-bank memory decode, boot
-    /// sequence, and VBlank delivery are right. Skips (doesn't fail)
-    /// when no ROM is present.
+    /// real code, through its real NEO-SMA decryption and bankswitch
+    /// (`Protection::SmaMslug3`), to prove the memory map, word-swap,
+    /// header/entry handling, and SMA transform are right against real
+    /// hardware/software, not just synthetic bytes. This can't prove
+    /// full compatibility (no sprite/fix-layer graphics decryption via
+    /// CMC42 yet, which real Metal Slug 3 also needs -- see the module
+    /// doc comment), but hundreds of thousands of real instructions
+    /// executing without faulting, deep into genuinely SMA-decrypted
+    /// code, is a meaningful signal the transform is at least mostly
+    /// right. Skips (doesn't fail) when no ROM is present.
     ///
-    /// **500,000 steps, not more**: pushed further (2,000,000 was
-    /// tried), the CPU eventually runs PC off into address space
-    /// beyond this core's 24-bit bus mask -- not a bug in what's
-    /// implemented, but the expected consequence of P2 bankswitching
-    /// not being implemented yet (see `NeoGeoBus`'s own doc comment):
-    /// real code that reaches a bank-switched routine reads whatever
-    /// bank-0 data happens to be there instead, and eventually that
-    /// wrong data corrupts control flow. 500,000 steps is comfortably
-    /// inside the range that survives.
+    /// **500,000 steps, not more (for now)**: pushed further
+    /// (10,000,000 was tried), the CPU hits a real `FlineTrap` at
+    /// PC=$200004 after ~524,000 steps -- landing in valid address
+    /// space this time (unlike the pre-SMA attempt, which ran PC off
+    /// into invalid 25-bit-plus addresses entirely), reached without
+    /// ever writing the SMA bankswitch register, so bank 0 of the
+    /// freshly SMA-decrypted P2 data. Whether this is a remaining bug
+    /// in the `sma_decrypt_68k` bit/address permutations, or a
+    /// consequence of some other still-unimplemented piece of hardware
+    /// steering real code somewhere it shouldn't go, is not yet
+    /// determined -- flagged here rather than silently working around
+    /// it by lowering the step count without comment.
     #[test]
     fn a_real_metal_slug_3_cartridge_boots_into_its_own_code_if_present() {
         let Some(p1) = load_real_rom("256-p1.rom") else {
@@ -1462,7 +1747,7 @@ mod tests {
         let p2 = load_real_rom("256-p2.rom").unwrap_or_default();
         let m1 = load_real_rom("256-m1.rom").unwrap_or_default();
         let s1 = load_real_rom("256-s1.rom").unwrap_or_default();
-        let mut machine = NeoGeoMachine::new(p1, p2, m1, s1, Vec::new());
+        let mut machine = NeoGeoMachine::new(p1, p2, m1, s1, Vec::new(), Vec::new(), Protection::SmaMslug3);
 
         // Real code almost universally waits on VBlank before doing
         // anything -- see `vblank`'s own doc comment -- so a run with
@@ -1479,7 +1764,12 @@ mod tests {
             if steps_run % 1000 == 0 {
                 machine.vblank();
             }
-            alive = machine.step();
+            let pc_before = machine.cpu.pc;
+            let result = machine.cpu.step(&mut machine.bus);
+            alive = matches!(result, StepResult::Ok { .. });
+            if !alive {
+                eprintln!("step {steps_run}: pc=0x{pc_before:06X} -> {result:?}");
+            }
             steps_run += 1;
             if !alive {
                 break;
@@ -1518,7 +1808,7 @@ mod tests {
             eprintln!("skipping: no ROM in {ROM_DIR} (this is expected in a fresh checkout)");
             return;
         };
-        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), Vec::new(), s1, Vec::new());
+        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), Vec::new(), s1, Vec::new(), Vec::new(), Protection::None);
 
         // Tilemap entry at row 2, col 3: palette 5, tile 0 (the real,
         // genuinely-solid palette-index-1 swatch).
@@ -1592,11 +1882,88 @@ mod tests {
             eprintln!("skipping: no ROM in {ROM_DIR} (this is expected in a fresh checkout)");
             return;
         };
-        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), m1, Vec::new(), Vec::new());
+        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), m1, Vec::new(), Vec::new(), Vec::new(), Protection::None);
         let pc_before = machine.sound_cpu.pc;
         for _ in 0..1_000 {
             machine.step_sound();
         }
         assert_ne!(machine.sound_cpu.pc, pc_before, "the Z80 should have advanced through real M1 ROM code, not stalled immediately");
+    }
+
+    /// The Z80-port-to-`ymfm`-offset mapping this module documents
+    /// (port 4/6 = address for part 0/1, port 5/7 = data) must match
+    /// exactly, per `Ym2610::register_offset`'s own doc comment.
+    #[test]
+    fn ym2610_register_offset_matches_the_documented_z80_port_layout() {
+        assert_eq!(Ym2610::register_offset(4), 0, "port 4 (part 0 address) must map to ymfm offset 0");
+        assert_eq!(Ym2610::register_offset(5), 1, "port 5 (part 0 data) must map to ymfm offset 1");
+        assert_eq!(Ym2610::register_offset(6), 2, "port 6 (part 1 address) must map to ymfm offset 2");
+        assert_eq!(Ym2610::register_offset(7), 3, "port 7 (part 1 data) must map to ymfm offset 3");
+    }
+
+    /// `sma_mslug3_bank_base`'s table lookup, checked against values
+    /// copied directly from MAME's own `sma_prot_device::
+    /// mslug3_bank_base` (`bankoffset[0]` and `bankoffset[1]`).
+    /// Selector 0 unscrambles to table index 0 trivially (every bit
+    /// the formula reads is already 0). The formula is
+    /// `bitswap<6>(sel, 9,3,6,15,12,14)` -- its *last*-listed source
+    /// bit becomes the unscrambled index's LSB, so setting only input
+    /// bit 14 isolates index 1 (binary `000001`).
+    #[test]
+    fn sma_mslug3_bank_base_matches_mames_own_table() {
+        assert_eq!(sma_mslug3_bank_base(0), 0x100000, "selector 0 -> table index 0 -> bankoffset[0]=0 -> 0x100000+0");
+        assert_eq!(sma_mslug3_bank_base(1 << 14), 0x120000, "selector with only bit 14 set -> table index 1 -> bankoffset[1]=0x020000 -> 0x100000+0x020000");
+    }
+
+    /// The NEO-SMA "chip present" check must always reply $9A37 at its
+    /// real documented address, per MAME's own memory map install for
+    /// `NEOGEO_MSLUG3`/`NEOGEO_MSLUG3A` ($2FE446) -- and, critically,
+    /// carts *without* SMA protection must not respond to that address
+    /// at all (it's ordinary ROM space for them).
+    #[test]
+    fn sma_protection_check_replies_9a37_only_for_protected_carts() {
+        let sma_rom = vec![0u8; 0x200];
+        let mut sma_machine = NeoGeoMachine::new(sma_rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::SmaMslug3);
+        assert_eq!(sma_machine.bus.read_word(0x2FE446), 0x9A37, "an SMA-protected cart must reply 0x9A37 at its real documented check address");
+
+        let plain_rom = vec![0u8; 0x200];
+        let mut plain_machine = NeoGeoMachine::new(plain_rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        assert_ne!(plain_machine.bus.read_word(0x2FE446), 0x9A37, "an unprotected cart must not coincidentally reply 0x9A37 at the same address (it's just ordinary banked ROM space for it)");
+    }
+
+    /// A real, minimal SSG (AY-3-8910-compatible) tone-on sequence,
+    /// written through the documented Z80 port interface exactly the
+    /// way real Neo Geo sound driver code would, must produce real,
+    /// varying (not silent, not stuck-DC) audio out of the actual
+    /// vendored YM2610 chip -- proof the register routing, the chip
+    /// wiring, and audio generation all connect correctly end to end.
+    /// Chosen over an FM-channel tone specifically because the SSG's
+    /// register layout is simple, extremely well-documented, and low-
+    /// risk to get right relative to full FM operator programming.
+    #[test]
+    fn a_real_ssg_tone_produces_real_varying_audio() {
+        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let bus = &mut machine.sound_bus;
+        let mut set = |register: u8, value: u8| {
+            bus.port_out(4, register); // part 0 address
+            bus.port_out(5, value); // part 0 data
+        };
+        set(0x00, 0x10); // channel A tone period, fine
+        set(0x01, 0x00); // channel A tone period, coarse
+        set(0x07, 0x3E); // mixer: enable tone A only, disable B/C and all noise
+        set(0x08, 0x0F); // channel A volume: maximum, no envelope
+
+        let (left, _right) = machine.generate_audio_seconds(0.02);
+        assert!(!left.is_empty(), "generate_audio_seconds must actually produce samples");
+        assert!(left.iter().any(|&s| s != 0.0), "a real enabled SSG tone must produce non-silent audio");
+        // A real square wave alternates between exactly two levels, so
+        // this checks for genuine toggling (both a positive and a
+        // negative/zero sample present), not a value stuck at one
+        // level -- >2 distinct values would actually be the wrong
+        // expectation for a pure square wave.
+        let distinct: std::collections::HashSet<_> = left.iter().map(|s| s.to_bits()).collect();
+        assert!(distinct.len() >= 2, "a real square-wave tone must toggle between levels, not sit at a single stuck value (got {} distinct sample values)", distinct.len());
+        let (min, max) = left.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &s| (lo.min(s), hi.max(s)));
+        assert!(max - min > 0.01, "the tone's high and low levels should be clearly separated, not two nearly-identical values (min={min}, max={max})");
     }
 }

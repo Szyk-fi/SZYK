@@ -60,7 +60,7 @@ pub fn render(directory: &str) {
         if let Some(running) = app.running() {
             assert!(app.transport_action().is_some());
             app.toggle_running();
-            if matches!(manifest.id.as_str(), "field"|"sample_hunter"|"studio"|"reference"|"vinyl"|"practice"|"radio"|"memories") {
+            if matches!(manifest.id.as_str(), "forge"|"field"|"sample_hunter"|"studio"|"reference"|"vinyl"|"practice"|"radio"|"memories") {
                 assert_eq!(app.running(),Some(false),"{} must not start without source/media",manifest.id);
             } else { assert_ne!(app.running(), Some(running), "{} transport did not change", manifest.id); }
         }

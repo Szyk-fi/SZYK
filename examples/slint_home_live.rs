@@ -104,6 +104,8 @@ pub mod clouds;
 pub mod cv_out;
 #[path = "../src/apps/collection.rs"]
 pub mod collection;
+#[path = "../src/apps/forge.rs"]
+pub mod forge;
 #[path = "../src/apps/vector_filter.rs"]
 pub mod vector_filter;
 #[path = "../src/apps/morph.rs"]
@@ -164,7 +166,7 @@ pub mod voltage;
 pub mod visualizer;
 mod apps {
     pub use super::{
-        analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, natural_gate, nautilus,
+        analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, forge, natural_gate, nautilus,
         nebula, pams, plaits, plaits_layout, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
         starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps,
     };
@@ -204,6 +206,7 @@ const VISIBLE_ROWS: usize = 10;
 const HOME_VISIBLE_ROWS: usize = 6;
 
 slint::slint! {
+    import { ForgePanel } from "slint_common/forge_panel.slint";
     import { VectorFilterPanel } from "slint_common/vector_filter_panel.slint";
     import { SettingsPanel } from "slint_common/settings_panel.slint";
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
@@ -746,6 +749,19 @@ slint::slint! {
         in property <[float]> portal-amounts; in property <[float]> portal-levels;
         in property <[bool]> portal-enabled; in property <int> portal-cable;
         in property <bool> portal-active; in property <string> portal-status;
+        in property <[float]> forge-wave;
+        in property <[float]> forge-starts;
+        in property <[float]> forge-ends;
+        in property <[float]> forge-levels;
+        in property <[string]> forge-labels;
+        in property <string> forge-name;
+        in property <string> forge-status;
+        in property <string> forge-mode;
+        in property <string> forge-source;
+        in property <int> forge-chunk;
+        in property <bool> forge-busy;
+        in property <bool> forge-recording;
+        in property <float> forge-duration;
         in property <[float]> filter-xyz;
         in property <[float]> filter-wave;
         in property <string> filter-source;
@@ -863,7 +879,7 @@ slint::slint! {
             }
             // Bloom keeps its dedicated orbital layout; all other apps use
             // the shared parameter rail with their own ink, paper, and accent.
-            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 : ParamListColumn {
+            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 : ParamListColumn {
                 width: 278px;
                 row-names: root.row-names;
                 row-values: root.row-values;
@@ -878,6 +894,12 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
+            if !root.on-home && root.active-kind == 34 : ForgePanel {
+                width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
+                names:root.row-names;values:root.row-values;selected:root.selected-row;more-above:root.more-above;more-below:root.more-below;
+                wave:root.forge-wave;starts:root.forge-starts;ends:root.forge-ends;levels:root.forge-levels;labels:root.forge-labels;clip-name:root.forge-name;status:root.forge-status;mode:root.forge-mode;source:root.forge-source;chunk:root.forge-chunk;busy:root.forge-busy;recording:root.forge-recording;duration:root.forge-duration;
+                action(x,y)=>{root.theme-wheel-picked(x,y);}
+            }
             if !root.on-home && root.active-kind == 33 : VectorFilterPanel {
                 width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
                 names:root.row-names;values:root.row-values;selected:root.selected-row;
@@ -3342,6 +3364,7 @@ fn app_palette(name: &str) -> Option<(slint::Color, slint::Color, slint::Color, 
     let (bg, ink, accent, dim): (u32, u32, u32, u32) = match name {
         "Analyzer" => (0x101b22, 0xe5eff3, 0x75dcd3, 0x81959e),
         "Synth" => (0x151c21, 0xe5eff3, 0x8adbc4, 0x81959e),
+        "Forge" => (0x211b18, 0xeee5d9, 0xf0ac70, 0x967d6a),
         "Vector Filter" => (0x101e25, 0xe4f0e8, 0x79e2cf, 0x729d9e),
         "Settings" => (0x14191f, 0xe7edf4, 0xa5bce9, 0x8994aa),
         "Bloom" => (0x0c1918, 0xe7edda, 0xd8f580, 0x203b33),
@@ -3917,6 +3940,11 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_collection_peak(c.peak); ui.set_collection_rms(c.rms);
                     ui.set_collection_phase(c.phase); ui.set_collection_duration(c.duration);
                     ui.set_collection_step(c.step); ui.set_collection_recording(c.recording); ui.set_collection_playing(c.playing);
+                }
+                app::SlintExtra::Forge(f) => {
+                    ui.set_active_kind(34);
+                    ui.set_forge_wave(Rc::new(slint::VecModel::from(f.wave)).into());ui.set_forge_starts(Rc::new(slint::VecModel::from(f.starts)).into());ui.set_forge_ends(Rc::new(slint::VecModel::from(f.ends)).into());ui.set_forge_levels(Rc::new(slint::VecModel::from(f.levels)).into());ui.set_forge_labels(Rc::new(slint::VecModel::from(f.labels.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_forge_name(f.name.into());ui.set_forge_status(f.status.into());ui.set_forge_mode(f.mode.into());ui.set_forge_source(f.source.into());ui.set_forge_chunk(f.selected);ui.set_forge_busy(f.busy);ui.set_forge_recording(f.recording);ui.set_forge_duration(f.duration);
                 }
                 app::SlintExtra::VectorFilter(f) => {
                     ui.set_active_kind(33);ui.set_filter_xyz(Rc::new(slint::VecModel::from(f.xyz)).into());ui.set_filter_wave(Rc::new(slint::VecModel::from(f.wave)).into());ui.set_filter_source(f.source.into());ui.set_filter_mode(f.mode.into());ui.set_filter_enabled(f.enabled);

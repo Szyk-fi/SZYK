@@ -489,6 +489,10 @@ impl Registry {
             let bus=Arc::clone(&audio_bus);let mods=Arc::clone(&modbus);let mixer=Arc::clone(&mixer_bus);let nav=Arc::clone(&nav_speed);
             Rc::new(move || Box::new(crate::apps::morph::MorphApp::new(bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>)
         });
+        constructors.insert("forge".into(), {
+            let bus=audio_bus.clone();let mods=modbus.clone();let mixer=mixer_bus.clone();let nav=nav_speed.clone();
+            Rc::new(move || Box::new(crate::apps::forge::ForgeApp::new(bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>)
+        });
         constructors.insert("vector_filter".into(), {
             let bus=audio_bus.clone();let mods=modbus.clone();let mixer=mixer_bus.clone();let nav=nav_speed.clone();
             Rc::new(move || Box::new(crate::apps::vector_filter::VectorFilterApp::new(bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>)
@@ -562,6 +566,6 @@ fn audio_outputs(id:&str)->Vec<String>{
     if id=="portal" {return std::iter::once("Portal".into()).chain((1..=4).map(|i|format!("Portal Aux {i}"))).collect();}
     if let Some((_,_,name))=crate::apps::collection::APPS.iter().find(|(_,app,_)|*app==id){return vec![(*name).into()];}
     let name=match id {
-        "synth"=>"Synth","analyzer"=>"Analyzer","visualizer"=>"Visualizer","plaits"=>"Plaits","beads"=>"Beads","black_hole"=>"Black Hole","bloom"=>"Bloom","cascade"=>"Cascade","clouds"=>"Clouds","madness"=>"Madness","magnito"=>"Magnito","morph"=>"Morph","nautilus"=>"Nautilus","nebula"=>"Nebula","prism"=>"Prism","rainmaker"=>"Rainmaker","sample_drum"=>"Sample Drum","sequencer"=>"Sequencer","singularity"=>"Singularity","starlab"=>"Starlab","tape"=>"Tape","tonestack"=>"Tonestack","voltage"=>"Voltage","retro"=>"Retro","vector_filter"=>"Vector Filter",_=>return Vec::new(),
+        "forge"=>"Forge","synth"=>"Synth","analyzer"=>"Analyzer","visualizer"=>"Visualizer","plaits"=>"Plaits","beads"=>"Beads","black_hole"=>"Black Hole","bloom"=>"Bloom","cascade"=>"Cascade","clouds"=>"Clouds","madness"=>"Madness","magnito"=>"Magnito","morph"=>"Morph","nautilus"=>"Nautilus","nebula"=>"Nebula","prism"=>"Prism","rainmaker"=>"Rainmaker","sample_drum"=>"Sample Drum","sequencer"=>"Sequencer","singularity"=>"Singularity","starlab"=>"Starlab","tape"=>"Tape","tonestack"=>"Tonestack","voltage"=>"Voltage","retro"=>"Retro","vector_filter"=>"Vector Filter",_=>return Vec::new(),
     };vec![name.into()]
 }
