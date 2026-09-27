@@ -839,36 +839,57 @@ impl NeoGeoMachine {
 ///
 /// - `$0000-$7FFF`: the static, always-resident first 32KB of the M1
 ///   ROM.
-/// - `$8000-$BFFF`, `$C000-$DFFF`, `$E000-$EFFF`, `$F000-$F7FF`: four
-///   independently bank-switched windows onto the rest of the M1 ROM
-///   (for carts whose M1 is larger than 32KB, like Metal Slug 3's
-///   512KB). Bankswitching itself is a real Z80 hardware quirk (the
-///   bank number and port number are both carried on the full 16-bit
-///   address bus during `OUT (C),r`) and is not implemented yet --
-///   these windows currently just read the ROM's own first bank.
+/// - `$8000-$BFFF` (16KB), `$C000-$DFFF` (8KB), `$E000-$EFFF` (4KB),
+///   `$F000-$F7FF` (2KB): four independently bank-switched windows
+///   onto the rest of the M1 ROM (for carts whose M1 is larger than
+///   32KB, like Metal Slug 3's 512KB). Real hardware selects each
+///   window's bank via a **read**, not a write -- confirmed against
+///   MAME's own memory map install
+///   (`map(0x08, 0x0b)...r(FUNC(neogeo_base_state::audio_cpu_bank_select_r))`,
+///   `src/mame/snk/neogeo.cpp`) -- an `IN r,(C)` instruction with the
+///   bank number in register B and the port (08-0B, one per window) in
+///   C, matching the same "full BC pair on the address bus" convention
+///   this module's own doc comment on bankswitch ports already
+///   documented in general terms; an earlier version of this comment
+///   wrongly guessed it was a write.
 /// - `$F800-$FFFF`: 2KB of sound work RAM.
 ///
 /// The 68k/Z80 sound-command handshake is implemented (`SoundLatch`,
 /// shared with `NeoGeoBus`) -- port $00 reads the 68k's command byte,
 /// port $0C writes a reply back. The YM2610 (ports $04-$07) is real --
-/// see `Ym2610`. Bankswitching (ports $08-$0B) is not implemented yet.
+/// see `Ym2610`.
 pub struct SoundBus {
     m1_rom: Vec<u8>,
     work_ram: [u8; 0x800],
     sound_latch: SoundLatch,
     ym2610: Ym2610,
+    /// Current bank (into `m1_rom`) for each of the four windows,
+    /// indexed `[$F000-window, $E000-window, $C000-window,
+    /// $8000-window]` (port $08, $09, $0A, $0B respectively -- see
+    /// this struct's own doc comment). `Cell` because bank selection
+    /// happens on a `Z80_io::port_in` read, which only gets `&self`.
+    m1_banks: [std::cell::Cell<usize>; 4],
 }
 
 impl SoundBus {
     pub fn new(m1_rom: Vec<u8>, v_rom: Vec<u8>, sound_latch: SoundLatch) -> Self {
-        Self { m1_rom, work_ram: [0; 0x800], sound_latch, ym2610: Ym2610::new(v_rom) }
+        Self { m1_rom, work_ram: [0; 0x800], sound_latch, ym2610: Ym2610::new(v_rom), m1_banks: Default::default() }
     }
 
     fn read_rom(&self, addr: u16) -> u8 {
         if self.m1_rom.is_empty() {
             return 0;
         }
-        self.m1_rom[(addr as usize) % self.m1_rom.len()]
+        // Window sizes, largest-addressed first, matching `m1_banks`'
+        // own [$F000, $E000, $C000, $8000] order.
+        let offset = match addr {
+            0xF000..=0xF7FF => self.m1_banks[0].get() * 0x800 + (addr - 0xF000) as usize,
+            0xE000..=0xEFFF => self.m1_banks[1].get() * 0x1000 + (addr - 0xE000) as usize,
+            0xC000..=0xDFFF => self.m1_banks[2].get() * 0x2000 + (addr - 0xC000) as usize,
+            0x8000..=0xBFFF => self.m1_banks[3].get() * 0x4000 + (addr - 0x8000) as usize,
+            _ => addr as usize,
+        };
+        self.m1_rom[offset % self.m1_rom.len()]
     }
 }
 
@@ -990,6 +1011,15 @@ impl Z80_io for SoundBus {
         match addr & 0xFF {
             0x00 => self.sound_latch.command.get(),
             port @ 0x04..=0x07 => self.ym2610.read(port),
+            // Bankswitch: the bank number rides in the high byte (the
+            // real `IN r,(C)` instruction form real hardware uses here
+            // puts the B register on the address bus's upper 8 bits --
+            // see this struct's own doc comment). Port order matches
+            // `m1_banks`' own [$F000, $E000, $C000, $8000] layout.
+            port @ 0x08..=0x0B => {
+                self.m1_banks[(port - 0x08) as usize].set((addr >> 8) as usize);
+                0xFF
+            }
             _ => 0xFF,
         }
     }
@@ -1000,7 +1030,6 @@ impl Z80_io for SoundBus {
             port @ 0x04..=0x07 => self.ym2610.write(port, value),
             _ => {}
         }
-        // Bankswitch ports ($08-$0B) aren't implemented yet.
     }
 }
 
@@ -2106,6 +2135,27 @@ mod tests {
         assert_eq!(Ym2610::register_offset(5), 1, "port 5 (part 0 data) must map to ymfm offset 1");
         assert_eq!(Ym2610::register_offset(6), 2, "port 6 (part 1 address) must map to ymfm offset 2");
         assert_eq!(Ym2610::register_offset(7), 3, "port 7 (part 1 data) must map to ymfm offset 3");
+    }
+
+    /// Real Z80 M1 ROM bankswitching: reading port $0B (the $8000-
+    /// $BFFF window's port, per this module's own doc comment on
+    /// `SoundBus::m1_banks`) with a given bank number in the address's
+    /// high byte -- the real `IN r,(C)` addressing convention hardware
+    /// uses here -- must switch which 16KB page of the M1 ROM appears
+    /// at $8000, not just leave it reading bank 0 forever.
+    #[test]
+    fn z80_bankswitch_read_selects_the_real_m1_rom_page() {
+        let mut m1_rom = vec![0u8; 0x20000]; // 128KB: banks 0-7 of 16KB each
+        m1_rom[0] = 0xAA; // bank 0's first byte at the $8000 window's own offset
+        m1_rom[3 * 0x4000] = 0xBB; // bank 3's first byte
+
+        let mut bus = SoundBus::new(m1_rom, Vec::new(), SoundLatch::new());
+        assert_eq!(bus.read_byte(0x8000), 0xAA, "bank 0 must be selected by default");
+
+        // Real hardware: `IN r,(C)` with B=3 (bank), C=0x0B (port) --
+        // the full BC pair lands in `addr`'s high/low bytes respectively.
+        bus.port_in((3u16 << 8) | 0x0B);
+        assert_eq!(bus.read_byte(0x8000), 0xBB, "reading port 0x0B with bank 3 in the high byte must switch the $8000 window to M1 ROM bank 3");
     }
 
     /// `sma_mslug3_bank_base`'s table lookup, checked against values
