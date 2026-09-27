@@ -224,11 +224,12 @@ enum Console {
     /// bankswitching, verified against a real 100,000,000-instruction
     /// run with no CPU fault) and its separate CMC42 graphics-
     /// decryption chip (sprite/fix-layer C-ROM data) are both
-    /// implemented, reimplemented from MAME's own source. Sprite auto-
-    /// animation isn't, and CMC42's exact left/right sprite orientation
-    /// is still flagged unverified in `neogeo_core.rs`. Most other real
-    /// cartridges' own protection chips aren't implemented at
-    /// all -- those will surface the same "emulation error, reload the
+    /// implemented, reimplemented from MAME's own source, alongside
+    /// real sprite auto-animation. CMC42's exact left/right sprite
+    /// orientation is still flagged unverified in `neogeo_core.rs`.
+    /// Most other real cartridges' own protection chips aren't
+    /// implemented at all -- those will surface the same "emulation
+    /// error, reload the
     /// ROM" this app already shows for any other core's crash.
     NeoGeo,
 }

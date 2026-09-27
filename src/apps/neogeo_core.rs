@@ -53,8 +53,9 @@
 //! real 100,000,000-instruction run with no CPU fault at all) and its
 //! separate CMC42 graphics-decryption chip (sprite/fix-layer C-ROM
 //! data, also reimplemented from MAME's own source -- see `cmc42`'s
-//! own module doc comment). Still missing: sprite auto-animation. See
-//! the module's own test coverage for exactly what is and isn't
+//! own module doc comment), and real sprite auto-animation (`Lspc`'s
+//! own doc comment). See the module's own test coverage for exactly
+//! what is and isn't
 //! verified so far.
 
 use m68k::{AddressBus, CpuCore, CpuType, StepResult};
@@ -110,15 +111,42 @@ impl SoundLatch {
 ///
 /// Real hardware also imposes minimum-cycle-delay timing rules between
 /// these accesses (see the wiki page above); not enforced here.
+///
+/// Also owns the real sprite auto-animation counter, per
+/// <https://wiki.neogeodev.org/index.php?title=Auto_animation> and
+/// `REG_LSPCMODE` ($3C0006): an 8-bit down-counter ticks once per
+/// video frame; on underflow it reloads from the last value written to
+/// `REG_LSPCMODE`'s high byte and increments a 3-bit animation counter
+/// (`render_sprites_onto` replaces a sprite tile's own low bits with
+/// this counter when its SCB1 auto-anim bits request it).
 struct Lspc {
     vram: Vec<u16>,
     vram_addr: u16,
     vram_mod: i16,
+    /// `REG_LSPCMODE`'s high byte: the down-counter's reload value.
+    anim_speed: u8,
+    /// The down-counter itself, ticking once per `advance_animation` call.
+    anim_timer: u8,
+    /// The real 3-bit animation counter sprites read from.
+    anim_counter: u8,
 }
 
 impl Lspc {
     fn new() -> Self {
-        Self { vram: vec![0; 0x10000], vram_addr: 0, vram_mod: 0 }
+        Self { vram: vec![0; 0x10000], vram_addr: 0, vram_mod: 0, anim_speed: 0, anim_timer: 0, anim_counter: 0 }
+    }
+
+    /// Ticks the auto-animation down-counter once (real hardware does
+    /// this every video frame); on underflow, reloads from `anim_speed`
+    /// and advances the 3-bit animation counter, per this struct's own
+    /// doc comment and its documented "n+1 frames per tick" formula.
+    fn advance_animation(&mut self) {
+        if self.anim_timer == 0 {
+            self.anim_timer = self.anim_speed;
+            self.anim_counter = (self.anim_counter + 1) & 0x7;
+        } else {
+            self.anim_timer -= 1;
+        }
     }
 
     fn read_data(&mut self) -> u16 {
@@ -522,10 +550,23 @@ impl NeoGeoBus {
                 let scb1_base = sprite.wrapping_mul(64).wrapping_add(tile_row * 2);
                 let even = self.lspc.peek(scb1_base);
                 let odd = self.lspc.peek(scb1_base.wrapping_add(1));
-                let tile_number = (((odd >> 8) & 0xF) as u32) << 16 | even as u32;
+                let mut tile_number = (((odd >> 8) & 0xF) as u32) << 16 | even as u32;
                 let palette = ((odd >> 12) & 0xF) as u32;
                 let h_flip = (odd >> 4) & 1 != 0;
                 let v_flip = (odd >> 5) & 1 != 0;
+                // Auto-animation, per
+                // <https://wiki.neogeodev.org/index.php?title=Auto_animation>:
+                // bit 7 (8-frame) replaces the tile number's low 3 bits
+                // with the real animation counter; bit 6 (4-frame, only
+                // when bit 7 is clear -- 8-frame has priority) replaces
+                // just the low 2 bits. Real hardware *replaces* these
+                // bits, not adds to them.
+                let anim = self.lspc.anim_counter as u32;
+                if (odd >> 7) & 1 != 0 {
+                    tile_number = (tile_number & !0x7) | (anim & 0x7);
+                } else if (odd >> 6) & 1 != 0 {
+                    tile_number = (tile_number & !0x3) | (anim & 0x3);
+                }
                 let pixels = decode_sprite_tile(&self.odd_c_rom, &self.even_c_rom, tile_number);
                 let column_position = if v_flip { tile_count as u16 - 1 - tile_row } else { tile_row } as usize;
                 for (ty, row) in pixels.iter().enumerate() {
@@ -650,6 +691,9 @@ impl AddressBus for NeoGeoBus {
             // auto-increments -- see `Lspc`'s own doc comment).
             0x3C0000 => self.lspc.vram_addr,
             0x3C0002 => self.lspc.read_data(),
+            // REG_LSPCMODE readback: only the real 3-bit animation
+            // counter (low bits) is modeled -- see `Lspc::advance_animation`.
+            0x3C0006 => self.lspc.anim_counter as u16,
             // NEO-SMA's "chip present" check: always replies $9A37,
             // per MAME's own `sma_prot_device::prot_9a37_r` and the
             // real hardware address neogeo.cpp installs it at for
@@ -704,6 +748,11 @@ impl AddressBus for NeoGeoBus {
             0x3C0000 => self.lspc.vram_addr = value,
             0x3C0002 => self.lspc.write_data(value),
             0x3C0004 => self.lspc.vram_mod = value as i16,
+            // REG_LSPCMODE: only the auto-animation speed divider
+            // (high byte) is implemented -- see `Lspc::advance_animation`'s
+            // own doc comment. The rest of this register (display mode
+            // bits) isn't modeled.
+            0x3C0006 => self.lspc.anim_speed = (value >> 8) as u8,
             // NEO-SMA bankswitch write, Metal Slug 3/3A's real address
             // ($2FFFE4, per MAME's own memory map install for
             // `NEOGEO_MSLUG3`/`NEOGEO_MSLUG3A`) -- real unscrambling
@@ -802,6 +851,7 @@ impl NeoGeoMachine {
     /// prevent.
     pub fn vblank(&mut self) {
         self.cpu.set_irq(1);
+        self.bus.lspc.advance_animation();
     }
 
     /// Steps the sound CPU once. Timing synchronization between the
@@ -1687,6 +1737,91 @@ mod tests {
         assert_eq!(rgba[just_past_shrunk_width + 3], 0, "past the documented shrunk width (nibble 3 -> 4px), nothing should be painted");
     }
 
+    /// The auto-animation timer must tick every `n+1` frames (per
+    /// <https://wiki.neogeodev.org/index.php?title=Auto_animation>'s
+    /// own documented formula) and advance a real 3-bit counter that
+    /// wraps at 8, not just increment forever or never move.
+    #[test]
+    fn lspc_auto_animation_counter_ticks_every_n_plus_1_frames() {
+        let mut lspc = Lspc::new();
+        lspc.anim_speed = 2; // n=2 -> ticks every 3 frames
+        // The timer starts at 0 (fresh state, never yet reloaded), so
+        // the very first call ticks immediately and reloads to
+        // anim_speed -- real hardware's own documented "n+1 frames per
+        // tick" cadence only applies *between* ticks, once the timer
+        // actually holds a real reload value.
+        lspc.advance_animation();
+        assert_eq!(lspc.anim_counter, 1, "the first call, from a fresh timer, must tick immediately");
+        for _ in 0..2 {
+            lspc.advance_animation();
+        }
+        assert_eq!(lspc.anim_counter, 1, "the counter must not advance again until n+1=3 more calls elapse");
+        lspc.advance_animation(); // the 3rd call since the last tick: underflow
+        assert_eq!(lspc.anim_counter, 2, "the counter must advance exactly on the n+1-th frame since the last tick");
+        for _ in 0..(3 * 6) {
+            lspc.advance_animation();
+        }
+        assert_eq!(lspc.anim_counter, 0, "the 3-bit counter must wrap back to 0 after 8 real ticks (1 + 7 more)");
+    }
+
+    /// A sprite with the 8-frame auto-anim bit (SCB1 odd bit 7) set
+    /// must actually render whichever tile the real animation counter
+    /// currently selects (base tile number with its low 3 bits
+    /// *replaced*, not added to), not always the sprite's own base
+    /// tile -- proving the counter genuinely reaches sprite rendering,
+    /// not just existing as inert state.
+    #[test]
+    fn auto_animation_bit_replaces_the_tiles_low_bits_with_the_real_counter() {
+        // Distinct solid colors per tile: tile 0 = color 3 (odd=FF,
+        // even=00 in tile 0's own 64-byte block), tile 5 = color 12
+        // (odd=00, even=FF in tile 5's block) -- chosen so the two are
+        // unmistakably different, not just "any nonzero".
+        let mut odd_c_rom = vec![0u8; 64 * 8];
+        let mut even_c_rom = vec![0u8; 64 * 8];
+        odd_c_rom[0..64].fill(0xFF); // tile 0: bitplanes 0+1 set -> color 3
+        even_c_rom[5 * 64..6 * 64].fill(0xFF); // tile 5: bitplanes 2+3 set -> color 12
+
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None);
+
+        // SCB1 sprite 0: base tile 0, palette 5, 8-frame auto-anim bit set.
+        machine.bus.write_word(0x3C0000, 0x0000);
+        machine.bus.write_word(0x3C0002, 0x0000); // tile number LSBs = 0
+        machine.bus.write_word(0x3C0000, 0x0001);
+        machine.bus.write_word(0x3C0002, (5u16 << 12) | (1 << 7)); // palette 5, bit7 = 8-frame auto-anim
+
+        machine.bus.write_word(0x3C0000, 0x8000); // SCB2: full size
+        machine.bus.write_word(0x3C0002, 0x0FFF);
+        machine.bus.write_word(0x3C0000, 0x8200);
+        machine.bus.write_word(0x3C0002, 1); // height 1 tile
+        machine.bus.write_word(0x3C0000, 0x8400);
+        machine.bus.write_word(0x3C0002, 50); // x = 50
+
+        // Palette 5: color 3 = red, color 12 = green -- distinguishable
+        // by which channel is lit.
+        machine.bus.write_word(0x400000 + (5 * 16 + 3) * 2, 0b1_1_0_0_1111_0000_0000);
+        machine.bus.write_word(0x400000 + (5 * 16 + 12) * 2, 0b1_0_1_0_0000_1111_0000);
+
+        const CANVAS: usize = 512;
+        let px = 50 + 4;
+        let py = 496 + 4;
+        let offset = (py * CANVAS + px) * 4;
+
+        // Counter starts at 0 -> tile number stays 0 (low 3 bits
+        // replaced with 0, a no-op here) -> renders tile 0 -> red.
+        let mut rgba = vec![0u8; CANVAS * CANVAS * 4];
+        machine.bus.render_sprites_onto(&mut rgba, CANVAS, CANVAS);
+        assert!(rgba[offset] > 200 && rgba[offset + 1] < 10, "counter 0 should render the base tile (0, red), got rgba=({},{},{})", rgba[offset], rgba[offset + 1], rgba[offset + 2]);
+
+        // Advance the counter to 5 (anim_speed defaults to 0, so every
+        // vblank ticks it by 1).
+        for _ in 0..5 {
+            machine.vblank();
+        }
+        let mut rgba = vec![0u8; CANVAS * CANVAS * 4];
+        machine.bus.render_sprites_onto(&mut rgba, CANVAS, CANVAS);
+        assert!(rgba[offset + 1] > 200 && rgba[offset] < 10, "counter 5 should replace the tile's low 3 bits (0 -> 5) and render tile 5 (green), got rgba=({},{},{})", rgba[offset], rgba[offset + 1], rgba[offset + 2]);
+    }
+
     /// A tile made of one repeated byte must decode to a perfectly
     /// uniform 8x8 block of that byte's two nibbles -- true regardless
     /// of exactly how the four (half, column) quadrants map onto
@@ -1954,9 +2089,9 @@ mod tests {
     /// (`Protection::SmaMslug3`), to prove the memory map, word-swap,
     /// header/entry handling, and SMA transform are right against real
     /// hardware/software, not just synthetic bytes. This can't prove
-    /// full compatibility (sprite auto-animation isn't implemented, and
-    /// the C-ROM/fix-layer CMC42 decryption's left/right sprite
-    /// orientation is still flagged unverified -- see this module's own
+    /// full compatibility (the C-ROM/fix-layer CMC42 decryption's
+    /// left/right sprite orientation is still flagged unverified --
+    /// see this module's own
     /// doc comment and `decode_sprite_tile`'s), but millions of real
     /// instructions executing without faulting, deep into genuinely
     /// SMA-decrypted code, is a meaningful signal the transform is
