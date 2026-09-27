@@ -76,17 +76,17 @@
 //! **Neo Geo is a fifth, different case**: no complete, vendorable
 //! system emulator exists for it anywhere in the Rust ecosystem (see
 //! `neogeo_core.rs`'s own module doc comment for what was actually
-//! checked). Its 68000 and Z80 CPU cores are real, vendored crates,
-//! same as the other four's cores -- but the memory map, video, and
-//! sound are hand-written against public hardware documentation
-//! instead of borrowed, a deliberate, flagged exception to this file's
-//! usual "vendor a real implementation" rule, and one still very much
-//! in progress: video (both the fix/text layer and sprites -- tile
-//! decode, position, flip, shrink) renders, but there's no sound at
-//! all, and most real cartridges' P2 ROM protection chips (Metal Slug
-//! 3's PVC among them) aren't decrypted, so real games run only
-//! briefly before hitting code this core can't
-//! yet execute correctly.
+//! checked). Its 68000/Z80 CPUs and its YM2610 sound chip are real,
+//! vendored crates, same as the other four's cores -- but the memory
+//! map and video are hand-written against public hardware
+//! documentation instead of borrowed, a deliberate, flagged exception
+//! to this file's usual "vendor a real implementation" rule. Video
+//! (fix/text layer and sprites), sound, VBlank, and Metal Slug 3's own
+//! NEO-SMA protection (real 68000 decryption and bankswitching,
+//! reimplemented from MAME's own source) all work; still missing is
+//! the separate CMC42 chip Metal Slug 3 also needs for sprite/fix-
+//! layer graphics decryption, and most other real cartridges'
+//! protection chips aren't implemented at all yet.
 //!
 //! **What's real here**: ROM scanning per console (ROMs are
 //! copyrighted and must stay user-supplied -- see `.gitignore`'s
@@ -221,12 +221,14 @@ enum Console {
     /// doc comment); the 68000/Z80 CPU cores and the YM2610 sound chip
     /// are real, vendored implementations, but the memory map and
     /// video are hand-written against public hardware documentation.
-    /// The fix/text layer, sprites, and real YM2610 audio all render;
-    /// cartridges using a protection chip for P2 bankswitching (Metal
-    /// Slug 3 among them) will still run real code for well under a
-    /// second before hitting code this core can't decrypt and
-    /// surfacing the same "emulation error, reload the ROM" this app
-    /// already shows for any other core's crash.
+    /// Metal Slug 3's real NEO-SMA protection (68000 decryption and
+    /// bankswitching) is implemented, verified against a real
+    /// 100,000,000-instruction run with no CPU fault; its separate
+    /// CMC42 graphics-decryption chip is not, so sprite/fix-layer
+    /// visuals for that specific cart won't look right yet. Most other
+    /// real cartridges' own protection chips aren't implemented at
+    /// all -- those will surface the same "emulation error, reload the
+    /// ROM" this app already shows for any other core's crash.
     NeoGeo,
 }
 const CONSOLE_NAMES: [&str; 5] = ["NES", "SNES", "Arcade", "Game Boy", "Neo Geo"];
@@ -466,6 +468,26 @@ fn load_neogeo_cartridge(dir: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec
     // as the C-ROMs' odd/even split in `concat_c_roms`.
     let v_rom = (1..=4).flat_map(|n| find(&format!("v{n}.rom"))).collect();
     (p1, p2, m1, s1, c_roms, v_rom)
+}
+
+/// Detects a Neo Geo cartridge's real protection chip from its folder
+/// name -- no per-game registry exists (see `scan_neogeo_roms`'s own
+/// doc comment), so this is the same pragmatic convention already
+/// used there. Only Metal Slug 3/3A's NEO-SMA is implemented so far
+/// (see `neogeo_core::Protection`'s own doc comment). Matches both the
+/// real MAME set name ("mslug3") and the common plain-English folder
+/// name ("metalslug3") -- confirmed necessary against a real cartridge
+/// folder actually named the latter, which the substring "mslug3"
+/// alone does NOT match ("metalslug3" has no contiguous "mslug3" in
+/// it) -- an earlier version of this check silently fell back to no
+/// protection at all for that exact folder name.
+fn detect_neogeo_protection(rom_name: &str) -> crate::apps::neogeo_core::Protection {
+    let name_lower = rom_name.to_ascii_lowercase();
+    if name_lower.contains("mslug3") || name_lower.contains("metal slug 3") || name_lower.contains("metalslug3") {
+        crate::apps::neogeo_core::Protection::SmaMslug3
+    } else {
+        crate::apps::neogeo_core::Protection::None
+    }
 }
 
 fn save_state_path(console: Console, rom_name: &str, slot: usize) -> PathBuf {
@@ -838,14 +860,7 @@ impl RetroApp {
                 if p1.is_empty() {
                     Err("no P1 ROM found in this cartridge folder".into())
                 } else {
-                    // No per-game registry exists (see `scan_neogeo_roms`'s
-                    // own doc comment) -- detecting a cartridge's real
-                    // protection chip by its folder name is the same
-                    // pragmatic convention already used there. Only
-                    // Metal Slug 3/3A's NEO-SMA is implemented so far
-                    // (see `neogeo_core::Protection`'s own doc comment).
-                    let name_lower = rom_name.to_ascii_lowercase();
-                    let protection = if name_lower.contains("mslug3") { crate::apps::neogeo_core::Protection::SmaMslug3 } else { crate::apps::neogeo_core::Protection::None };
+                    let protection = detect_neogeo_protection(&rom_name);
                     Ok(Deck::NeoGeo(Box::new(NeoGeoMachine::new(p1, p2, m1, s1, c_roms, v_rom, protection))))
                 }
             }
@@ -1986,6 +2001,20 @@ mod tests {
 
         let rom_name = app.loaded_rom_name.clone().unwrap();
         let _ = std::fs::remove_file(save_state_path(Console::Gb, &rom_name, 0));
+    }
+
+    /// `detect_neogeo_protection` must recognize the real cartridge
+    /// folder name this project's own `roms/neogeo/metalslug3`
+    /// convention actually uses -- not just the MAME set name --
+    /// since an earlier version silently fell back to no protection at
+    /// all for exactly that folder name, undetected until traced by
+    /// hand.
+    #[test]
+    fn detect_neogeo_protection_recognizes_the_real_metalslug3_folder_name() {
+        assert_eq!(detect_neogeo_protection("metalslug3"), crate::apps::neogeo_core::Protection::SmaMslug3, "the real folder name this repo's roms/neogeo/ convention uses must be detected");
+        assert_eq!(detect_neogeo_protection("mslug3"), crate::apps::neogeo_core::Protection::SmaMslug3, "the real MAME set name must also be detected");
+        assert_eq!(detect_neogeo_protection("MetalSlug3"), crate::apps::neogeo_core::Protection::SmaMslug3, "detection must be case-insensitive");
+        assert_eq!(detect_neogeo_protection("kof98"), crate::apps::neogeo_core::Protection::None, "an unrelated cartridge must not be misdetected as needing Metal Slug 3's own protection");
     }
 
     /// The same real end-to-end exercise as the other consoles' tests

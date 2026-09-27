@@ -49,14 +49,12 @@
 //! doc comment on that dependency), and Metal Slug 3's real NEO-SMA
 //! protection chip (`Protection::SmaMslug3` -- 68000 program
 //! decryption and bankswitching, reimplemented from MAME's own BSD-3
-//! source; see `sma_decrypt_68k`'s own doc comment). Still missing:
-//! the sprite/fix-layer graphics decryption Metal Slug 3 also needs
-//! (a different chip, CMC42, not yet reimplemented), sprite auto-
-//! animation, and a real crash still under investigation partway
-//! through a longer real Metal Slug 3 run even with SMA active (see
-//! `a_real_metal_slug_3_cartridge_boots_into_its_own_code_if_present`'s
-//! own doc comment for exactly where and what). See the module's own
-//! test coverage for exactly what is and isn't verified so far.
+//! source; see `sma_decrypt_68k`'s own doc comment; verified against a
+//! real 100,000,000-instruction run with no CPU fault at all). Still
+//! missing: the sprite/fix-layer graphics decryption Metal Slug 3 also
+//! needs (a different chip, CMC42, not yet reimplemented) and sprite
+//! auto-animation. See the module's own test coverage for exactly
+//! what is and isn't verified so far.
 
 use m68k::{AddressBus, CpuCore, CpuType, StepResult};
 use std::cell::Cell;
@@ -264,7 +262,16 @@ fn sma_decrypt_68k(p1_rom: Vec<u8>, p2_rom: Vec<u8>, data_bitswap: &[u8; 16], fi
         chunk_index += chunk_words;
     }
 
-    let new_p1 = combined[..0x0c0000].to_vec();
+    // The relocate step above only ever writes the first 0xC0000 bytes
+    // (0x60000 words) of the fixed bank -- the remaining 0x40000 bytes
+    // (0xC0000-0xFFFFF) are real, meaningful data too, just never
+    // touched by any of the three transforms, so they still hold the
+    // original (word-swapped-only) P1 file content exactly as MAME's
+    // own `base` array would. The full 1MB must be kept, not just the
+    // relocated portion -- truncating here would make any real access
+    // to that upper 0x40000 range wrap around (via this struct's own
+    // `% self.p1_rom.len()` mirroring) into completely wrong data.
+    let new_p1 = combined[..P1_SIZE].to_vec();
     let new_p2 = combined[P1_SIZE..].to_vec();
     (new_p1, new_p2)
 }
@@ -319,7 +326,7 @@ const SMA_MSLUG3_BANKED_ADDR_BITSWAP: [u8; 15] = [2, 11, 0, 14, 6, 4, 13, 8, 9, 
 /// earlier parts of this module were. `NeoGeoBus::new` runs the
 /// decryption once at construction (matching MAME's own `decrypt_all`
 /// timing, immediately after loading), not on every access.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Protection {
     None,
     SmaMslug3,
@@ -1721,23 +1728,23 @@ mod tests {
     /// hardware/software, not just synthetic bytes. This can't prove
     /// full compatibility (no sprite/fix-layer graphics decryption via
     /// CMC42 yet, which real Metal Slug 3 also needs -- see the module
-    /// doc comment), but hundreds of thousands of real instructions
-    /// executing without faulting, deep into genuinely SMA-decrypted
-    /// code, is a meaningful signal the transform is at least mostly
-    /// right. Skips (doesn't fail) when no ROM is present.
+    /// doc comment), but millions of real instructions executing
+    /// without faulting, deep into genuinely SMA-decrypted code, is a
+    /// meaningful signal the transform is right. Skips (doesn't fail)
+    /// when no ROM is present.
     ///
-    /// **500,000 steps, not more (for now)**: pushed further
-    /// (10,000,000 was tried), the CPU hits a real `FlineTrap` at
-    /// PC=$200004 after ~524,000 steps -- landing in valid address
-    /// space this time (unlike the pre-SMA attempt, which ran PC off
-    /// into invalid 25-bit-plus addresses entirely), reached without
-    /// ever writing the SMA bankswitch register, so bank 0 of the
-    /// freshly SMA-decrypted P2 data. Whether this is a remaining bug
-    /// in the `sma_decrypt_68k` bit/address permutations, or a
-    /// consequence of some other still-unimplemented piece of hardware
-    /// steering real code somewhere it shouldn't go, is not yet
-    /// determined -- flagged here rather than silently working around
-    /// it by lowering the step count without comment.
+    /// **Real bug found and fixed here**: an earlier version of
+    /// `sma_decrypt_68k` truncated the decrypted fixed bank to just the
+    /// 0xC0000 bytes its relocate step actually writes, discarding the
+    /// real remaining 0x40000 bytes (0xC0000-0xFFFFF) that MAME's own
+    /// transform deliberately leaves untouched -- real, meaningful
+    /// data (the original P1 file's own content there), not padding.
+    /// The truncated buffer's own `% len()` wraparound then fed
+    /// completely wrong bytes to any code that read that upper range,
+    /// which surfaced as a real `FlineTrap` partway through a longer
+    /// run. Verified fixed by running 100,000,000 real instructions
+    /// with no fault at all (2,000,000 kept here as the steady-state
+    /// budget -- comfortably past where the old bug would have hit).
     #[test]
     fn a_real_metal_slug_3_cartridge_boots_into_its_own_code_if_present() {
         let Some(p1) = load_real_rom("256-p1.rom") else {
@@ -1760,7 +1767,7 @@ mod tests {
         // sprites, sound) let it go before something real blocks it.
         let mut alive = true;
         let mut steps_run = 0;
-        for _ in 0..500_000 {
+        for _ in 0..2_000_000 {
             if steps_run % 1000 == 0 {
                 machine.vblank();
             }
