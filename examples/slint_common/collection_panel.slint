@@ -1,0 +1,77 @@
+import { ParamListColumn } from "device_frame.slint";
+import { CollectionScene } from "collection_scenes.slint";
+component Label inherits Text { in property <color> ink; color: ink; font-family: "JetBrains Mono"; font-size: 9px; overflow: elide; }
+export component CollectionPanel inherits Rectangle {
+    in property <[float]> terrain;
+    in property <[float]> visual-lines;
+    in property <int> kind;
+    in property <color> paper; in property <color> ink; in property <color> accent;
+    in property <[string]> names; in property <[string]> values; in property <int> selected;
+    in property <bool> more-above; in property <bool> more-below;
+    in property <string> title; in property <string> status; in property <string> source; in property <string> hint;
+    in property <[float]> wave; in property <[float]> spectrum; in property <[float]> levels; in property <[bool]> pads;
+    in property <float> peak; in property <float> rms; in property <float> phase; in property <float> duration;
+    in property <int> step; in property <bool> recording; in property <bool> playing;
+    in property <[float]> controls;
+    in property <[float]> buffer;
+    in property <[float]> tracks;
+    in property <[float]> voice-phases;
+    in property <[float]> notes;
+    in property <[float]> genes;
+    in property <[string]> files;
+    in property <[string]> source-names;
+    in property <string> reference;
+    in property <string> instrument;
+    in property <bool> frozen;
+    in property <bool> alternate;
+    callback pad(int,bool); callback xy(float,float);
+    HorizontalLayout {
+        spacing: 18px;
+        ParamListColumn { width: 220px; row-names: root.names; row-values: root.values; selected-row: root.selected;
+            more-above: root.more-above; more-below: root.more-below; accent: root.accent; ink: root.ink; paper: root.paper; instrument-style: true; }
+        VerticalLayout {
+            spacing: 7px; padding-top: 4px; padding-bottom: 10px;
+            Label { text: root.kind==14 ? "LIVE ANALYSIS / MONITOR OFF" : root.recording ? "● RECORDING / BOUNDED TAKE" : root.playing ? "● RUNNING / LIVE ENGINE" : "○ READY / LIVE ENGINE"; ink: root.accent; height: 14px; }
+            if root.kind != 2 && root.kind != 3 && root.kind != 6 && root.kind != 4 && root.kind != 14 : Text { text: root.title; color: root.ink; font-family: "Space Grotesk"; font-size: 25px; font-weight: 600; height: 31px; }
+            CollectionScene {
+                    terrain:root.terrain;visual-lines:root.visual-lines; vertical-stretch: 1;
+                controls: root.controls;
+                buffer: root.buffer;
+                tracks: root.tracks;
+                voice-phases: root.voice-phases;
+                notes: root.notes;
+                genes: root.genes;
+                files: root.files;
+                source-names: root.source-names;
+                reference: root.reference;
+                instrument: root.instrument;
+                frozen: root.frozen;
+                alternate: root.alternate;
+                kind: root.kind;
+                paper: root.paper;
+                ink: root.ink;
+                accent: root.accent;
+                wave: root.wave;
+                spectrum: root.spectrum;
+                levels: root.levels;
+                pads: root.pads;
+                source: root.source;
+                phase: root.phase;
+                duration: root.duration;
+                peak: root.peak;
+                rms: root.rms;
+                step: root.step;
+                recording: root.recording;
+                playing: root.playing;
+                pad(i,down) => {root.pad(i,down);} xy(x,y) => {root.xy(x,y);}
+            }
+            HorizontalLayout { height: 12px; spacing: 8px;
+                Label { text: "PK " + round(root.peak*100) + "%"; ink: root.accent; width: 61px; }
+                Rectangle { y: 4px; height: 4px; horizontal-stretch: 1; background: root.ink.with-alpha(0.1); Rectangle { width: min(1,root.rms)*parent.width; height: parent.height; background: root.accent; } }
+                Label { text: root.kind == 1 || root.kind == 4 || root.kind == 5 || root.kind == 6 || root.kind == 8 ? "STEP " + (root.step + 1) : root.duration > 0 ? round(root.phase*10)/10 + " / " + round(root.duration*10)/10 + "s" : "LIVE"; ink: root.ink.with-alpha(0.6); width: 92px; horizontal-alignment: right; }
+            }
+            Text { text: root.status; color: root.ink; font-family: "Space Grotesk"; font-size: 11px; wrap: word-wrap; height: root.kind==2 || root.kind==3 || root.kind==6 || root.kind==4 || root.kind==14 ? 20px : 29px; }
+            Text { text: root.hint; color: root.ink.with-alpha(0.55); font-family: "Space Grotesk"; font-size: 10px; wrap: word-wrap; height: root.kind==2 || root.kind==3 || root.kind==6 || root.kind==4 || root.kind==14 ? 17px : 25px; }
+        }
+    }
+}

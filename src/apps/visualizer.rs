@@ -1,63 +1,4 @@
-//! A real slot in the app registry, not a separate standalone tool --
-//! this replaces the earlier `examples/te_visualizer.rs` desktop
-//! prototype (removed) with the same idea folded into the simulator
-//! itself: knob1 navigates a flat menu (Mode, Demo Signal, Frequency,
-//! Scene), knob2 edits the selected row, exactly like every other app
-//! here. No mouse-only controls, no separate window.
-//!
-//! Wraps `AnalyzerApp` verbatim for the real signal generation/
-//! analysis (self-generated sine/noise/sweep, real FFT spectrum, real
-//! oscilloscope trace, real peak/RMS meters, real autocorrelation
-//! pitch detection) and adds one more row on top, "Scene", which
-//! swaps the plot area for one of two audio-reactive pixel-art
-//! "mascots" instead of a plain scope/spectrum readout -- the same
-//! idea as the little animated icons Teenage Engineering's own
-//! hardware shows on its screen (OP-1 synth-engine icons, TX-6 VU
-//! pixel art), not a literal reproduction of either product:
-//!   - **Boxer**: bobs on bass energy, jabs both gloves outward on a
-//!     beat hit.
-//!   - **Car**: drives left-to-right on a loop, hops on a beat,
-//!     headlight/rear glow trail brighten with treble energy.
-//!   - **Cat**: a maneki-neko DJ -- head/ears nod and its raised paw
-//!     swings side to side on every beat (a real 4/4 will read as a
-//!     steady metronome swing since it flips side on each beat
-//!     onset, not a fixed tempo), boombox shows a tiny live spectrum
-//!     readout.
-//! All three read real numbers off `AnalyzerApp` (bass/treble = averaged
-//! low/high spectrum bins, "beat" = a real peak-level threshold
-//! crossing that spikes then decays) -- see `tick`'s bookkeeping.
-//!
-//! `AnalyzerApp`'s own selection state is private (`list`/`shared`
-//! aren't `pub`), so editing one of its first 3 rows works by
-//! "walking" its internal cursor onto the target row with repeated
-//! `knob1: 1` ticks before forwarding the real `knob2` edit -- the
-//! same trick `examples/te_visualizer.rs` used against the same
-//! constraint. Its own audio processing (FFT/level calc) runs
-//! independent of menu navigation, so Scene reads accurate
-//! spectrum/level data no matter which row is selected.
-//!
-//! Next step once this is playing well: swap `AnalyzerApp`'s self-
-//! generated demo signal for a real tap into this sim's `AudioBus`,
-//! so Boxer/Car react to whichever app (or the full master mix) is
-//! actually playing, instead of the demo oscillator's incidental
-//! level wobble.
-//!
-//! **Monitor (default Off)**: `MixBus` runs every registered app's
-//! processor every block for the life of the program, regardless of
-//! which screen is active (see audio.rs's own doc comment) -- that's
-//! right for an instrument that stays silent until played, but
-//! `AnalyzerApp` is a self-contained tone generator that *always*
-//! emits its demo signal by design (fine for the old standalone
-//! prototype, where it was the only thing running). Wrapped into the
-//! real registry unguarded, that meant a sine tone humming the
-//! instant the whole simulator booted, before you'd even opened this
-//! app. `VisualizerProcessor` below gates the actual audible output
-//! on `monitor` (an `Arc<AtomicBool>`, default `false`) while leaving
-//! the underlying analysis running regardless -- Boxer/Car/scope keep
-//! reacting to the demo signal even while it's muted, since Shared's
-//! spectrum/level/waveform state updates inside `AnalyzerApp`'s own
-//! processor regardless of what we do to its output afterward.
-
+//! Animated scenes driven by the selected AudioBus source or explicit demo.
 use super::analyzer::AnalyzerApp;
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
@@ -74,7 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 const SCENE_NAMES: [&str; 4] = ["Off", "Boxer", "Car", "Cat"];
-const NUM_ROWS: usize = 5;
+const NUM_ROWS: usize = 6;
 /// A real peak-level crossing above this counts as a "beat" -- see
 /// `tick`'s beat-pulse bookkeeping.
 const BEAT_THRESHOLD: f32 = 0.5;
@@ -133,10 +74,15 @@ impl VisualizerApp {
         }
     }
 
+    pub fn with_audio_bus(bus:Arc<crate::audio_bus::AudioBus>)->Self {let mut app=Self::new();app.analyzer=AnalyzerApp::with_named_bus(bus,"Visualizer");app.analyzer.set_monitor(true);app}
+
     fn display_rows(&self) -> Vec<(String, String)> {
         let mut rows = self.analyzer.display_rows();
+        let source=rows[3].clone();
+        rows.truncate(3);
         rows.push(("Scene".to_string(), SCENE_NAMES[self.scene % SCENE_NAMES.len()].to_string()));
         rows.push(("Monitor".to_string(), if self.monitor.load(Ordering::Relaxed) { "On".to_string() } else { "Off".to_string() }));
+        rows.push(source);
         rows
     }
 }
@@ -163,12 +109,14 @@ impl AudioProcessor for VisualizerProcessor {
 }
 
 impl App for VisualizerApp {
+    fn needs_background_audio(&self)->bool {self.monitor.load(Ordering::Relaxed)}
     fn tick(&mut self, input: &Input) {
         self.list.navigate_input(input, NUM_ROWS, 1);
         let row = self.list.selected;
 
         if input.knob2 != 0 {
-            if row < 3 {
+            if row < 3 || row==5 {
+                let row=if row==5{3}else{row};
                 let mut guard = 0;
                 while self.analyzer.selected_row() != row && guard < 8 {
                     self.analyzer.tick(&Input { knob1: 1, ..Default::default() });
@@ -641,3 +589,5 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)] mod monitoring_lifecycle_tests {use super::*;#[test]fn only_explicit_monitoring_keeps_visualizer_awake(){let app=VisualizerApp::with_audio_bus(Arc::new(crate::audio_bus::AudioBus::new()));assert!(!app.needs_background_audio());app.monitor.store(true,Ordering::Relaxed);assert!(app.needs_background_audio());app.monitor.store(false,Ordering::Relaxed);assert!(!app.needs_background_audio());}}

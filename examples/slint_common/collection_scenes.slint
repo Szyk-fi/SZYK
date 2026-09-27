@@ -1,0 +1,266 @@
+import { SpectralTerrain, SwarmNetwork } from "dynamic_visuals.slint";
+import { VectorSegment } from "instrument_widgets.slint";
+export component Micro inherits Text { in property <color> ink; color: ink; font-family: "JetBrains Mono"; font-size: 9px; overflow: elide; }
+export component SignalTrace inherits Rectangle {
+    in property <[float]> signal; in property <color> ink;
+    in property <int> start: 0; in property <int> count: 128;
+    property <int> n: max(0,min(root.count,root.signal.length - root.start));
+    for i in root.n : Rectangle {
+        x: i*root.width/max(1,root.n); width: max(1px,root.width/max(1,root.n) - 1px);
+        height: max(1px,min(1,abs(root.signal[root.start+i]))*root.height);
+        y: (root.height - self.height)/2; background: root.ink; border-radius: 1px;
+    }
+}
+component PressTarget inherits TouchArea {
+    callback held(bool);
+    pointer-event(event) => {
+        if event.kind == PointerEventKind.down { root.held(true); }
+        else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel { root.held(false); }
+    }
+}
+export component CollectionScene inherits Rectangle {
+    in property <[float]> terrain;
+    in property <[float]> visual-lines;
+    in property <int> kind; in property <color> paper; in property <color> ink; in property <color> accent;
+    in property <[float]> controls; in property <[float]> wave; in property <[float]> spectrum; in property <[float]> buffer; in property <[float]> tracks;
+    in property <[float]> levels; in property <[float]> voice-phases; in property <[float]> notes; in property <[float]> genes;
+    in property <[bool]> pads; in property <[string]> files; in property <[string]> source-names;
+    in property <string> source; in property <string> reference; in property <string> instrument;
+    in property <float> phase; in property <float> duration; in property <float> peak; in property <float> rms;
+    in property <int> step; in property <bool> recording; in property <bool> playing; in property <bool> frozen; in property <bool> alternate;
+    callback pad(int,bool); callback xy(float,float);
+    background: root.ink.with-alpha(0.025); border-radius: 7px; border-width: 1px; border-color: root.ink.with-alpha(0.12); clip: true;
+    // 01: independent orbital trigger lanes, with real gates and voice activity.
+    if root.kind == 1 : Rectangle {
+        for lane in 4 : Rectangle {
+            width: parent.width*(0.3+lane*0.2); height: parent.height*(0.24+lane*0.22);
+            x: (parent.width - self.width)/2; y: (parent.height - self.height)/2;
+            border-radius: self.width/2; border-width: 1px; border-color: root.accent.with-alpha(0.12+lane*0.07);
+        }
+        Rectangle { x: parent.width/2; y: 9px; height: parent.height - 18px; width: 1px; background: root.ink.with-alpha(0.18); }
+        for i in 16 : Rectangle {
+            property <float> angle: mod(i,4)*90+root.phase*360/(1+floor(i/4)*(1+root.controls[1]*7));
+            width: 7px+root.levels[i]*8px; height: self.width; border-radius: self.width/2;
+            x: parent.width/2+cos(self.angle*1deg)*parent.width*(0.15+floor(i/4)*0.1) - self.width/2;
+            y: parent.height/2+sin(self.angle*1deg)*parent.height*(0.12+floor(i/4)*0.11) - self.height/2;
+            background: root.pads[i] || root.levels[i]>0.05 ? root.accent : root.ink.with-alpha(0.18);
+            PressTarget { held(down) => {root.pad(i,down);} }
+        }
+        Rectangle { x: parent.width/2 - 5px; y: parent.height/2 - 5px; width: 10px; height: 10px; border-radius: 5px; background: root.ink; }
+        Micro { x: 10px; y: 7px; text: "CROSSINGS → NOTES"; ink: root.accent; }
+        Micro { x: 10px; y: parent.height - 18px; text: root.alternate ? "KEYS / " + root.instrument : "16 TRIGGER POINTS"; ink: root.ink.with-alpha(0.55); }
+    }
+    // 02: each playable slice displays its own actual region of buffer history.
+    // 03: layered memories, offset according to age and decaying by the real control.
+    // 04: each particle is one real oscillator, with pitch, phase and amplitude.
+    if root.kind == 4 : SwarmNetwork {
+        levels:root.levels;phases:root.voice-phases;notes:root.notes;count:round(1+root.controls[0]*15);cohesion:root.controls[1];accent:root.accent;ink:root.ink;
+        pad(i,down)=>{root.pad(i,down);}
+    }
+    // 05: harmonic parent, mutated parent and the actual blended partial weights.
+    if root.kind == 5 : Rectangle {
+        for parent-index in 3 : Rectangle {
+            x: 7px+parent-index*(parent.width - 14px)/3; y: 13px; width: (parent.width - 26px)/3; height: parent.height - 42px;
+            background: root.accent.with-alpha(parent-index==2 ? 0.12 : 0.035); border-width: 1px; border-color: root.accent.with-alpha(parent-index==2 ? 0.8 : 0.2); border-radius: 4px;
+            for i in 12 : Rectangle {
+                property <float> partial: parent-index==0 ? 1/(i+1.0) : parent-index==1 ? root.genes[i] : ((1 - root.controls[0])/(i+1.0)+root.controls[0]*root.genes[i]);
+                x: 6px+i*(parent.width - 12px)/12; width: max(2px,(parent.width - 12px)/12 - 2px); height: min(1,self.partial)*(parent.height - 30px); y: parent.height - self.height - 22px;
+                background: root.accent.with-alpha(parent-index==2 ? 1 : 0.5);
+            }
+            Micro { x: 5px; y: parent.height - 17px; text: ["HARMONIC A","MUTATED B","OFFSPRING"][parent-index]; ink: root.ink; font-size: 8px; }
+        }
+        Micro { x: 12px; y: parent.height - 21px; text: "BREED NEW OFFSPRING →"; ink: root.accent; }
+        TouchArea { y: parent.height - 28px; height: 28px; clicked => {root.xy(-1,0);} }
+    }
+    // 06: notes are placed by their actual pitch classes, not arbitrary particles.
+    // 07: four independently auditionable heads over the recorded tape history.
+    if root.kind == 7 : Rectangle {
+        Rectangle { x: 0; y: parent.height*0.34; width: parent.width; height: parent.height*0.4; background: root.accent.with-alpha(0.12);
+            SignalTrace { signal: root.buffer; ink: root.accent; width: 100%; height: 100%; }
+        }
+        for i in 4 : Rectangle {
+            x: (0.12+i*(0.1+root.controls[1]*0.13))*parent.width; y: 18px; width: 2px; height: parent.height - 40px; background: root.accent.with-alpha(root.pads[i] ? 1 : 0.45);
+            Rectangle { x: -12px; width: 26px; height: 20px; border-radius: 3px; background: root.pads[i] ? root.accent : root.paper; border-width: 1px; border-color: root.accent;
+                Text { text: i+1; color: root.pads[i] ? root.paper : root.ink; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                PressTarget { held(down) => {root.pad(i,down);} }
+            }
+        }
+        Micro { x: 12px; y: parent.height - 17px; text: root.frozen ? "TAPE FROZEN / HEADS STILL READ" : "FOUR HEADS / CONTINUOUS INPUT"; ink: root.ink.with-alpha(0.6); }
+    }
+    // 08: musical state transitions, showing the engine's state rather than a timer.
+    if root.kind == 8 : Rectangle {
+        for i in 3 : VectorSegment {
+            center-x: root.width*(0.25+i*0.24); center-y: root.height*0.5;
+            delta-x: root.width/1px*0.24; delta-y: (mod(i,2)==0 ? -1 : 1)*root.height/1px*0.42;
+            trace: root.accent.with-alpha(0.35); line-width: 2px;
+        }
+        for i in 4 : Rectangle {
+            x: 8px+i*(parent.width - 12px)/4; y: mod(i,2)==0 ? parent.height*0.5 : parent.height*0.15;
+            width: (parent.width - 38px)/4; height: parent.height*0.3; border-radius: 6px;
+            background: root.step==i ? root.accent : root.paper; border-width: 1px; border-color: root.accent.with-alpha(0.5);
+            Text { text: ["CALM","TENSION","CHAOS","RELEASE"][i]; color: root.step==i ? root.paper : root.ink; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => {root.xy(-70 - i,0);} }
+        }
+        Micro { x: 12px; y: parent.height - 17px; text: root.instrument + " / TOUCH A STATE"; ink: root.accent; }
+    }
+    // 09: the live patch registry is the node list; no invented destinations.
+    if root.kind == 9 : Rectangle {
+        for source[i] in root.source-names : Rectangle {
+            visible: i<4; x: 9px; y: 9px+i*(parent.height - 20px)/4; width: parent.width*0.36; height: (parent.height - 28px)/4;
+            background: source==root.source || source==root.reference ? root.accent.with-alpha(0.2) : root.paper;
+            border-width: 1px; border-color: root.accent.with-alpha(0.3); border-radius: 3px;
+            Text { text: source; color: root.ink; font-size: 10px; overflow: elide; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => {root.xy(-10 - i,0);} }
+        }
+        for source[i] in root.source-names : VectorSegment {
+            visible: i<4 && (source==root.source || source==root.reference);
+            center-x: root.width*0.53; center-y: (root.height/2+12px+i*(root.height - 20px)/4)/2;
+            delta-x: root.width/1px*0.29; delta-y: (root.height/2 - 12px - i*(root.height - 20px)/4)/1px;
+            trace: root.accent; line-width: 2px;
+        }
+        Rectangle { x: parent.width*0.68; y: parent.height*0.31; width: parent.width*0.28; height: parent.height*0.38; border-radius: 5px; background: root.accent.with-alpha(0.15); border-width: 1px; border-color: root.accent;
+            Micro { x: 8px; y: 8px; text: "PORTAL OUT"; ink: root.accent; }
+            SignalTrace { x: 7px; y: 26px; width: parent.width - 14px; height: parent.height - 30px; signal: root.wave; ink: root.accent; }
+        }
+    }
+    // 10: a listening card with a waveform sleeve from the actual loaded file.
+    if root.kind == 10 : Rectangle {
+        Rectangle { x: 12px; y: 12px; width: parent.height - 24px; height: self.width; background: root.accent; clip: true;
+            for ring in 6 : Rectangle { width: parent.width*(0.3+ring*0.18); height: self.width; x: (parent.width - self.width)/2; y: (parent.height - self.height)/2; border-radius: self.width/2; border-width: 1px; border-color: root.paper.with-alpha(0.65); }
+            SignalTrace { y: parent.height*0.3; height: parent.height*0.4; width: parent.width; signal: root.buffer; ink: root.paper; }
+        }
+        VerticalLayout { x: parent.height; y: 17px; width: parent.width - parent.height - 12px; height: parent.height - 34px; spacing: 9px;
+            Micro { text: "REFERENCE / AUDIO"; ink: root.accent; }
+            Text { text: root.files.length>0 ? root.files[0] : "Your listening\nlibrary"; color: root.ink; font-family: "Space Grotesk"; font-size: 18px; wrap: word-wrap; }
+            Rectangle { height: 3px; background: root.ink.with-alpha(0.1); Rectangle { width: parent.width*min(1,root.phase/max(0.001,root.duration)); height: 100%; background: root.accent; } }
+            Micro { text: root.duration>0 ? round(root.phase)+" / "+round(root.duration)+" SEC" : "LOAD AUDIO TO BEGIN"; ink: root.ink.with-alpha(0.5); }
+        }
+    }
+    // 11: input peak and RMS are deliberately labelled mono, not fake stereo.
+    if root.kind == 11 : Rectangle {
+        for lane in 2 : Rectangle {
+            x: 12px; y: 23px+lane*parent.height*0.3; width: parent.width - 24px; height: parent.height*0.16;
+            for segment in 36 : Rectangle { x: segment*parent.width/36; width: parent.width/36 - 2px; height: 100%;
+                background: segment/36.0 < (lane==0 ? root.peak : root.rms) ? (segment>30 ? root.ink : root.accent) : root.ink.with-alpha(0.06);
+            }
+            Micro { y: -15px; text: lane==0 ? "INPUT / PEAK" : "MONO / RMS"; ink: root.ink.with-alpha(0.6); font-size: 8px; }
+        }
+        SignalTrace { x: 12px; y: parent.height*0.73; width: parent.width - 24px; height: parent.height*0.17; signal: root.buffer; ink: root.accent.with-alpha(0.7); }
+        Micro { x: 12px; y: parent.height - 16px; text: root.recording ? "● CAPTURING / " + round(root.duration*10)/10 + "s" : "PRE-ROLL READY / " + root.source; ink: root.accent; }
+    }
+    // 12: actual captured waveform with the editable trim region and key bank.
+    if root.kind == 12 : Rectangle {
+        SignalTrace { x: 12px; y: 19px; width: parent.width - 24px; height: parent.height*0.55; signal: root.buffer; ink: root.ink.with-alpha(0.4); }
+        Rectangle { x: 12px+root.controls[0]*0.99*(parent.width - 24px); y: 16px; width: max(1px,(0.01+root.controls[1]*0.99 - root.controls[0]*0.99)*(parent.width - 24px)); height: parent.height*0.58; background: root.accent.with-alpha(0.18); border-width: 1px; border-color: root.accent;
+            Micro { x: 4px; y: 4px; text: "A"; ink: root.accent; } Micro { x: parent.width - 12px; y: 4px; text: "B"; ink: root.accent; }
+        }
+        for i in 16 : Rectangle { x: 12px+i*(parent.width - 24px)/16; y: parent.height*0.79; width: (parent.width - 24px)/16 - 2px; height: parent.height*0.15; border-radius: 2px; background: root.pads[i] ? root.accent : root.accent.with-alpha(0.2);
+            TouchArea { clicked => {root.xy(-50 - i,0);} }
+        }
+        TouchArea { x: 12px; y: 16px; width: parent.width - 24px; height: parent.height*0.28; moved => {if self.pressed{root.xy(-20,self.mouse-x/self.width);}} }
+        TouchArea { x: 12px; y: parent.height*0.35; width: parent.width - 24px; height: parent.height*0.28; moved => {if self.pressed{root.xy(-21,self.mouse-x/self.width);}} }
+    }
+    // 13: eight real take lanes, rather than eight identical output meters.
+    if root.kind == 13 : Rectangle {
+        for i in 8 : Rectangle { x: 6px; y: 5px+i*(parent.height - 10px)/8; width: parent.width - 12px; height: (parent.height - 10px)/8 - 2px;
+            background: round(root.controls[0]*7)==i ? root.accent.with-alpha(0.17) : root.ink.with-alpha(0.025);
+            Micro { x: 5px; y: 1px; text: "0"+(i+1); ink: root.accent; font-size: 8px; }
+            SignalTrace { x: 31px; width: parent.width - 63px; height: 100%; signal: root.tracks; start: i*32; count: 32; ink: root.accent.with-alpha(0.7); }
+            Rectangle { x: parent.width - 23px; width: min(1,root.levels[i])*20px; y: 4px; height: 4px; background: root.accent; }
+            TouchArea { clicked => {root.xy(-10 - i,0);} }
+        }
+        Rectangle { x: 38px+min(1,root.phase/max(0.001,root.duration))*(parent.width - 70px); width: 1px; height: 100%; background: root.ink.with-alpha(0.65); }
+    }
+    // 14: calibrated scope grid with a connected signed trace or FFT bars.
+    if root.kind == 14 && round(root.controls[4]*9)==1 : SpectralTerrain {history:root.terrain;accent:root.accent;ink:root.ink;frozen:root.controls[5]>0;}
+    if root.kind == 14 && root.controls[4]==0 : Rectangle {
+        for i in 9 : Rectangle { x: i*parent.width/8; width: 1px; height: 100%; background: root.accent.with-alpha(i==4 ? 0.3 : 0.08); }
+        for i in 5 : Rectangle { y: i*parent.height/4; height: 1px; width: 100%; background: root.accent.with-alpha(i==2 ? 0.3 : 0.08); }
+        for i in max(0,root.wave.length - 1) : VectorSegment {
+            center-x: (i+0.5)*root.width/max(1,root.wave.length); center-y: root.height*(0.5 - (root.wave[i]+root.wave[i+1])*0.2);
+            delta-x: root.width/1px/max(1,root.wave.length); delta-y: (root.wave[i]-root.wave[i+1])*root.height/1px*0.4;
+            trace: root.accent; line-width: 2px;
+        }
+        for value[i] in root.spectrum : Rectangle { x: i*parent.width/48; width: parent.width/48 - 2px; height: min(1,value*4)*(parent.height - 22px); y: parent.height - self.height; background: root.accent; }
+        Micro { x: 9px; y: 7px; text: root.controls[5]>0 ? "HOLD / MEASURED SIGNAL" : "LIVE / " + root.source; ink: root.accent; }
+    }
+    if root.kind==2 || root.kind==3 || root.kind==6 || (root.kind==14 && round(root.controls[4]*9)>=2) : Rectangle {
+        for i in floor(root.visual-lines.length/7) : VectorSegment {
+            property <int> k:i*7;
+            center-x:(root.visual-lines[self.k]+root.visual-lines[self.k+2])/2*root.width;
+            center-y:(root.visual-lines[self.k+1]+root.visual-lines[self.k+3])/2*root.height;
+            delta-x:(root.visual-lines[self.k+2]-root.visual-lines[self.k])*root.width/1px;
+            delta-y:(root.visual-lines[self.k+3]-root.visual-lines[self.k+1])*root.height/1px;
+            trace:(root.visual-lines[self.k+5]>0.6?root.ink:root.accent).with-alpha(root.visual-lines[self.k+4]);
+            line-width:root.visual-lines[self.k+6]*1px;
+        }
+        Micro {x:12px;y:9px;ink:root.accent;text:root.kind==2?"PRISMATIC SHARDS / 16 SLICES":root.kind==3?"INTERFERENCE LOOM / MEMORY":root.kind==6?"HARMONIC ORRERY / VOICES":["","","INTERFERENCE LOOM","PRISMATIC SHARDS","HARMONIC ORRERY","PHASE PORTRAIT / MONO DELAY","SPECTRAL CROWN","SPECTROGRAM / HISTORY","CONTOUR FIELD","WAVE RIBBONS"][round(root.controls[4]*9)];}
+        if root.kind==2 || root.kind==3 : Rectangle {
+            for i in (root.kind==2?16:4) : Rectangle {
+                x:root.kind==2?mod(i,8)*parent.width/8:0px;
+                y:root.kind==2?floor(i/8)*parent.height/2:parent.height*(0.16+i*0.17);
+                width:root.kind==2?parent.width/8:parent.width;height:root.kind==2?parent.height/2:parent.height*0.17;
+                background:root.pads[i]?root.accent.with-alpha(0.12):transparent;
+                Micro {x:root.kind==2?6px:parent.width - 42px;y:parent.height - 13px;ink:root.accent;text:root.kind==2?"SL "+(i+1):"SOLO "+(i+1);font-size:8px;}
+                PressTarget {held(down)=>{root.pad(i,down);}}
+            }
+        }
+        if root.kind==6 : Rectangle {
+            TouchArea {y:24px;height:parent.height - 55px;moved=>{if self.pressed {root.xy(-71,self.mouse-x/self.width);root.xy(-72,1 - self.mouse-y/self.height);}}}
+
+            for i in 3 : Rectangle {x:i*parent.width/3;y:parent.height - 30px;width:parent.width/3;height:30px;
+                Micro {text:["ROOT","INVERSION","SPREAD"][i];ink:root.accent;x:5px;y:12px;font-size:8px;}
+                TouchArea {moved=>{if self.pressed {root.xy(-70-i,self.mouse-x/self.width);}} clicked=>{root.xy(-70-i,self.mouse-x/self.width);}}
+            }
+        }
+    }
+    // 15: library sleeves are decorative vectors; titles are actual filenames.
+    if root.kind == 15 : Rectangle {
+        for i in 3 : Rectangle {
+            x: 8px+i*(parent.width - 16px)/3; y: i==1 ? 10px : 23px; width: (parent.width - 28px)/3; height: parent.height - 40px;
+            background: root.accent.with-alpha(i==1 ? 0.85 : 0.45); clip: true;
+            for ring in 5 : Rectangle { x: parent.width/2 - self.width/2; y: parent.height*0.46 - self.height/2; width: parent.width*(0.3+ring*0.2); height: self.width; border-radius: self.width/2; border-width: 1px; border-color: root.paper.with-alpha(0.7); }
+            Text { x: 5px; y: parent.height - 29px; width: parent.width - 10px; height: 24px; text: root.files.length>i ? root.files[i] : "EMPTY SLEEVE"; color: root.paper; font-size: 9px; wrap: word-wrap; overflow: elide; }
+            TouchArea { clicked => {root.xy(-10 - i,0);} }
+        }
+        Micro { x: 12px; y: parent.height - 17px; text: "AUDIO COLLECTION / SELECT A SLEEVE"; ink: root.accent; }
+    }
+    // 16: the A/B loop and tempo are drawn from actual practice parameters.
+    if root.kind == 16 : Rectangle {
+        Micro { x: 12px; y: 9px; text: "PHRASE / " + round((0.5+root.controls[0])*100) + "% SPEED"; ink: root.accent; }
+        SignalTrace { x: 12px; y: 34px; width: parent.width - 24px; height: parent.height - 67px; signal: root.buffer; ink: root.ink.with-alpha(0.3); }
+        Rectangle { x: 12px+root.controls[1]*0.99*(parent.width - 24px); y: 29px; width: max(2px,(0.01+root.controls[2]*0.99 - root.controls[1]*0.99)*(parent.width - 24px)); height: parent.height - 59px; background: root.accent.with-alpha(0.13); border-width: 1px; border-color: root.accent;
+            Micro { x: 4px; y: 4px; text: "A"; ink: root.accent; } Micro { x: parent.width - 12px; y: 4px; text: "B"; ink: root.accent; }
+        }
+        Rectangle { x: 12px+min(1,root.phase/max(0.001,root.duration))*(parent.width - 24px); y: 30px; width: 1px; height: parent.height - 61px; background: root.ink; }
+        Micro { x: 12px; y: parent.height - 20px; text: "PAD 1: SET A     PAD 2: SET B     3/4: SPEED"; ink: root.ink.with-alpha(0.6); font-size: 8px; }
+    }
+    // 17: actual station selection and spectral activity, no fictitious frequency.
+    if root.kind == 17 : Rectangle {
+        Text { x: 14px; y: 12px; width: parent.width - 28px; height: 32px; text: root.files.length>0 ? root.files[0] : "ELSEWHERE"; color: root.ink; font-family: "Space Grotesk"; font-size: 26px; font-weight: 600; overflow: elide; }
+        Micro { x: 15px; y: 49px; text: root.playing ? "● ON AIR / PCM WAV STREAM" : "SELECT A WAV STATION"; ink: root.accent; }
+        for i in 48 : Rectangle { x: 14px+i*(parent.width - 28px)/48; y: 75px; width: 2px; height: 6px+min(1,root.spectrum[i]*4)*(parent.height - 101px); background: root.accent.with-alpha(0.25+min(0.75,root.spectrum[i]*4)); }
+        Micro { x: 14px; y: parent.height - 18px; text: "BUFFER " + round(20+root.controls[0]*480) + "ms / HTTP AUDIO"; ink: root.ink.with-alpha(0.55); }
+    }
+    // 18: comparison controls plus the processed spectrum and actual peak ceiling.
+    if root.kind == 18 : Rectangle {
+        for i in 2 : Rectangle { x: 10px+i*(parent.width - 20px)/2; y: 7px; width: (parent.width - 26px)/2; height: 25px; border-radius: 3px;
+            background: round(root.controls[0])==i ? root.accent : root.ink.with-alpha(0.05);
+            Text { text: i==0 ? "A / " + root.source : "B / " + root.reference; color: round(root.controls[0])==i ? root.paper : root.ink; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+            PressTarget { held(down) => {root.pad(i,down);} }
+        }
+        for value[i] in root.spectrum : Rectangle { x: 12px+i*(parent.width - 24px)/48; width: (parent.width - 24px)/48 - 2px; height: min(1,value*5)*(parent.height - 62px); y: parent.height - 21px - self.height; background: root.accent.with-alpha(0.65); }
+        Micro { x: 12px; y: parent.height - 16px; text: root.frozen ? "BYPASS / UNPROCESSED" : "LOW             MID             HIGH"; ink: root.ink.with-alpha(0.6); font-size: 8px; }
+    }
+    // 19: a journal of real files; empty collections never invent recordings.
+    if root.kind == 19 : Rectangle {
+        Rectangle { x: 23px; y: 12px; width: 1px; height: parent.height - 24px; background: root.accent.with-alpha(0.3); }
+        for i in 3 : Rectangle {
+            x: 12px; y: 7px+i*(parent.height - 14px)/3; width: parent.width - 24px; height: (parent.height - 20px)/3;
+            Rectangle { x: 7px; y: 12px; width: 8px; height: 8px; border-radius: 4px; background: root.files.length>i ? root.accent : root.accent.with-alpha(0.2); }
+            Micro { x: 28px; y: 6px; width: parent.width - 36px; text: root.files.length>i ? root.files[i] : "NO ENTRY / CAPTURE A MEMORY"; ink: root.ink.with-alpha(root.files.length>i ? 1 : 0.4); }
+            if i==0 : SignalTrace { x: 28px; y: 22px; width: parent.width - 40px; height: parent.height - 26px; signal: root.buffer; ink: root.accent; }
+            TouchArea { clicked => {root.xy(-10 - i,0);} }
+        }
+    }
+}

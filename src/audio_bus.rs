@@ -13,9 +13,13 @@
 //! ModBus-based modulation.
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration,Instant};
 
 struct AudioSource {
     name: String,
+    owner: Option<String>,
+    claimed: bool,
+    last_read: Option<Instant>,
     buffer: Arc<Mutex<Vec<f32>>>,
 }
 
@@ -33,10 +37,24 @@ impl AudioBus {
     /// mono block every `process()` call. Call once per source during
     /// app construction, not per-block.
     pub fn register(&self, name: impl Into<String>) -> Arc<Mutex<Vec<f32>>> {
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        self.sources.lock().unwrap().push(AudioSource { name: name.into(), buffer: Arc::clone(&buffer) });
-        buffer
+        let name=name.into();let mut sources=self.sources.lock().unwrap();
+        if let Some(source)=sources.iter_mut().find(|s|s.name==name) {source.claimed=true;return source.buffer.clone();}
+        let buffer=Arc::new(Mutex::new(Vec::new()));
+        sources.push(AudioSource{name,owner:None,claimed:true,last_read:None,buffer:buffer.clone()});buffer
     }
+
+    /// Reserve only metadata and an empty buffer. No app or DSP is constructed.
+    pub fn declare(&self, owner:&str, name:&str) {
+        let mut sources=self.sources.lock().unwrap();
+        if let Some(s)=sources.iter_mut().find(|s|s.name==name) {s.owner=Some(owner.into());return;}
+        sources.push(AudioSource{name:name.into(),owner:Some(owner.into()),claimed:false,last_read:None,buffer:Arc::new(Mutex::new(Vec::new()))});
+    }
+    pub fn index_of(&self,name:&str)->Option<usize>{self.sources.lock().unwrap().iter().position(|s|s.name==name)}
+    pub fn owned_indices(&self,owner:&str)->Vec<usize>{self.sources.lock().unwrap().iter().enumerate().filter(|(_,s)|s.owner.as_deref()==Some(owner)).map(|(i,_)|i).collect()}
+    pub fn is_claimed(&self,index:usize)->bool{self.sources.lock().unwrap().get(index).is_some_and(|s|s.claimed)}
+    pub fn requested(&self,owner:&str)->bool {self.sources.lock().unwrap().iter().any(|s|s.owner.as_deref()==Some(owner)&&s.last_read.is_some_and(|t|t.elapsed()<Duration::from_millis(500)))}
+    /// Read without waking a source: metering and cleanup must not start engines.
+    pub fn peek(&self,idx:usize)->Option<Arc<Mutex<Vec<f32>>>>{self.sources.lock().unwrap().get(idx).map(|s|s.buffer.clone())}
 
     pub fn names(&self) -> Vec<String> {
         self.sources.lock().unwrap().iter().map(|s| s.name.clone()).collect()
@@ -47,7 +65,7 @@ impl AudioBus {
     }
 
     pub fn get(&self, idx: usize) -> Option<Arc<Mutex<Vec<f32>>>> {
-        self.sources.lock().unwrap().get(idx).map(|s| Arc::clone(&s.buffer))
+        self.sources.lock().unwrap().get_mut(idx).map(|s| {s.last_read=Some(Instant::now());Arc::clone(&s.buffer)})
     }
 
     /// This index's display name, or `"none"` for `NO_SOURCE`/an
@@ -131,4 +149,9 @@ mod optional_source_tests {
             assert_eq!(cycle_source(old, step, 0), NO_SOURCE);
         }}
     }
+}
+
+#[cfg(test)] mod catalog_tests {
+ use super::*;
+ #[test] fn declared_port_is_stable_and_browsing_never_requests_dsp(){let bus=AudioBus::new();bus.declare("bloom","Bloom");let before=bus.peek(0).unwrap();assert_eq!(bus.names(),vec!["Bloom"]);assert!(!bus.requested("bloom"));assert!(!bus.is_claimed(0));let published=bus.register("Bloom");assert!(Arc::ptr_eq(&before,&published));assert_eq!(bus.len(),1);assert!(!bus.requested("bloom"));bus.get(0);assert!(bus.requested("bloom"));bus.sources.lock().unwrap()[0].last_read=Some(Instant::now()-Duration::from_secs(1));assert!(!bus.requested("bloom"));}
 }

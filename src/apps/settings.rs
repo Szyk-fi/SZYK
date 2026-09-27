@@ -5,8 +5,7 @@
 //! thing tuned differently). Added so tuning either is a menu item, not
 //! a code change. Selecting an output actually switches the live stream
 //! (see audio_devices.rs). Selecting an input just records the
-//! preference -- there's no microphone pipeline in this build to plug
-//! it into yet.
+//! capture request; apps opt in by selecting Hardware input.
 //!
 //! Uses the same Group/Leaf/`ParamList` navigation every other app in
 //! this build uses (knob1: browse + press to expand/collapse a group,
@@ -138,8 +137,8 @@ impl SettingsApp {
         match g {
             0 => "Output Device",
             1 => "Input Device",
-            2 => "Preferences",
-            _ => "Theme Color",
+            2 => "Controls",
+            _ => "Appearance",
         }
     }
 
@@ -148,7 +147,7 @@ impl SettingsApp {
             0 => self.devices.current_output(),
             1 => {
                 let cur = self.devices.current_input();
-                if cur.is_empty() { "none (not wired to any app yet)".into() } else { format!("{cur} (not wired to any app yet)") }
+                if cur.is_empty() { "No input selected".into() } else { cur }
             }
             2 => format!(
                 "sens {:.2}, nav {:.0}, cpu {}",
@@ -296,7 +295,17 @@ impl SettingsApp {
     fn theme_extra(&self) -> ThemeExtra {
         let (h, s, v) = self.target().hsv();
         let (mx, my) = self.target().wheel_marker(WHEEL_RADIUS_PX);
+        let row=self.visible_rows().get(self.list.selected).copied();
+        let section=match row {Some(Row::Group(g))=>g,Some(Row::Leaf(Selection::OutputDevice(_)))=>0,Some(Row::Leaf(Selection::InputDevice(_)))=>1,Some(Row::Leaf(Selection::Sensitivity|Selection::NavSpeed|Selection::ShowCpu))=>2,_=>3};
+        let (detail,value)=match row {Some(Row::Leaf(sel))=>(self.leaf_name(sel),self.leaf_value(sel)),_ => (self.group_name(section).into(), self.group_summary(section))};
+        let help=match row {
+            Some(Row::Leaf(Selection::Sensitivity))=>"Adjust how quickly MIDI knobs change a parameter. Left / right to adjust.",
+            Some(Row::Leaf(Selection::NavSpeed))=>"Encoder ticks per menu step. D-pad taps always move one row. Left / right to adjust.",
+            Some(Row::Leaf(Selection::ShowCpu))=>"Show the live audio-engine load in the system header. Left / right to change.",
+            _=>match section {0=>"Expand Output Device, choose an output, then press R1 to connect.",1=>"Choose an input and press R1. Route Hardware input inside an app to use its signal.",2=>"Expand Controls to adjust controls and the CPU display.",_=>"Choose Accent or Background. Touch the wheel, or adjust Hue, Saturation and Brightness."},
+        };
         ThemeExtra {
+            section,detail,value,help:help.into(),output:self.devices.current_output(),input:self.devices.current_input(),device_count:if section==0 {self.outputs.len()}else{self.inputs.len()},
             editing_background: self.editing_background,
             hue: h as f32,
             saturation: s as f32,
@@ -319,13 +328,16 @@ impl App for SettingsApp {
         self.selected_row()
     }
     fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
-        self.windowed_rows(visible)
+        self.windowed_rows(visible.min(7))
     }
     fn slint_extra(&mut self) -> SlintExtra {
         SlintExtra::Theme(self.theme_extra())
     }
     fn slint_pointer_pick(&mut self, x: f32, y: f32) {
-        self.target().set_from_wheel(x, y, WHEEL_RADIUS_PX);
+        if (1000. ..1004.).contains(&x) {
+            let group=(x-1000.) as usize;self.expanded=[false;NUM_GROUPS];self.expanded[group]=true;
+            self.list.selected=self.visible_rows().iter().position(|r|matches!(r,Row::Group(g) if *g==group)).unwrap_or(0);
+        } else if x==1004. || x==1005. {self.editing_background=x==1005.;} else {self.target().set_from_wheel(x, y, WHEEL_RADIUS_PX);}
     }
 
     fn on_enter(&mut self) {
@@ -346,7 +358,7 @@ impl App for SettingsApp {
         }
         if let Some(Row::Leaf(sel)) = current {
             self.edit(sel, input.knob2);
-            if input.knob2_press {
+            if input.knob2_press || (input.knob1_press && matches!(sel,Selection::OutputDevice(_)|Selection::InputDevice(_))) {
                 self.reset(sel);
             }
         }
@@ -377,5 +389,21 @@ impl App for SettingsApp {
             None => String::new(),
         };
         Text::new(&hint, Point::new(20, 337), dim).draw(fb).ok();
+    }
+}
+
+#[cfg(test)]
+mod redesign_tests {
+    use super::*;
+    fn fixture()->SettingsApp {SettingsApp::new(Arc::new(AudioDeviceState::new("Test output".into())),Arc::new(AtomicF32::new(0.1)),Arc::new(AtomicF32::new(3.)),Arc::new(AtomicBool::new(false)),Arc::new(ThemeColor::new(132,62,94)),Arc::new(ThemeColor::new(132,31,6)))}
+    #[test] fn tabs_preserve_theme_and_preferences_remain_editable() {
+        let mut app=fixture();let original=app.accent.hsv();
+        for group in 0..4 {app.slint_pointer_pick(1000.+group as f32,0.);assert_eq!(app.theme_extra().section,group);assert_eq!(app.accent.hsv(),original);assert_eq!(app.expanded.iter().filter(|v|**v).count(),1);}
+        app.slint_pointer_pick(1002.,0.);app.tick(&Input{navigation_steps:1,knob2:1,..Default::default()});assert!(app.sensitivity.get()>0.1);
+        let (rows,selected,_,_)=app.slint_windowed_rows(10);assert!(rows.len()<=7&&selected<rows.len());
+    }
+    #[test] fn appearance_wheel_still_edits_selected_color() {
+        let mut app=fixture();let background=app.background.hsv();app.slint_pointer_pick(70.,0.);assert_ne!(app.accent.hsv(),(132,62,94));assert_eq!(app.background.hsv(),background);
+        app.editing_background=true;let accent=app.accent.hsv();app.slint_pointer_pick(0.,70.);assert_ne!(app.background.hsv(),background);assert_eq!(app.accent.hsv(),accent);
     }
 }

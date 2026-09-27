@@ -119,7 +119,7 @@ impl LedOutput {
                         for conn in &mut self.connections { conn.send(&message).ok(); }
                     }
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Empty) => (),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.pending = None;
                     self.queued.clear();

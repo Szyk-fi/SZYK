@@ -238,11 +238,17 @@ impl Os {
             self.update_leds(&input);
 
             fb.clear(Rgb565::BLACK).ok();
+            let fullscreen = self.active.is_some_and(|i| self.apps[i].1.wants_fullscreen());
             match self.active {
                 None => self.draw_launcher(&mut fb),
                 Some(i) => self.apps[i].1.draw(&mut fb),
             }
-            self.draw_bottom_bar(&mut fb);
+            // A screen that wants the whole device (Retro's game
+            // video, so far) must not have the bottom bar painted
+            // over whatever it just drew -- see `App::wants_fullscreen`.
+            if !fullscreen {
+                self.draw_bottom_bar(&mut fb);
+            }
 
             window
                 .update_with_buffer(fb.buffer(), display::WIDTH, display::HEIGHT)

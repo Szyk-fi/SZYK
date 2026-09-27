@@ -16,3 +16,17 @@ portamax-github-source.zip
 
 # Large local audio libraries
 samples/Drum Loops/
+
+# Media library (Vinyl/Reference/Studio/Memories test content): the
+# user's own copyrighted music files (e.g. commercial FLAC albums),
+# same "copyrighted, user-supplied, never committed" reasoning as
+# roms/ below -- also several GB, which has no place in git history
+# regardless of copyright.
+media/
+
+# Retro app: ROMs are copyrighted and must stay user-supplied, never
+# committed (see retro.rs's module doc comment) -- same reasoning
+# `presets/`'s per-user save data gets, just legally non-negotiable
+# here. Save states/SRAM are per-user runtime data, not source, either.
+roms/
+saves/

@@ -1,0 +1,55 @@
+import { ParamListColumn } from "device_frame.slint";
+export component SettingsPanel inherits Rectangle {
+    in property <color> paper; in property <color> ink; in property <color> accent;
+    in property <[string]> names; in property <[string]> values; in property <[bool]> groups;
+    in property <int> selected; in property <bool> above; in property <bool> below;
+    in property <int> section; in property <string> detail; in property <string> value; in property <string> help;
+    in property <string> output; in property <string> input; in property <int> count;
+    in property <float> marker-x; in property <float> marker-y; in property <bool> editing-bg;
+    in property <string> hex; in property <color> accent-swatch; in property <color> bg-swatch;
+    property <bool> device-group: root.detail=="Output Device" || root.detail=="Input Device";
+    callback pick(float,float);
+    VerticalLayout {spacing:12px;padding-top:4px;padding-bottom:8px;
+        HorizontalLayout {height:28px;spacing:6px;
+            for label[i] in ["01  OUTPUT","02  INPUT","03  CONTROLS","04  APPEARANCE"] : Rectangle {
+                background:root.section==i?root.accent:root.ink.with-alpha(0.04);border-radius:4px;
+                Text {text:label;color:root.section==i?root.paper:root.ink.with-alpha(0.6);font-size:10px;font-weight:600;horizontal-alignment:center;vertical-alignment:center;}
+                TouchArea {clicked=>{root.pick(1000+i,0);}}
+            }
+        }
+        HorizontalLayout {spacing:20px;
+            ParamListColumn {width:278px;row-names:root.names;row-values:root.values;row-is-group:root.groups;selected-row:root.selected;more-above:root.above;more-below:root.below;paper:root.paper;ink:root.ink;accent:root.accent;instrument-style:true;}
+            VerticalLayout {spacing:10px;
+                Text {text:["AUDIO / PLAYBACK","AUDIO / CAPTURE","SYSTEM / CONTROLS","SYSTEM / APPEARANCE"][root.section];height:15px;color:root.accent;font-size:9px;}
+                if root.section<2 : Rectangle {height:118px;border-radius:7px;background:root.ink.with-alpha(0.035);border-width:1px;border-color:root.accent.with-alpha(0.2);
+                    Text {x:14px;y:12px;text:root.device-group?(root.section==0?"CURRENT OUTPUT":"CURRENT INPUT"):"SELECT DEVICE · R1";color:root.ink.with-alpha(0.5);font-size:9px;}
+                    Text {x:14px;y:34px;width:parent.width - 28px;height:54px;text:!root.device-group?root.detail:((root.section==0?root.output:root.input)==""?"No device selected":(root.section==0?root.output:root.input));color:root.ink;font-family:"Space Grotesk";font-size:22px;font-weight:600;wrap:word-wrap;}
+                    Text {x:14px;y:97px;text:root.count+" AVAILABLE DEVICES";color:root.accent;font-size:9px;}
+                }
+                if root.section==2 : Rectangle {height:118px;border-radius:7px;background:root.ink.with-alpha(0.035);border-width:1px;border-color:root.accent.with-alpha(0.2);
+                    Text {x:14px;y:12px;width:parent.width - 28px;text:root.detail;color:root.ink;font-size:14px;font-weight:600;}
+                    Text {x:14px;y:40px;width:parent.width - 28px;height:65px;text:root.value;color:root.accent;font-family:"Space Grotesk";font-size:root.detail=="Controls"?17px:38px;wrap:word-wrap;vertical-alignment:center;}
+                }
+                if root.section==3 : HorizontalLayout {height:140px;spacing:16px;
+                    Rectangle {width:140px;height:140px;border-radius:70px;clip:true;
+                        Rectangle {width:140px;height:140px;border-radius:70px;background:@conic-gradient(#ff0000 0deg,#ffff00 60deg,#00ff00 120deg,#00ffff 180deg,#0000ff 240deg,#ff00ff 300deg,#ff0000 360deg);}
+                        Rectangle {width:140px;height:140px;border-radius:70px;background:@radial-gradient(circle,#ffffff 0%,#ffffff00 75%);}
+                        Rectangle {x:70px+root.marker-x*1px - 5px;y:70px+root.marker-y*1px - 5px;width:10px;height:10px;border-radius:5px;border-width:2px;border-color:#ffffff;background:root.editing-bg?root.bg-swatch:root.accent-swatch;}
+                        Image {width:140px;height:140px;source:@image-url("settings-wheel-mask.svg");colorize:root.paper;}
+                        TouchArea {pointer-event(e)=>{if e.kind==PointerEventKind.down {root.pick(self.mouse-x/1px - 70,self.mouse-y/1px - 70);}} moved=>{if self.pressed {root.pick(self.mouse-x/1px - 70,self.mouse-y/1px - 70);}}}
+                    }
+                    VerticalLayout {spacing:9px;alignment:center;
+                        Text {text:root.editing-bg?"BACKGROUND":"ACCENT";color:root.accent;font-size:9px;}
+                        Text {text:root.hex;color:root.ink;font-size:16px;font-weight:600;}
+                        HorizontalLayout {height:28px;spacing:6px;
+                            Rectangle {background:root.accent-swatch;border-radius:4px;border-width:root.editing-bg?0px:2px;border-color:root.ink;TouchArea {clicked=>{root.pick(1004,0);}}}
+                            Rectangle {background:root.bg-swatch;border-radius:4px;border-width:root.editing-bg?2px:0px;border-color:root.ink;TouchArea {clicked=>{root.pick(1005,0);}}}
+                        }
+                    }
+                }
+                Text {text:root.help;color:root.ink.with-alpha(0.65);font-size:12px;wrap:word-wrap;vertical-stretch:1;}
+                Text {text:root.section<2?"R1 SELECT DEVICE  ·  F1 HOME":"← → ADJUST  ·  F1 HOME";color:root.accent;font-size:9px;height:17px;}
+            }
+        }
+    }
+}

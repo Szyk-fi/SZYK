@@ -58,7 +58,7 @@ use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -2316,7 +2316,7 @@ impl AudioProcessor for SequencerProcessor {
             // patterns still change on a clean, predictable bar
             // boundary rather than at a different moment for every
             // possible track-length combination.
-            if song_mode && next % NUM_STEPS == 0 {
+            if song_mode && next.is_multiple_of(NUM_STEPS) {
                 self.song_reps_done += 1;
                 let target_reps = self.params.song_slot_repeats[self.song_pos].load(Ordering::Relaxed).max(1);
                 if self.song_reps_done >= target_reps {
@@ -2337,7 +2337,7 @@ impl AudioProcessor for SequencerProcessor {
                 // trigger. `1` (default) passes every pulse, exactly
                 // as before this existed. See `TrackParams::rate_div`.
                 let rate_div = self.params.tracks[t].rate_div.load(Ordering::Relaxed).max(1);
-                if next % rate_div != 0 {
+                if !next.is_multiple_of(rate_div) {
                     continue;
                 }
                 // Polymeter: this track plays through only its own

@@ -35,7 +35,7 @@ use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -367,8 +367,8 @@ impl PamsApp {
             Selection::Offset(_) => "Offset".into(),
             Selection::Invert(_) => "Invert".into(),
             Selection::QuantizerOn(_) => "Quantizer".into(),
-            Selection::QuantizerScale(_) => "Q. Scale".into(),
-            Selection::QuantizerRoot(_) => "Q. Root".into(),
+            Selection::QuantizerScale(_) => "Main scale".into(),
+            Selection::QuantizerRoot(_) => "Root note".into(),
             Selection::Swing(_) => "Swing".into(),
             Selection::Human(_) => "Human".into(),
         }
@@ -566,6 +566,9 @@ impl App for PamsApp {
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
+    }
+    fn slint_scale_info(&self) -> Option<crate::app::music_scales::ScaleInfo> {
+        match self.visible_rows().get(self.list.selected) { Some(Row::Leaf(Selection::QuantizerScale(c) | Selection::QuantizerRoot(c))) => {let p=&self.params.channels[*c];Some(crate::app::music_scales::ScaleInfo::new(p.quantizer_scale.load(Ordering::Relaxed) as usize,p.quantizer_root.load(Ordering::Relaxed) as i32))}, _ => None }
     }
     fn slint_selected(&self) -> usize {
         self.selected_row()

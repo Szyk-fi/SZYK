@@ -45,7 +45,7 @@ use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Circle, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -387,8 +387,8 @@ impl NebulaApp {
             Selection::Damping => "Damping".into(),
             Selection::CaptureRadius => "Capture Radius".into(),
             Selection::WellActive(w) => format!("Well {} Active", w + 1),
-            Selection::Scale => "Scale".into(),
-            Selection::Root => "Root".into(),
+            Selection::Scale => "Main scale".into(),
+            Selection::Root => "Root note".into(),
             Selection::OctaveRange => "Octave Range".into(),
             Selection::VelMin => "Vel Min".into(),
             Selection::VelMax => "Vel Max".into(),
@@ -559,6 +559,9 @@ impl NebulaApp {
 impl App for NebulaApp {
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
+    }
+    fn slint_scale_info(&self) -> Option<crate::app::music_scales::ScaleInfo> {
+        match self.visible_rows().get(self.list.selected) { Some(Row::Leaf(Selection::Scale | Selection::Root)) => Some(crate::app::music_scales::ScaleInfo::new(self.params.scale.load(Ordering::Relaxed) as usize,self.params.root.load(Ordering::Relaxed) as i32)), _ => None }
     }
     fn slint_selected(&self) -> usize {
         self.selected_row()

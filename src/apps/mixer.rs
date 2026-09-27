@@ -26,7 +26,7 @@ use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -101,7 +101,7 @@ impl MixerApp {
         let Some(name) = self.mixer_bus.names().get(mixer_idx).cloned() else { return 0.0 };
         let names = self.audio_bus.names();
         let Some(audio_idx) = names.iter().position(|n| *n == name) else { return 0.0 };
-        let Some(buf) = self.audio_bus.get(audio_idx) else { return 0.0 };
+        let Some(buf) = self.audio_bus.peek(audio_idx) else { return 0.0 };
         let guard = buf.lock().unwrap();
         guard.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
     }

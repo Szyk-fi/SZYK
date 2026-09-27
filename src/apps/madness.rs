@@ -41,7 +41,7 @@ use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Circle, Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -375,8 +375,8 @@ impl MadnessApp {
         match sel {
             Selection::MasterBpm => "BPM".into(),
             Selection::Notes(_) => "Notes".into(),
-            Selection::Scale(_) => "Scale".into(),
-            Selection::Root(_) => "Root".into(),
+            Selection::Scale(_) => "Main scale".into(),
+            Selection::Root(_) => "Root note".into(),
             Selection::Direction(_) => "Direction".into(),
             Selection::Running(_) => "Running".into(),
             Selection::TempoSync(_) => "Tempo Sync".into(),
@@ -639,6 +639,9 @@ impl MadnessApp {
 impl App for MadnessApp {
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
+    }
+    fn slint_scale_info(&self) -> Option<crate::app::music_scales::ScaleInfo> {
+        match self.visible_rows().get(self.list.selected) { Some(Row::Leaf(Selection::Scale(s) | Selection::Root(s))) => {let p=&self.params.shapes[*s];Some(crate::app::music_scales::ScaleInfo::new(p.scale.load(Ordering::Relaxed) as usize,p.root.load(Ordering::Relaxed) as i32))}, _ => None }
     }
     fn slint_selected(&self) -> usize {
         self.selected_row()

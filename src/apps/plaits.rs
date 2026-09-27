@@ -75,7 +75,7 @@ use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, note_name, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12, SPLEEN_8X16};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Circle, Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -165,24 +165,7 @@ const CHORD_TYPES: [(&str, &[i32]); 7] = [
     ("Sus2", &[2, 7]),
 ];
 
-pub const ROOT_NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-
-/// Scale name + its degrees as semitones from the root, one octave's
-/// worth. `note_for` wraps the 16 pads through this list (not raw
-/// chromatic semitones) once a non-Chromatic scale is picked -- pad
-/// rank 0 is scale degree 1, rank `len` is degree 1 an octave up, etc.
-/// Chromatic (all 12 semitones) is first/default so the pads are fully
-/// chromatic until you deliberately pick a scale.
-pub const SCALE_TYPES: [(&str, &[i32]); 8] = [
-    ("Chromatic", &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
-    ("Major", &[0, 2, 4, 5, 7, 9, 11]),
-    ("Nat Minor", &[0, 2, 3, 5, 7, 8, 10]),
-    ("Dorian", &[0, 2, 3, 5, 7, 9, 10]),
-    ("Mixolydian", &[0, 2, 4, 5, 7, 9, 10]),
-    ("Harm Minor", &[0, 2, 3, 5, 7, 8, 11]),
-    ("Maj Pentatonic", &[0, 2, 4, 7, 9]),
-    ("Min Pentatonic", &[0, 3, 5, 7, 10]),
-];
+pub use crate::app::music_scales::{ROOT_NAMES, SCALE_TYPES};
 
 const ANALYZER_TYPE_NAMES: [&str; 4] = ["Spectrum", "Oscilloscope", "Level Meter", "Pitch Detect"];
 /// Sentinel for "no pitch confidently detected" in `Params.detected_note`.
@@ -780,8 +763,8 @@ impl PlaitsApp {
             Selection::ModDepth(slot) => format!("{} Depth", MOD_SLOT_NAMES[slot]),
             Selection::RollVisible => "Show".into(),
             Selection::RollHeight => "Height".into(),
-            Selection::RootNote => "Root".into(),
-            Selection::ScaleType => "Scale".into(),
+            Selection::RootNote => "Root note".into(),
+            Selection::ScaleType => "Main scale".into(),
             Selection::AnalyzerType => "Type".into(),
             Selection::ArpOn => "On/Off".into(),
             Selection::ArpPattern => "Pattern".into(),
@@ -1209,6 +1192,9 @@ impl App for PlaitsApp {
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
+    }
+    fn slint_scale_info(&self) -> Option<crate::app::music_scales::ScaleInfo> {
+        match self.visible_rows().get(self.list.selected) { Some(Row::Leaf(Selection::ScaleType | Selection::RootNote)) => Some(crate::app::music_scales::ScaleInfo::new(self.params.scale_type.load(Ordering::Relaxed) as usize,self.params.root_note.load(Ordering::Relaxed) as i32)), _ => None }
     }
     fn slint_selected(&self) -> usize {
         self.selected_row()

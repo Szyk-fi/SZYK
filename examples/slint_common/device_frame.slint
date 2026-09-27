@@ -154,6 +154,15 @@ export component DeviceFrame inherits Window {
     title: "Portamax — Portable console";
     in property <string> app-name: "APP";
     in property <string> breadcrumb: "";
+    // Collapses the on-screen title row and bottom label bar entirely
+    // (not just dimming them) so a screen's own content -- Retro's
+    // game video, so far the only user -- can occupy the *whole*
+    // 640x360 screen, matching what the real device's own `Os::run`
+    // does when an app reports `App::wants_fullscreen`. The physical
+    // F1-F4 buttons below the mockup screen stay untouched -- those
+    // represent real hardware, not on-screen chrome, and still work
+    // (F1/Home still exits a full-screen game).
+    in property <bool> hide-chrome: false;
     in property <color> accent: #5CF07A;
     in property <color> screen-bg: #0B100C;
     in property <color> screen-ink: #ffffff;
@@ -231,7 +240,7 @@ export component DeviceFrame inherits Window {
                 VerticalLayout {
                     // Title row
                     HorizontalLayout {
-                        height: 40px;
+                        height: root.hide-chrome ? 0px : 40px;
                         padding-left: 18px;
                         padding-right: 18px;
                         padding-top: 12px;
@@ -267,7 +276,7 @@ export component DeviceFrame inherits Window {
                     // staying pinned to the screen's real bottom edge.
                     // Caught by rendering and looking, not a test.
                     Rectangle {
-                        height: 284px;
+                        height: root.hide-chrome ? 360px : 284px;
                         @children
                     }
 
@@ -277,7 +286,8 @@ export component DeviceFrame inherits Window {
                     // slint_launcher_poc.rs's doc comment for the
                     // PPI math.
                     Rectangle {
-                        height: 36px;
+                        height: root.hide-chrome ? 0px : 36px;
+                        clip: true;
                         Rectangle {
                             y: 0px; height: 1px;
                             background: root.screen-ink.with-alpha(0.14);

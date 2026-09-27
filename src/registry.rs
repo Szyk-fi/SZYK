@@ -113,11 +113,11 @@ impl Registry {
         });
         constructors.insert(
             "analyzer".into(),
-            Rc::new(|| Box::new(AnalyzerApp::new()) as Box<dyn App>),
+            {let bus=audio_bus.clone();Rc::new(move || Box::new(AnalyzerApp::with_audio_bus(bus.clone())) as Box<dyn App>)},
         );
         constructors.insert(
             "visualizer".into(),
-            Rc::new(|| Box::new(VisualizerApp::new()) as Box<dyn App>),
+            {let bus=audio_bus.clone();Rc::new(move || Box::new(VisualizerApp::with_audio_bus(bus.clone())) as Box<dyn App>)},
         );
         constructors.insert("sequencer".into(), {
             let sensitivity = Arc::clone(&sensitivity);
@@ -410,6 +410,22 @@ impl Registry {
                 )) as Box<dyn App>
             })
         });
+        constructors.insert("retro".into(), {
+            let sensitivity = Arc::clone(&sensitivity);
+            let nav_speed = Arc::clone(&nav_speed);
+            let modbus = Arc::clone(&modbus);
+            let audio_bus = Arc::clone(&audio_bus);
+            let mixer_bus = Arc::clone(&mixer_bus);
+            Rc::new(move || {
+                Box::new(crate::apps::retro::RetroApp::new(
+                    Arc::clone(&sensitivity),
+                    Arc::clone(&nav_speed),
+                    Arc::clone(&modbus),
+                    Arc::clone(&audio_bus),
+                    Arc::clone(&mixer_bus),
+                )) as Box<dyn App>
+            })
+        });
         constructors.insert("sample_drum".into(), {
             let sensitivity = Arc::clone(&sensitivity);
             let nav_speed = Arc::clone(&nav_speed);
@@ -473,6 +489,14 @@ impl Registry {
             let bus=Arc::clone(&audio_bus);let mods=Arc::clone(&modbus);let mixer=Arc::clone(&mixer_bus);let nav=Arc::clone(&nav_speed);
             Rc::new(move || Box::new(crate::apps::morph::MorphApp::new(bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>)
         });
+        constructors.insert("vector_filter".into(), {
+            let bus=audio_bus.clone();let mods=modbus.clone();let mixer=mixer_bus.clone();let nav=nav_speed.clone();
+            Rc::new(move || Box::new(crate::apps::vector_filter::VectorFilterApp::new(bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>)
+        });
+        for &(kind,id,_) in crate::apps::collection::APPS {
+            let bus=audio_bus.clone(); let mods=modbus.clone(); let mixer=mixer_bus.clone(); let nav=nav_speed.clone();
+            constructors.insert(id.into(), Rc::new(move || if kind==crate::apps::collection::Kind::Portal {Box::new(crate::apps::collection::portal::PortalApp::new(bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>} else {Box::new(crate::apps::collection::CollectionApp::new(kind,bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>}));
+        }
         Self { constructors, audio_bus }
     }
 
@@ -480,6 +504,7 @@ impl Registry {
     /// order given. A manifest with no matching implementation is skipped
     /// with a warning rather than panicking the whole OS.
     pub fn build(&self, manifests: &[AppManifest]) -> Vec<(String, Box<dyn App>)> {
+        for m in manifests {if self.constructors.contains_key(&m.id) {for name in audio_outputs(&m.id) {self.audio_bus.declare(&m.id,&name);}}}
         let mut seen = HashSet::new();
         manifests
             .iter()
@@ -528,4 +553,15 @@ mod installation_contract_tests {
         assert!(registry.build(&[]).is_empty());
         assert!(registry.build(&manifests[..1]).is_empty());
     }
+}
+
+/// Output metadata belongs to the installation contract, not running instances.
+fn audio_outputs(id:&str)->Vec<String>{
+    if id=="natural_gate" {return (1..=2).map(|i|format!("Natural Gate: Ch{i}")).collect();}
+    if id=="warps" {return vec!["Warps".into(),"Warps (Aux)".into()];}
+    if id=="portal" {return std::iter::once("Portal".into()).chain((1..=4).map(|i|format!("Portal Aux {i}"))).collect();}
+    if let Some((_,_,name))=crate::apps::collection::APPS.iter().find(|(_,app,_)|*app==id){return vec![(*name).into()];}
+    let name=match id {
+        "synth"=>"Synth","analyzer"=>"Analyzer","visualizer"=>"Visualizer","plaits"=>"Plaits","beads"=>"Beads","black_hole"=>"Black Hole","bloom"=>"Bloom","cascade"=>"Cascade","clouds"=>"Clouds","madness"=>"Madness","magnito"=>"Magnito","morph"=>"Morph","nautilus"=>"Nautilus","nebula"=>"Nebula","prism"=>"Prism","rainmaker"=>"Rainmaker","sample_drum"=>"Sample Drum","sequencer"=>"Sequencer","singularity"=>"Singularity","starlab"=>"Starlab","tape"=>"Tape","tonestack"=>"Tonestack","voltage"=>"Voltage","retro"=>"Retro","vector_filter"=>"Vector Filter",_=>return Vec::new(),
+    };vec![name.into()]
 }

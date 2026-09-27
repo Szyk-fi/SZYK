@@ -3,10 +3,8 @@
 //! `ModBus`/`AudioBus`/`MixerBus`/audio engine, and F1(Home)/F4(Mixer)
 //! navigation `main.rs`/`os.rs`/`registry.rs` use for the real
 //! embedded_graphics firmware -- just rendered through Slint instead.
-//! Every app's audio processor is registered into the one shared
-//! engine at startup and keeps running regardless of which app is on
-//! screen, exactly like the real firmware; only the *active* app
-//! receives `tick`/`Input`.
+//! Manifests register dormant app factories. Engines are constructed on first
+//! use; transports, live routes, visible screens and tails determine activity.
 //!
 //! This is the actual assembly the individual `slint_*_live.rs`
 //! examples were scoping work for -- each of those proved one app's
@@ -49,6 +47,13 @@ mod clouds_ffi;
 mod controller;
 #[path = "../src/display.rs"]
 mod display;
+// Same real GameController.framework-based gamepad support the main
+// binary has (see gamepad.rs's own doc comment for why not `gilrs`) --
+// this dev-preview tool has its own separate `main()`/window/
+// ControllerState, so it needs its own copy of the spawn call too.
+#[cfg(target_os = "macos")]
+#[path = "../src/gamepad.rs"]
+mod gamepad;
 #[path = "../src/led_output.rs"]
 mod led_output;
 #[path = "../src/manifest.rs"]
@@ -97,6 +102,10 @@ pub mod cascade;
 pub mod clouds;
 #[path = "../src/apps/cv_out.rs"]
 pub mod cv_out;
+#[path = "../src/apps/collection.rs"]
+pub mod collection;
+#[path = "../src/apps/vector_filter.rs"]
+pub mod vector_filter;
 #[path = "../src/apps/morph.rs"]
 pub mod morph;
 #[path = "../src/apps/madness.rs"]
@@ -125,6 +134,10 @@ pub mod prism;
 pub mod queen_of_pentacles;
 #[path = "../src/apps/rainmaker.rs"]
 pub mod rainmaker;
+#[path = "../src/apps/neogeo_core.rs"]
+pub mod neogeo_core;
+#[path = "../src/apps/retro.rs"]
+pub mod retro;
 #[path = "../src/apps/sample_drum.rs"]
 pub mod sample_drum;
 #[path = "../src/apps/sequencer.rs"]
@@ -151,8 +164,8 @@ pub mod voltage;
 pub mod visualizer;
 mod apps {
     pub use super::{
-        analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, natural_gate, nautilus,
-        nebula, pams, plaits, plaits_layout, prism, queen_of_pentacles, rainmaker, sample_drum, sequencer, settings, singularity,
+        analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, natural_gate, nautilus,
+        nebula, pams, plaits, plaits_layout, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
         starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps,
     };
 }
@@ -188,9 +201,16 @@ const VISIBLE_ROWS: usize = 10;
 // (22px each when scrolled to the middle of a long list) came to
 // 308px, overflowing the screen's 284px content area and visually
 // colliding with the last row. 5 rows (220px) leaves real headroom.
-const HOME_VISIBLE_ROWS: usize = 5;
+const HOME_VISIBLE_ROWS: usize = 6;
 
 slint::slint! {
+    import { VectorFilterPanel } from "slint_common/vector_filter_panel.slint";
+    import { SettingsPanel } from "slint_common/settings_panel.slint";
+    import { LauncherPanel } from "slint_common/launcher_panel.slint";
+    import { RetroPanel } from "slint_common/retro_panel.slint";
+    import { PortalPanel } from "slint_common/portal_panel.slint";
+    import { ScalePanel } from "slint_common/scale_panel.slint";
+    import { CollectionPanel } from "slint_common/collection_panel.slint";
     import { DeviceFrame, BarSegment, ParamListColumn } from "slint_common/device_frame.slint";
 
     import { InstrumentLabel, InstrumentHeading, ScopeSurface, SignalTrace, ValueTrack, InstrumentPanel, VectorSegment } from "slint_common/instrument_widgets.slint";
@@ -225,10 +245,10 @@ slint::slint! {
         ] : [
             { label: root.on-home ? (root.has-settings ? "F1  SETTINGS" : "F1  —") : "F1  HOME", active: false },
             {
-                label: root.grid-mode-label != "" ? (root.grid-mode-label == "STEP" ? "F2  PAD MODE" : "F2  STEP MODE") : (root.midi-target-label != "" ? "F2  UNLOCK" : root.pad-lock-available && !root.on-home ? "F2  PAD LOCK" : "F2  —"),
+                label: root.on-home ? "F2  CATEGORY" : root.grid-mode-label != "" ? (root.grid-mode-label == "STEP" ? "F2  PAD MODE" : "F2  STEP MODE") : (root.midi-target-label != "" ? "F2  UNLOCK" : root.pad-lock-available && !root.on-home ? "F2  PAD LOCK" : "F2  —"),
                 active: root.grid-mode-label != "" ? root.grid-mode-label == "PAD" : root.midi-target-label != "",
             },
-            { label: root.on-home || root.transport-action == "" ? "F3  —" : "F3  " + root.transport-action, active: !root.on-home && root.transport-label == "RUNNING" },
+            { label: root.on-home ? "F3  RECENT" : root.transport-action == "" ? "F3  —" : "F3  " + root.transport-action, active: !root.on-home && root.transport-label == "RUNNING" },
             { label: root.has-mixer ? "F4  MIXER" : "F4  —", active: false },
         ];
         // Both driven live from `theme::ThemeColor` every tick (see
@@ -238,6 +258,9 @@ slint::slint! {
         accent: root.live-accent;
         screen-bg: root.live-bg;
         screen-ink: root.live-ink;
+        // Retro's full-screen game view -- see `DeviceFrame.hide-chrome`'s
+        // own doc comment.
+        hide-chrome: !root.on-home && root.active-kind == 30 && !root.retro-menu-visible;
         in-out property <color> live-accent: #5CF07A;
         in-out property <color> live-bg: #0B100C;
         // The active app's own text-ink color (white by default,
@@ -266,6 +289,10 @@ slint::slint! {
         in-out property <string> grid-mode-label: "";
 
         in-out property <[string]> home-names: [];
+        in property <[int]> home-ids; in property <[bool]> home-running;
+        in property <int> home-category; in property <int> home-total; in property <int> home-count;
+        in property <string> home-title; in property <string> home-description; in property <string> home-family;
+        callback home-category-picked(int); callback home-open(int);
         in-out property <int> home-selected: 0;
         in-out property <bool> home-more-above: false;
         in-out property <bool> home-more-below: false;
@@ -663,6 +690,13 @@ slint::slint! {
         in-out property <bool> magnito-dropout: false;
         in-out property <float> magnito-output-peak: 0;
 
+        in-out property <int> settings-section;
+        in-out property <string> settings-detail;
+        in-out property <string> settings-value;
+        in-out property <string> settings-help;
+        in-out property <string> settings-output;
+        in-out property <string> settings-input;
+        in-out property <int> settings-count;
         // --- Settings' color wheel (active-kind == 25): hue +
         // saturation picked directly off the wheel below, brightness
         // browsed via the ordinary list -- see `ThemeExtra`. ---
@@ -702,6 +736,63 @@ slint::slint! {
         in-out property <[float]> sample-drum-source-waveform: [];
         in-out property <[float]> sample-drum-slice-lowers: [];
         in-out property <[float]> sample-drum-slice-uppers: [];
+
+        in property <bool> scale-visible;
+        in property <string> scale-name;
+        in property <string> scale-root;
+        in property <string> scale-notes;
+        in property <[bool]> scale-keys;
+        in property <[string]> portal-sources; in property <[string]> portal-targets;
+        in property <[float]> portal-amounts; in property <[float]> portal-levels;
+        in property <[bool]> portal-enabled; in property <int> portal-cable;
+        in property <bool> portal-active; in property <string> portal-status;
+        in property <[float]> filter-xyz;
+        in property <[float]> filter-wave;
+        in property <string> filter-source;
+        in property <string> filter-mode;
+        in property <bool> filter-enabled;
+        in property <[float]> collection-terrain;
+        in property <[float]> collection-visual-lines;
+        in property <int> collection-kind;
+        in property <[float]> collection-controls;
+        in property <[float]> collection-buffer;
+        in property <[float]> collection-tracks;
+        in property <[float]> collection-voice-phases;
+        in property <[float]> collection-notes;
+        in property <[float]> collection-genes;
+        in property <[string]> collection-files;
+        in property <[string]> collection-source-names;
+        in property <string> collection-reference;
+        in property <string> collection-instrument;
+        in property <bool> collection-frozen;
+        in property <bool> collection-alternate;
+
+        in property <string> collection-status;
+        in property <string> collection-source;
+        in property <string> collection-hint;
+        in property <[float]> collection-wave;
+        in property <[float]> collection-spectrum;
+        in property <[float]> collection-levels;
+        in property <[bool]> collection-pads;
+        in property <float> collection-peak;
+        in property <float> collection-rms;
+        in property <float> collection-phase;
+        in property <float> collection-duration;
+        in property <int> collection-step;
+        in property <bool> collection-recording;
+        in property <bool> collection-playing;
+        // --- Retro-specific state (active-kind == 30): the NES's own
+        // real rendered frame, straight from `tetanes_core` -- see
+        // `RetroExtra`. ---
+        in-out property <string> retro-console-name: "NES";
+        in-out property <string> retro-rom-name: "";
+        in-out property <bool> retro-running: false;
+        in-out property <bool> retro-menu-visible: true;
+        in-out property <string> retro-status: "";
+        in-out property <image> retro-frame;
+        in property <string> retro-loaded-name;
+        in property <int> retro-rom-count;
+        in property <bool> retro-has-frame;
 
         // --- Visualizer-specific state (active-kind == 28): the
         // real analyzer readout (scene-kind == 0) or one of the two
@@ -755,23 +846,24 @@ slint::slint! {
 
         if !root.splash-active : Rectangle {
         HorizontalLayout {
-            padding-left: 18px;
-            padding-right: 18px;
-            padding-top: 4px;
-            spacing: 20px;
+            // Retro's full-screen game view needs the video edge to
+            // edge, not just chrome-free -- see `hide-chrome`'s doc
+            // comment for the rest of this same fullscreen path.
+            property <bool> retro-fullscreen: !root.on-home && root.active-kind == 30 && !root.retro-menu-visible;
+            padding-left: self.retro-fullscreen ? 0px : 18px;
+            padding-right: self.retro-fullscreen ? 0px : 18px;
+            padding-top: self.retro-fullscreen ? 0px : 4px;
+            spacing: self.retro-fullscreen ? 0px : 20px;
 
-            if root.on-home : ParamListColumn {
-                width: 604px;
-                big-text: true;
-                row-names: root.home-names;
-                selected-row: root.home-selected;
-                more-above: root.home-more-above;
-                more-below: root.home-more-below;
-                accent: root.accent;
+            if root.on-home : LauncherPanel {
+                width:604px;names:root.home-names;ids:root.home-ids;running:root.home-running;selected:root.home-selected;
+                category:root.home-category;total:root.home-total;count:root.home-count;above:root.home-more-above;below:root.home-more-below;
+                title:root.home-title;description:root.home-description;family:root.home-family;
+                category-picked(i)=>{root.home-category-picked(i);} open-app(i)=>{root.home-open(i);}
             }
             // Bloom keeps its dedicated orbital layout; all other apps use
             // the shared parameter rail with their own ink, paper, and accent.
-            if !root.on-home && root.active-kind != 29 : ParamListColumn {
+            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 : ParamListColumn {
                 width: 278px;
                 row-names: root.row-names;
                 row-values: root.row-values;
@@ -786,6 +878,45 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
+            if !root.on-home && root.active-kind == 33 : VectorFilterPanel {
+                width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
+                names:root.row-names;values:root.row-values;selected:root.selected-row;
+                xyz:root.filter-xyz;wave:root.filter-wave;source:root.filter-source;mode:root.filter-mode;enabled:root.filter-enabled;
+                pick(x,y)=>{root.theme-wheel-picked(x,y);}
+            }
+            if !root.on-home && root.active-kind == 32 : PortalPanel {
+                width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
+                names:root.row-names;values:root.row-values;selected:root.selected-row;more-above:root.more-above;more-below:root.more-below;
+                sources:root.portal-sources;targets:root.portal-targets;amounts:root.portal-amounts;levels:root.portal-levels;enabled:root.portal-enabled;cable:root.portal-cable;active:root.portal-active;status:root.portal-status;
+                choose(x,y)=>{root.theme-wheel-picked(x,y);}
+            }
+            if !root.on-home && root.active-kind == 31 : CollectionPanel {
+                width: 604px;
+                terrain: root.collection-terrain;
+                visual-lines:root.collection-visual-lines;
+                kind: root.collection-kind; paper: root.live-bg; ink: root.live-ink; accent: root.accent;
+                names: root.row-names; values: root.row-values; selected: root.selected-row;
+                more-above: root.more-above; more-below: root.more-below;
+                status: root.collection-status; source: root.collection-source; hint: root.collection-hint;
+                wave: root.collection-wave; spectrum: root.collection-spectrum; levels: root.collection-levels;
+                pads: root.collection-pads; peak: root.collection-peak; rms: root.collection-rms;
+                phase: root.collection-phase; duration: root.collection-duration; step: root.collection-step;
+                recording: root.collection-recording; playing: root.collection-playing;
+                controls: root.collection-controls;
+                buffer: root.collection-buffer;
+                tracks: root.collection-tracks;
+                voice-phases: root.collection-voice-phases;
+                notes: root.collection-notes;
+                genes: root.collection-genes;
+                files: root.collection-files;
+                source-names: root.collection-source-names;
+                reference: root.collection-reference;
+                instrument: root.collection-instrument;
+                frozen: root.collection-frozen;
+                alternate: root.collection-alternate;
+                pad(i,down) => {root.pad-toggled(i,down);} xy(x,y) => {root.theme-wheel-picked(x,y);}
+                title: root.active-app-name;
+            }
             if !root.on-home && root.active-kind == 0 : InstrumentPanel {
                 width: 306px;
                 caption: root.active-app-name == "MIDI Learn" ? "CONTROL / MIDI MAPPING" : "VOICE / CONTROL";
@@ -2580,95 +2711,14 @@ slint::slint! {
             // (hue + saturation picked directly off it; brightness
             // stays a plain browsed row, like every other Settings
             // value) -- see `ThemeExtra`. ---
-            if !root.on-home && root.active-kind == 25 : InstrumentPanel {
-                width: 306px;
-                caption: "SYSTEM / APPEARANCE";
-                ink: root.live-ink; accent: root.accent;
-                HorizontalLayout {
-                spacing: 12px;
-                alignment: start;
-                padding-top: 4px;
-                Rectangle {
-                    width: 140px; height: 140px;
-                    wheel-area := TouchArea {
-                        width: 100%; height: 100%;
-                        pointer-event(event) => {
-                            if (event.kind == PointerEventKind.down) {
-                                root.theme-wheel-picked(self.mouse-x / 1px - 70, self.mouse-y / 1px - 70);
-                            }
-                        }
-                        moved => {
-                            if (self.pressed) {
-                                root.theme-wheel-picked(self.mouse-x / 1px - 70, self.mouse-y / 1px - 70);
-                            }
-                        }
-                    }
-                    Rectangle {
-                        width: 100%; height: 100%;
-                        border-radius: 70px;
-                        background: @conic-gradient(#ff0000 0deg, #ffff00 60deg, #00ff00 120deg, #00ffff 180deg, #0000ff 240deg, #ff00ff 300deg, #ff0000 360deg);
-                    }
-                    Rectangle {
-                        width: 100%; height: 100%;
-                        border-radius: 70px;
-                        background: @radial-gradient(circle, #ffffff 0%, root.live-ink.with-alpha(0) 75%);
-                    }
-                    Rectangle {
-                        width: 100%; height: 100%;
-                        border-radius: 70px;
-                        border-width: 1px;
-                        border-color: root.live-ink.with-alpha(0.15);
-                    }
-                    Rectangle {
-                        x: 70px + root.theme-marker-x * 1px - 5px;
-                        y: 70px + root.theme-marker-y * 1px - 5px;
-                        width: 10px; height: 10px;
-                        border-radius: 5px;
-                        background: root.theme-editing-bg ? root.theme-bg-swatch : root.theme-accent-swatch;
-                        border-width: 2px;
-                        border-color: #ffffff;
-                    }
-                }
-                VerticalLayout {
-                    width: 124px;
-                    spacing: 8px;
-                    alignment: start;
-                    Text {
-                        text: (root.theme-editing-bg ? "BACKGROUND" : "ACCENT") + "\n" + root.theme-hex;
-                        color: root.accent;
-                        font-family: "JetBrains Mono";
-                        font-weight: 700;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-                    HorizontalLayout {
-                        spacing: 6px;
-                        height: 28px;
-                        Rectangle {
-                            width: 28px;
-                            border-radius: 6px;
-                            background: root.theme-accent-swatch;
-                            border-width: root.theme-editing-bg ? 0px : 2px;
-                            border-color: #ffffff;
-                        }
-                        Rectangle {
-                            width: 28px;
-                            border-radius: 6px;
-                            background: root.theme-bg-swatch;
-                            border-width: root.theme-editing-bg ? 2px : 0px;
-                            border-color: #ffffff;
-                        }
-                    }
-                    Text {
-                        text: "click the wheel to set hue/\nsaturation, or browse Hue/\nSaturation/Brightness below";
-                        color: root.live-ink.with-alpha(0.35);
-                        font-family: "JetBrains Mono";
-                        font-size: 10px;
-                        wrap: word-wrap;
-                    }
-                }
-
-                }
+            if !root.on-home && root.active-kind == 25 : SettingsPanel {
+                width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
+                names:root.row-names;values:root.row-values;groups:root.row-is-group;selected:root.selected-row;above:root.more-above;below:root.more-below;
+                section:root.settings-section;detail:root.settings-detail;value:root.settings-value;help:root.settings-help;
+                output:root.settings-output;input:root.settings-input;count:root.settings-count;
+                marker-x:root.theme-marker-x;marker-y:root.theme-marker-y;editing-bg:root.theme-editing-bg;hex:root.theme-hex;
+                accent-swatch:root.theme-accent-swatch;bg-swatch:root.theme-bg-swatch;
+                pick(x,y)=>{root.theme-wheel-picked(x,y);}
             }
 
             // --- Tonestack: the real post-chain output waveform +
@@ -3128,6 +3178,35 @@ slint::slint! {
                 }
             }
 
+            // --- Retro: the NES's own real rendered frame (see
+            // `RetroExtra`) -- a plain image, not redrawn shapes, since
+            // an emulated game's video is a real pixel buffer already,
+            // not something worth re-describing as vector primitives.
+            // Two entirely separate variants, not one panel that just
+            // resizes -- "totally full screen" means no `InstrumentPanel`
+            // chrome (its own caption row/border/padding) at all while
+            // playing, not just a bigger box within it.
+            if !root.on-home && root.active-kind == 30 && root.retro-menu-visible : RetroPanel {
+                width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
+                names:root.row-names;values:root.row-values;selected:root.selected-row;
+                console:root.retro-console-name;rom:root.retro-rom-name;loaded:root.retro-loaded-name;count:root.retro-rom-count;
+                status:root.retro-status;running:root.retro-running;frame:root.retro-frame;has-frame:root.retro-has-frame;
+                action(x,y)=>{root.theme-wheel-picked(x,y);}
+            }
+
+            // Full-screen: no panel border, no caption, no padding --
+            // just the game filling the entire 640x360 screen, edge to
+            // edge, with the title/breadcrumb/bottom-bar chrome above
+            // also collapsed via `hide-chrome`.
+            if !root.on-home && root.active-kind == 30 && !root.retro-menu-visible : Rectangle {
+                background: black;
+                Image {
+                    source: root.retro-frame;
+                    image-fit: contain;
+                    width: 100%; height: 100%;
+                }
+            }
+
             if !root.on-home && root.active-kind == 29 : BloomPanel {
                 row-names: root.row-names;
                 row-values: root.row-values;
@@ -3157,6 +3236,12 @@ slint::slint! {
 
         }
 
+        if root.scale-visible && !root.on-home && !root.splash-active : ScalePanel {
+            x: root.active-kind == 31 ? 250px : root.active-kind == 29 ? 278px : 316px; y: 4px;
+            width: root.active-kind == 31 ? 372px : root.active-kind == 29 ? 344px : 306px; height: 278px;
+            paper: root.live-bg; ink: root.live-ink; accent: root.accent;
+            scale-name: root.scale-name; root-note: root.scale-root; notes: root.scale-notes; keys: root.scale-keys;
+        }
         // Cover the complete display, including the title and footer. The
         // launcher is not instantiated during boot, so no rows can bleed out.
         if root.splash-active : Rectangle {
@@ -3211,6 +3296,27 @@ fn logo_to_slint_image(logo: &startup_logo::Logo) -> slint::Image {
     slint::Image::from_rgba8(pixel_buffer)
 }
 
+/// Either console's rendered frame is already tightly-packed RGBA8 at
+/// its own real `width x height` (see `RetroExtra::frame_w`/`frame_h`/
+/// `frame_rgba` -- NES and SNES render at different resolutions, and
+/// even games on the same console can differ), so this is a straight
+/// byte copy into Slint's own pixel buffer type -- no format
+/// conversion needed, unlike `logo_to_slint_image`'s packed-u32-
+/// framebuffer source. Returns `None` for an empty/wrong-sized buffer
+/// (no game loaded yet) rather than panicking on a slice-length
+/// mismatch.
+fn rgba_frame_to_slint_image(rgba: &[u8], width: u32, height: u32) -> Option<slint::Image> {
+    if width == 0 || height == 0 || rgba.len() != (width * height * 4) as usize {
+        return None;
+    }
+    let mut pixel_buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(width, height);
+    let slice = pixel_buffer.make_mut_slice();
+    for (dst, chunk) in slice.iter_mut().zip(rgba.chunks_exact(4)) {
+        *dst = slint::Rgba8Pixel { r: chunk[0], g: chunk[1], b: chunk[2], a: 255 };
+    }
+    Some(slint::Image::from_rgba8(pixel_buffer))
+}
+
 /// One redesigned app's fixed (bg, ink/title, accent, dim) palette --
 /// The four instrument redesigns have Slint-specific palettes; other
 /// entries retain the values from `draw()` in `src/apps/
@@ -3236,6 +3342,7 @@ fn app_palette(name: &str) -> Option<(slint::Color, slint::Color, slint::Color, 
     let (bg, ink, accent, dim): (u32, u32, u32, u32) = match name {
         "Analyzer" => (0x101b22, 0xe5eff3, 0x75dcd3, 0x81959e),
         "Synth" => (0x151c21, 0xe5eff3, 0x8adbc4, 0x81959e),
+        "Vector Filter" => (0x101e25, 0xe4f0e8, 0x79e2cf, 0x729d9e),
         "Settings" => (0x14191f, 0xe7edf4, 0xa5bce9, 0x8994aa),
         "Bloom" => (0x0c1918, 0xe7edda, 0xd8f580, 0x203b33),
         "Visualizer" => (0x151b25, 0xebedf3, 0xf3b980, 0x8994aa),
@@ -3257,6 +3364,25 @@ fn app_palette(name: &str) -> Option<(slint::Color, slint::Color, slint::Color, 
         "Mixer" => (0x101820, 0xe2edf5, 0x76cddd, 0x81949f),
         "Cascade" => (0x081019, 0xe6f3ff, 0x7bdbff, 0x5a697b),
         "Clouds" => (0xe0e9ee, 0x19283a, 0x326c97, 0x627b8a),
+        "Orbit" => (0x15162b, 0xeeedfb, 0xbaa6ff, 0xf3c477),
+        "Fracture" => (0x201525, 0xfff0ed, 0xfb87b1, 0xa5e8ed),
+        "Ghosts" => (0x122024, 0xe6efee, 0x9ccecb, 0xc8b9e8),
+        "Swarm" => (0x172019, 0xedf2d9, 0xd2eb8b, 0xeea777),
+        "Mutant" => (0x221827, 0xf2eafa, 0xc8a4f7, 0xeea6b2),
+        "Constellation" => (0x111d2b, 0xe9f0f7, 0x91c8f1, 0xf1c69e),
+        "Tape Machine" => (0xe9e1cc, 0x302f28, 0x98602f, 0x437a71),
+        "Dream" => (0x171a2a, 0xeeeafa, 0xc0b0ef, 0xf2b89c),
+        "Portal" => (0x111f24, 0xe4eff1, 0x80d9cc, 0xa9b7ef),
+        "Reference" => (0xeae4d5, 0x283434, 0x347c76, 0xb96547),
+        "Field" => (0x14211e, 0xe8efe1, 0xbfe091, 0xf2b37f),
+        "Sample Hunter" => (0x242018, 0xf5ecdc, 0xf0bc70, 0x99c5a4),
+        "Studio" => (0x16202a, 0xe7eef6, 0x9ebee5, 0xe4ad8e),
+        "Scope" => (0x101f22, 0xe3f0e9, 0x78d6c4, 0xeec77f),
+        "Vinyl" => (0x241c22, 0xf3e8de, 0xdca5b5, 0xd6c083),
+        "Practice" => (0xe6e8de, 0x273734, 0x387d6c, 0xac684a),
+        "Radio" => (0x161d2b, 0xecedf6, 0x94b1ed, 0xdf9fbd),
+        "Master" => (0x1d1c27, 0xecebf5, 0xb9b1e6, 0xe4c287),
+        "Memories" => (0xe8e0cf, 0x3d3932, 0x8a6347, 0x5d8276),
         "Morph" => (0x101e24, 0xeaf3ec, 0x9fe7c3, 0xf8b489),
         "Madness" => (0x080408, 0xffe3f7, 0xff2d94, 0x7b4963),
         "Pam's Workout" => (0x151715, 0xf2e9ce, 0xf6bd46, 0x8e805e),
@@ -3269,6 +3395,17 @@ fn app_palette(name: &str) -> Option<(slint::Color, slint::Color, slint::Color, 
         _ => return None,
     };
     Some((c(bg), c(ink), c(accent), c(dim)))
+}
+
+#[path = "slint_common/launcher.rs"]
+mod launcher;
+
+fn apply_scale_visual(ui: &LiveHomeScreen, info: Option<app::music_scales::ScaleInfo>) {
+    ui.set_scale_visible(info.is_some());
+    if let Some(info)=info {
+        ui.set_scale_name(info.name.into()); ui.set_scale_root(info.root.into());ui.set_scale_notes(info.notes.into());
+        ui.set_scale_keys(Rc::new(slint::VecModel::from(info.keys)).into());
+    }
 }
 
 fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
@@ -3696,6 +3833,8 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                 }
                 app::SlintExtra::Theme(t) => {
                     ui.set_active_kind(25);
+                    ui.set_settings_section(t.section as i32);ui.set_settings_detail(t.detail.into());ui.set_settings_value(t.value.into());ui.set_settings_help(t.help.into());
+                    ui.set_settings_output(t.output.into());ui.set_settings_input(t.input.into());ui.set_settings_count(t.device_count as i32);
                     ui.set_theme_editing_bg(t.editing_background);
                     ui.set_theme_hex(if t.editing_background {
                         format!("#{:02X}{:02X}{:02X}", t.background_rgb.0, t.background_rgb.1, t.background_rgb.2)
@@ -3753,6 +3892,54 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_visualizer_cat_paw_left(v.cat_paw_left);
                     ui.set_visualizer_monitor_on(v.monitor_on);
                 }
+                app::SlintExtra::Collection(c) => {
+                    ui.set_collection_visual_lines(Rc::new(slint::VecModel::from(c.visual_lines)).into());
+                    ui.set_collection_terrain(Rc::new(slint::VecModel::from(c.terrain)).into());
+                    ui.set_active_kind(31); ui.set_collection_kind(c.kind);
+                    ui.set_collection_controls(Rc::new(slint::VecModel::from(c.controls)).into());
+                    ui.set_collection_buffer(Rc::new(slint::VecModel::from(c.buffer)).into());
+                    ui.set_collection_tracks(Rc::new(slint::VecModel::from(c.tracks)).into());
+                    ui.set_collection_voice_phases(Rc::new(slint::VecModel::from(c.voice_phases)).into());
+                    ui.set_collection_notes(Rc::new(slint::VecModel::from(c.notes)).into());
+                    ui.set_collection_genes(Rc::new(slint::VecModel::from(c.genes)).into());
+                    ui.set_collection_files(Rc::new(slint::VecModel::from(c.files.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_collection_source_names(Rc::new(slint::VecModel::from(c.source_names.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_collection_reference(c.reference.into());
+                    ui.set_collection_instrument(c.instrument.into());
+                    ui.set_collection_frozen(c.frozen);
+                    ui.set_collection_alternate(c.alternate);
+
+                    ui.set_collection_status(c.status.into()); ui.set_collection_source(c.source.into()); ui.set_collection_hint(c.hint.into());
+                    ui.set_collection_wave(Rc::new(slint::VecModel::from(c.wave)).into());
+                    ui.set_collection_spectrum(Rc::new(slint::VecModel::from(c.spectrum)).into());
+                    ui.set_collection_levels(Rc::new(slint::VecModel::from(c.levels)).into());
+                    ui.set_collection_pads(Rc::new(slint::VecModel::from(c.pads)).into());
+                    ui.set_collection_peak(c.peak); ui.set_collection_rms(c.rms);
+                    ui.set_collection_phase(c.phase); ui.set_collection_duration(c.duration);
+                    ui.set_collection_step(c.step); ui.set_collection_recording(c.recording); ui.set_collection_playing(c.playing);
+                }
+                app::SlintExtra::VectorFilter(f) => {
+                    ui.set_active_kind(33);ui.set_filter_xyz(Rc::new(slint::VecModel::from(f.xyz)).into());ui.set_filter_wave(Rc::new(slint::VecModel::from(f.wave)).into());ui.set_filter_source(f.source.into());ui.set_filter_mode(f.mode.into());ui.set_filter_enabled(f.enabled);
+                }
+                app::SlintExtra::Portal(p) => {
+                    ui.set_active_kind(32);
+                    ui.set_portal_sources(Rc::new(slint::VecModel::from(p.sources.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_portal_targets(Rc::new(slint::VecModel::from(p.targets.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_portal_amounts(Rc::new(slint::VecModel::from(p.amounts)).into());ui.set_portal_levels(Rc::new(slint::VecModel::from(p.levels)).into());ui.set_portal_enabled(Rc::new(slint::VecModel::from(p.enabled)).into());
+                    ui.set_portal_cable(p.selected);ui.set_portal_active(p.active);ui.set_portal_status(p.status.into());
+                }
+                app::SlintExtra::Retro(r) => {
+                    ui.set_active_kind(30);
+                    ui.set_retro_console_name(r.console_name.into());
+                    ui.set_retro_loaded_name(r.loaded_name.into());ui.set_retro_rom_count(r.rom_count);ui.set_retro_has_frame(!r.frame_rgba.is_empty());
+                    ui.set_retro_rom_name(r.rom_name.into());
+                    ui.set_retro_running(r.running);
+                    ui.set_retro_menu_visible(r.menu_visible);
+                    ui.set_retro_status(r.status.into());
+                    if let Some(image) = rgba_frame_to_slint_image(&r.frame_rgba, r.frame_w, r.frame_h) {
+                        ui.set_retro_frame(image);
+                    }
+                }
                 app::SlintExtra::None => ui.set_active_kind(0),
             }
 }
@@ -3784,6 +3971,7 @@ fn main() {
 
     let engine = audio::new_engine(Arc::clone(&master_volume));
     let (mut audio_host, device_state) = AudioHost::open_resilient(Arc::clone(&engine));
+    audio_host.attach_input(audio_bus.register("Hardware input"));
     println!("Live Home prototype -- output device: {}", device_state.current_output());
     let device_state = Arc::new(device_state);
 
@@ -3828,6 +4016,8 @@ fn main() {
     // original behavior, unchanged unless you actually use F2.
     let midi_target: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
     let home_list = Rc::new(RefCell::new(ParamList::new()));
+    let launcher = Rc::new(RefCell::new(launcher::Launcher::default()));
+
 
     println!("App registry ready; creating Slint window");
     let ui = LiveHomeScreen::new().unwrap();
@@ -3849,6 +4039,17 @@ fn main() {
     // Real MIDI input, alongside the mouse -- see live_midi.rs.
     let controller = Arc::new(ControllerState::new());
     let _midi_connections = live_midi::connect_all(Arc::clone(&controller), Arc::clone(&midi_map), Arc::clone(&modbus));
+
+    // Real gamepad input (a PS5 DualSense via GameController.framework)
+    // -- same shared `controller` the mouse-simulated knobs/pads and
+    // MIDI above already feed. See gamepad.rs's own doc comment for
+    // why this needs a real window (this tool has one -- `ui` below)
+    // rather than working from a bare CLI process.
+    #[cfg(target_os = "macos")]
+    {
+        let gamepad_controller = Arc::clone(&controller);
+        std::thread::spawn(move || gamepad::run_gamepad_listener(gamepad_controller));
+    }
 
     let grid_held: Rc<RefCell<[bool; 16]>> = Rc::new(RefCell::new([false; 16]));
     let grid_for_pad = Rc::clone(&grid_held);
@@ -3882,6 +4083,11 @@ fn main() {
     let apps_for_f = Rc::clone(&apps);
     let active_for_f = Rc::clone(&active);
     let midi_target_for_f = Rc::clone(&midi_target);
+    let launcher_for_category=launcher.clone();let list_for_category=home_list.clone();
+    ui.on_home_category_picked(move |i|{launcher_for_category.borrow_mut().category=(i as usize).min(6);list_for_category.borrow_mut().selected=0;});
+    let apps_for_open=apps.clone();let active_for_open=active.clone();let launcher_for_open=launcher.clone();
+    ui.on_home_open(move |i|{if active_for_open.borrow().is_none() && i>=0 && (i as usize)<apps_for_open.borrow().len() {let i=i as usize;apps_for_open.borrow_mut()[i].1.on_enter();*active_for_open.borrow_mut()=Some(i);launcher_for_open.borrow_mut().visit(i);}});
+    let launcher_for_f=launcher.clone();let list_for_f=home_list.clone();
     ui.on_f_clicked(move |i| match i {
         0 => {
             let mut act = active_for_f.borrow_mut();
@@ -3907,12 +4113,12 @@ fn main() {
                 } else if apps_for_f.borrow()[idx].1.supports_pad_lock() {
                     *midi_target_for_f.borrow_mut() = Some(idx);
                 }
-            } else { *midi_target_for_f.borrow_mut() = None; }
+            } else { launcher_for_f.borrow_mut().cycle(1);list_for_f.borrow_mut().selected=0; }
         }
         2 => {
             if let Some(idx) = *active_for_f.borrow() {
                 apps_for_f.borrow_mut()[idx].1.toggle_running();
-            }
+            } else {launcher_for_f.borrow_mut().category=6;list_for_f.borrow_mut().selected=0;}
         }
         3 => {
             let mixer_idx = apps_for_f.borrow().iter().position(|(_, app)| app.system_role() == Some(app::SystemRole::Mixer));
@@ -3935,6 +4141,8 @@ fn main() {
     let active_for_timer = Rc::clone(&active);
     let grid_for_timer = Rc::clone(&grid_held);
     let home_list_for_timer = Rc::clone(&home_list);
+    let launcher_for_timer=launcher.clone();
+    let mut previous_visit=None;
     let midi_target_for_timer = Rc::clone(&midi_target);
     let engine_for_timer = Arc::clone(&engine);
     let show_cpu_for_timer = Arc::clone(&show_cpu);
@@ -4097,23 +4305,25 @@ fn main() {
                 ui.set_live_pad_colors(Rc::new(slint::VecModel::from(default_colors)).into());
             }
 
-            let mut list = home_list_for_timer.borrow_mut();
-            list.navigate(k1, apps_ref.len(), nav_speed.get() as i32);
-            list.navigate_steps(navigation, apps_ref.len());
-            if press1 && !apps_ref.is_empty() {
-                let idx = list.selected;
-                apps_ref[idx].1.on_enter();
-                ui.set_active_app_name(apps_ref[idx].0.as_str().into());
-                *active_for_timer.borrow_mut() = Some(idx);
-            }
-            let (start, end) = list.centered_scroll_window(HOME_VISIBLE_ROWS, apps_ref.len());
-            ui.set_home_selected((list.selected - start) as i32);
-            ui.set_home_more_above(start > 0);
-            ui.set_home_more_below(end < apps_ref.len());
-            let names: Vec<slint::SharedString> = apps_ref[start..end].iter().map(|(n, _)| n.as_str().into()).collect();
-            ui.set_home_names(Rc::new(slint::VecModel::from(names)).into());
+            ui.set_live_bg(slint::Color::from_rgb_u8(18,27,27));ui.set_live_ink(slint::Color::from_rgb_u8(241,240,230));ui.set_live_accent(slint::Color::from_rgb_u8(183,214,197));
+            let names_all:Vec<_>=apps_ref.iter().map(|(n,_)|n.clone()).collect();
+            let mut browser=launcher_for_timer.borrow_mut();let mut list=home_list_for_timer.borrow_mut();
+            if k2!=0 {browser.cycle(k2.signum());list.selected=0;}
+            let indices=browser.indices(&names_all);
+            list.selected=list.selected.min(indices.len().saturating_sub(1));
+            list.navigate(k1,indices.len(),nav_speed.get() as i32);list.navigate_steps(navigation,indices.len());
+            if press1 && !indices.is_empty(){let idx=indices[list.selected];apps_ref[idx].1.on_enter();ui.set_active_app_name(apps_ref[idx].0.as_str().into());*active_for_timer.borrow_mut()=Some(idx);browser.visit(idx);}
+            let(start,end)=list.centered_scroll_window(HOME_VISIBLE_ROWS,indices.len());
+            ui.set_home_selected(list.selected.saturating_sub(start) as i32);ui.set_home_more_above(start>0);ui.set_home_more_below(end<indices.len());
+            ui.set_home_names(Rc::new(slint::VecModel::from(indices[start..end].iter().map(|i|slint::SharedString::from(names_all[*i].as_str())).collect::<Vec<_>>())).into());
+            ui.set_home_ids(Rc::new(slint::VecModel::from(indices[start..end].iter().map(|i|*i as i32).collect::<Vec<_>>())).into());
+            ui.set_home_running(Rc::new(slint::VecModel::from(indices[start..end].iter().map(|i|apps_ref[*i].1.running()==Some(true)).collect::<Vec<_>>())).into());
+            ui.set_home_category(browser.category as i32);ui.set_home_total(names_all.len() as i32);ui.set_home_count(indices.len() as i32);
+            let name=indices.get(list.selected).map(|i|names_all[*i].as_str()).unwrap_or("");
+            ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list."}else{launcher::description(name)}.into());ui.set_home_family(if name.is_empty(){"WELCOME"}else{launcher::CATEGORIES[launcher::category(name)]}.into());
         } else {
             let idx = active_for_timer.borrow().unwrap();
+            if previous_visit!=Some(idx){launcher_for_timer.borrow_mut().visit(idx);previous_visit=Some(idx);}
             // A redesigned app overrides the ThemeColor default set
             // above with its own fixed identity -- see `app_palette`.
             // Apps with no entry there (Settings, plus any not yet
@@ -4148,6 +4358,7 @@ fn main() {
             let app = &mut apps_ref[idx].1;
             app.tick(&input);
 
+            apply_scale_visual(&ui, app.slint_scale_info());
             let (rows, selected_in_window, more_above, more_below) = app.slint_windowed_rows(VISIBLE_ROWS);
             let levels = app.slint_levels(VISIBLE_ROWS);
             let names: Vec<slint::SharedString> = rows.iter().map(|(n, _, _)| n.as_str().into()).collect();

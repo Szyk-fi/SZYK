@@ -2,6 +2,9 @@
 //! small is what lets the launcher add more audio tools later without
 //! touching the OS or the other apps — that's the "modular app system."
 
+#[path = "music_scales.rs"]
+pub mod music_scales;
+
 use crate::audio::AudioProcessor;
 use crate::controller::ControllerState;
 use crate::display::FrameBuffer;
@@ -151,13 +154,10 @@ pub trait App {
 
     fn draw(&mut self, fb: &mut FrameBuffer);
 
-    /// Audio tools return their processor here; `main.rs` registers it into
-    /// the shared mix bus exactly once at startup, and it keeps
-    /// running/mixing for the program's life regardless of which app (or
-    /// the launcher) is on screen afterward -- NOT re-installed on
-    /// `on_enter`/swapped out on `on_exit` (see os.rs's header comment).
-    /// Apps that don't touch audio (a settings screen, say) just leave
-    /// this as None.
+    /// Creates this app's processor when its lazy factory is first opened.
+    /// The registry installs a dormant proxy at startup; active transports,
+    /// routes, tails and visible screens keep it awake. Closing an idle app
+    /// suspends DSP without discarding its settings or recordings.
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
         None
     }
@@ -175,6 +175,17 @@ pub trait App {
     /// Toggles whatever `running()` reports, if anything. Default: no-op,
     /// matching the default `running() -> None`.
     fn toggle_running(&mut self) {}
+
+    /// Whether this screen wants the *entire* device screen to itself
+    /// -- no OS-drawn bottom bar composited on top (see `Os::run`).
+    /// `false` (the default) for every ordinary instrument/menu
+    /// screen; Retro's game video is the one real user of this so far
+    /// (see `apps::retro::RetroApp`), since a game filling the whole
+    /// screen with an F1-F4 strip painted over its bottom edge would
+    /// defeat the entire point of "full screen".
+    fn wants_fullscreen(&self) -> bool {
+        false
+    }
 
     /// Whether this app has its own notion of a grid-wide input mode
     /// (e.g. the Sequencer's Step-sequencing vs. Pad Perform, which
@@ -246,6 +257,8 @@ pub trait App {
     }
 
     /// Which row `slint_rows` should show as selected.
+    fn slint_scale_info(&self) -> Option<music_scales::ScaleInfo> { None }
+
     fn slint_selected(&self) -> usize {
         0
     }
@@ -357,6 +370,33 @@ pub enum SlintExtra {
     Tonestack(TonestackExtra),
     SampleDrum(SampleDrumExtra),
     Visualizer(VisualizerExtra),
+    VectorFilter(VectorFilterExtra),
+    Retro(RetroExtra),
+    Collection(CollectionExtra),
+    Portal(PortalExtra),
+}
+
+/// Retro's real per-frame telemetry -- see `RetroApp::slint_extra`.
+pub struct RetroExtra {
+    pub loaded_name: String,
+    pub rom_count: i32,
+    pub console_name: String,
+    pub rom_name: String,
+    pub running: bool,
+    pub menu_visible: bool,
+    pub status: String,
+    /// The active console's own real rendered frame dimensions --
+    /// varies by console (and even by game), so the Slint side needs
+    /// these to size its `Image` correctly rather than assuming a
+    /// fixed resolution.
+    pub frame_w: u32,
+    pub frame_h: u32,
+    /// The actual last rendered frame, raw RGBA8 bytes (`frame_w x
+    /// frame_h x 4`), or empty when no game is loaded yet. Not
+    /// resized/converted here -- the Slint side turns this straight
+    /// into an `Image` since it's already in a format
+    /// `slint::SharedPixelBuffer<Rgba8Pixel>` can consume directly.
+    pub frame_rgba: Vec<u8>,
 }
 
 /// Visualizer's real analysis/scene telemetry -- see
@@ -420,6 +460,13 @@ pub struct TonestackExtra {
 
 /// Settings' live color-wheel state -- see `SettingsApp::slint_extra`.
 pub struct ThemeExtra {
+    pub section: usize,
+    pub detail: String,
+    pub value: String,
+    pub help: String,
+    pub output: String,
+    pub input: String,
+    pub device_count: usize,
     /// True while the wheel/Hue/Saturation/Brightness rows are
     /// editing the background instead of the accent.
     pub editing_background: bool,
@@ -852,3 +899,20 @@ pub fn cascade_connection_lines(connections: &[(usize, usize)]) -> CurveSegments
     }
     CurveSegments { mid_x, mid_y, length, angle_deg }
 }
+
+/// Bounded live telemetry for the independently installed collection apps.
+pub struct CollectionExtra {
+    pub visual_lines:Vec<f32>,
+    pub terrain:Vec<f32>,
+    pub controls:Vec<f32>,pub buffer:Vec<f32>,pub tracks:Vec<f32>,pub voice_phases:Vec<f32>,pub notes:Vec<f32>,pub genes:Vec<f32>,
+    pub files:Vec<String>,pub source_names:Vec<String>,pub reference:String,pub instrument:String,pub frozen:bool,pub alternate:bool,
+    pub kind: i32, pub status: String, pub wave: Vec<f32>, pub spectrum: Vec<f32>,
+    pub levels: Vec<f32>, pub peak: f32, pub rms: f32, pub phase: f32,
+    pub duration: f32, pub step: i32, pub pads: Vec<bool>, pub recording: bool,
+    pub playing: bool, pub source: String, pub hint: String,
+}
+
+#[derive(Clone,Debug)]
+pub struct PortalExtra {pub sources:Vec<String>,pub targets:Vec<String>,pub amounts:Vec<f32>,pub enabled:Vec<bool>,pub levels:Vec<f32>,pub selected:i32,pub active:bool,pub status:String}
+
+pub struct VectorFilterExtra {pub xyz:Vec<f32>,pub wave:Vec<f32>,pub source:String,pub mode:String,pub enabled:bool}

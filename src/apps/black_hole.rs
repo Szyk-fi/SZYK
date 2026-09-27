@@ -75,7 +75,7 @@ use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -1018,7 +1018,7 @@ impl BlackHoleProcessor {
                 let fb = p1.clamp(0.0, 0.95);
                 (shifted, echo * fb)
             }
-            9 | 10 | 11 => {
+            9..=11 => {
                 // Shimmer Drift / + / -: a pre-delayed tap feeds the
                 // shared reverb tank with feedback pitch-shifted up
                 // (bidirectional for Drift, fixed direction for +/-).

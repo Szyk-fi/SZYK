@@ -9,7 +9,7 @@ struct Params { a:AtomicUsize,b:AtomicUsize,blend:AtomicF32,smooth:AtomicF32,loc
 pub struct MorphApp { params:Arc<Params>,bus:Arc<AudioBus>,nav:Arc<AtomicF32>,list:ParamList,own:usize }
 impl MorphApp {
  pub fn new(bus:Arc<AudioBus>,modbus:Arc<ModBus>,mixer:Arc<MixerBus>,nav:Arc<AtomicF32>)->Self {
-  let own=bus.len();let out=bus.register("Morph");let(mix,ext_mix)=mixer.register("Morph",&modbus);
+  let out=bus.register("Morph");let own=bus.index_of("Morph").unwrap();let(mix,ext_mix)=mixer.register("Morph",&modbus);
   Self{params:Arc::new(Params{a:AtomicUsize::new(NO_SOURCE),b:AtomicUsize::new(NO_SOURCE),blend:AtomicF32::new(0.5),smooth:AtomicF32::new(0.0),lock:AtomicBool::new(false),level:AtomicF32::new(0.8),mix,ext_mix,out}),bus,nav,list:ParamList::new(),own}
  }
  fn rows(&self)->Vec<(String,String,bool)> { vec![

@@ -1,0 +1,33 @@
+import { ParamListColumn } from "device_frame.slint";
+import { VectorSegment } from "instrument_widgets.slint";
+export component VectorFilterPanel inherits Rectangle {
+ in property <color> paper;in property <color> ink;in property <color> accent;
+ in property <[string]> names;in property <[string]> values;in property <int> selected;
+ in property <[float]> xyz;in property <[float]> wave;in property <string> source;in property <string> mode;in property <bool> enabled;
+ callback pick(float,float);
+ HorizontalLayout {spacing:18px;
+  ParamListColumn {width:220px;row-names:root.names;row-values:root.values;selected-row:root.selected;paper:root.paper;ink:root.ink;accent:root.accent;instrument-style:true;}
+  VerticalLayout {spacing:6px;padding-top:6px;
+   HorizontalLayout {height:20px;Text {text:"RESONANT SPACE";color:root.accent;font-size:11px;font-weight:600;}Text {text:root.enabled?root.mode:"BYPASSED";color:root.ink.with-alpha(0.65);font-size:10px;horizontal-alignment:right;}}
+   Rectangle {height:198px;background:root.ink.with-alpha(0.025);border-radius:6px;clip:true;
+    Path {width:300px;height:180px;viewbox-width:300;viewbox-height:180;fill:root.accent.with-alpha(0.06);stroke:root.accent.with-alpha(0.28);stroke-width:1px;
+     MoveTo {x:30;y:55;}LineTo{x:85;y:25;}LineTo{x:285;y:25;}LineTo{x:285;y:145;}LineTo{x:230;y:175;}LineTo{x:30;y:175;}Close{}
+    }
+    for i in 6 : VectorSegment {center-x:(30+i*40)*1px;center-y:115px;delta-x:0;delta-y:120;trace:root.accent.with-alpha(0.1);line-width:1px;}
+    for i in 5 : VectorSegment {center-x:130px;center-y:(55+i*30)*1px;delta-x:200;delta-y:0;trace:root.accent.with-alpha(0.1);line-width:1px;}
+    for edge[i] in [0,1,2,3,4,5,6,7,8,9,10,11] : VectorSegment {
+     property <float> ax:[30,230,230,30,85,285,285,85,30,230,230,30][i];property <float> ay:[55,55,175,175,25,25,145,145,55,55,175,175][i];
+     property <float> bx:[230,230,30,30,285,285,85,85,85,285,285,85][i];property <float> by:[55,175,175,55,25,145,145,25,25,25,145,145][i];
+     center-x:(self.ax+self.bx)/2*1px;center-y:(self.ay+self.by)/2*1px;delta-x:self.bx - self.ax;delta-y:self.by - self.ay;trace:root.accent.with-alpha(i<4?0.75:0.3);line-width:1px;
+    }
+    for i in max(0,root.wave.length - 1) : VectorSegment {center-x:(30+(i+0.5)*200/max(1,root.wave.length)+55*root.xyz[2])*1px;center-y:(115-(root.wave[i]+root.wave[i+1])*22 - 30*root.xyz[2])*1px;delta-x:200/max(1,root.wave.length);delta-y:(root.wave[i] - root.wave[i+1])*44;trace:root.accent.with-alpha(0.65);line-width:2px;}
+    VectorSegment {center-x:(30+200*root.xyz[0]+27.5*root.xyz[2])*1px;center-y:(175 - 120*root.xyz[1] - 15*root.xyz[2])*1px;delta-x:55*root.xyz[2];delta-y: -30*root.xyz[2];trace:root.accent.with-alpha(0.6);line-width:1px;}
+    for i in [2,1,0] : Rectangle {width:(10+i*14)*1px;height:self.width;border-radius:self.width/2;x:(30+200*root.xyz[0]+55*root.xyz[2])*1px - self.width/2;y:(175 - 120*root.xyz[1] - 30*root.xyz[2])*1px - self.height/2;background:root.accent.with-alpha(i==0?1:0.08);}
+    Text {x:30px;y:180px;text:"X  CUTOFF →";color:root.accent;font-size:9px;}Text {x:5px;y:35px;text:"Y / Q";color:root.accent;font-size:8px;}
+    TouchArea {x:30px;y:55px;width:200px;height:120px;pointer-event(e)=>{if e.kind==PointerEventKind.down {root.pick(self.mouse-x/self.width,1 - self.mouse-y/self.height);}}moved=>{if self.pressed {root.pick(self.mouse-x/self.width,1 - self.mouse-y/self.height);}}}
+   }
+   Rectangle {height:21px;border-radius:4px;background:root.accent.with-alpha(0.09);Rectangle {width:parent.width*root.xyz[2];height:100%;border-radius:4px;background:root.accent.with-alpha(0.22);}Text {text:"Z / DRIVE   "+round(root.xyz[2]*100)+"%   ↔";color:root.accent;font-size:9px;horizontal-alignment:center;vertical-alignment:center;}TouchArea {pointer-event(e)=>{if e.kind==PointerEventKind.down {root.pick(1000+self.mouse-x/self.width,0);}}moved=>{if self.pressed {root.pick(1000+self.mouse-x/self.width,0);}}}}
+   Text {text:root.source=="none"?"Choose Source to process audio":"Drag front face · depth strip adds drive";color:root.ink.with-alpha(0.6);font-size:10px;height:17px;}
+  }
+ }
+}

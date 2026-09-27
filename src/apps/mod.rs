@@ -12,12 +12,14 @@ pub mod mixer;
 pub mod natural_gate;
 pub mod nautilus;
 pub mod nebula;
+pub mod neogeo_core;
 pub mod pams;
 pub mod plaits;
 pub mod plaits_layout;
 pub mod prism;
 pub mod queen_of_pentacles;
 pub mod rainmaker;
+pub mod retro;
 pub mod sample_drum;
 pub mod sequencer;
 pub mod settings;
@@ -32,3 +34,7 @@ pub mod warps;
 pub mod voltage;
 
 pub mod morph;
+
+pub mod collection;
+
+pub mod vector_filter;

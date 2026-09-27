@@ -45,12 +45,12 @@ pub struct MixBus {
     /// `process()` time divided by that block's real-time budget
     /// (frames / sample_rate), as a fraction (1.0 = exactly real-time,
     /// >1.0 = the engine is behind). This is a genuine measurement of
-    /// this simulator's own host CPU cost, not a cycle-accurate model
-    /// of the real STM32H7 -- every app's processor runs on every
-    /// block here (see module doc comment), which the real hardware
-    /// never does (only the one active screen's DSP runs there), so
-    /// this number is deliberately a "how loaded is the simulation
-    /// engine" reading rather than a stand-in for real firmware load.
+    /// > this simulator's own host CPU cost, not a cycle-accurate model
+    /// > of the real STM32H7 -- every app's processor runs on every
+    /// > block here (see module doc comment), which the real hardware
+    /// > never does (only the one active screen's DSP runs there), so
+    /// > this number is deliberately a "how loaded is the simulation
+    /// > engine" reading rather than a stand-in for real firmware load.
     load_frac: AtomicF32,
 }
 
@@ -151,7 +151,8 @@ impl MixBus {
             }
         }
 
-        let volume = self.master_volume.get().clamp(0.0, MAX_MASTER_VOLUME);
+        let requested_volume = self.master_volume.get();
+        let volume = if requested_volume.is_finite() {requested_volume.clamp(0.0, MAX_MASTER_VOLUME)} else {0.0};
         for out in buffer.iter_mut() {
             *out *= volume;
         }
@@ -295,6 +296,13 @@ mod tests {
     /// is NaN, so without sanitizing at the source this would
     /// silently wreck every app on the bus, forever, not just the
     /// broken one.
+    #[test]
+    fn invalid_master_gain_is_silent_and_recovers_on_a_valid_setting() {
+        let volume=Arc::new(AtomicF32::new(f32::NAN));let bus=MixBus::new(volume.clone());
+        bus.add(Box::new(ConstProcessor(0.3)));let mut out=[0.;32];
+        for invalid in [f32::NAN,f32::INFINITY,f32::NEG_INFINITY] {volume.set(invalid);bus.process(&mut out,2,48000.);assert!(out.iter().all(|v|*v==0.));}
+        volume.set(0.6);bus.process(&mut out,2,48000.);assert!(out.iter().all(|v|v.is_finite()&&*v>0.));assert_eq!(volume.get(),0.6);
+    }
     #[test]
     fn one_nan_processor_does_not_poison_others() {
         let bus = MixBus::new(Arc::new(AtomicF32::new(1.0)));

@@ -46,7 +46,7 @@ use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -985,11 +985,9 @@ impl AudioProcessor for CascadeProcessor {
             None => held_raw,
         };
 
-        // Same active-voice headroom normalization Bloom's voice pool
-        // needed: render every one of the 16 pad-voices' full block,
-        // count how many actually produced audible signal, and
-        // divide the sum by that count so a chord doesn't get louder
-        // just for having more notes held.
+        // Reserve headroom by voice lifecycle, not instantaneous amplitude.
+        // A silent operator envelope or modulation interval is still part of
+        // the same held/releasing phrase and must not reset its gain.
         let mut active_voices: usize = 0;
         for i in 0..16 {
             let gate = held[i];
@@ -999,6 +997,7 @@ impl AudioProcessor for CascadeProcessor {
             voice.buf.resize(frames, 0.0);
 
             if !gate && voice.env.stage == 0 { continue; }
+            active_voices += 1;
 
             for n in 0..frames {
                 voice.lfo_phase = (voice.lfo_phase + lfo_rate * dt).rem_euclid(1.0);
@@ -1049,10 +1048,6 @@ impl AudioProcessor for CascadeProcessor {
                 voice.buf[n] = sample * env;
             }
 
-            let peak = voice.buf.iter().fold(0.0f32, |a, s| a.max(s.abs()));
-            if peak > 1e-4 {
-                active_voices += 1;
-            }
             for (m, s) in self.mono_buf.iter_mut().zip(voice.buf.iter()) {
                 *m += *s;
             }
@@ -1342,6 +1337,30 @@ fn resolve_preset(banks: &[Dx7Bank], bank: usize, preset: usize) -> Option<usize
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn silent_held_phrase_does_not_reset_headroom() {
+        let params=Arc::new(Params::new(&ModBus::new(),&AudioBus::new(),&MixerBus::new()));
+        params.algorithm.store(7,Ordering::Relaxed);
+        params.sustain.set(1.);
+        params.held.lock().unwrap()[0]=true;
+        params.held.lock().unwrap()[1]=true;
+        let mut dsp=new_processor(params.clone());let mut out=[0.;1024];
+        for _ in 0..8 {dsp.process(&mut out,2,48000.);}
+        assert_eq!(dsp.chord_headroom,2);
+        let levels:Vec<_>=params.ops.iter().map(|op|op.level.get()).collect();
+        for op in &params.ops {op.level.set(0.);}
+        dsp.process(&mut out,2,48000.);
+        assert!(out.iter().all(|v|*v==0.));
+        assert_eq!(dsp.chord_headroom,2,"a silent modulation/envelope interval must not reset a held phrase's gain");
+        for (op,level) in params.ops.iter().zip(levels){op.level.set(level);}
+        params.held.lock().unwrap()[1]=false;
+        for _ in 0..200 {dsp.process(&mut out,2,48000.);}
+        assert_eq!(dsp.chord_headroom,2,"releasing another voice must not turn up the sustained note");
+        params.held.lock().unwrap().fill(false);
+        for _ in 0..500 {dsp.process(&mut out,2,48000.);}
+        assert_eq!(dsp.chord_headroom,1,"a finished phrase must release its headroom");
+    }
+
 
     fn new_processor(params: Arc<Params>) -> CascadeProcessor {
         CascadeProcessor { params, voices: std::array::from_fn(|_| FmVoice::new()), mono_buf: Vec::new(), chord_headroom: 1 }
@@ -1774,5 +1793,43 @@ mod imported_patch_regressions {
         let patch = parse_packed_voice(&data);
         assert_eq!(patch.op_ratio[0],7.0);
         assert!((patch.feedback-3.0/7.0).abs()<1e-6);
+    }
+}
+
+#[cfg(test)]
+mod review_audio {
+    use super::*;
+    fn render(name:&str,mute_op5:bool)->(Vec<f32>,String) {
+        let mut app=CascadeApp::new(Arc::new(AtomicF32::new(0.1)),Arc::new(AtomicF32::new(1.)),Arc::new(ModBus::new()),Arc::new(AudioBus::new()),Arc::new(MixerBus::new()));
+        let canonical=|s:&str|s.chars().filter(|c|c.is_ascii_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
+        let index=app.presets.iter().position(|p|canonical(&p.name)==canonical(name)).expect("reported patch must exist in the shipped bank");
+        let actual=app.presets[index].name.clone();app.load_preset(index);
+        if mute_op5{app.params.ops[4].level.set(0.);}
+        app.params.mix_level.set(0.6);
+        let mut dsp=app.audio_processor().unwrap();let mut out=[0.;512];let mut samples=Vec::new();
+        // One note, a second added, that note released, then the whole phrase released.
+        for block in 0..1125 {
+            {let mut held=app.params.held.lock().unwrap();held.fill(false);held[0]=block<750;held[4]=(280..470).contains(&block);}
+            dsp.process(&mut out,2,48000.);
+            assert!(out.iter().all(|s|s.is_finite()&&s.abs()<=0.6001),"{name}: raw DSP output exceeded its fixed 60% mixer level");
+            assert_eq!(app.params.mix_level.get(),0.6,"rendering must never write a new volume setting");
+            samples.extend(out.chunks_exact(2).map(|s|s[0]));
+        }
+        assert!(samples.iter().any(|s|s.abs()>0.0001),"{name} must produce sound");
+        (samples,actual)
+    }
+    #[test]
+    fn reported_patches_remain_bounded_at_sixty_percent_through_note_changes(){for name in ["SteelCans","W.Block1"]{let _=render(name,false);}}
+    #[test]
+    #[ignore="writes optional listening review assets; set PORTAMAX_AUDIO_REVIEW_DIR"]
+    fn export_reported_patch_listening_clips(){
+        let dir=std::path::PathBuf::from(std::env::var("PORTAMAX_AUDIO_REVIEW_DIR").expect("explicit export directory required"));std::fs::create_dir_all(&dir).unwrap();
+        let mut report=String::from("patch,variant,peak,rms,frames,sample_rate,mixer_level\n");
+        for name in ["SteelCans","W.Block1"]{for mute in [false,true]{let (samples,actual)=render(name,mute);let variant=if mute{"op5-muted"}else{"original"};let slug=name.to_ascii_lowercase().replace('.',"-");let path=dir.join(format!("{slug}-{variant}.wav"));
+            let spec=hound::WavSpec{channels:1,sample_rate:48000,bits_per_sample:24,sample_format:hound::SampleFormat::Int};let mut writer=hound::WavWriter::create(path,spec).unwrap();
+            for s in &samples{writer.write_sample((s*8388607.) as i32).unwrap();}writer.finalize().unwrap();
+            let peak=samples.iter().map(|s|s.abs()).fold(0.,f32::max);let rms=(samples.iter().map(|s|(*s as f64).powi(2)).sum::<f64>()/samples.len() as f64).sqrt();
+            report.push_str(&format!("{actual},{variant},{peak:.6},{rms:.6},{},48000,0.6\n",samples.len()));
+        }}std::fs::write(dir.join("measurements.csv"),report).unwrap();
     }
 }

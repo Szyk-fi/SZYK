@@ -25,6 +25,8 @@ mod audio_devices;
 mod clouds_ffi;
 mod controller;
 mod display;
+#[cfg(target_os = "macos")]
+mod gamepad;
 mod led_output;
 mod manifest;
 mod midi_map;
@@ -180,6 +182,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // --- Gamepad input: a PS5 DualSense via Apple's
+    // GameController.framework, feeding the same shared
+    // ControllerState the MIDI listener above does -- see gamepad.rs's
+    // own doc comment for why this is macOS-only and framework-based
+    // rather than the originally-tried `gilrs` (which can't see
+    // first-party controllers on modern macOS at all). ---
+    #[cfg(target_os = "macos")]
+    {
+        let gamepad_controller = Arc::clone(&controller);
+        thread::spawn(move || gamepad::run_gamepad_listener(gamepad_controller));
+    }
+
     // The mixing bus every app's audio processor renders into -- see
     // audio.rs. Every app gets one registered below, once, at startup;
     // it keeps running for the program's life regardless of which app
@@ -199,7 +213,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Owns the live output stream; Settings can request a different
     // device and Os::run's loop (main thread) applies it — see
     // audio_devices.rs for why that has to happen there.
-    let (audio_host, device_state) = AudioHost::open_resilient(Arc::clone(&engine));
+    let (mut audio_host, device_state) = AudioHost::open_resilient(Arc::clone(&engine));
+    audio_host.attach_input(audio_bus.register("Hardware input"));
     let device_state = Arc::new(device_state);
 
     println!("Running. Send MIDI CC1 on any connected port to sweep the synth cutoff.");

@@ -56,7 +56,7 @@ use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Circle, Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -136,7 +136,7 @@ fn dot_speed_mult(d: usize, curve: u32) -> f32 {
     match curve {
         1 => {
             let half = (d / 2) as f32;
-            if d % 2 == 0 {
+            if d.is_multiple_of(2) {
                 1.0 + half * DOT_SPEED_STEP * 0.5
             } else {
                 1.0 + half * DOT_SPEED_STEP * 2.5
@@ -1316,9 +1316,9 @@ impl BloomApp {
             Selection::OuterAngleOffset(_) => "Outer Angle Offset".into(),
             Selection::DotAngleOffset(_) => "Dot Angle Offset".into(),
             Selection::RingRotationOffset(_) => "Ring Rotation".into(),
-            Selection::Scale(_) => "Scale".into(),
+            Selection::Scale(_) => "Main scale".into(),
             Selection::ScaleCustomEdit(_) => "Edit Custom Scale".into(),
-            Selection::Root(_) => "Root".into(),
+            Selection::Root(_) => "Root note".into(),
             Selection::OctaveRange(_) => "Octave Range".into(),
             Selection::OctaveTranspose(_) => "Octave Transpose".into(),
             Selection::MinNote(_) => "Min Note".into(),
@@ -1781,6 +1781,9 @@ impl BloomApp {
 impl App for BloomApp {
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
+    }
+    fn slint_scale_info(&self) -> Option<crate::app::music_scales::ScaleInfo> {
+        match self.visible_rows().get(self.list.selected) { Some(Row::Leaf(Selection::Scale(s) | Selection::Root(s) | Selection::ScaleCustomEdit(s))) => {let p=&self.params.shapes[*s];Some(crate::app::music_scales::ScaleInfo::from_intervals(if p.scale.load(Ordering::Relaxed)==custom_scale_index(){"Custom"}else{SCALE_TYPES[p.scale.load(Ordering::Relaxed) as usize % SCALE_TYPES.len()].0},p.root.load(Ordering::Relaxed) as i32,&resolved_scale_intervals(p)))}, _ => None }
     }
     fn slint_selected(&self) -> usize {
         self.selected_row()

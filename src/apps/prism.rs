@@ -132,7 +132,7 @@ use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -622,8 +622,8 @@ impl Default for PrismCcTargets {
 }
 
 struct Params {
-    input_levels: [AtomicF32; MAX_INPUTS],
-    ext_input_level: [Arc<AtomicF32>; MAX_INPUTS],
+    input_levels: Vec<AtomicF32>,
+    ext_input_level: Vec<Arc<AtomicF32>>,
     preset: AtomicU32,
     time: Arc<AtomicF32>,
     taps: AtomicUsize,
@@ -672,8 +672,8 @@ impl Params {
     fn new_with_cc(modbus: &ModBus, audio_bus: &AudioBus, mixer_bus: &MixerBus, cc: &PrismCcTargets) -> Self {
         let (mix_level, ext_mix_level) = mixer_bus.register("Prism", modbus);
         Self {
-            input_levels: std::array::from_fn(|_| AtomicF32::new(0.0)),
-            ext_input_level: std::array::from_fn(|i| modbus.register(format!("Prism: Input {} Level", i + 1))),
+            input_levels: (0..audio_bus.len().saturating_add(1).max(MAX_INPUTS)).map(|_| AtomicF32::new(0.0)).collect(),
+            ext_input_level: (0..audio_bus.len().saturating_add(1).max(MAX_INPUTS)).map(|i| modbus.register(format!("Prism: Input {} Level", i + 1))).collect(),
             preset: AtomicU32::new(0),
             time: Arc::clone(&cc.time),
             taps: AtomicUsize::new(DEFAULT_TAPS),
@@ -753,7 +753,7 @@ impl PrismApp {
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         match g {
-            0 => (0..self.audio_bus.len().min(MAX_INPUTS)).map(Selection::InputLevel).collect(),
+            0 => (0..self.audio_bus.len().min(self.params.input_levels.len())).map(Selection::InputLevel).collect(),
             1 => vec![
                 Selection::Preset,
                 Selection::Time,
@@ -847,7 +847,7 @@ impl PrismApp {
     fn group_summary(&self, g: usize) -> String {
         match g {
             0 => {
-                let active = (0..self.audio_bus.len().min(MAX_INPUTS)).filter(|&i| self.params.input_levels[i].get() > 0.0).count();
+                let active = (0..self.audio_bus.len().min(self.params.input_levels.len())).filter(|&i| self.params.input_levels[i].get() > 0.0).count();
                 format!("{active} active")
             }
             // Just the preset name -- tap count already has its own
@@ -1589,7 +1589,7 @@ impl AudioProcessor for PrismProcessor {
         // each level additionally modulatable via modbus.rs, same
         // additive pattern as everywhere else. See Clouds for the
         // original version of this.
-        let num_inputs = self.audio_bus.len().min(MAX_INPUTS);
+        let num_inputs = self.audio_bus.len().min(self.params.input_levels.len());
         for i in 0..num_inputs {
             let level = (self.params.input_levels[i].get() + self.params.ext_input_level[i].get()).clamp(0.0, 2.0);
             if level <= 0.0 {
@@ -2148,15 +2148,15 @@ mod tests {
         let modbus = Arc::new(ModBus::new());
         let audio_bus = Arc::new(AudioBus::new());
         let mixer_bus = Arc::new(MixerBus::new());
-        for i in 0..12 {
+        for i in 0..160 {
             audio_bus.register(format!("source-{i}"));
         }
         let app = PrismApp::new(sensitivity, nav_speed, modbus, audio_bus, mixer_bus);
 
-        // 12 test sources + this app's own registration of itself = 13.
+        // 160 test sources + this app's own registration of itself = 161.
         let leaves = app.group_leaves(0);
-        assert_eq!(leaves.len(), 13, "expected all 13 registered sources (12 test ones + itself) to be selectable inputs, got {}", leaves.len());
-        assert!(matches!(leaves[12], Selection::InputLevel(12)), "the last source (past the old cap of 8) must still be reachable");
+        assert_eq!(leaves.len(), 161, "expected all 161 registered sources (160 test ones + itself) to be selectable inputs, got {}", leaves.len());
+        assert!(matches!(leaves[160], Selection::InputLevel(160)), "the last source (past the old cap of 128) must still be reachable");
     }
 
     fn new_processor(params: Arc<Params>, audio_bus: Arc<AudioBus>) -> PrismProcessor {

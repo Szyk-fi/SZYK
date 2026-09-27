@@ -1,32 +1,13 @@
-//! 5 real spectral/signal analyzers over a self-generated demo signal.
-//!
-//! Honest limitation: there's no app-linking yet (see main.rs's module
-//! doc for the "4 linked apps" direction), and no microphone input in
-//! this build, so there's nothing external to analyze. This app
-//! generates its own signal (sine/noise/sweep, picked from the list) and
-//! sends it to *both* the speakers and the analyzers -- so what you see
-//! is what you hear, and once app-linking exists this is the natural
-//! place to swap the demo oscillator for "whatever the linked app is
-//! playing."
-//!
-//! Modes (list item "Mode"):
-//!   0. Spectrum   -- FFT magnitude bars (linear frequency bins, dB scale)
-//!   1. Oscilloscope -- raw waveform trace
-//!   2. Spectrogram -- scrolling time/frequency heatmap (reuses the same FFT)
-//!   3. Level meter -- peak (with hold) + RMS, in dB
-//!   4. Pitch detect -- autocorrelation fundamental frequency -> note name
-//!
-//! Control surface matches Plaits' new pattern: knob1 navigates the
-//! (short) settings list, knob2 edits the selected item.
-
+//! Shared-bus signal analysis, with an explicit internal demonstration source.
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
+use crate::audio_bus::{AudioBus,NO_SOURCE,cycle_source};
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::paramlist::ParamList;
 use crate::util::{note_name, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_8X16};
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
@@ -34,7 +15,7 @@ use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 const FFT_SIZE: usize = 1024;
@@ -51,6 +32,8 @@ const MODE_NAMES: [&str; 5] = ["Spectrum", "Oscilloscope", "Spectrogram", "Level
 const DEMO_NAMES: [&str; 3] = ["Sine", "Noise", "Sweep"];
 
 struct Shared {
+    source: AtomicUsize,
+    monitor: AtomicBool,
     mode: AtomicU32,
     demo_kind: AtomicU32,
     frequency: AtomicF32,
@@ -65,6 +48,8 @@ struct Shared {
 impl Shared {
     fn new() -> Self {
         Self {
+            source: AtomicUsize::new(NO_SOURCE),
+            monitor: AtomicBool::new(true),
             mode: AtomicU32::new(0),
             demo_kind: AtomicU32::new(0),
             frequency: AtomicF32::new(220.0),
@@ -82,18 +67,24 @@ enum Selection {
     Mode,
     DemoKind,
     Frequency,
+    Source,
+    Monitor,
 }
 
 fn selection_for(index: usize) -> Selection {
     match index {
         0 => Selection::Mode,
         1 => Selection::DemoKind,
-        _ => Selection::Frequency,
+        2 => Selection::Frequency,
+        3 => Selection::Source,
+        _ => Selection::Monitor,
     }
 }
-const NUM_ROWS: usize = 3;
+const NUM_ROWS: usize = 5;
 
 pub struct AnalyzerApp {
+    bus_out:Option<Arc<Mutex<Vec<f32>>>>,
+    bus: Arc<AudioBus>,
     shared: Arc<Shared>,
     list: ParamList,
 }
@@ -112,15 +103,18 @@ const ANALYZER_DIM: Rgb565 = Rgb565::new(9, 22, 12);
 impl AnalyzerApp {
     pub fn new() -> Self {
         Self {
+            bus_out:None,
+            bus: Arc::new(AudioBus::new()),
             shared: Arc::new(Shared::new()),
             list: ParamList::new(),
         }
     }
 
-    /// Real `(name, value)` rows for this flat 3-row list -- exposed
-    /// for an alternate renderer (a live Slint screen) instead of
-    /// drawn. No groups here (unlike every other app), so there's no
-    /// `is_group`/windowing to do -- always all 3 rows.
+    pub fn with_audio_bus(bus:Arc<AudioBus>) -> Self {Self::with_named_bus(bus,"Analyzer")}
+    pub(crate) fn with_named_bus(bus:Arc<AudioBus>,name:&str)->Self {let mut app=Self::new();app.bus_out=Some(bus.register(name));app.bus=bus;app.shared.monitor.store(false,Ordering::Relaxed);app}
+    pub(crate) fn set_monitor(&self,on:bool){self.shared.monitor.store(on,Ordering::Relaxed);}
+
+    /// Flat source, analysis and monitor controls for alternate renderers.
     pub(crate) fn display_rows(&self) -> Vec<(String, String)> {
         let mode = self.shared.mode.load(Ordering::Relaxed) as usize % MODE_NAMES.len();
         let demo = self.shared.demo_kind.load(Ordering::Relaxed) as usize % DEMO_NAMES.len();
@@ -128,6 +122,8 @@ impl AnalyzerApp {
             ("Mode".to_string(), MODE_NAMES[mode].to_string()),
             ("Demo Signal".to_string(), DEMO_NAMES[demo].to_string()),
             ("Frequency".to_string(), format!("{:.0} Hz", self.shared.frequency.get())),
+            ("Source".into(), if self.shared.source.load(Ordering::Relaxed)==NO_SOURCE {"Demo (internal)".into()} else {self.bus.source_name(self.shared.source.load(Ordering::Relaxed))}),
+            ("Monitor".into(), if self.shared.monitor.load(Ordering::Relaxed){"On"}else{"Off"}.into()),
         ]
     }
 
@@ -166,6 +162,7 @@ impl AnalyzerApp {
 }
 
 impl App for AnalyzerApp {
+    fn needs_background_audio(&self)->bool {self.shared.monitor.load(Ordering::Relaxed)}
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows().into_iter().map(|(n, v)| (n, v, false)).collect()
     }
@@ -237,6 +234,8 @@ impl App for AnalyzerApp {
                     let next = (cur + input.knob2).rem_euclid(DEMO_NAMES.len() as i32);
                     self.shared.demo_kind.store(next as u32, Ordering::Relaxed);
                 }
+                Selection::Source => {let mut next=cycle_source(self.shared.source.load(Ordering::Relaxed),input.knob2,self.bus.len());while self.bus.source_name(next)=="Analyzer" || self.bus.source_name(next)=="Visualizer" {next=cycle_source(next,input.knob2.signum(),self.bus.len());}self.shared.source.store(next,Ordering::Relaxed);},
+                Selection::Monitor => self.set_monitor(input.knob2>0),
                 Selection::Frequency => {
                     let next = (self.shared.frequency.get() * 1.05f32.powi(input.knob2)).clamp(20.0, 8000.0);
                     self.shared.frequency.set(next);
@@ -245,6 +244,8 @@ impl App for AnalyzerApp {
         }
         if input.knob2_press {
             match selection_for(self.list.selected) {
+                Selection::Source => self.shared.source.store(NO_SOURCE,Ordering::Relaxed),
+                Selection::Monitor => self.set_monitor(false),
                 Selection::Frequency => self.shared.frequency.set(220.0),
                 Selection::Mode => self.shared.mode.store(0, Ordering::Relaxed),
                 Selection::DemoKind => self.shared.demo_kind.store(0, Ordering::Relaxed),
@@ -256,6 +257,8 @@ impl App for AnalyzerApp {
         let mut planner = FftPlanner::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
         Some(Box::new(AnalyzerProcessor {
+            bus:self.bus.clone(),
+            bus_out:self.bus_out.clone(),
             shared: Arc::clone(&self.shared),
             fft,
             history: VecDeque::with_capacity(FFT_SIZE),
@@ -433,6 +436,8 @@ fn draw_line(fb: &mut FrameBuffer, p0: Point, p1: Point, color: Rgb565) {
 }
 
 struct AnalyzerProcessor {
+    bus_out:Option<Arc<Mutex<Vec<f32>>>>,
+    bus:Arc<AudioBus>,
     shared: Arc<Shared>,
     fft: Arc<dyn Fft<f32>>,
     history: VecDeque<f32>,
@@ -521,8 +526,11 @@ impl AudioProcessor for AnalyzerProcessor {
         let demo_kind = self.shared.demo_kind.load(Ordering::Relaxed);
         let base_freq = self.shared.frequency.get();
 
+        if channels==0 {return;}
         let frames = buffer.len() / channels;
         let mut mono = vec![0.0f32; frames];
+        let source=self.shared.source.load(Ordering::Relaxed);
+        if source!=NO_SOURCE {if let Some(input)=self.bus.get(source){if let Ok(input)=input.try_lock(){for (out,sample) in mono.iter_mut().zip(input.iter()){*out=if sample.is_finite(){*sample}else{0.};}}}} else {
         for sample in mono.iter_mut() {
             let value = match demo_kind {
                 1 => self.next_rand() * 0.3,
@@ -542,9 +550,11 @@ impl AudioProcessor for AnalyzerProcessor {
             *sample = value;
         }
 
+        }
+        if let Some(bus)=&self.bus_out {if let Ok(mut bus)=bus.try_lock(){bus.clear();bus.extend_from_slice(&mono);}}
         for (frame, sample) in buffer.chunks_mut(channels).zip(mono.iter()) {
             for out in frame.iter_mut() {
-                *out = *sample;
+                *out = if self.shared.monitor.load(Ordering::Relaxed){*sample}else{0.};
             }
         }
 
@@ -578,3 +588,10 @@ impl AudioProcessor for AnalyzerProcessor {
         self.analyze(sample_rate);
     }
 }
+
+#[cfg(test)] mod routing_tests {
+ use super::*;
+ #[test] fn bus_input_is_measured_without_monitor_or_demo_leak(){let bus=Arc::new(AudioBus::new());let signal=bus.register("Bloom");*signal.lock().unwrap()=vec![0.25;512];let mut app=AnalyzerApp::with_audio_bus(bus);app.shared.source.store(0,Ordering::Relaxed);let mut dsp=app.audio_processor().unwrap();let mut out=[0.;1024];dsp.process(&mut out,2,48000.);assert!(out.iter().all(|x|*x==0.));assert!(app.waveform_samples().iter().any(|x|*x==0.25));signal.lock().unwrap().fill(0.);for _ in 0..3{dsp.process(&mut out,2,48000.);}assert!(app.waveform_samples().iter().all(|x|*x==0.));}
+}
+
+#[cfg(test)] mod monitoring_lifecycle_tests {use super::*;#[test]fn only_explicit_monitoring_keeps_analyzer_awake(){let app=AnalyzerApp::with_audio_bus(Arc::new(AudioBus::new()));assert!(!app.needs_background_audio());app.set_monitor(true);assert!(app.needs_background_audio());app.set_monitor(false);assert!(!app.needs_background_audio());}}

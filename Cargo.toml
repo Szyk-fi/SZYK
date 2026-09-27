@@ -38,11 +38,92 @@ cpal = "0.15"
 embedded-graphics = "0.8.2"
 hound = "3.5.1"
 midir = "0.10"
+# Real gamepad input. `gilrs`'s macOS backend uses the legacy raw
+# IOHIDManager API, which silently fails to see first-party controllers
+# like the DualSense on modern macOS -- Apple routes those through
+# GameController.framework instead (see gamepad.rs's own doc comment).
+# Kept for reference/possible non-Apple-platform use later; the actual
+# macOS path is objc2-game-controller below.
+gilrs = "0.10"
+
 minifb = "0.28.0"
 png = "0.17"
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"
+# The NES core behind the Retro app (src/apps/retro.rs) -- a real, actively
+# maintained, pure-Rust emulator library (30+ mappers, ~90% of licensed
+# games), statically linked into this binary rather than dynamically loaded
+# at runtime. That's a deliberate architecture choice, not a shortcut: a
+# Libretro-style "dlopen a .so core" frontend depends on a dynamic linker
+# and a real OS, neither of which the actual target hardware (an STM32N6
+# microcontroller -- see main.rs's own doc comment) has. Picking a system
+# at *build* time and linking it straight into the firmware image is the
+# only version of "pluggable cores" that can ever reach real hardware; see
+# retro.rs's own module doc comment for the rest of that reasoning.
+tetanes-core = "0.17"
+# The SNES core -- same "real, vendored, statically-linked, pure Rust"
+# reasoning as `tetanes-core` above, and the same static-link
+# architecture: both cores are compiled directly into this one binary,
+# selected at *runtime* by the Retro app's own Console menu row (a
+# plain match/enum, no dynamic loading at all -- see retro.rs's module
+# doc comment for why that distinction is what makes this still
+# translate to firmware).
+super-sabicom = "0.2"
+meru-interface = "0.3"
+# The arcade core -- real MAME itself is a multi-million-line C++
+# codebase with no realistic path to vendoring or to the STM32N6 (see
+# the "why not Libretro" reasoning above; MAME needs a real OS, a
+# dynamic driver-loading model, and desktop-class RAM regardless).
+# `phosphor-emulator` is a genuinely different thing: a from-scratch,
+# actively developed pure-Rust re-implementation of dozens of specific
+# classic arcade boards (Pac-Man, Galaga, Donkey Kong, Dig Dug, Frogger,
+# Joust, Robotron, Defender/Williams hardware, Asteroids, Tempest,
+# Xevious, and more -- see retro.rs's own module doc comment), each a
+# small, well-documented, real 8-bit-era board, exactly the same "one
+# well-defined system, not a sprawling generalist emulator" scope this
+# project already applied to NES/SNES. Not on crates.io -- a real,
+# public GitHub project instead, added as a git dependency the same way
+# Cargo supports any other.
+phosphor-core = { git = "https://github.com/patsoffice/phosphor-emulator" }
+phosphor-machines = { git = "https://github.com/patsoffice/phosphor-emulator" }
+# The Game Boy / Game Boy Color core -- same "real, vendored,
+# statically-linked" reasoning as the others. A clean, mature, pull-
+# based library (no GUI deps pulled in unless its own "gui" feature is
+# explicitly requested, which this project never does) -- real
+# precedent exists for GB-class hardware on genuinely MCU-class chips,
+# a meaningfully better sign for the STM32N6 than either SNES or the
+# heavier arcade boards got.
+rboy = { git = "https://github.com/mvdnes/rboy" }
+symphonia = { version = "0.5.5", default-features = false, features = ["aac", "alac", "flac", "mp3", "vorbis", "ogg", "isomp4", "pcm", "wav", "aiff"] }
+# The Neo Geo core -- unlike NES/SNES/Arcade/Game Boy, no complete,
+# vendorable system emulator exists for this hardware (checked
+# crates.io and GitHub; the only close match, `asobou`, is a
+# Libretro-style `libloading` frontend, the same dynamic-core-loading
+# architecture already ruled out for this project's real target
+# hardware). What's real and vendorable here are the two CPU cores:
+# `m68k` (the main 68000, MIT, stable Rust, an actively developed and
+# well-documented `AddressBus`-trait design) and `z80` (the sound CPU,
+# MIT) -- everything else (the LSPC video/sprite controller, YM2610
+# sound chip, memory map, bankswitching) is hand-written in
+# `src/apps/neogeo_core.rs` against public Neo Geo hardware
+# documentation, since no existing Rust implementation of that
+# hardware exists to borrow. This is a deliberate exception to this
+# project's usual "vendor a real, proven implementation" rule -- there
+# is nothing to vendor for the system-level hardware, only for the two
+# CPUs inside it.
+m68k = "0.14"
+z80 = "2.0"
+
+
+# GameController.framework bindings -- the correct, native macOS API
+# for DualSense/DualShock4/Xbox-class controllers (see gamepad.rs's own
+# doc comment for why gilrs's approach doesn't see them). Apple-only,
+# so this is a target-specific dependency rather than a normal one.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-game-controller = "0.3"
 
 [build-dependencies]
 cc = "1.4.6"
