@@ -394,6 +394,21 @@ pub struct NeoGeoBus {
     /// memory map, same reasoning as `s1_rom`.
     odd_c_rom: Vec<u8>,
     even_c_rom: Vec<u8>,
+    /// REG_P1CNT ($300000) live value: bits 0-7 = Up/Down/Left/Right/
+    /// A/B/C/D, active-low (0 = pressed), per
+    /// <https://wiki.neogeodev.org/index.php?title=Joypad>. Idle is
+    /// 0xFF. Set by `set_p1_input`, called from `retro.rs`'s
+    /// `apply_pad_input`.
+    p1_input: u8,
+    /// REG_STATUS_B ($380000) live value: bit0=Start P1, bit1=Select
+    /// (coin) P1, bit2=Start P2, bit3=Select P2, all active-low, per
+    /// <https://wiki.neogeodev.org/index.php?title=Memory_mapped_registers>.
+    /// Bits 4-7 are fixed system/cabinet config (AES/MVS, memory card
+    /// presence/write-protect), not real per-frame input; this core has
+    /// neither a real cabinet DIP bank nor a real memory card, so they
+    /// stay idle (1) along with the button bits rather than asserting
+    /// an arbitrary specific configuration.
+    status_b: u8,
 }
 
 impl NeoGeoBus {
@@ -426,7 +441,34 @@ impl NeoGeoBus {
             s1_rom,
             odd_c_rom,
             even_c_rom,
+            p1_input: 0xFF,
+            status_b: 0xFF,
         }
+    }
+
+    /// Real, live P1 joypad + Start/Select state, active-low. `buttons`
+    /// is `[Up, Down, Left, Right, A, B, C, D]`; `start`/`select` are
+    /// separate since they land in a different real register
+    /// (REG_STATUS_B, not REG_P1CNT). Called from `retro.rs`'s
+    /// `apply_pad_input` with the app's own 4x4 pad grid mapped onto
+    /// real Neo Geo buttons; replaces the previous always-idle
+    /// placeholder for $300000/$380000.
+    pub fn set_p1_input(&mut self, buttons: [bool; 8], start: bool, select: bool) {
+        let mut p1 = 0xFFu8;
+        for (bit, pressed) in buttons.into_iter().enumerate() {
+            if pressed {
+                p1 &= !(1 << bit);
+            }
+        }
+        self.p1_input = p1;
+        let mut status_b = self.status_b | 0b0000_0011;
+        if start {
+            status_b &= !0b0000_0001;
+        }
+        if select {
+            status_b &= !0b0000_0010;
+        }
+        self.status_b = status_b;
     }
 
     /// Renders the fix/text layer's full 40x32-tile tilemap (320x256
@@ -669,10 +711,13 @@ impl AddressBus for NeoGeoBus {
             0x200000..=0x2FFFFF => self.read_p2_banked(address - 0x200000),
             // REG_SOUND: the Z80's last reply byte.
             0x320000 => self.sound_latch.reply.get(),
-            // Input/DIP/system registers: real controls aren't wired
-            // up to this core yet (see this struct's own doc comment),
-            // so every one of these reads back as fully idle. All of
-            // them are active-low per
+            // REG_P1CNT: real, live joypad state -- see `set_p1_input`.
+            0x300000 | 0x300001 | 0x300081 => self.p1_input,
+            // REG_STATUS_B: real, live Start/Select + fixed system
+            // config bits -- see `set_p1_input`.
+            0x380000 | 0x380001 => self.status_b,
+            // Remaining DIP/system registers: not modeled yet, so read
+            // back as fully idle. Active-low per
             // <https://wiki.neogeodev.org/index.php?title=Joypad> (a
             // bit reads 1 when its input is NOT active), so idle is
             // 0xFF, not 0 -- returning 0 here would look like every
@@ -680,7 +725,7 @@ impl AddressBus for NeoGeoBus {
             // once, which is exactly backwards and would send real
             // cartridge code down input-handling paths it shouldn't
             // take.
-            0x300000 | 0x300001 | 0x300081 | 0x320001 | 0x340000 | 0x380000 | 0x380001 => 0xFF,
+            0x320001 | 0x340000 => 0xFF,
             _ => 0,
         }
     }
@@ -1514,15 +1559,21 @@ mod tests {
     /// Input/DIP/system registers are active-low (a bit reads 1 when
     /// its input is NOT asserted, per
     /// <https://wiki.neogeodev.org/index.php?title=Joypad>), so with no
-    /// real controller wired up yet, every one of them must read back
-    /// fully idle (0xFF) -- not 0, which would look like every button
-    /// held and every coin slot inserted simultaneously and could send
-    /// real cartridge code down input-handling paths it shouldn't take.
+    /// button pressed, every one of them must read back with all
+    /// per-frame input bits idle (1) -- not 0, which would look like
+    /// every button held and every coin slot inserted simultaneously
+    /// and could send real cartridge code down input-handling paths it
+    /// shouldn't take. $300000/$380000 are real, live registers now
+    /// (see `set_p1_input`), so their idle value isn't necessarily
+    /// 0xFF -- $380000's top bits are fixed system config, not input.
     #[test]
     fn unwired_input_registers_read_idle_not_all_buttons_held() {
         let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
-        for addr in [0x300000u32, 0x300001, 0x300081, 0x320001, 0x340000, 0x380000, 0x380001] {
+        for addr in [0x300000u32, 0x300001, 0x300081, 0x380000, 0x380001] {
             assert_eq!(machine.bus.read_byte(addr), 0xFF, "register 0x{addr:06X} must read idle (0xFF), not 0");
+        }
+        for addr in [0x320001u32, 0x340000] {
+            assert_eq!(machine.bus.read_byte(addr), 0xFF, "unmodeled register 0x{addr:06X} must read idle (0xFF), not 0");
         }
     }
 
@@ -2291,6 +2342,30 @@ mod tests {
         // the full BC pair lands in `addr`'s high/low bytes respectively.
         bus.port_in((3u16 << 8) | 0x0B);
         assert_eq!(bus.read_byte(0x8000), 0xBB, "reading port 0x0B with bank 3 in the high byte must switch the $8000 window to M1 ROM bank 3");
+    }
+
+    /// `set_p1_input` must produce real, active-low REG_P1CNT/
+    /// REG_STATUS_B byte values, per
+    /// <https://wiki.neogeodev.org/index.php?title=Joypad> and
+    /// <https://wiki.neogeodev.org/index.php?title=Memory_mapped_registers>:
+    /// idle is all-1s, and each pressed button clears only its own bit.
+    #[test]
+    fn set_p1_input_produces_real_active_low_register_values() {
+        let mut bus = NeoGeoBus::new(Vec::new(), Vec::new(), Vec::new(), &[], SoundLatch::new(), Protection::None);
+        assert_eq!(bus.read_byte(0x300000), 0xFF, "idle P1CNT must read all-1s");
+        assert_eq!(bus.read_byte(0x380000) & 0b11, 0b11, "idle Start/Select bits must read 1 (not pressed)");
+
+        bus.set_p1_input([true, false, false, false, false, false, false, false], false, false);
+        assert_eq!(bus.read_byte(0x300000), 0b1111_1110, "pressing Up must clear only bit 0");
+
+        bus.set_p1_input([false, false, false, false, false, false, false, true], false, false);
+        assert_eq!(bus.read_byte(0x300000), 0b0111_1111, "pressing D must clear only bit 7");
+
+        bus.set_p1_input([false; 8], true, false);
+        assert_eq!(bus.read_byte(0x380000) & 0b11, 0b10, "pressing Start must clear only bit 0 of STATUS_B, leaving Select idle");
+
+        bus.set_p1_input([false; 8], false, true);
+        assert_eq!(bus.read_byte(0x380000) & 0b11, 0b01, "pressing Select must clear only bit 1 of STATUS_B, leaving Start idle");
     }
 
     /// `sma_mslug3_bank_base`'s table lookup, checked against values

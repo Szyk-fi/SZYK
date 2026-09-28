@@ -1016,13 +1016,18 @@ impl RetroApp {
                 }
                 self.gb_prev_grid = input.grid;
             }
-            // Controller input isn't wired into the Neo Geo core yet --
-            // `neogeo_core::NeoGeoBus`'s input registers always read
-            // fully idle regardless of what's pressed here (see its
-            // own doc comment on why: no real controller reaches it
-            // yet, deliberately, so idle stays a well-defined "nothing
-            // pressed" rather than accidentally garbled bits).
-            Deck::NeoGeo(_) => {}
+            // Real Neo Geo joypad (A/B/C/D + Start/Select), mapped onto
+            // the grid following the same slot convention as the other
+            // consoles above (0-3=D-Pad, 4-5=primary face buttons,
+            // 6-7=Select/Start); pads 8-9 cover the Neo Geo's extra C/D
+            // face buttons the other consoles don't have. See
+            // `neogeo_core::NeoGeoBus::set_p1_input`'s own doc comment
+            // for the real REG_P1CNT/REG_STATUS_B bit layouts this
+            // feeds.
+            Deck::NeoGeo(machine) => {
+                let g = &input.grid;
+                machine.bus.set_p1_input([g[0], g[1], g[2], g[3], g[5], g[4], g[8], g[9]], g[7], g[6]);
+            }
         }
     }
 
