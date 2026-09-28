@@ -36,6 +36,15 @@
 //! positions (A=bottom, B=right, X=left, Y=top) regardless of brand,
 //! which is exactly Cross/Circle/Square/Triangle on a PlayStation pad.
 //!
+//! Menu navigation (browsing the OS/app list up and down, and diving
+//! into the highlighted row) deliberately does *not* use the left
+//! stick at all -- this controller's left stick has real drift, so it
+//! was dropped entirely rather than fighting spurious ticks. The right
+//! stick took over browsing (with up/down reversed from the original
+//! mapping, per explicit request), and D-Pad Left/Right became an
+//! edge-triggered alternative way to "dive" into the highlighted row
+//! (see `apply_gamepad_state`'s own comments for the specifics).
+//!
 //! macOS-only, deliberately (`GameController.framework` doesn't exist
 //! elsewhere) -- `main.rs` only spawns this listener under `#[cfg(target_os
 //! = "macos")]`.
@@ -63,8 +72,9 @@ struct EdgeState {
     options: bool,
     left_trigger: bool,
     right_trigger: bool,
+    dpad_left: bool,
+    dpad_right: bool,
     last_knob1_tick: Option<std::time::Instant>,
-    last_knob2_tick: Option<std::time::Instant>,
 }
 
 /// Runs forever on its own thread (spawned once from `main.rs`,
@@ -90,7 +100,6 @@ fn run_gamepad_session(controller: &Arc<ControllerState>) {
     println!("gamepad: polling GameController.framework (macOS native) for a connected controller");
     let mut was_connected = false;
     let mut edges = EdgeState::default();
-    let (mut stick1_x, mut stick1_y) = (0.0f32, 0.0f32);
     let (mut stick2_x, mut stick2_y) = (0.0f32, 0.0f32);
 
     loop {
@@ -102,7 +111,7 @@ fn run_gamepad_session(controller: &Arc<ControllerState>) {
         }
 
         if let Some(gamepad) = gamepad {
-            unsafe { apply_gamepad_state(controller, &gamepad, &mut edges, &mut stick1_x, &mut stick1_y, &mut stick2_x, &mut stick2_y) };
+            unsafe { apply_gamepad_state(controller, &gamepad, &mut edges, &mut stick2_x, &mut stick2_y) };
         }
 
         std::thread::sleep(Duration::from_millis(8));
@@ -127,15 +136,7 @@ unsafe fn is_down(button: &GCControllerButtonInput) -> bool {
     button.isPressed()
 }
 
-unsafe fn apply_gamepad_state(
-    controller: &ControllerState,
-    gamepad: &GCExtendedGamepad,
-    edges: &mut EdgeState,
-    stick1_x: &mut f32,
-    stick1_y: &mut f32,
-    stick2_x: &mut f32,
-    stick2_y: &mut f32,
-) {
+unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtendedGamepad, edges: &mut EdgeState, stick2_x: &mut f32, stick2_y: &mut f32) {
     // Grid pads: level state, mirrors real held-down semantics (same
     // as the keyboard's own grid keys) -- this is what makes the
     // D-Pad/face-buttons/shoulders line up with `apps/retro.rs`'s own
@@ -144,8 +145,22 @@ unsafe fn apply_gamepad_state(
     let dpad: Retained<GCControllerDirectionPad> = gamepad.dpad();
     controller.grid[0].store(is_down(&dpad.up()), Ordering::Relaxed);
     controller.grid[1].store(is_down(&dpad.down()), Ordering::Relaxed);
-    controller.grid[2].store(is_down(&dpad.left()), Ordering::Relaxed);
-    controller.grid[3].store(is_down(&dpad.right()), Ordering::Relaxed);
+    let dpad_left_down = is_down(&dpad.left());
+    let dpad_right_down = is_down(&dpad.right());
+    controller.grid[2].store(dpad_left_down, Ordering::Relaxed);
+    controller.grid[3].store(dpad_right_down, Ordering::Relaxed);
+    // D-Pad Left/Right double as "menu dive" (select/expand the
+    // highlighted row) -- an edge-triggered alternative to clicking the
+    // nav stick, since a drifting left stick (see below) makes that
+    // stick's own click awkward to land precisely.
+    if dpad_left_down && !edges.dpad_left {
+        controller.set_knob1_press();
+    }
+    edges.dpad_left = dpad_left_down;
+    if dpad_right_down && !edges.dpad_right {
+        controller.set_knob1_press();
+    }
+    edges.dpad_right = dpad_right_down;
     controller.grid[4].store(is_down(&gamepad.buttonA()), Ordering::Relaxed); // Cross -> B
     controller.grid[5].store(is_down(&gamepad.buttonB()), Ordering::Relaxed); // Circle -> A
     controller.grid[6].store(is_down(&gamepad.buttonX()), Ordering::Relaxed); // Square -> Y
@@ -189,27 +204,26 @@ unsafe fn apply_gamepad_state(
     }
     edges.right_trigger = right_trigger_down;
 
-    // Sticks: left browses the menu (knob1), right edits the selected
-    // value (knob2) -- same convention/deadzone/repeat-rate the
-    // original `gilrs`-based mapping used.
-    let left_stick = gamepad.leftThumbstick();
-    *stick1_x = left_stick.xAxis().value();
-    *stick1_y = left_stick.yAxis().value();
+    // The left stick is deliberately not read at all -- disabled due to
+    // real drift on this controller (spurious nav ticks with the stick
+    // sitting still). The right stick takes over its old job (browsing
+    // the menu via knob1) instead of its own old job (editing the
+    // selected value via knob2), so it's the only stick driving
+    // navigation now; there's no second stick left to also carry knob2,
+    // so that role has no analog gamepad source any more (still
+    // reachable via the on-screen/keyboard/MIDI paths).
     let right_stick = gamepad.rightThumbstick();
     *stick2_x = right_stick.xAxis().value();
     *stick2_y = right_stick.yAxis().value();
 
     let now = std::time::Instant::now();
     let ready1 = edges.last_knob1_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
-    if (stick1_x.abs() > STICK_DEADZONE || stick1_y.abs() > STICK_DEADZONE) && ready1 {
-        let delta = if stick1_y.abs() > stick1_x.abs() { -stick1_y.signum() as i32 } else { stick1_x.signum() as i32 };
+    if (stick2_x.abs() > STICK_DEADZONE || stick2_y.abs() > STICK_DEADZONE) && ready1 {
+        // Reversed from the original mapping (`-y.signum()`) per
+        // explicit request: pushing the stick the way that used to
+        // navigate up now navigates down, and vice versa.
+        let delta = if stick2_y.abs() > stick2_x.abs() { stick2_y.signum() as i32 } else { stick2_x.signum() as i32 };
         controller.add_knob1_delta(delta);
         edges.last_knob1_tick = Some(now);
-    }
-    let ready2 = edges.last_knob2_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
-    if (stick2_x.abs() > STICK_DEADZONE || stick2_y.abs() > STICK_DEADZONE) && ready2 {
-        let delta = if stick2_x.abs() > stick2_y.abs() { stick2_x.signum() as i32 } else { stick2_y.signum() as i32 };
-        controller.add_knob2_delta(delta);
-        edges.last_knob2_tick = Some(now);
     }
 }

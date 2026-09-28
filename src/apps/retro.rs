@@ -2089,6 +2089,56 @@ mod tests {
         }
     }
 
+    /// Not part of the normal test suite (`#[ignore]`d): dumps an
+    /// actual rendered frame from a real, running Metal Slug 3 session
+    /// to disk as visual proof the video pipeline (fix layer + sprites
+    /// + CMC42-decrypted graphics + real input) produces a real image,
+    /// not just "doesn't crash". Run explicitly with
+    /// `cargo test --ignored dump_a_real_neogeo_frame -- --nocapture`
+    /// and open the path it prints.
+    #[test]
+    #[ignore]
+    fn dump_a_real_neogeo_frame_to_disk_if_a_cartridge_is_present() {
+        let mut app = new_app();
+        app.console = Console::NeoGeo;
+        app.rescan_roms();
+        if app.roms.is_empty() {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        }
+        app.load_selected_rom();
+        assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+        // Tap Start every so often (real pad 7, per `apply_pad_input`'s
+        // Neo Geo mapping) to push past any attract-mode/title screen
+        // and into real gameplay, same as a player would.
+        for frame in 0..900 {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            let press_start = frame % 60 == 0;
+            app.tick(&Input { grid: std::array::from_fn(|pad| pad == 7 && press_start), ..Default::default() });
+            if app.deck.is_none() {
+                eprintln!("deck stopped early at frame {frame}: {}", app.status);
+                break;
+            }
+            if frame % 100 == 0 {
+                if let Some((w, h, rgba)) = &app.last_frame {
+                    let non_black = rgba.chunks_exact(4).filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count();
+                    eprintln!("frame {frame}: {w}x{h}, {non_black} non-black pixels of {}", w * h);
+                }
+            }
+        }
+
+        let (w, h, rgba) = app.last_frame.clone().expect("a real cartridge must have produced at least one frame");
+        let out_path = std::env::temp_dir().join("neogeo_live_frame.png");
+        let file = std::fs::File::create(&out_path).expect("create output file");
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("write PNG header");
+        writer.write_image_data(&rgba).expect("write PNG data");
+        eprintln!("wrote a real running Metal Slug 3 frame to {}", out_path.display());
+    }
+
     /// No real arcade ROM sets ship with this repo (same legal reasons
     /// as NES/SNES), but `phosphor_machines`' own `MachineEntry::
     /// create_bare` builds a real, fully wired machine with zero-filled
