@@ -221,16 +221,40 @@ enum Console {
     /// are real, vendored implementations, but the memory map and
     /// video are hand-written against public hardware documentation.
     /// Metal Slug 3's real NEO-SMA protection (68000 decryption and
-    /// bankswitching, verified against a real 100,000,000-instruction
-    /// run with no CPU fault) and its separate CMC42 graphics-
-    /// decryption chip (sprite/fix-layer C-ROM data) are both
-    /// implemented, reimplemented from MAME's own source, alongside
-    /// real sprite auto-animation. CMC42's exact left/right sprite
+    /// bankswitching) and its separate CMC42 graphics-decryption chip
+    /// (sprite/fix-layer C-ROM data) are both implemented, reimplemented
+    /// from MAME's own source -- but `detect_neogeo_protection` only
+    /// applies them to a P2 ROM that's actually the real, full-size
+    /// (8MB) encrypted layout; a smaller P2 is treated as an
+    /// already-decrypted dump (confirmed against this repo's own real
+    /// cartridge folder: its file timestamps predate MAME's ~2008
+    /// public disclosure of NEO-SMA, and its raw, only-word-swapped P1
+    /// already carries the documented real SSP ($0010F300) and a
+    /// legitimate entry-point jump, with no decryption needed at all).
+    ///
+    /// Sprite auto-animation is real. CMC42's exact left/right sprite
     /// orientation is still flagged unverified in `neogeo_core.rs`.
     /// Most other real cartridges' own protection chips aren't
     /// implemented at all -- those will surface the same "emulation
-    /// error, reload the
-    /// ROM" this app already shows for any other core's crash.
+    /// error, reload the ROM" this app already shows for any other
+    /// core's crash.
+    ///
+    /// **No video output yet, even with the right protection applied**:
+    /// a real, running Metal Slug 3 cartridge's own code makes a
+    /// legitimate call into $C00000+ (the fixed Neo Geo BIOS ROM
+    /// window real cartridges rely on for standard system services --
+    /// confirmed by tracing real PC values frame by frame, showing
+    /// clean, sane control flow right up until that jump). This core
+    /// has no BIOS ROM loaded there at all (a deliberate simplification
+    /// noted in `neogeo_core.rs`'s own doc comment, for booting straight
+    /// into cartridge code), so the call reads back zeroed memory and
+    /// the CPU runs off into it as bogus "code" instead of returning
+    /// -- explaining a game that runs 30,000,000+ real instructions
+    /// without ever writing to VRAM or palette RAM. Fixing this needs
+    /// either a real Neo Geo BIOS ROM dump (copyrighted system
+    /// firmware, distinct from any game cartridge -- not something to
+    /// source without the user providing one) or high-level emulation
+    /// of the specific BIOS calls real cartridges make.
     NeoGeo,
 }
 const CONSOLE_NAMES: [&str; 5] = ["NES", "SNES", "Arcade", "Game Boy", "Neo Geo"];
@@ -472,20 +496,36 @@ fn load_neogeo_cartridge(dir: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec
     (p1, p2, m1, s1, c_roms, v_rom)
 }
 
-/// Detects a Neo Geo cartridge's real protection chip from its folder
-/// name -- no per-game registry exists (see `scan_neogeo_roms`'s own
-/// doc comment), so this is the same pragmatic convention already
-/// used there. Only Metal Slug 3/3A's NEO-SMA is implemented so far
-/// (see `neogeo_core::Protection`'s own doc comment). Matches both the
-/// real MAME set name ("mslug3") and the common plain-English folder
-/// name ("metalslug3") -- confirmed necessary against a real cartridge
-/// folder actually named the latter, which the substring "mslug3"
-/// alone does NOT match ("metalslug3" has no contiguous "mslug3" in
-/// it) -- an earlier version of this check silently fell back to no
-/// protection at all for that exact folder name.
-fn detect_neogeo_protection(rom_name: &str) -> crate::apps::neogeo_core::Protection {
+/// Detects a Neo Geo cartridge's real protection chip -- no per-game
+/// registry exists (see `scan_neogeo_roms`'s own doc comment), so this
+/// combines the folder-name convention already used there with a real
+/// structural check on the P2 ROM's own size. Only Metal Slug 3/3A's
+/// NEO-SMA is implemented so far (see `neogeo_core::Protection`'s own
+/// doc comment).
+///
+/// The name alone isn't enough: MAME's real, still-encrypted `mslug3`
+/// romset splits its banked program data across two real 4MB chips
+/// (`256-pg1.p1` + `256-pg2.p2`, 8MB combined -- confirmed directly
+/// from MAME's own `ROM_START(mslug3)`) plus a real, separately-dumped
+/// 256KB ROM embedded in the SMA chip itself (`green.neo-sma`) that
+/// supplies part of the fixed bank; encrypted carts also have no S1
+/// dump at all (an MVS board without SMA has none -- the fix layer's
+/// graphics come from the C-ROMs instead). A folder named
+/// "metalslug3"/"mslug3" but shaped like a single, already-decrypted
+/// 4MB P2 with its own standalone S1 file (confirmed against a real,
+/// legally-owned dump whose C/M/P/S/V file timestamps are all
+/// 2001-2003 -- years before MAME's ~2008 public disclosure of the
+/// NEO-SMA algorithm) is a pre-decrypted release, not a raw MAME dump:
+/// running this project's own from-scratch SMA/CMC42 decryption
+/// against data that's already been decrypted once just re-scrambles
+/// it into garbage (confirmed: the CPU ran for 30,000,000 real
+/// instructions afterward without a single VRAM or palette write).
+/// Only apply SMA when the P2 data is actually large enough to be the
+/// real encrypted layout.
+fn detect_neogeo_protection(rom_name: &str, p2_len: usize) -> crate::apps::neogeo_core::Protection {
     let name_lower = rom_name.to_ascii_lowercase();
-    if name_lower.contains("mslug3") || name_lower.contains("metal slug 3") || name_lower.contains("metalslug3") {
+    let name_matches = name_lower.contains("mslug3") || name_lower.contains("metal slug 3") || name_lower.contains("metalslug3");
+    if name_matches && p2_len >= 0x800000 {
         crate::apps::neogeo_core::Protection::SmaMslug3
     } else {
         crate::apps::neogeo_core::Protection::None
@@ -862,7 +902,7 @@ impl RetroApp {
                 if p1.is_empty() {
                     Err("no P1 ROM found in this cartridge folder".into())
                 } else {
-                    let protection = detect_neogeo_protection(&rom_name);
+                    let protection = detect_neogeo_protection(&rom_name, p2.len());
                     Ok(Deck::NeoGeo(Box::new(NeoGeoMachine::new(p1, p2, m1, s1, c_roms, v_rom, protection))))
                 }
             }
@@ -2018,10 +2058,15 @@ mod tests {
     /// hand.
     #[test]
     fn detect_neogeo_protection_recognizes_the_real_metalslug3_folder_name() {
-        assert_eq!(detect_neogeo_protection("metalslug3"), crate::apps::neogeo_core::Protection::SmaMslug3, "the real folder name this repo's roms/neogeo/ convention uses must be detected");
-        assert_eq!(detect_neogeo_protection("mslug3"), crate::apps::neogeo_core::Protection::SmaMslug3, "the real MAME set name must also be detected");
-        assert_eq!(detect_neogeo_protection("MetalSlug3"), crate::apps::neogeo_core::Protection::SmaMslug3, "detection must be case-insensitive");
-        assert_eq!(detect_neogeo_protection("kof98"), crate::apps::neogeo_core::Protection::None, "an unrelated cartridge must not be misdetected as needing Metal Slug 3's own protection");
+        assert_eq!(detect_neogeo_protection("metalslug3", 0x800000), crate::apps::neogeo_core::Protection::SmaMslug3, "the real folder name this repo's roms/neogeo/ convention uses, with a real full-size encrypted P2, must be detected");
+        assert_eq!(detect_neogeo_protection("mslug3", 0x800000), crate::apps::neogeo_core::Protection::SmaMslug3, "the real MAME set name must also be detected");
+        assert_eq!(detect_neogeo_protection("MetalSlug3", 0x800000), crate::apps::neogeo_core::Protection::SmaMslug3, "detection must be case-insensitive");
+        assert_eq!(detect_neogeo_protection("kof98", 0x800000), crate::apps::neogeo_core::Protection::None, "an unrelated cartridge must not be misdetected as needing Metal Slug 3's own protection");
+        assert_eq!(
+            detect_neogeo_protection("metalslug3", 0x400000),
+            crate::apps::neogeo_core::Protection::None,
+            "a folder named like Metal Slug 3 but shaped like a pre-decrypted dump (a single 4MB P2, not the real 8MB encrypted pg1+pg2 pair) must not have this project's own SMA decryption re-applied to already-decrypted data"
+        );
     }
 
     /// The same real end-to-end exercise as the other consoles' tests
