@@ -176,6 +176,15 @@ const GB_FRAME_SECONDS: f32 = 1.0 / 59.7275;
 
 const NEOGEO_ROMS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/roms/neogeo");
 const NEOGEO_SAVES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/saves/neogeo");
+/// Where a real, user-supplied SNK BIOS dump goes, if the user has one
+/// -- shared system firmware, not part of any individual cartridge
+/// folder, so it lives in its own subdirectory of `NEOGEO_ROMS_DIR`
+/// rather than needing to be copied into every cartridge's own folder.
+/// `scan_neogeo_roms` only lists folders containing a `p1.rom`-suffixed
+/// file, so a BIOS-only folder here never shows up as a fake
+/// "cartridge". See `neogeo_core.rs`'s own module doc comment for why
+/// none is vendored.
+const NEOGEO_BIOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/roms/neogeo/bios");
 /// The real Neo Geo's own hardware-derived refresh rate: a 24MHz clock
 /// / 4 = 6MHz pixel clock / 384 pixels-per-line = 15.625kHz horizontal
 /// rate / 264 lines -- see
@@ -239,22 +248,28 @@ enum Console {
     /// error, reload the ROM" this app already shows for any other
     /// core's crash.
     ///
-    /// **No video output yet, even with the right protection applied**:
-    /// a real, running Metal Slug 3 cartridge's own code makes a
-    /// legitimate call into $C00000+ (the fixed Neo Geo BIOS ROM
-    /// window real cartridges rely on for standard system services --
-    /// confirmed by tracing real PC values frame by frame, showing
-    /// clean, sane control flow right up until that jump). This core
-    /// has no BIOS ROM loaded there at all (a deliberate simplification
-    /// noted in `neogeo_core.rs`'s own doc comment, for booting straight
-    /// into cartridge code), so the call reads back zeroed memory and
-    /// the CPU runs off into it as bogus "code" instead of returning
-    /// -- explaining a game that runs 30,000,000+ real instructions
-    /// without ever writing to VRAM or palette RAM. Fixing this needs
-    /// either a real Neo Geo BIOS ROM dump (copyrighted system
-    /// firmware, distinct from any game cartridge -- not something to
-    /// source without the user providing one) or high-level emulation
-    /// of the specific BIOS calls real cartridges make.
+    /// **A real BIOS now loads if the user supplies one** (see
+    /// `NEOGEO_BIOS_DIR`, `load_neogeo_bios`, and `NeoGeoBus`'s own doc
+    /// comment) -- a real cartridge's own code makes a legitimate call
+    /// into $C00000+ (the fixed BIOS ROM window every cartridge relies
+    /// on for standard system services), which previously read back
+    /// zeroed memory and ran off into it as bogus "code" with no BIOS
+    /// mapped there. With a real BIOS supplied, that call now runs real
+    /// code and returns properly, and a real, running Metal Slug 3
+    /// session does start writing real tilemap data into VRAM (confirmed:
+    /// 2336 real, non-zero VRAM words within the first ~100 frames).
+    ///
+    /// **Still no visible video, though**: after that initial burst,
+    /// execution parks in a tight two-instruction busy-wait inside the
+    /// BIOS itself (`TST.B $10FE8C` / `BNE` -- confirmed by sampling
+    /// real PC values), polling a plain work-RAM byte that nothing ever
+    /// clears. VBlank interrupts are confirmed still being taken
+    /// correctly during this (the real vector-25 handler at $002654 was
+    /// observed running), so this isn't a broken interrupt path -- the
+    /// game is waiting on some other real condition tied to that RAM
+    /// address, most plausibly a sound/Z80 handshake acknowledgment this
+    /// core's Z80 stepping doesn't yet complete correctly. Not yet
+    /// root-caused further.
     NeoGeo,
 }
 const CONSOLE_NAMES: [&str; 5] = ["NES", "SNES", "Arcade", "Game Boy", "Neo Geo"];
@@ -494,6 +509,19 @@ fn load_neogeo_cartridge(dir: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec
     // as the C-ROMs' odd/even split in `concat_c_roms`.
     let v_rom = (1..=4).flat_map(|n| find(&format!("v{n}.rom"))).collect();
     (p1, p2, m1, s1, c_roms, v_rom)
+}
+
+/// A real, user-supplied SNK BIOS dump from `NEOGEO_BIOS_DIR`, if one
+/// is present -- any file in there, whichever regional revision the
+/// user dropped in (see `NEOGEO_BIOS_DIR`'s own doc comment). Empty
+/// (no BIOS mapped) if the folder doesn't exist or has no files.
+fn load_neogeo_bios() -> Vec<u8> {
+    std::fs::read_dir(NEOGEO_BIOS_DIR)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .find_map(|entry| std::fs::read(entry.path()).ok())
+        .unwrap_or_default()
 }
 
 /// Detects a Neo Geo cartridge's real protection chip -- no per-game
@@ -903,7 +931,7 @@ impl RetroApp {
                     Err("no P1 ROM found in this cartridge folder".into())
                 } else {
                     let protection = detect_neogeo_protection(&rom_name, p2.len());
-                    Ok(Deck::NeoGeo(Box::new(NeoGeoMachine::new(p1, p2, m1, s1, c_roms, v_rom, protection))))
+                    Ok(Deck::NeoGeo(Box::new(NeoGeoMachine::new(p1, p2, m1, s1, c_roms, v_rom, protection, load_neogeo_bios()))))
                 }
             }
         };
@@ -2169,6 +2197,10 @@ mod tests {
                 if let Some((w, h, rgba)) = &app.last_frame {
                     let non_black = rgba.chunks_exact(4).filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count();
                     eprintln!("frame {frame}: {w}x{h}, {non_black} non-black pixels of {}", w * h);
+                }
+                if let Some(Deck::NeoGeo(machine)) = app.deck.as_ref() {
+                    let (vram, pal) = machine.bus.debug_nonzero_counts();
+                    eprintln!("  nonzero vram={vram} palette={pal}, pc=0x{:06X}", machine.cpu.pc);
                 }
             }
         }

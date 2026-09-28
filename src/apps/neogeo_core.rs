@@ -15,17 +15,33 @@
 //! [wiki.neogeodev.org](https://wiki.neogeodev.org)), since there is
 //! nothing existing to borrow for the system-level hardware itself.
 //!
-//! **No real SNK BIOS is used or included.** Every real cartridge
-//! depends on SNK's own copyrighted `sp-s2.sp1` BIOS ROM for POST, and
-//! this project does not have and will not ship that. Instead,
-//! `NeoGeoMachine::new` does the one thing the real BIOS does that
-//! actually matters for running a cart: read the cart's own header
-//! (present on every real cartridge, not BIOS-supplied) and jump to
-//! its documented entry trampoline -- see `boot_pc` below. This is a
-//! real, publicly documented convention
+//! **No SNK BIOS is included or vendored.** Every real cartridge
+//! depends on SNK's own copyrighted `sp-s2.sp1` (or an equivalent
+//! regional/Uni-BIOS) ROM, which this project does not ship -- same
+//! "user-supplied, never committed" stance `retro.rs`'s module doc
+//! comment already takes for cartridge ROMs (see `roms/` in
+//! `.gitignore`). `NeoGeoMachine::new` still does the one thing the
+//! real BIOS does that's required just to *start* running a cart:
+//! read the cart's own header (present on every real cartridge, not
+//! BIOS-supplied) and jump to its documented entry trampoline -- see
+//! `boot_pc` below, a real, publicly documented convention
 //! (<https://wiki.neogeodev.org/index.php?title=68k_program_header>),
-//! not a copy of SNK's code, and no POST/memory-card/system-mode work
-//! the BIOS also does is attempted.
+//! not a copy of SNK's code. No POST/memory-card/system-mode work the
+//! BIOS also does at reset is attempted.
+//!
+//! Real cartridges, though, don't just run standalone after that --
+//! they make ongoing calls into the BIOS's own fixed $C00000-$C1FFFF
+//! window for standard system services for as long as they run
+//! (confirmed directly: tracing a real Metal Slug 3 cartridge's own PC
+//! values showed clean, sane control flow right up until a jump to
+//! $C00468, after which -- with nothing mapped there -- the CPU read
+//! back zeroed memory and ran off into it as garbage, never reaching
+//! any code that writes to VRAM or palette RAM). If the user supplies
+//! a real BIOS dump (`bios_rom` below, loaded from a path outside this
+//! project's own tree -- never bundled), it's mapped read-only at
+//! $C00000-$C1FFFF so those calls run real code and actually return;
+//! with no BIOS supplied, that window still reads back zeroed memory,
+//! same as before.
 //!
 //! **The memory map below was corrected once against real evidence**:
 //! an earlier version of this file had the fixed and banked program
@@ -409,10 +425,17 @@ pub struct NeoGeoBus {
     /// stay idle (1) along with the button bits rather than asserting
     /// an arbitrary specific configuration.
     status_b: u8,
+    /// The real SNK BIOS, word-swapped like the other program ROMs,
+    /// mapped read-only at its real fixed $C00000-$C1FFFF window --
+    /// empty unless the user supplied one (see this struct's own
+    /// module doc comment on why none is vendored). Real cartridges
+    /// call into this window for standard system services throughout
+    /// the whole run, not just at boot.
+    bios_rom: Vec<u8>,
 }
 
 impl NeoGeoBus {
-    fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: &[Vec<u8>], sound_latch: SoundLatch, protection: Protection) -> Self {
+    fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: &[Vec<u8>], sound_latch: SoundLatch, protection: Protection, bios_rom: Vec<u8>) -> Self {
         let (p1_rom, p2_rom) = match protection {
             Protection::None => (word_swap(p1_rom), word_swap(p2_rom)),
             Protection::SmaMslug3 => sma_decrypt_68k(word_swap(p1_rom), word_swap(p2_rom), &SMA_MSLUG3_DATA_BITSWAP, &SMA_MSLUG3_FIXED_ADDR_BITSWAP, SMA_MSLUG3_FIXED_SOURCE, &SMA_MSLUG3_BANKED_ADDR_BITSWAP),
@@ -443,6 +466,7 @@ impl NeoGeoBus {
             even_c_rom,
             p1_input: 0xFF,
             status_b: 0xFF,
+            bios_rom: word_swap(bios_rom),
         }
     }
 
@@ -666,6 +690,12 @@ impl NeoGeoBus {
         (width, height, rgba)
     }
 
+    /// Debug-only: (nonzero VRAM words, nonzero palette words), for
+    /// diagnosing why a real frame is/isn't showing anything.
+    pub fn debug_nonzero_counts(&self) -> (usize, usize) {
+        (self.lspc.vram.iter().filter(|&&w| w != 0).count(), self.palette_ram.iter().filter(|&&w| w != 0).count())
+    }
+
     fn read_work_ram(&self, addr: u32) -> u8 {
         self.work_ram[(addr as usize) % WORK_RAM_SIZE]
     }
@@ -693,6 +723,16 @@ impl NeoGeoBus {
         self.p2_rom[offset % self.p2_rom.len()]
     }
 
+    /// The real BIOS's fixed $C00000-$C1FFFF window -- empty (reads
+    /// back 0) unless the user supplied a real BIOS dump, per this
+    /// struct's own doc comment.
+    fn read_bios(&self, addr: u32) -> u8 {
+        if self.bios_rom.is_empty() {
+            return 0;
+        }
+        self.bios_rom[(addr as usize) % self.bios_rom.len()]
+    }
+
     /// Palette RAM's 8KB word-addressed window ($400000-$401FFF,
     /// mirrored through $7FFFFF) maps directly onto its 4096 words
     /// (256 palettes x 16 colors), unlike VRAM's indirect
@@ -709,6 +749,9 @@ impl AddressBus for NeoGeoBus {
             0x000000..=0x0FFFFF => self.read_p1(address),
             0x100000..=0x1FFFFF => self.read_work_ram(address),
             0x200000..=0x2FFFFF => self.read_p2_banked(address - 0x200000),
+            // The real BIOS's fixed window -- see `read_bios`'s own
+            // doc comment.
+            0xC00000..=0xC1FFFF => self.read_bios(address - 0xC00000),
             // REG_SOUND: the Z80's last reply byte.
             0x320000 => self.sound_latch.reply.get(),
             // REG_P1CNT: real, live joypad state -- see `set_p1_input`.
@@ -843,12 +886,13 @@ pub struct NeoGeoMachine {
 }
 
 impl NeoGeoMachine {
-    pub fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, m1_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: Vec<Vec<u8>>, v_rom: Vec<u8>, protection: Protection) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, m1_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: Vec<Vec<u8>>, v_rom: Vec<u8>, protection: Protection, bios_rom: Vec<u8>) -> Self {
         let sound_latch = SoundLatch::new();
 
         let mut cpu = CpuCore::new();
         cpu.set_cpu_type(CpuType::M68000);
-        let mut bus = NeoGeoBus::new(p1_rom, p2_rom, s1_rom, &c_roms, sound_latch.clone(), protection);
+        let mut bus = NeoGeoBus::new(p1_rom, p2_rom, s1_rom, &c_roms, sound_latch.clone(), protection, bios_rom);
         // `reset` reads the cartridge's own initial SSP from address 0
         // (real, meaningful data -- see the module doc comment) but
         // its initial PC is not how real hardware enters cartridge
@@ -1401,9 +1445,23 @@ mod tests {
     use std::path::Path;
 
     const ROM_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/roms/neogeo/metalslug3");
+    const BIOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/roms/neogeo/bios");
 
     fn load_real_rom(name: &str) -> Option<Vec<u8>> {
         std::fs::read(Path::new(ROM_DIR).join(name)).ok()
+    }
+
+    /// A real, user-supplied BIOS dump if one is present (see
+    /// `NeoGeoBus`'s own doc comment on why none is vendored) -- any
+    /// file in `BIOS_DIR`, since which exact region/revision is
+    /// present isn't fixed the way a cartridge's own filenames are.
+    fn load_real_bios() -> Vec<u8> {
+        std::fs::read_dir(BIOS_DIR)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .find_map(|entry| std::fs::read(entry.path()).ok())
+            .unwrap_or_default()
     }
 
     /// All-zero and all-one words must produce black and white
@@ -1484,7 +1542,7 @@ mod tests {
     #[test]
     fn new_loads_the_cartridges_own_stack_pointer_and_starts_at_the_header_trampoline() {
         let rom = synthetic_cartridge_with_entry_point(0x000180);
-        let machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         assert_eq!(machine.cpu.dar[15], 0x0010F000, "SSP (A7) must be exactly what the cartridge's own header at offset 0 specifies");
         assert_eq!(machine.cpu.pc, HEADER_ENTRY_TRAMPOLINE, "PC must start at the documented header entry trampoline");
     }
@@ -1497,7 +1555,7 @@ mod tests {
     #[test]
     fn the_header_trampoline_jumps_to_the_cartridges_own_declared_entry_point() {
         let rom = synthetic_cartridge_with_entry_point(0x0001C4);
-        let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         assert!(machine.step(), "the header's own JMP.L must execute cleanly");
         assert_eq!(machine.cpu.pc, 0x0001C4, "PC must land exactly on the cartridge's own declared entry point");
     }
@@ -1516,7 +1574,7 @@ mod tests {
         rom[HEADER_ENTRY_TRAMPOLINE as usize + 2..HEADER_ENTRY_TRAMPOLINE as usize + 6].copy_from_slice(&0x00000180u32.to_be_bytes());
         let rom = word_swap(rom);
 
-        let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         machine.cpu.int_mask = 0; // simulate the game's own code having unmasked interrupts
         machine.vblank();
         assert!(machine.step(), "taking the interrupt must not fault the CPU");
@@ -1541,7 +1599,7 @@ mod tests {
         m1_rom[0x69] = 0x0C;
         m1_rom[0x6A] = 0xED;
         m1_rom[0x6B] = 0x45;
-        let mut machine = NeoGeoMachine::new(rom, Vec::new(), m1_rom, Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(rom, Vec::new(), m1_rom, Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
 
         // The 68k sends a real command byte.
         machine.bus.write_byte(0x320000, 0x42);
@@ -1568,7 +1626,7 @@ mod tests {
     /// 0xFF -- $380000's top bits are fixed system config, not input.
     #[test]
     fn unwired_input_registers_read_idle_not_all_buttons_held() {
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         for addr in [0x300000u32, 0x300001, 0x300081, 0x380000, 0x380001] {
             assert_eq!(machine.bus.read_byte(addr), 0xFF, "register 0x{addr:06X} must read idle (0xFF), not 0");
         }
@@ -1584,7 +1642,7 @@ mod tests {
     /// rendered.
     #[test]
     fn vram_write_then_read_back_at_the_same_address_round_trips() {
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         machine.bus.write_word(0x3C0000, 0x1234); // REG_VRAMADDR
         machine.bus.write_word(0x3C0002, 0xBEEF); // REG_VRAMRW
         machine.bus.write_word(0x3C0000, 0x1234); // re-seek: REG_VRAMRW just auto-incremented past it
@@ -1597,7 +1655,7 @@ mod tests {
     /// layer via repeated accesses instead of re-seeking every word.
     #[test]
     fn vram_mod_auto_increments_the_address_after_each_access() {
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         machine.bus.write_word(0x3C0000, 0x0100); // REG_VRAMADDR
         machine.bus.write_word(0x3C0004, 1); // REG_VRAMMOD: +1 per access
         machine.bus.write_word(0x3C0002, 0xAAAA);
@@ -1617,7 +1675,7 @@ mod tests {
     /// not alias each other.
     #[test]
     fn palette_ram_write_then_read_back_round_trips_without_aliasing() {
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         machine.bus.write_word(0x400000, 0x7FFF);
         machine.bus.write_word(0x400002, 0x1234);
         assert_eq!(machine.bus.read_word(0x400000), 0x7FFF, "the word written to color 0 of palette 0 must read back unchanged");
@@ -1640,7 +1698,7 @@ mod tests {
         // uses for P1) cancels that out, so the logical byte values
         // set above land exactly where intended.
         let p2 = word_swap(p2);
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], p2, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], p2, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
 
         assert_eq!(machine.bus.read_byte(0x200000), 0xAA, "bank 0 must be visible by default after reset");
         machine.bus.write_byte(0x250000, 2); // write anywhere in the window, not just its base
@@ -1662,7 +1720,7 @@ mod tests {
         // `a_solid_fill_sprite_tile_decodes_to_a_uniform_block`.
         let odd_c_rom = vec![0xFFu8; 64];
         let even_c_rom = vec![0x00u8; 64];
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None, Vec::new());
 
         // SCB1 sprite 0: tile 0, palette 5.
         machine.bus.write_word(0x3C0000, 0x0000); // REG_VRAMADDR: SCB1 even word (tile LSBs)
@@ -1721,7 +1779,7 @@ mod tests {
         let mut odd_c_rom = vec![0u8; 64];
         odd_c_rom[32..48].fill(0xFF);
         let even_c_rom = vec![0u8; 64];
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None, Vec::new());
 
         machine.bus.write_word(0x3C0000, 0x0000);
         machine.bus.write_word(0x3C0002, 0x0000); // tile 0
@@ -1759,7 +1817,7 @@ mod tests {
     fn scb2_horizontal_shrink_narrows_the_sprite_to_the_documented_width() {
         let odd_c_rom = vec![0xFFu8; 64];
         let even_c_rom = vec![0x00u8; 64];
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None, Vec::new());
 
         machine.bus.write_word(0x3C0000, 0x0000);
         machine.bus.write_word(0x3C0002, 0x0000); // tile 0
@@ -1832,7 +1890,7 @@ mod tests {
         odd_c_rom[0..64].fill(0xFF); // tile 0: bitplanes 0+1 set -> color 3
         even_c_rom[5 * 64..6 * 64].fill(0xFF); // tile 5: bitplanes 2+3 set -> color 12
 
-        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), vec![odd_c_rom, even_c_rom], Vec::new(), Protection::None, Vec::new());
 
         // SCB1 sprite 0: base tile 0, palette 5, 8-frame auto-anim bit set.
         machine.bus.write_word(0x3C0000, 0x0000);
@@ -2169,7 +2227,17 @@ mod tests {
         let p2 = load_real_rom("256-p2.rom").unwrap_or_default();
         let m1 = load_real_rom("256-m1.rom").unwrap_or_default();
         let s1 = load_real_rom("256-s1.rom").unwrap_or_default();
-        let mut machine = NeoGeoMachine::new(p1, p2, m1, s1, Vec::new(), Vec::new(), Protection::SmaMslug3);
+        // This repo's own real cartridge folder is a pre-decrypted
+        // dump, not MAME's raw encrypted layout -- see
+        // `detect_neogeo_protection`'s own doc comment in retro.rs for
+        // the full evidence (file timestamps predating NEO-SMA's public
+        // disclosure, a real, correct SSP/entry point with no
+        // decryption applied at all). Loads a real, user-supplied BIOS
+        // if one is present (see `NeoGeoBus`'s own doc comment) -- the
+        // cartridge makes real calls into it, so without one, execution
+        // runs off into unmapped, zeroed memory well before producing
+        // any real video output.
+        let mut machine = NeoGeoMachine::new(p1, p2, m1, s1, Vec::new(), Vec::new(), Protection::None, load_real_bios());
 
         // Real code almost universally waits on VBlank before doing
         // anything -- see `vblank`'s own doc comment -- so a run with
@@ -2230,7 +2298,7 @@ mod tests {
             eprintln!("skipping: no ROM in {ROM_DIR} (this is expected in a fresh checkout)");
             return;
         };
-        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), Vec::new(), s1, Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), Vec::new(), s1, Vec::new(), Vec::new(), Protection::None, Vec::new());
 
         // Tilemap entry at row 2, col 3: palette 5, tile 0 (the real,
         // genuinely-solid palette-index-1 swatch).
@@ -2304,7 +2372,7 @@ mod tests {
             eprintln!("skipping: no ROM in {ROM_DIR} (this is expected in a fresh checkout)");
             return;
         };
-        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), m1, Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), m1, Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         let pc_before = machine.sound_cpu.pc;
         for _ in 0..1_000 {
             machine.step_sound();
@@ -2351,7 +2419,7 @@ mod tests {
     /// idle is all-1s, and each pressed button clears only its own bit.
     #[test]
     fn set_p1_input_produces_real_active_low_register_values() {
-        let mut bus = NeoGeoBus::new(Vec::new(), Vec::new(), Vec::new(), &[], SoundLatch::new(), Protection::None);
+        let mut bus = NeoGeoBus::new(Vec::new(), Vec::new(), Vec::new(), &[], SoundLatch::new(), Protection::None, Vec::new());
         assert_eq!(bus.read_byte(0x300000), 0xFF, "idle P1CNT must read all-1s");
         assert_eq!(bus.read_byte(0x380000) & 0b11, 0b11, "idle Start/Select bits must read 1 (not pressed)");
 
@@ -2390,11 +2458,11 @@ mod tests {
     #[test]
     fn sma_protection_check_replies_9a37_only_for_protected_carts() {
         let sma_rom = vec![0u8; 0x200];
-        let mut sma_machine = NeoGeoMachine::new(sma_rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::SmaMslug3);
+        let mut sma_machine = NeoGeoMachine::new(sma_rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::SmaMslug3, Vec::new());
         assert_eq!(sma_machine.bus.read_word(0x2FE446), 0x9A37, "an SMA-protected cart must reply 0x9A37 at its real documented check address");
 
         let plain_rom = vec![0u8; 0x200];
-        let mut plain_machine = NeoGeoMachine::new(plain_rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut plain_machine = NeoGeoMachine::new(plain_rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         assert_ne!(plain_machine.bus.read_word(0x2FE446), 0x9A37, "an unprotected cart must not coincidentally reply 0x9A37 at the same address (it's just ordinary banked ROM space for it)");
     }
 
@@ -2409,7 +2477,7 @@ mod tests {
     /// risk to get right relative to full FM operator programming.
     #[test]
     fn a_real_ssg_tone_produces_real_varying_audio() {
-        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None);
+        let mut machine = NeoGeoMachine::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         let bus = &mut machine.sound_bus;
         let mut set = |register: u8, value: u8| {
             bus.port_out(4, register); // part 0 address
