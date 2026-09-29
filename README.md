@@ -68,12 +68,26 @@ Full navigation semantics (what each button does in which context) are in
 
 ## Platform support
 
-Developed and tested on macOS (Apple Silicon). The core audio engine
-(`cpal`) and most DSP are cross-platform, but gamepad support is macOS-only
-by design (`GameController.framework` has no equivalent elsewhere), and the
-rest of the app hasn't been verified on Linux or Windows. If you try it on
-another platform, expect keyboard-only control at best, and please report
-what breaks.
+Developed and tested on macOS (Apple Silicon) only.
+
+**Confirmed macOS-only**: gamepad support (`src/gamepad.rs`). It's built on
+Apple's `GameController.framework` and hard-gated behind
+`#[cfg(target_os = "macos")]`, with its `objc2`/`objc2-game-controller`
+dependencies correctly scoped to macOS in `Cargo.toml` — on another platform
+those dependencies simply aren't pulled in and the gamepad thread never
+spawns. Keyboard and MIDI control aren't affected by this and keep working
+regardless.
+
+**Architecturally cross-platform, but never run or tested anywhere but this
+Mac**: everything else. Audio (`cpal`), the window/framebuffer (`minifb`),
+and MIDI (`midir`) are genuine cross-platform crates with real Linux/Windows
+backends, and the vendored C++ DSP (compiled via `build.rs` using the `cc`
+crate) has no Apple-specific flags or frameworks linked — it should build
+anywhere with a working C++ toolchain, but that toolchain requirement itself
+(Xcode Command Line Tools vs. `build-essential` vs. MSVC) is untested
+friction on other platforms. In short: nothing but the gamepad is *known* to
+be macOS-only, but nothing except the gamepad is *verified* elsewhere either.
+If you try another platform, please report what breaks (or what works).
 
 ## The Retro app and ROMs
 
