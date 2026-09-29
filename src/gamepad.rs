@@ -41,10 +41,11 @@
 //! stick at all -- this controller's left stick has real drift, so it
 //! was dropped entirely rather than fighting spurious ticks. The right
 //! stick still browses up/down (reversed from the original mapping, per
-//! an earlier explicit request); D-Pad Up/Down duplicate that same
-//! browsing action (not reversed -- a real button has no drift to work
-//! around, so it gets the plain, intuitive polarity), and D-Pad
-//! Left/Right edit the highlighted row's value. The face buttons and
+//! an earlier explicit request); D-Pad Left/Right duplicate that same
+//! browsing action, and D-Pad Up/Down edit the highlighted row's value
+//! instead (Up increases, Down decreases) -- navigation and editing
+//! deliberately live on opposite D-Pad axes from what a first pass at
+//! this mapping used, per explicit correction. The face buttons and
 //! shoulders double as the OS's own F1-F4/Home/select controls
 //! alongside their existing Retro pad-input role -- see
 //! `apply_gamepad_state`'s own comments for the full, current layout.
@@ -267,22 +268,22 @@ unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtended
 
     let now = std::time::Instant::now();
 
-    // D-Pad Up/Down duplicate the right stick's own browsing action
-    // (see below) -- reversed per explicit request (pushing Up now
-    // navigates down, and vice versa), same as the right stick's own
-    // reversed polarity below.
+    // D-Pad Left/Right duplicate the right stick's own browsing action
+    // (see below) -- per explicit correction, navigation lives on the
+    // left/right axis, not up/down.
     let ready_dpad_nav = edges.last_knob1_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
-    if (dpad_up_down || dpad_down_down) && ready_dpad_nav {
-        controller.add_knob1_delta(if dpad_up_down { 1 } else { -1 });
+    if (dpad_left_down || dpad_right_down) && ready_dpad_nav {
+        controller.add_knob1_delta(if dpad_left_down { -1 } else { 1 });
         edges.last_knob1_tick = Some(now);
     }
 
-    // D-Pad Left/Right edit the highlighted row's own value (knob2),
+    // D-Pad Up/Down edit the highlighted row's own value (knob2),
     // repeating at the same rate while held as every other repeating
-    // control here -- also reversed per the same request.
+    // control here -- Up increases, Down decreases, matching a
+    // physical up/down spinner.
     let ready_dpad_edit = edges.last_knob2_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
-    if (dpad_left_down || dpad_right_down) && ready_dpad_edit {
-        controller.add_knob2_delta(if dpad_left_down { 1 } else { -1 });
+    if (dpad_up_down || dpad_down_down) && ready_dpad_edit {
+        controller.add_knob2_delta(if dpad_up_down { 1 } else { -1 });
         edges.last_knob2_tick = Some(now);
     }
 
