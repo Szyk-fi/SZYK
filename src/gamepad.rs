@@ -40,10 +40,14 @@
 //! into the highlighted row) deliberately does *not* use the left
 //! stick at all -- this controller's left stick has real drift, so it
 //! was dropped entirely rather than fighting spurious ticks. The right
-//! stick took over browsing (with up/down reversed from the original
-//! mapping, per explicit request), and D-Pad Left/Right became an
-//! edge-triggered alternative way to "dive" into the highlighted row
-//! (see `apply_gamepad_state`'s own comments for the specifics).
+//! stick still browses up/down (reversed from the original mapping, per
+//! an earlier explicit request); D-Pad Up/Down duplicate that same
+//! browsing action (not reversed -- a real button has no drift to work
+//! around, so it gets the plain, intuitive polarity), and D-Pad
+//! Left/Right edit the highlighted row's value. The face buttons and
+//! shoulders double as the OS's own F1-F4/Home/select controls
+//! alongside their existing Retro pad-input role -- see
+//! `apply_gamepad_state`'s own comments for the full, current layout.
 //!
 //! macOS-only, deliberately (`GameController.framework` doesn't exist
 //! elsewhere) -- `main.rs` only spawns this listener under `#[cfg(target_os
@@ -51,8 +55,9 @@
 
 use crate::controller::ControllerState;
 use objc2::rc::Retained;
+use objc2::Message;
 use objc2_foundation::NSArray;
-use objc2_game_controller::{GCController, GCControllerButtonInput, GCControllerDirectionPad, GCExtendedGamepad};
+use objc2_game_controller::{GCController, GCControllerButtonInput, GCControllerDirectionPad, GCDualSenseGamepad, GCExtendedGamepad};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -72,9 +77,15 @@ struct EdgeState {
     options: bool,
     left_trigger: bool,
     right_trigger: bool,
-    dpad_left: bool,
-    dpad_right: bool,
+    cross: bool,
+    circle: bool,
+    square: bool,
+    triangle: bool,
+    left_shoulder: bool,
+    right_shoulder: bool,
+    touchpad: bool,
     last_knob1_tick: Option<std::time::Instant>,
+    last_knob2_tick: Option<std::time::Instant>,
 }
 
 /// Runs forever on its own thread (spawned once from `main.rs`,
@@ -143,24 +154,14 @@ unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtended
     // NES/SNES pad mapping (grid 0-3 = D-Pad, 4-7 = B/A/Y/X, 8-9 =
     // L/R, 10-11 = Select/Start).
     let dpad: Retained<GCControllerDirectionPad> = gamepad.dpad();
-    controller.grid[0].store(is_down(&dpad.up()), Ordering::Relaxed);
-    controller.grid[1].store(is_down(&dpad.down()), Ordering::Relaxed);
+    let dpad_up_down = is_down(&dpad.up());
+    let dpad_down_down = is_down(&dpad.down());
     let dpad_left_down = is_down(&dpad.left());
     let dpad_right_down = is_down(&dpad.right());
+    controller.grid[0].store(dpad_up_down, Ordering::Relaxed);
+    controller.grid[1].store(dpad_down_down, Ordering::Relaxed);
     controller.grid[2].store(dpad_left_down, Ordering::Relaxed);
     controller.grid[3].store(dpad_right_down, Ordering::Relaxed);
-    // D-Pad Left/Right double as "menu dive" (select/expand the
-    // highlighted row) -- an edge-triggered alternative to clicking the
-    // nav stick, since a drifting left stick (see below) makes that
-    // stick's own click awkward to land precisely.
-    if dpad_left_down && !edges.dpad_left {
-        controller.set_knob1_press();
-    }
-    edges.dpad_left = dpad_left_down;
-    if dpad_right_down && !edges.dpad_right {
-        controller.set_knob1_press();
-    }
-    edges.dpad_right = dpad_right_down;
     controller.grid[4].store(is_down(&gamepad.buttonA()), Ordering::Relaxed); // Cross -> B
     controller.grid[5].store(is_down(&gamepad.buttonB()), Ordering::Relaxed); // Circle -> A
     controller.grid[6].store(is_down(&gamepad.buttonX()), Ordering::Relaxed); // Square -> Y
@@ -204,24 +205,101 @@ unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtended
     }
     edges.right_trigger = right_trigger_down;
 
+    // The OS-level control layout: X = select (dive into the
+    // highlighted row), Circle = back (F1 -- the OS's own "return to
+    // the home list" button, which also jumps into Settings when
+    // already there), Square = F2, Triangle = F3, R1 = jump straight to
+    // the Mixer (F4), L1 and the DualSense's own touchpad click = Home.
+    // These are real, explicit per-button assignments, not derived from
+    // the RetroArch-style face-button remap above -- that remap is only
+    // about lining up with a game's own face buttons while playing,
+    // and coexists fine with these OS-level meanings since apps only
+    // ever look at one or the other depending on what's focused.
+    let cross_down = is_down(&gamepad.buttonA());
+    if cross_down && !edges.cross {
+        controller.set_knob1_press();
+    }
+    edges.cross = cross_down;
+
+    let circle_down = is_down(&gamepad.buttonB());
+    if circle_down && !edges.circle {
+        controller.set_top(0);
+    }
+    edges.circle = circle_down;
+
+    let square_down = is_down(&gamepad.buttonX());
+    if square_down && !edges.square {
+        controller.set_top(1);
+    }
+    edges.square = square_down;
+
+    let triangle_down = is_down(&gamepad.buttonY());
+    if triangle_down && !edges.triangle {
+        controller.set_top(2);
+    }
+    edges.triangle = triangle_down;
+
+    let left_shoulder_down = is_down(&gamepad.leftShoulder());
+    if left_shoulder_down && !edges.left_shoulder {
+        controller.set_home();
+    }
+    edges.left_shoulder = left_shoulder_down;
+
+    let right_shoulder_down = is_down(&gamepad.rightShoulder());
+    if right_shoulder_down && !edges.right_shoulder {
+        controller.set_top(3);
+    }
+    edges.right_shoulder = right_shoulder_down;
+
+    // The DualSense's own touchpad-click button isn't part of the
+    // generic `GCExtendedGamepad` profile at all (Apple exposes it only
+    // on the DualSense-specific subclass) -- retaining+downcasting the
+    // same underlying object is how objc2 gets from one to the other;
+    // this is a no-op (touchpad simply never presses) on any other
+    // controller, not a crash.
+    if let Ok(dualsense) = gamepad.retain().downcast::<GCDualSenseGamepad>() {
+        let touchpad_down = is_down(&dualsense.touchpadButton());
+        if touchpad_down && !edges.touchpad {
+            controller.set_home();
+        }
+        edges.touchpad = touchpad_down;
+    }
+
+    let now = std::time::Instant::now();
+
+    // D-Pad Up/Down duplicate the right stick's own browsing action
+    // (see below) -- plain, non-reversed polarity, since this is a real
+    // button with no drift to correct for.
+    let ready_dpad_nav = edges.last_knob1_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
+    if (dpad_up_down || dpad_down_down) && ready_dpad_nav {
+        controller.add_knob1_delta(if dpad_up_down { -1 } else { 1 });
+        edges.last_knob1_tick = Some(now);
+    }
+
+    // D-Pad Left/Right edit the highlighted row's own value (knob2),
+    // repeating at the same rate while held as every other repeating
+    // control here.
+    let ready_dpad_edit = edges.last_knob2_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
+    if (dpad_left_down || dpad_right_down) && ready_dpad_edit {
+        controller.add_knob2_delta(if dpad_left_down { -1 } else { 1 });
+        edges.last_knob2_tick = Some(now);
+    }
+
     // The left stick is deliberately not read at all -- disabled due to
     // real drift on this controller (spurious nav ticks with the stick
-    // sitting still). The right stick takes over its old job (browsing
-    // the menu via knob1) instead of its own old job (editing the
-    // selected value via knob2), so it's the only stick driving
-    // navigation now; there's no second stick left to also carry knob2,
-    // so that role has no analog gamepad source any more (still
-    // reachable via the on-screen/keyboard/MIDI paths).
+    // sitting still). The right stick still browses the menu (knob1);
+    // there's no second stick left to also carry knob2 (editing a
+    // value), which the D-Pad's own Left/Right now covers instead.
     let right_stick = gamepad.rightThumbstick();
     *stick2_x = right_stick.xAxis().value();
     *stick2_y = right_stick.yAxis().value();
 
-    let now = std::time::Instant::now();
-    let ready1 = edges.last_knob1_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
-    if (stick2_x.abs() > STICK_DEADZONE || stick2_y.abs() > STICK_DEADZONE) && ready1 {
+    if (stick2_x.abs() > STICK_DEADZONE || stick2_y.abs() > STICK_DEADZONE) && ready_dpad_nav {
         // Reversed from the original mapping (`-y.signum()`) per
         // explicit request: pushing the stick the way that used to
-        // navigate up now navigates down, and vice versa.
+        // navigate up now navigates down, and vice versa. (D-Pad
+        // Up/Down above is intentionally the other polarity -- see its
+        // own comment.)
         let delta = if stick2_y.abs() > stick2_x.abs() { stick2_y.signum() as i32 } else { stick2_x.signum() as i32 };
         controller.add_knob1_delta(delta);
         edges.last_knob1_tick = Some(now);
