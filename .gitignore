@@ -14,8 +14,13 @@ portamax-source.zip
 portamax-source/
 portamax-github-source.zip
 
-# Large local audio libraries
+# Large local audio libraries: user-supplied, never committed (same
+# reasoning as media/ and roms/ below). "Boom Bap Addict WAV" is a
+# commercial sample pack that was accidentally committed in this
+# repo's very first commit and has since been purged from history --
+# gitignored now so it can't be re-added by accident.
 samples/Drum Loops/
+samples/Boom Bap Addict WAV/
 
 # Media library (Vinyl/Reference/Studio/Memories test content): the
 # user's own copyrighted music files (e.g. commercial FLAC albums),
