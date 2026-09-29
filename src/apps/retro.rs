@@ -260,16 +260,39 @@ enum Console {
     /// 2336 real, non-zero VRAM words within the first ~100 frames).
     ///
     /// **Still no visible video, though**: after that initial burst,
-    /// execution parks in a tight two-instruction busy-wait inside the
-    /// BIOS itself (`TST.B $10FE8C` / `BNE` -- confirmed by sampling
-    /// real PC values), polling a plain work-RAM byte that nothing ever
-    /// clears. VBlank interrupts are confirmed still being taken
-    /// correctly during this (the real vector-25 handler at $002654 was
-    /// observed running), so this isn't a broken interrupt path -- the
-    /// game is waiting on some other real condition tied to that RAM
-    /// address, most plausibly a sound/Z80 handshake acknowledgment this
-    /// core's Z80 stepping doesn't yet complete correctly. Not yet
-    /// root-caused further.
+    /// execution parks for a very long time (confirmed sustained across
+    /// 1000+ real emulated frames, i.e. tens of seconds of in-game time)
+    /// in a tight busy-wait inside the BIOS itself (`TST.B $10FE8C` /
+    /// `BNE`), polling a plain work-RAM byte. Several real, concrete
+    /// leads were checked and ruled out rather than guessed away:
+    /// - VBlank interrupts are confirmed still firing and reaching the
+    ///   cartridge's real vector-25 handler ($002654) throughout --
+    ///   not a broken interrupt path.
+    /// - The Z80 sound CPU is confirmed alive and doing real work: it
+    ///   receives a real command (0x03) via NMI, executes a large,
+    ///   varied real initialization sequence (confirmed via PC tracing:
+    ///   dozens of distinct real addresses, including a real per-entry
+    ///   loop over what looks like a channel/voice table), and settles
+    ///   into its own real idle loop -- not crashed or stuck immediately.
+    /// - The real watchdog-kick address ($300001, per MAME's own
+    ///   `neogeo.cpp` -- a real hardware watchdog resets the system
+    ///   after ~0.13s unless kicked, and MAME's own source notes some
+    ///   games deliberately let it expire once to reinitialize backup
+    ///   RAM) is being written continuously (hundreds of thousands of
+    ///   times over the run) -- ruling out "deliberately waiting to be
+    ///   reset": a cartridge that wanted that would stop kicking, not
+    ///   keep servicing it.
+    /// - The polled byte was confirmed to genuinely read 0 at least once
+    ///   very early (frame 0), so it isn't hardwired to a stuck value at
+    ///   the storage level -- something legitimately clears it early on
+    ///   but then never again for a long, sustained stretch.
+    ///
+    /// None of this pins down what real, not-yet-modeled piece of
+    /// hardware or timing is supposed to clear that byte on an ongoing
+    /// basis. Further progress here would benefit from a real reference
+    /// trace (e.g. running this exact ROM in MAME with its debugger) to
+    /// see what actually clears it on real hardware -- something this
+    /// session doesn't have access to.
     NeoGeo,
 }
 const CONSOLE_NAMES: [&str; 5] = ["NES", "SNES", "Arcade", "Game Boy", "Neo Geo"];
