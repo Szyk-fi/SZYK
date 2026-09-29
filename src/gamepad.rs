@@ -268,20 +268,21 @@ unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtended
     let now = std::time::Instant::now();
 
     // D-Pad Up/Down duplicate the right stick's own browsing action
-    // (see below) -- plain, non-reversed polarity, since this is a real
-    // button with no drift to correct for.
+    // (see below) -- reversed per explicit request (pushing Up now
+    // navigates down, and vice versa), same as the right stick's own
+    // reversed polarity below.
     let ready_dpad_nav = edges.last_knob1_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
     if (dpad_up_down || dpad_down_down) && ready_dpad_nav {
-        controller.add_knob1_delta(if dpad_up_down { -1 } else { 1 });
+        controller.add_knob1_delta(if dpad_up_down { 1 } else { -1 });
         edges.last_knob1_tick = Some(now);
     }
 
     // D-Pad Left/Right edit the highlighted row's own value (knob2),
     // repeating at the same rate while held as every other repeating
-    // control here.
+    // control here -- also reversed per the same request.
     let ready_dpad_edit = edges.last_knob2_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
     if (dpad_left_down || dpad_right_down) && ready_dpad_edit {
-        controller.add_knob2_delta(if dpad_left_down { -1 } else { 1 });
+        controller.add_knob2_delta(if dpad_left_down { 1 } else { -1 });
         edges.last_knob2_tick = Some(now);
     }
 
