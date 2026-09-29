@@ -27,6 +27,7 @@ pub mod singularity;
 pub mod starlab;
 pub mod synth;
 pub mod tape;
+pub mod template;
 pub mod tonestack;
 pub mod turing_machine;
 pub mod visualizer;
