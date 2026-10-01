@@ -43,3 +43,4 @@ pub mod vector_filter;
 pub mod forge;
 pub mod oracle;
 pub mod pulsar;
+pub mod tinkertone;

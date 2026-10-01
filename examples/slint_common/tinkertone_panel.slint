@@ -1,0 +1,261 @@
+// Tinkertone's right-hand panel: the 37-key keyboard (held keys lit, the
+// 16-pad window bracketed), the 15 bass keys, the 4 tone presets, and the
+// rhythm section's lamps. An original early-80s home-keyboard look, not a
+// copy of any real product's panel.
+import { InstrumentPanel } from "instrument_widgets.slint";
+
+component Lamp inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> on;
+    in property <color> lit;
+    in property <color> ink;
+    spacing: 4px;
+    Rectangle {
+        width: 7px; height: 7px; y: 3px;
+        border-radius: 3.5px;
+        background: root.on ? root.lit : root.ink.with-alpha(0.15);
+    }
+    Text {
+        text: root.label;
+        color: root.on ? root.ink : root.ink.with-alpha(0.45);
+        font-family: "JetBrains Mono";
+        font-size: 8px;
+        vertical-alignment: center;
+    }
+}
+
+export component TinkertonePanel inherits InstrumentPanel {
+    in property <color> paper;
+    in property <[bool]> keys-held;
+    in property <int> window;
+    in property <bool> bass-layer;
+    in property <int> bass-held: -1;
+    in property <int> bass-sounding: -1;
+    in property <int> preset;
+    in property <[string]> preset-tones;
+    in property <bool> vibrato;
+    in property <bool> sustain;
+    in property <string> rhythm;
+    in property <float> tempo: 120;
+    in property <bool> playing;
+    in property <bool> synchro;
+    in property <bool> fill;
+    in property <bool> bass-auto;
+    in property <string> chord;
+    in property <int> step;
+    in property <int> steps: 16;
+    in property <int> steps-per-beat: 4;
+    in property <int> bar;
+    in property <[float]> drum-flash;
+    in property <float> volume;
+    in property <float> accomp;
+    in property <float> peak;
+
+    // Semitone classes that are black keys, and each key's white-key slot.
+    property <[bool]> black: [false, true, false, true, false, false, true, false, true, false, true, false];
+    property <[int]> white-index: [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+
+    caption: "HOME KEYBOARD / 37 + 15 KEYS";
+
+    VerticalLayout {
+        spacing: 6px;
+
+        // Tone line: current preset's tone + effect lamps.
+        HorizontalLayout {
+            height: 16px;
+            spacing: 10px;
+            Text {
+                text: root.preset < root.preset-tones.length ? root.preset-tones[root.preset] : "";
+                color: root.accent;
+                font-family: "Space Grotesk";
+                font-weight: 700;
+                font-size: 14px;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            Lamp { label: "VIBRATO"; on: root.vibrato; lit: root.accent; ink: root.ink; }
+            Lamp { label: "SUSTAIN"; on: root.sustain; lit: root.accent; ink: root.ink; }
+        }
+
+        // 37-key keyboard: 22 white keys, black keys on top.
+        Rectangle {
+            height: 50px;
+            property <length> ww: self.width / 22;
+            for held[k] in root.keys-held : Rectangle {
+                property <int> pc: mod(k, 12);
+                property <bool> is-black: root.black[self.pc];
+                property <int> slot: floor(k / 12) * 7 + root.white-index[self.pc];
+                visible: !self.is-black;
+                x: self.slot * parent.ww;
+                y: 0px;
+                width: parent.ww - 1px;
+                height: 44px;
+                border-radius: 2px;
+                background: held ? root.accent : #FBF8F0;
+                border-width: 1px;
+                border-color: root.ink.with-alpha(0.25);
+            }
+            for held[k] in root.keys-held : Rectangle {
+                property <int> pc: mod(k, 12);
+                property <bool> is-black: root.black[self.pc];
+                property <int> slot: floor(k / 12) * 7 + root.white-index[self.pc];
+                visible: self.is-black;
+                x: (self.slot + 1) * parent.ww - parent.ww * 0.32;
+                y: 0px;
+                width: parent.ww * 0.62;
+                height: 27px;
+                border-radius: 1px;
+                background: held ? root.accent : #2A2420;
+            }
+            // the 16-pad window, bracketed under the keys
+            if !root.bass-layer : Rectangle {
+                property <int> lo-pc: mod(root.window, 12);
+                property <int> hi: root.window + 15;
+                property <int> hi-pc: mod(self.hi, 12);
+                x: (floor(root.window / 12) * 7 + root.white-index[self.lo-pc]) * parent.ww;
+                y: 46px;
+                width: (floor(self.hi / 12) * 7 + root.white-index[self.hi-pc] + 1) * parent.ww - self.x;
+                height: 3px;
+                border-radius: 1.5px;
+                background: root.accent;
+            }
+        }
+
+        // 15 bass keys.
+        HorizontalLayout {
+            height: 15px;
+            spacing: 2px;
+            Text {
+                text: "BASS";
+                width: 26px;
+                color: root.bass-layer ? root.accent : root.ink.with-alpha(0.55);
+                font-family: "JetBrains Mono";
+                font-weight: 700;
+                font-size: 8px;
+                vertical-alignment: center;
+            }
+            for k in 15 : Rectangle {
+                border-radius: 2px;
+                background: k == root.bass-held ? root.accent : k == root.bass-sounding ? root.accent.with-alpha(0.45) : root.ink.with-alpha(0.12);
+            }
+        }
+
+        // 4 tone presets.
+        HorizontalLayout {
+            height: 26px;
+            spacing: 4px;
+            for name[i] in root.preset-tones : Rectangle {
+                border-radius: 3px;
+                background: i == root.preset ? root.accent : root.ink.with-alpha(0.07);
+                VerticalLayout {
+                    padding-left: 4px; padding-right: 4px; padding-top: 2px;
+                    Text {
+                        text: "TONE " + (i + 1);
+                        color: i == root.preset ? root.paper : root.ink.with-alpha(0.5);
+                        font-family: "JetBrains Mono";
+                        font-size: 7px;
+                    }
+                    Text {
+                        text: name;
+                        color: i == root.preset ? root.paper : root.ink;
+                        font-family: "JetBrains Mono";
+                        font-size: 8px;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        // Rhythm section.
+        HorizontalLayout {
+            height: 14px;
+            spacing: 8px;
+            Text {
+                text: root.rhythm + "  " + round(root.tempo) + " BPM";
+                color: root.ink;
+                font-family: "JetBrains Mono";
+                font-weight: 700;
+                font-size: 9px;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Lamp { label: "RUN"; on: root.playing; lit: #3FAF5A; ink: root.ink; }
+            Lamp { label: "SYNC"; on: root.synchro; lit: #E0A030; ink: root.ink; }
+            Lamp { label: "FILL"; on: root.fill; lit: root.accent; ink: root.ink; }
+        }
+        HorizontalLayout {
+            height: 10px;
+            spacing: 3px;
+            // beat lamps for this bar, then the 4 bar lamps
+            for b in root.steps / root.steps-per-beat : Rectangle {
+                width: 18px;
+                border-radius: 2px;
+                background: root.playing && b == floor(root.step / root.steps-per-beat) ? root.accent : root.ink.with-alpha(0.12);
+            }
+            Rectangle { horizontal-stretch: 1; }
+            for b in 4 : Rectangle {
+                width: 10px;
+                border-radius: 2px;
+                background: root.playing && b == root.bar ? root.ink.with-alpha(0.7) : root.ink.with-alpha(0.12);
+            }
+        }
+        HorizontalLayout {
+            height: 12px;
+            spacing: 6px;
+            for d[i] in ["BD", "SD", "CH", "OH", "CY"] : HorizontalLayout {
+                spacing: 3px;
+                Rectangle {
+                    width: 7px; height: 7px; y: 2px;
+                    border-radius: 3.5px;
+                    background: root.accent.with-alpha(i < root.drum-flash.length ? root.drum-flash[i] : 0);
+                    border-width: 1px;
+                    border-color: root.ink.with-alpha(0.2);
+                }
+                Text {
+                    text: d;
+                    color: root.ink.with-alpha(0.55);
+                    font-family: "JetBrains Mono";
+                    font-size: 8px;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: root.bass-auto ? "AUTO BASS · " + root.chord : "MANUAL BASS";
+                color: root.bass-auto ? root.accent : root.ink.with-alpha(0.55);
+                font-family: "JetBrains Mono";
+                font-size: 8px;
+                vertical-alignment: center;
+            }
+        }
+
+        // Volume, accompaniment volume, output level.
+        HorizontalLayout {
+            height: 10px;
+            spacing: 6px;
+            for v[i] in [root.volume, root.accomp, root.peak] : HorizontalLayout {
+                spacing: 4px;
+                Text {
+                    text: ["VOL", "ACC", "OUT"][i];
+                    color: root.ink.with-alpha(0.55);
+                    font-family: "JetBrains Mono";
+                    font-size: 7px;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 4px; y: 3px;
+                    border-radius: 2px;
+                    background: root.ink.with-alpha(0.12);
+                    Rectangle {
+                        x: 0px; y: 0px;
+                        width: parent.width * max(0, min(1, v));
+                        height: 100%;
+                        border-radius: 2px;
+                        background: i == 2 && v > 0.95 ? #D9302B : root.accent;
+                    }
+                }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}

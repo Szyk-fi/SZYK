@@ -110,6 +110,8 @@ pub mod forge;
 pub mod oracle;
 #[path = "../src/apps/pulsar/mod.rs"]
 pub mod pulsar;
+#[path = "../src/apps/tinkertone.rs"]
+pub mod tinkertone;
 #[path = "../src/apps/vector_filter.rs"]
 pub mod vector_filter;
 #[path = "../src/apps/morph.rs"]
@@ -172,7 +174,7 @@ mod apps {
     pub use super::{
         analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, forge, natural_gate, nautilus,
         nebula, pams, plaits, plaits_layout, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
-        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar,
+        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar, tinkertone,
     };
 }
 
@@ -213,6 +215,7 @@ slint::slint! {
     import { ForgePanel } from "slint_common/forge_panel.slint";
     import { OraclePanel } from "slint_common/oracle_panel.slint";
     import { PulsarPanel } from "slint_common/pulsar_panel.slint";
+    import { TinkertonePanel } from "slint_common/tinkertone_panel.slint";
     import { VectorFilterPanel } from "slint_common/vector_filter_panel.slint";
     import { SettingsPanel } from "slint_common/settings_panel.slint";
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
@@ -822,6 +825,31 @@ slint::slint! {
         in property <float> pulsar-swing: 50;
         in property <float> pulsar-peak;
         in property <string> pulsar-status;
+        // --- Tinkertone (active-kind == 37): see `TinkertoneExtra`. ---
+        in property <[bool]> tt-keys-held;
+        in property <int> tt-window;
+        in property <bool> tt-bass-layer;
+        in property <int> tt-bass-held: -1;
+        in property <int> tt-bass-sounding: -1;
+        in property <int> tt-preset;
+        in property <[string]> tt-preset-tones;
+        in property <bool> tt-vibrato;
+        in property <bool> tt-sustain;
+        in property <string> tt-rhythm;
+        in property <float> tt-tempo: 120;
+        in property <bool> tt-playing;
+        in property <bool> tt-synchro;
+        in property <bool> tt-fill;
+        in property <bool> tt-bass-auto;
+        in property <string> tt-chord;
+        in property <int> tt-step;
+        in property <int> tt-steps: 16;
+        in property <int> tt-steps-per-beat: 4;
+        in property <int> tt-bar;
+        in property <[float]> tt-drum-flash;
+        in property <float> tt-volume;
+        in property <float> tt-accomp;
+        in property <float> tt-peak;
         in property <[float]> filter-xyz;
         in property <[float]> filter-wave;
         in property <string> filter-source;
@@ -954,6 +982,17 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
+            if !root.on-home && root.active-kind == 37 : TinkertonePanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                keys-held: root.tt-keys-held; window: root.tt-window; bass-layer: root.tt-bass-layer;
+                bass-held: root.tt-bass-held; bass-sounding: root.tt-bass-sounding;
+                preset: root.tt-preset; preset-tones: root.tt-preset-tones; vibrato: root.tt-vibrato; sustain: root.tt-sustain;
+                rhythm: root.tt-rhythm; tempo: root.tt-tempo; playing: root.tt-playing; synchro: root.tt-synchro; fill: root.tt-fill;
+                bass-auto: root.tt-bass-auto; chord: root.tt-chord;
+                step: root.tt-step; steps: root.tt-steps; steps-per-beat: root.tt-steps-per-beat; bar: root.tt-bar;
+                drum-flash: root.tt-drum-flash; volume: root.tt-volume; accomp: root.tt-accomp; peak: root.tt-peak;
+            }
             if !root.on-home && root.active-kind == 35 : OraclePanel {
                 width: 306px;
                 ink: root.live-ink; accent: root.accent; paper: root.live-bg;
@@ -3452,6 +3491,7 @@ fn app_palette(name: &str) -> Option<(slint::Color, slint::Color, slint::Color, 
         "Forge" => (0x211b18, 0xeee5d9, 0xf0ac70, 0x967d6a),
         "Oracle" => (0x13122a, 0xece8fb, 0xe7c46e, 0x8a84ad),
         "Pulsar" => (0x1c1014, 0xf6e7ea, 0xff5d73, 0x9a6f78),
+        "Tinkertone" => (0xece4d0, 0x2b2620, 0xd2532c, 0x8a7f6c),
         "Vector Filter" => (0x101e25, 0xe4f0e8, 0x79e2cf, 0x729d9e),
         "Settings" => (0x14191f, 0xe7edf4, 0xa5bce9, 0x8994aa),
         "Bloom" => (0x0c1918, 0xe7edda, 0xd8f580, 0x203b33),
@@ -4113,6 +4153,33 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_pulsar_swing(p.swing_pct);
                     ui.set_pulsar_peak(p.peak);
                     ui.set_pulsar_status(p.status.into());
+                }
+                app::SlintExtra::Tinkertone(t) => {
+                    ui.set_active_kind(37);
+                    ui.set_tt_keys_held(Rc::new(slint::VecModel::from(t.keys_held)).into());
+                    ui.set_tt_window(t.window as i32);
+                    ui.set_tt_bass_layer(t.bass_layer);
+                    ui.set_tt_bass_held(t.bass_held);
+                    ui.set_tt_bass_sounding(t.bass_sounding);
+                    ui.set_tt_preset(t.preset as i32);
+                    ui.set_tt_preset_tones(Rc::new(slint::VecModel::from(t.preset_tones.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_tt_vibrato(t.vibrato);
+                    ui.set_tt_sustain(t.sustain);
+                    ui.set_tt_rhythm(apps::tinkertone::RHYTHM_NAMES[t.rhythm.min(5)].into());
+                    ui.set_tt_tempo(t.tempo);
+                    ui.set_tt_playing(t.playing);
+                    ui.set_tt_synchro(t.synchro);
+                    ui.set_tt_fill(t.fill);
+                    ui.set_tt_bass_auto(t.bass_auto);
+                    ui.set_tt_chord(t.chord.into());
+                    ui.set_tt_step(t.step as i32);
+                    ui.set_tt_steps(t.steps as i32);
+                    ui.set_tt_steps_per_beat(t.steps_per_beat as i32);
+                    ui.set_tt_bar(t.bar as i32);
+                    ui.set_tt_drum_flash(Rc::new(slint::VecModel::from(t.drum_flash)).into());
+                    ui.set_tt_volume(t.volume);
+                    ui.set_tt_accomp(t.accomp);
+                    ui.set_tt_peak(t.peak);
                 }
                 app::SlintExtra::None => ui.set_active_kind(0),
             }

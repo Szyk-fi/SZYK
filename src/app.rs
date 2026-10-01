@@ -377,6 +377,7 @@ pub enum SlintExtra {
     Portal(PortalExtra),
     Oracle(OracleExtra),
     Pulsar(PulsarExtra),
+    Tinkertone(TinkertoneExtra),
 }
 
 /// Retro's real per-frame telemetry -- see `RetroApp::slint_extra`.
@@ -541,6 +542,40 @@ pub struct PulsarExtra {
     pub swing_pct: f32,
     pub peak: f32,
     pub status: String,
+}
+
+// Read only by the Slint GUI (examples/slint_home_live.rs), which the
+// framebuffer binary doesn't build -- hence the allow.
+#[allow(dead_code)]
+/// Tinkertone's live state -- see `TinkertoneApp::panel_extra`.
+pub struct TinkertoneExtra {
+    /// 37 melody keys, held or not.
+    pub keys_held: Vec<bool>,
+    /// First key of the 16-pad window.
+    pub window: usize,
+    pub bass_layer: bool,
+    /// Bass key held / sounding (0..15), or -1.
+    pub bass_held: i32,
+    pub bass_sounding: i32,
+    pub preset: usize,
+    pub preset_tones: Vec<String>,
+    pub vibrato: bool,
+    pub sustain: bool,
+    pub rhythm: usize,
+    pub tempo: f32,
+    pub playing: bool,
+    pub synchro: bool,
+    pub fill: bool,
+    pub bass_auto: bool,
+    pub chord: String,
+    pub step: usize,
+    pub steps: usize,
+    pub steps_per_beat: usize,
+    pub bar: usize,
+    pub drum_flash: Vec<f32>,
+    pub volume: f32,
+    pub accomp: f32,
+    pub peak: f32,
 }
 
 /// Settings' live color-wheel state -- see `SettingsApp::slint_extra`.
