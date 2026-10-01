@@ -49,6 +49,41 @@ pub struct Input {
     pub nav_up: bool,
     pub nav_down: bool,
     pub nav_select: bool,
+    // --- Play surface: continuous controls an instrument can play with.
+    // They only reach an app that asks for them (`App::play_surface`);
+    // for every other app the shell keeps using the stick, shoulders and
+    // depth sensors for navigation, exactly as before. ---
+    /// Joystick, -1..1 each axis, +x right, +y up. Springs to 0.
+    pub stick: [f32; 2],
+    /// Joystick click (edge).
+    pub stick_click: bool,
+    /// Depth sensors (left, right): 0 = no hand, rising to 1 as a hand
+    /// comes closer. On hardware these are the two time-of-flight
+    /// sensors; in the sim, the frame's sensor strips or L2/R2.
+    pub hands: [f32; 2],
+    /// L1 / R1 held state.
+    pub shoulders: [bool; 2],
+    /// R1 press edge (L1's is reserved for the shell outside play apps).
+    pub shoulder_press: [bool; 2],
+    /// MIDI keyboard: held notes by MIDI number, velocity 1..127 (0 = up).
+    pub midi_keys: MidiKeys,
+    /// MIDI pitch bend, -1..1.
+    pub pitch_bend: f32,
+    /// MIDI mod wheel (CC1), 0..1.
+    pub mod_wheel: f32,
+    /// MIDI channel aftertouch, 0..1.
+    pub aftertouch: f32,
+}
+
+/// 128 MIDI note velocities -- a newtype only because `Default` isn't
+/// derived for arrays longer than 32.
+#[derive(Clone, Copy, PartialEq)]
+pub struct MidiKeys(pub [u8; 128]);
+
+impl Default for MidiKeys {
+    fn default() -> Self {
+        MidiKeys([0; 128])
+    }
 }
 
 impl Input {
@@ -124,6 +159,23 @@ impl Input {
             nav_up: pressed(Key::Up) || knob1 < 0,
             nav_down: pressed(Key::Down) || knob1 > 0,
             nav_select: pressed(Key::Enter) || knob1_press,
+            ..controller.play_surface_input(Self::keyboard_play_surface(window))
+        }
+    }
+
+    /// Keyboard stand-ins for the play surface (framebuffer runtime):
+    /// arrow keys = joystick, O / P = left / right hand over the depth
+    /// sensors, K = stick click, 9 / 0 = L1 / R1 held.
+    fn keyboard_play_surface(window: &Window) -> Input {
+        let down = |k| window.is_key_down(k);
+        let axis = |neg, pos| (down(pos) as i32 - down(neg) as i32) as f32;
+        Input {
+            stick: [axis(Key::Left, Key::Right), axis(Key::Down, Key::Up)],
+            stick_click: window.is_key_pressed(Key::K, KeyRepeat::No),
+            hands: [if down(Key::O) { 0.7 } else { 0.0 }, if down(Key::P) { 0.7 } else { 0.0 }],
+            shoulders: [down(Key::Key9), down(Key::Key0)],
+            shoulder_press: [window.is_key_pressed(Key::Key9, KeyRepeat::No), window.is_key_pressed(Key::Key0, KeyRepeat::No)],
+            ..Default::default()
         }
     }
 }
@@ -139,6 +191,11 @@ pub trait App {
     fn system_role(&self) -> Option<SystemRole> { None }
     /// Only apps that meaningfully consume performance pads can own the pad lock.
     fn supports_pad_lock(&self) -> bool { false }
+    /// True for an instrument that plays the joystick, depth sensors,
+    /// L1/R1 and MIDI keyboard itself (see the `Input` play-surface
+    /// fields). The shell then stops using those for navigation while
+    /// this app is on screen.
+    fn play_surface(&self) -> bool { false }
     /// The action F3 will perform, supplied by the app rather than inferred by name.
     fn transport_action(&self) -> Option<&'static str> {
         self.running().map(|running| if running { "STOP" } else { "PLAY" })
@@ -342,6 +399,7 @@ pub fn polyline_segments(samples: &[f32], width_px: f32, height_px: f32, centere
 pub enum SlintExtra {
     None,
     Plaits(PlaitsExtra),
+    PlaitsPlay(PlaitsPlayExtra),
     Analyzer(AnalyzerExtra),
     Voltage(VoltageExtra),
     Cascade(CascadeExtra),
@@ -832,6 +890,50 @@ pub struct SequencerExtra {
     /// One entry per pad (16): whether it currently resolves to a
     /// real sample.
     pub pad_loaded: Vec<bool>,
+}
+
+/// One of the four dials on Plaits' play view. `knob` says which
+/// encoder turns it right now (0 = neither), so the screen can badge it.
+#[derive(Default)]
+#[allow(dead_code)] // read only by the Slint renderer, not by the bin target
+pub struct PlaitsDial {
+    pub label: String,
+    pub value: String,
+    pub norm: f32,
+    pub knob: u8,
+}
+
+/// Plaits' play view (see src/apps/plaits_play.rs): what you hear and
+/// what every surface is doing, without a menu in the way.
+#[derive(Default)]
+#[allow(dead_code)] // read only by the Slint renderer, not by the bin target
+pub struct PlaitsPlayExtra {
+    pub engine_name: String,
+    pub engine_index: usize,
+    pub engine_bank: usize,
+    pub engine_led: usize,
+    pub layer: String,
+    pub dials: Vec<PlaitsDial>,
+    /// Physical pad order (row 0 on top), like `Input::grid`.
+    pub pad_labels: Vec<String>,
+    /// Per pad: 0 off, 1 root note, 2 chord, 3 lit (held / focused /
+    /// stored) -- the same meaning as the controller LEDs.
+    pub pad_state: Vec<i32>,
+    /// Pitch rank of the grabbed control on the Controls layer, else -1.
+    pub focused_control: i32,
+    /// Live Timbre/Morph offsets (-0.5..0.5) -- where the stick has
+    /// pushed the sound, after routing.
+    pub stick: [f32; 2],
+    pub hands: [f32; 2],
+    pub hand_targets: [String; 2],
+    /// Expression pitch offset in semitones.
+    pub pitch: f32,
+    pub key: String,
+    pub sounding: String,
+    pub voices: usize,
+    pub arp: bool,
+    pub scope: CurveSegments,
+    pub status: String,
 }
 
 pub struct PlaitsExtra {

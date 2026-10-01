@@ -67,6 +67,9 @@ use std::time::Duration;
 /// sticks report nonzero noise near rest.
 const STICK_DEADZONE: f32 = 0.35;
 const STICK_REPEAT: Duration = Duration::from_millis(60);
+/// Dead zone for the analog stick as a play-surface joystick -- much
+/// smaller than the navigation one, since here small moves are music.
+const PLAY_DEADZONE: f32 = 0.08;
 
 /// Tracks which edge-triggered buttons were already down last poll,
 /// so a held button fires its action once, not every ~8ms it stays
@@ -87,6 +90,8 @@ struct EdgeState {
     touchpad: bool,
     last_knob1_tick: Option<std::time::Instant>,
     last_knob2_tick: Option<std::time::Instant>,
+    /// Right-stick click (R3), for a play-surface app's stick click.
+    stick_click: bool,
 }
 
 /// Runs forever on its own thread (spawned once from `main.rs`,
@@ -167,8 +172,11 @@ unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtended
     controller.grid[5].store(is_down(&gamepad.buttonB()), Ordering::Relaxed); // Circle -> A
     controller.grid[6].store(is_down(&gamepad.buttonX()), Ordering::Relaxed); // Square -> Y
     controller.grid[7].store(is_down(&gamepad.buttonY()), Ordering::Relaxed); // Triangle -> X
-    controller.grid[8].store(is_down(&gamepad.leftShoulder()), Ordering::Relaxed); // L1 -> L
-    controller.grid[9].store(is_down(&gamepad.rightShoulder()), Ordering::Relaxed); // R1 -> R
+    // Not while a play-surface app is up: there L1/R1 are its own held
+    // buttons (see below), and must not also press pads 9/10.
+    let play_surface = controller.play_surface.load(Ordering::Relaxed);
+    controller.grid[8].store(!play_surface && is_down(&gamepad.leftShoulder()), Ordering::Relaxed); // L1 -> L
+    controller.grid[9].store(!play_surface && is_down(&gamepad.rightShoulder()), Ordering::Relaxed); // R1 -> R
     // `buttonOptions`/`buttonMenu` (Share/Options on a DualSense) also
     // double as this app's Select/Start grid pads -- Retro wants both
     // a level-state Select/Start (for held-during-boot combos some
@@ -194,13 +202,26 @@ unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtended
         edges.options = options_down;
     }
 
-    let left_trigger_down = is_down(&gamepad.leftTrigger());
+    // Play-surface apps (see App::play_surface) take L2/R2 as the two
+    // depth sensors (the triggers are analog, so they stand in for a
+    // hand's distance), L1/R1 as held buttons and the right stick as an
+    // analog joystick -- none of them navigate while such an app is up.
+    let play = controller.play_surface.load(Ordering::Relaxed);
+    if play {
+        controller.hands[0].set(gamepad.leftTrigger().value().clamp(0.0, 1.0));
+        controller.hands[1].set(gamepad.rightTrigger().value().clamp(0.0, 1.0));
+    } else {
+        controller.hands[0].set(0.0);
+        controller.hands[1].set(0.0);
+    }
+
+    let left_trigger_down = !play && is_down(&gamepad.leftTrigger());
     if left_trigger_down && !edges.left_trigger {
         controller.set_top(1); // L2 -> F2
     }
     edges.left_trigger = left_trigger_down;
 
-    let right_trigger_down = is_down(&gamepad.rightTrigger());
+    let right_trigger_down = !play && is_down(&gamepad.rightTrigger());
     if right_trigger_down && !edges.right_trigger {
         controller.set_top(2); // R2 -> F3
     }
@@ -241,14 +262,15 @@ unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtended
     edges.triangle = triangle_down;
 
     let left_shoulder_down = is_down(&gamepad.leftShoulder());
+    let right_shoulder_down = is_down(&gamepad.rightShoulder());
+    controller.shoulders[0].store(play && left_shoulder_down, Ordering::Relaxed);
+    controller.shoulders[1].store(play && right_shoulder_down, Ordering::Relaxed);
     if left_shoulder_down && !edges.left_shoulder {
-        controller.set_home();
+        if play { controller.set_shoulder_press(0) } else { controller.set_home() }
     }
     edges.left_shoulder = left_shoulder_down;
-
-    let right_shoulder_down = is_down(&gamepad.rightShoulder());
     if right_shoulder_down && !edges.right_shoulder {
-        controller.set_top(3);
+        if play { controller.set_shoulder_press(1) } else { controller.set_top(3) }
     }
     edges.right_shoulder = right_shoulder_down;
 
@@ -295,6 +317,23 @@ unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtended
     let right_stick = gamepad.rightThumbstick();
     *stick2_x = right_stick.xAxis().value();
     *stick2_y = right_stick.yAxis().value();
+
+    if play {
+        // Analog: a small dead zone, rescaled so full travel still reads 1.
+        let shape = |v: f32| if v.abs() < PLAY_DEADZONE { 0.0 } else { v.signum() * (v.abs() - PLAY_DEADZONE) / (1.0 - PLAY_DEADZONE) };
+        controller.stick[0].set(shape(*stick2_x));
+        controller.stick[1].set(shape(*stick2_y));
+        if let Some(r3) = gamepad.rightThumbstickButton() {
+            let down = is_down(&r3);
+            if down && !edges.stick_click {
+                controller.set_stick_click();
+            }
+            edges.stick_click = down;
+        }
+        return;
+    }
+    controller.stick[0].set(0.0);
+    controller.stick[1].set(0.0);
 
     if (stick2_x.abs() > STICK_DEADZONE || stick2_y.abs() > STICK_DEADZONE) && ready_dpad_nav {
         // Reversed from the original mapping (`-y.signum()`) per

@@ -136,6 +136,8 @@ pub mod pams;
 pub mod plaits;
 #[path = "../src/apps/plaits_layout.rs"]
 pub mod plaits_layout;
+#[path = "../src/apps/plaits_play.rs"]
+pub mod plaits_play;
 #[path = "../src/apps/prism.rs"]
 pub mod prism;
 #[path = "../src/apps/queen_of_pentacles.rs"]
@@ -216,6 +218,7 @@ slint::slint! {
     import { OraclePanel } from "slint_common/oracle_panel.slint";
     import { PulsarPanel } from "slint_common/pulsar_panel.slint";
     import { TinkertonePanel } from "slint_common/tinkertone_panel.slint";
+    import { PlaitsPlayPanel } from "slint_common/plaits_play_panel.slint";
     import { VectorFilterPanel } from "slint_common/vector_filter_panel.slint";
     import { SettingsPanel } from "slint_common/settings_panel.slint";
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
@@ -327,10 +330,22 @@ slint::slint! {
             if direction == 3 { root.knob2-delta -= 1; }
             if direction == 4 { root.knob1-clicked(); }
         }
+        // While a play-surface app is up, the shoulders are its own held
+        // buttons (read from l1-held/r1-held); clicks are only counted.
         shoulder-pressed(side) => {
-            if side == 0 { root.f-clicked(0); }
+            if root.play-surface { if side == 0 { root.l1-presses += 1; } else { root.r1-presses += 1; } }
+            else if side == 0 { root.f-clicked(0); }
             else { root.knob1-clicked(); }
         }
+        in property <bool> play-surface: false;
+        stick-owned: root.play-surface;
+        in-out property <int> l1-presses: 0;
+        in-out property <int> r1-presses: 0;
+        in-out property <int> live-stick-clicks <=> self.stick-clicks;
+        in-out property <float> live-hand-l <=> self.hand-l;
+        in-out property <float> live-hand-r <=> self.hand-r;
+        in-out property <bool> live-l1-held <=> self.l1-held;
+        in-out property <bool> live-r1-held <=> self.r1-held;
         in-out property <float> knob1-delta: 0;
         in-out property <float> knob2-delta: 0;
 
@@ -825,6 +840,33 @@ slint::slint! {
         in property <float> pulsar-swing: 50;
         in property <float> pulsar-peak;
         in property <string> pulsar-status;
+        // --- Plaits play view (active-kind == 38): see `PlaitsPlayExtra`. ---
+        in property <string> pp-engine-name;
+        in property <int> pp-engine-index;
+        in property <int> pp-engine-bank;
+        in property <string> pp-layer;
+        in property <[string]> pp-dial-labels;
+        in property <[string]> pp-dial-values;
+        in property <[float]> pp-dial-norms;
+        in property <[int]> pp-dial-knobs;
+        in property <[string]> pp-pad-labels;
+        in property <[int]> pp-pad-state;
+        in property <float> pp-stick-x;
+        in property <float> pp-stick-y;
+        in property <float> pp-hand-l;
+        in property <float> pp-hand-r;
+        in property <string> pp-hand-l-target;
+        in property <string> pp-hand-r-target;
+        in property <float> pp-pitch;
+        in property <string> pp-key;
+        in property <string> pp-sounding;
+        in property <int> pp-voices;
+        in property <bool> pp-arp;
+        in property <[float]> pp-scope-mid-x;
+        in property <[float]> pp-scope-mid-y;
+        in property <[float]> pp-scope-length;
+        in property <[float]> pp-scope-angle;
+        in property <string> pp-status;
         // --- Tinkertone (active-kind == 37): see `TinkertoneExtra`. ---
         in property <[bool]> tt-keys-held;
         in property <int> tt-window;
@@ -967,7 +1009,7 @@ slint::slint! {
             }
             // Bloom keeps its dedicated orbital layout; all other apps use
             // the shared parameter rail with their own ink, paper, and accent.
-            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 : ParamListColumn {
+            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 38 : ParamListColumn {
                 width: 278px;
                 row-names: root.row-names;
                 row-values: root.row-values;
@@ -982,6 +1024,20 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
+            if !root.on-home && root.active-kind == 38 : PlaitsPlayPanel {
+                width: 604px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                bank-colors: root.plaits-bank-colors;
+                engine-name: root.pp-engine-name; engine-index: root.pp-engine-index; engine-bank: root.pp-engine-bank;
+                layer: root.pp-layer;
+                dial-labels: root.pp-dial-labels; dial-values: root.pp-dial-values; dial-norms: root.pp-dial-norms; dial-knobs: root.pp-dial-knobs;
+                pad-labels: root.pp-pad-labels; pad-state: root.pp-pad-state;
+                stick-x: root.pp-stick-x; stick-y: root.pp-stick-y;
+                hand-l: root.pp-hand-l; hand-r: root.pp-hand-r; hand-l-target: root.pp-hand-l-target; hand-r-target: root.pp-hand-r-target;
+                pitch: root.pp-pitch; key: root.pp-key; sounding: root.pp-sounding; voices: root.pp-voices; arp: root.pp-arp;
+                scope-mid-x: root.pp-scope-mid-x; scope-mid-y: root.pp-scope-mid-y; scope-length: root.pp-scope-length; scope-angle: root.pp-scope-angle;
+                status: root.pp-status;
+            }
             if !root.on-home && root.active-kind == 37 : TinkertonePanel {
                 width: 306px;
                 ink: root.live-ink; accent: root.accent; paper: root.live-bg;
@@ -4154,6 +4210,39 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_pulsar_peak(p.peak);
                     ui.set_pulsar_status(p.status.into());
                 }
+                app::SlintExtra::PlaitsPlay(p) => {
+                    let strings = |v: Vec<String>| -> slint::ModelRc<slint::SharedString> {
+                        Rc::new(slint::VecModel::from(v.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into()
+                    };
+                    ui.set_active_kind(38);
+                    ui.set_pp_engine_name(p.engine_name.into());
+                    ui.set_pp_engine_index(p.engine_index as i32);
+                    ui.set_pp_engine_bank(p.engine_bank as i32);
+                    ui.set_pp_layer(p.layer.to_uppercase().into());
+                    ui.set_pp_dial_labels(strings(p.dials.iter().map(|d| d.label.clone()).collect()));
+                    ui.set_pp_dial_values(strings(p.dials.iter().map(|d| d.value.clone()).collect()));
+                    ui.set_pp_dial_norms(Rc::new(slint::VecModel::from(p.dials.iter().map(|d| d.norm).collect::<Vec<_>>())).into());
+                    ui.set_pp_dial_knobs(Rc::new(slint::VecModel::from(p.dials.iter().map(|d| d.knob as i32).collect::<Vec<_>>())).into());
+                    ui.set_pp_pad_labels(strings(p.pad_labels));
+                    ui.set_pp_pad_state(Rc::new(slint::VecModel::from(p.pad_state)).into());
+                    ui.set_pp_stick_x(p.stick[0]);
+                    ui.set_pp_stick_y(p.stick[1]);
+                    ui.set_pp_hand_l(p.hands[0]);
+                    ui.set_pp_hand_r(p.hands[1]);
+                    let [hl, hr] = p.hand_targets;
+                    ui.set_pp_hand_l_target(hl.into());
+                    ui.set_pp_hand_r_target(hr.into());
+                    ui.set_pp_pitch(p.pitch);
+                    ui.set_pp_key(p.key.into());
+                    ui.set_pp_sounding(p.sounding.into());
+                    ui.set_pp_voices(p.voices as i32);
+                    ui.set_pp_arp(p.arp);
+                    ui.set_pp_scope_mid_x(Rc::new(slint::VecModel::from(p.scope.mid_x)).into());
+                    ui.set_pp_scope_mid_y(Rc::new(slint::VecModel::from(p.scope.mid_y)).into());
+                    ui.set_pp_scope_length(Rc::new(slint::VecModel::from(p.scope.length)).into());
+                    ui.set_pp_scope_angle(Rc::new(slint::VecModel::from(p.scope.angle_deg)).into());
+                    ui.set_pp_status(p.status.into());
+                }
                 app::SlintExtra::Tinkertone(t) => {
                     ui.set_active_kind(37);
                     ui.set_tt_keys_held(Rc::new(slint::VecModel::from(t.keys_held)).into());
@@ -4421,10 +4510,16 @@ fn main() {
 
         let midi_k1 = controller.take_knob1_delta();
         let midi_k2 = controller.take_knob2_delta();
+        // A play-surface app on screen takes the stick, shoulders, depth
+        // sensors and MIDI keyboard as instrument controls (see
+        // App::play_surface); otherwise they keep navigating as before.
+        let play_surface = active_for_timer.borrow().is_some_and(|i| apps_for_timer.borrow()[i].1.play_surface());
+        controller.set_play_surface(play_surface);
+        ui.set_play_surface(play_surface);
         // The spring-return stick repeats on its dominant axis after a dead zone.
         // Discrete navigation bypasses the encoder ticks-per-row setting.
-        let x = ui.get_live_stick_x();
-        let y = ui.get_live_stick_y();
+        let x = if play_surface { 0.0 } else { ui.get_live_stick_x() };
+        let y = if play_surface { 0.0 } else { ui.get_live_stick_y() };
         let mut stick_nav = 0;
         let mut stick_edit = 0;
         if x.abs().max(y.abs()) <= 0.35 {
@@ -4595,7 +4690,25 @@ fn main() {
             let pad_overlay = apps_ref[play_idx].1.grid_led_overlay();
             let play_name_upper = apps_ref[play_idx].0.to_uppercase();
             let screen_grid: [bool; 16] = if play_idx == idx { grid } else { [false; 16] };
-            let input = Input { grid: screen_grid, navigation_steps: navigation, knob1: k1, knob2: k2, knob1_press: press1, knob2_press: press2, ..Default::default() };
+            let mut input = Input { grid: screen_grid, navigation_steps: navigation, knob1: k1, knob2: k2, knob1_press: press1, knob2_press: press2, ..Default::default() };
+            if play_surface {
+                let clicks = ui.get_live_stick_clicks();
+                let (l1p, r1p) = (ui.get_l1_presses(), ui.get_r1_presses());
+                ui.set_live_stick_clicks(0);
+                ui.set_l1_presses(0);
+                ui.set_r1_presses(0);
+                let frame = Input {
+                    // the frame's y grows downward; the play surface's +y is up
+                    stick: [ui.get_live_stick_x(), -ui.get_live_stick_y()],
+                    stick_click: clicks > 0,
+                    hands: [ui.get_live_hand_l(), ui.get_live_hand_r()],
+                    shoulders: [ui.get_live_l1_held(), ui.get_live_r1_held()],
+                    shoulder_press: [l1p > 0, r1p > 0],
+                    ..Default::default()
+                };
+                let surface = controller.play_surface_input(frame);
+                input = Input { grid: input.grid, navigation_steps: input.navigation_steps, knob1: input.knob1, knob2: input.knob2, knob1_press: input.knob1_press, knob2_press: input.knob2_press, ..surface };
+            }
             let app = &mut apps_ref[idx].1;
             app.tick(&input);
 

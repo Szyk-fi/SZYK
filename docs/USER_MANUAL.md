@@ -58,7 +58,7 @@ to register its parameters as modulation targets, then wire it up in Portal.
 
 | App | What it does |
 |---|---|
-| **Plaits** | The real Mutable Instruments Plaits voice (ported DSP, not an approximation) — the same 16-model macro-oscillator as the Eurorack module. |
+| **Plaits** | The real Mutable Instruments Plaits voice (ported DSP, not an approximation) — all 24 engines of the Eurorack module's 1.2 firmware, with a play view built around the whole device (see §3.1). |
 | **Voltage** | Classic 2-oscillator subtractive synth (Saw/Square/Triangle/Sine), filter, envelope. |
 | **Cascade** | 6-operator FM synth in the spirit of the DX7 — real FM synthesis, not a clone of Yamaha's ROM. Loads real `.syx` presets. |
 | **Synth** | The simplest instrument: 4x4 grid as a 16-note held keyboard, two knobs for cutoff/volume. |
@@ -67,6 +67,28 @@ to register its parameters as modulation targets, then wire it up in Portal.
 | **Queen of Pentacles** | CV/gate generator driven by real 1D chaotic maps (logistic map and two relatives), not a disguised sequencer. |
 | **StarLab** | Strymon StarLab-inspired: a Karplus-Strong string voice sharing a comb/allpass reverb tank with the effect side. |
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
+
+### 3.1 Playing Plaits
+
+Plaits opens on its **play view**; **R1** flips to the full parameter menu and
+back. Notes keep sounding in both.
+
+| Surface | What it does |
+|---|---|
+| Knob 1 / Knob 2 | Turn the current pair of dials (badged 1 and 2). Knob 1 press: next pair (Harmonics/Timbre → Morph/Decay → Attack/Release → Colour/Octave). Knob 2 press: reset the pair. |
+| D-pad ▲▼ | Step through the 24 engines; the strip under the name shows where you are. |
+| F2 | Pad layer: **Notes** (in key) → **Chords** (each pad is that degree's chord in the key) → **Controls** (16 parameters; tap one, knob 2 turns it) → **Moments** (tap to recall a whole sound, hold 0.6 s to store it). |
+| L1 (hold) | Peek at the Controls layer without leaving the one you're on. |
+| F3 | Arpeggiator on/off (it walks the held Notes pads). |
+| Joystick | Bends Timbre (X) and Morph (Y) by up to half their range. **Click** keeps the bent sound: the offset is folded into the knobs. |
+| Depth sensors (L2/R2 on a gamepad, the lenses on the sim frame, O/P keys) | Right hand: a theremin — plays on its own, pitch from height over 12 semitones, unquantised. Left hand: Harmonics. |
+| MIDI keyboard | Real note numbers and velocity (louder and brighter), pitch bend (±2 semitones), mod wheel (Morph), aftertouch (Timbre). |
+| Audio in | Optional envelope follower (Play Surface → Audio In) from **Hardware input** to any target. |
+
+Every routing above lives in the menu's **Play Surface** group. Expression is
+always an offset on top of the knobs, never overwriting them. Moments are
+saved to `saves/plaits/moments.json` (the SD card on hardware). The camera is
+not used by Plaits.
 
 ## 4. Effects
 

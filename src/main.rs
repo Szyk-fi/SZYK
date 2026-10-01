@@ -452,6 +452,9 @@ fn handle_midi_message(
                 if is_on {
                     controller.set_top(i);
                 }
+            } else if controller.play_surface_midi(message[0], data1, data2) {
+                // A play-surface app (see App::play_surface) gets the
+                // real note and velocity instead of the 16-pad fold.
             } else if let Some(i) = fallback_grid_pad(data1) {
                 // Not one of the Push 2 pads/top buttons `GRID_NOTES`/
                 // `TOP_NOTES` were hand-tuned for -- still play it
@@ -468,8 +471,13 @@ fn handle_midi_message(
                 eprintln!("midi: unmapped note {data1} (on={is_on})");
             }
         }
+        0xD0 | 0xE0 => {
+            controller.play_surface_midi(message[0], data1, data2);
+        }
         0xB0 => {
             if data1 == 1 {
+                // Also the play-surface app's mod wheel, when one is on screen.
+                controller.play_surface_midi(message[0], data1, data2);
                 // Mod wheel -- map 0-127 to a 100 Hz - 8000 Hz cutoff range, log scale
                 let cc_value = data2 as f32 / 127.0;
                 let hz = 100.0 * (80.0f32).powf(cc_value);

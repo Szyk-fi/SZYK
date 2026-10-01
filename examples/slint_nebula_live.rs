@@ -43,6 +43,8 @@ mod util;
 pub mod plaits;
 #[path = "../src/apps/plaits_layout.rs"]
 mod plaits_layout;
+#[path = "../src/apps/plaits_play.rs"]
+mod plaits_play;
 // Nebula's own source refers to `crate::apps::plaits::...` (the real
 // crate's module path) -- this re-export makes that path resolve to
 // the same flat `plaits` module declared above, without needing a

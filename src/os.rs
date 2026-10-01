@@ -174,6 +174,8 @@ impl Os {
             // any Push 2 pad still cuts the boot screen short, same as
             // every other input already does below.
             let midi_armed = self.splash.is_some() || self.active.map(|i| self.midi_armed[i]).unwrap_or(false);
+            let play_surface = self.splash.is_none() && self.active.is_some_and(|i| self.apps[i].1.play_surface());
+            self.controller.set_play_surface(play_surface);
             let input = Input::poll(&window, &self.controller, midi_armed);
 
             if let Some((stage, deadline)) = self.splash {

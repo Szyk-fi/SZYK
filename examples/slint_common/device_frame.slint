@@ -194,6 +194,17 @@ export component DeviceFrame inherits Window {
     callback shoulder-pressed(int);
     in-out property <float> stick-x: 0;
     in-out property <float> stick-y: 0;
+    // Play surface (see App::play_surface): held shoulders, stick clicks
+    // counted separately from D-pad select, and the two depth sensors'
+    // hand distance (0 = no hand, 1 = closest).
+    in-out property <bool> l1-held: false;
+    in-out property <bool> r1-held: false;
+    in-out property <int> stick-clicks: 0;
+    // When true, a stick click is only counted (the app plays it);
+    // otherwise it also acts as select, as before.
+    in property <bool> stick-owned: false;
+    in-out property <float> hand-l: 0;
+    in-out property <float> hand-r: 0;
 
     // Shoulder buttons project above the rectangular aluminium rim.
     for side in [0, 1] : Rectangle {
@@ -209,7 +220,13 @@ export component DeviceFrame inherits Window {
             horizontal-alignment: center; vertical-alignment: center;
             letter-spacing: 1px;
         }
-        shoulder-touch := TouchArea { clicked => { root.shoulder-pressed(side); } }
+        shoulder-touch := TouchArea {
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down { if side == 0 { root.l1-held = true; } else { root.r1-held = true; } }
+                if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel { if side == 0 { root.l1-held = false; } else { root.r1-held = false; } }
+            }
+            clicked => { root.shoulder-pressed(side); }
+        }
     }
     Rectangle {
         x: 20px; y: 48px; width: 1200px; height: 480px;
@@ -228,6 +245,40 @@ export component DeviceFrame inherits Window {
         Rectangle {
             x: 818px; y: 19px; width: 5px; height: 5px;
             border-radius: 3px; background: #d0d4d2;
+        }
+        // Two depth (time-of-flight) sensors, one per hand. In the sim:
+        // press a lens and drag up to bring the hand closer, down to pull
+        // it away; let go and the hand leaves.
+        for side in [0, 1] : lens := Rectangle {
+            property <float> value: side == 0 ? root.hand-l : root.hand-r;
+            x: side == 0 ? 60px : 1080px; y: 6px;
+            width: 72px; height: 30px;
+            Rectangle {
+                x: 2px; y: 7px; width: 16px; height: 16px; border-radius: 8px;
+                background: #050606; border-width: 2px;
+                border-color: lens.value > 0 ? #5cf07a.with-alpha(0.35 + 0.65 * lens.value) : #2c3034;
+                Rectangle { x: 4px; y: 4px; width: 4px; height: 4px; border-radius: 2px; background: #3c4248; }
+            }
+            Rectangle {
+                x: 24px; y: 13px; width: 44px; height: 4px; border-radius: 2px; background: #1e2124;
+                Rectangle { x: 0px; y: 0px; width: 44px * lens.value; height: 100%; border-radius: 2px; background: #5cf07a; }
+            }
+            Text {
+                x: 24px; y: 19px; text: side == 0 ? "HAND L" : "HAND R";
+                color: #6c7075; font-family: "JetBrains Mono"; font-size: 7px;
+            }
+            TouchArea {
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down { if side == 0 { root.hand-l = 0.5; } else { root.hand-r = 0.5; } }
+                    if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel { if side == 0 { root.hand-l = 0; } else { root.hand-r = 0; } }
+                }
+                moved => {
+                    if self.pressed {
+                        if side == 0 { root.hand-l = max(0.02, min(1, 0.5 + (self.pressed-y - self.mouse-y) / 80px)); }
+                        else { root.hand-r = max(0.02, min(1, 0.5 + (self.pressed-y - self.mouse-y) / 80px)); }
+                    }
+                }
+            }
         }
         // Native-resolution screen and existing module layouts.
         Rectangle {
@@ -381,7 +432,7 @@ export component DeviceFrame inherits Window {
                         root.stick-y = max(-1, min(1, (self.mouse-y - self.pressed-y) / 26px));
                     }
                 }
-                clicked => { if !stick.dragged { root.navigation-pressed(4); } }
+                clicked => { if !stick.dragged { root.stick-clicks += 1; if !root.stick-owned { root.navigation-pressed(4); } } }
             }
         }
         // Right-hand performance deck: same row-major pad IDs and gate edges.

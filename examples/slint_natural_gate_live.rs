@@ -47,6 +47,8 @@ mod arpeggiator;
 mod plaits;
 #[path = "../src/apps/plaits_layout.rs"]
 mod plaits_layout;
+#[path = "../src/apps/plaits_play.rs"]
+mod plaits_play;
 #[path = "../src/apps/natural_gate.rs"]
 mod natural_gate;
 pub fn run_inference(block: &mut [f32]) {

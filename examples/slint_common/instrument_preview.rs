@@ -139,6 +139,12 @@ pub fn render(directory: &str) {
             assert_eq!(app.running(), Some(false));
             app.toggle_running();
         }
+        // Plaits opens on its play view, where the D-pad steps engines;
+        // the list-navigation checks below belong to its menu (R1).
+        if name == "Plaits" {
+            assert!(matches!(app.slint_extra(), app::SlintExtra::PlaitsPlay(_)), "Plaits must open on its play view");
+            app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        }
         if ["Plaits", "Pam's Workout", "Beads", "Black Hole", "Bloom"].contains(&name) {
         // Exercise actual short pointer taps all the way into the module menu,
         // using the normal three-tick encoder setting that exposed the regression.
@@ -177,6 +183,12 @@ pub fn render(directory: &str) {
                 assert_eq!(app.slint_selected(), if delta == 1 { before + 1 } else { before }, "{name}: short tap navigation");
             }
             println!("{name}: pointer tap navigation passed");
+        }
+        if name == "Plaits" && std::env::var("PORTAMAX_PLAITS_MENU").is_err() {
+            app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+            let mut input = Input::default();
+            input.grid[0] = true;
+            app.tick(&input);
         }
         let (rows, selected, above, below) = app.slint_windowed_rows(10);
         ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.0.clone().into()).collect::<Vec<slint::SharedString>>())).into());
