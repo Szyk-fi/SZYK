@@ -1,0 +1,35 @@
+{
+  "name": "Drone Engine",
+  "kind": "instrument",
+  "description": "Slowly mutating supersaw drones steered by a Lorenz attractor. Turn on Hold.",
+  "voices": 4,
+  "amp_env": true,
+  "params": [
+    {"id": "cutoff", "name": "Cutoff", "min": 60, "max": 8000, "default": 700, "curve": "exp", "unit": "Hz", "page": 1},
+    {"id": "res", "name": "Resonance", "min": 0, "max": 1, "default": 0.35, "page": 1},
+    {"id": "motion", "name": "Motion", "min": 0, "max": 3, "default": 1.2, "page": 1},
+    {"id": "drift", "name": "Drift", "min": 0, "max": 1, "default": 0.3, "page": 1},
+    {"id": "detune", "name": "Detune", "min": 0, "max": 1, "default": 0.45, "page": 1},
+    {"id": "air", "name": "Air", "min": 0, "max": 0.8, "default": 0.2, "page": 2},
+    {"id": "speed", "name": "Chaos Speed", "min": 0.02, "max": 20, "default": 0.4, "curve": "exp", "page": 2},
+    {"id": "space", "name": "Space", "min": 0, "max": 1, "default": 0.6, "page": 2}
+  ],
+  "macros": [
+    {"name": "Awaken", "targets": [{"param": "cutoff", "amount": 0.5}, {"param": "motion", "amount": 0.3}]},
+    {"name": "Storm", "targets": [{"param": "speed", "amount": 0.6}, {"param": "drift", "amount": 0.4}]},
+    {"name": "Breath", "targets": [{"param": "air", "amount": 0.6}]},
+    {"name": "Abyss", "targets": [{"param": "space", "amount": 0.4}, {"param": "cutoff", "amount": -0.4}]}
+  ],
+  "voice": [
+    {"id": "att", "type": "chaos", "map": "lorenz", "in": {"rate": "speed", "r": 0.7}},
+    {"id": "saws", "type": "supersaw", "in": {"freq": "pitch * (1 + att * drift * 0.012)", "detune": "detune", "mix": 0.8}},
+    {"id": "hiss", "type": "noise", "color": "pink"},
+    {"id": "filt", "type": "ladder", "in": {"in": "saws + hiss * air", "cutoff": "clamp(cutoff * 2 ^ (att * motion), 40, 14000)", "res": "res", "drive": 1.5}}
+  ],
+  "voice_out": "filt * 0.5",
+  "global": [
+    {"id": "rev", "type": "reverb", "in": {"in": "voices", "size": 0.95, "damp": 0.5, "mod": 0.6}},
+    {"id": "sway", "type": "lfo", "shape": "smooth", "in": {"rate": 0.05}}
+  ],
+  "out": {"left": "voices + rev * space", "right": "voices * (0.9 + sway * 0.1) + rev * space"}
+}

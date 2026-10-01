@@ -51,6 +51,12 @@ png = "0.17"
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"
+# Oracle (src/apps/oracle): its AI patch designer exchanges JSON patches
+# with an LLM and posts voice takes to a speech-to-text server, so it
+# needs a JSON value type and a small blocking HTTP client. Both run only
+# on Oracle's own worker threads -- never on the audio thread.
+serde_json = "1"
+ureq = "2"
 # The NES core behind the Retro app (src/apps/retro.rs) -- a real, actively
 # maintained, pure-Rust emulator library (30+ mappers, ~90% of licensed
 # games), statically linked into this binary rather than dynamically loaded

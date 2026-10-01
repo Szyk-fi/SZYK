@@ -1,0 +1,25 @@
+{
+  "name": "Bit Mangler",
+  "kind": "effect",
+  "description": "Wavefolding, bit crushing and an envelope-following wah for destroying anything.",
+  "params": [
+    {"id": "fold", "name": "Fold", "min": 1, "max": 12, "default": 2.5, "page": 1},
+    {"id": "bits", "name": "Bits", "min": 1, "max": 16, "default": 7, "page": 1},
+    {"id": "srate", "name": "Sample Rate", "min": 400, "max": 48000, "default": 9000, "curve": "exp", "unit": "Hz", "page": 1},
+    {"id": "wah", "name": "Wah", "min": 0, "max": 1, "default": 0.5, "page": 1},
+    {"id": "res", "name": "Resonance", "min": 0, "max": 0.95, "default": 0.6, "page": 2},
+    {"id": "outgain", "name": "Output", "min": 0.1, "max": 1.5, "default": 0.7, "page": 2}
+  ],
+  "macros": [
+    {"name": "Destroy", "targets": [{"param": "fold", "amount": 0.5}, {"param": "bits", "amount": -0.5}, {"param": "srate", "amount": -0.4}]},
+    {"name": "Quack", "targets": [{"param": "wah", "amount": 0.5}, {"param": "res", "amount": 0.3}]},
+    {"name": "Lo-Fi", "targets": [{"param": "bits", "amount": -0.3}, {"param": "srate", "amount": -0.3}]},
+    {"name": "Tame", "targets": [{"param": "fold", "amount": -0.6}, {"param": "outgain", "amount": -0.2}]}
+  ],
+  "global": [
+    {"id": "fol", "type": "follower", "in": {"in": "in", "attack": 0.005, "release": 0.12}},
+    {"id": "cr", "type": "crush", "in": {"in": "fold(in * fold)", "bits": "bits", "rate": "srate"}},
+    {"id": "wf", "type": "filter", "mode": "bp", "in": {"in": "cr", "cutoff": "clamp(250 * 2 ^ (fol * wah * 12), 120, 12000)", "res": "res"}}
+  ],
+  "out": "mix(cr, wf * 2, wah) * outgain"
+}

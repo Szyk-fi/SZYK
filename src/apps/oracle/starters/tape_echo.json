@@ -1,0 +1,28 @@
+{
+  "name": "Worn Tape Echo",
+  "kind": "effect",
+  "description": "Saturating tape delay with wow, flutter and a darkening feedback path.",
+  "params": [
+    {"id": "dtime", "name": "Time", "min": 0.04, "max": 1.2, "default": 0.38, "curve": "exp", "unit": "s", "page": 1},
+    {"id": "fb", "name": "Feedback", "min": 0, "max": 0.95, "default": 0.5, "page": 1},
+    {"id": "tone", "name": "Tone", "min": 500, "max": 12000, "default": 3200, "curve": "exp", "unit": "Hz", "page": 1},
+    {"id": "drive", "name": "Saturation", "min": 1, "max": 6, "default": 1.8, "page": 1},
+    {"id": "wow", "name": "Wow", "min": 0, "max": 1, "default": 0.35, "page": 2},
+    {"id": "flutter", "name": "Flutter", "min": 0, "max": 1, "default": 0.25, "page": 2},
+    {"id": "spread", "name": "Stereo", "min": 0, "max": 1, "default": 0.5, "page": 2}
+  ],
+  "macros": [
+    {"name": "Worn", "targets": [{"param": "wow", "amount": 0.5}, {"param": "flutter", "amount": 0.5}, {"param": "tone", "amount": -0.3}]},
+    {"name": "Runaway", "targets": [{"param": "fb", "amount": 0.45}]},
+    {"name": "Hot", "targets": [{"param": "drive", "amount": 0.6}]},
+    {"name": "Wide", "targets": [{"param": "spread", "amount": 0.5}]}
+  ],
+  "global": [
+    {"id": "wowl", "type": "lfo", "shape": "smooth", "in": {"rate": 0.6}},
+    {"id": "flut", "type": "lfo", "shape": "sine", "in": {"rate": 7.3}},
+    {"id": "tape", "type": "delay", "max": 2, "in": {"in": "sat(in * drive) / sat(drive)", "time": "clamp(dtime * (1 + wowl * wow * 0.015 + flut * flutter * 0.003), 0.01, 1.9)", "fb": "fb", "damp": 0.35}},
+    {"id": "col", "type": "filter", "mode": "lp", "in": {"in": "tape", "cutoff": "tone", "res": 0.1}},
+    {"id": "echo2", "type": "delay", "max": 2, "in": {"in": "col", "time": "0.001 + spread * 0.03", "fb": 0}}
+  ],
+  "out": {"left": "col", "right": "mix(col, echo2, spread)"}
+}

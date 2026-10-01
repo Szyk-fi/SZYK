@@ -1,0 +1,209 @@
+{
+  "name": "Velvet Drift",
+  "kind": "instrument",
+  "description": "Warm detuned pad with a breathing filter and a wide shimmer tail.",
+  "voices": 8,
+  "amp_env": true,
+  "params": [
+    {
+      "id": "detune",
+      "name": "Detune",
+      "min": 0,
+      "max": 1,
+      "default": 0.35,
+      "page": 1
+    },
+    {
+      "id": "cutoff",
+      "name": "Cutoff",
+      "min": 80,
+      "max": 9000,
+      "default": 1200,
+      "curve": "exp",
+      "unit": "Hz",
+      "page": 1
+    },
+    {
+      "id": "res",
+      "name": "Resonance",
+      "min": 0,
+      "max": 0.95,
+      "default": 0.25,
+      "page": 1
+    },
+    {
+      "id": "envamt",
+      "name": "Filter Env",
+      "min": 0,
+      "max": 4,
+      "default": 1.5,
+      "page": 1
+    },
+    {
+      "id": "lforate",
+      "name": "Breath Rate",
+      "min": 0.02,
+      "max": 8,
+      "default": 0.2,
+      "curve": "exp",
+      "unit": "Hz",
+      "page": 2
+    },
+    {
+      "id": "lfoamt",
+      "name": "Breath Depth",
+      "min": 0,
+      "max": 1,
+      "default": 0.4,
+      "page": 2
+    },
+    {
+      "id": "verb",
+      "name": "Space",
+      "min": 0,
+      "max": 1,
+      "default": 0.45,
+      "page": 2
+    },
+    {
+      "id": "size",
+      "name": "Size",
+      "min": 0.2,
+      "max": 0.98,
+      "default": 0.8,
+      "page": 2
+    }
+  ],
+  "macros": [
+    {
+      "name": "Open",
+      "targets": [
+        {
+          "param": "cutoff",
+          "amount": 0.6
+        },
+        {
+          "param": "envamt",
+          "amount": 0.3
+        }
+      ]
+    },
+    {
+      "name": "Breathe",
+      "targets": [
+        {
+          "param": "lfoamt",
+          "amount": 0.6
+        },
+        {
+          "param": "lforate",
+          "amount": 0.3
+        }
+      ]
+    },
+    {
+      "name": "Vast",
+      "targets": [
+        {
+          "param": "verb",
+          "amount": 0.5
+        },
+        {
+          "param": "size",
+          "amount": 0.2
+        }
+      ]
+    },
+    {
+      "name": "Sour",
+      "targets": [
+        {
+          "param": "detune",
+          "amount": 0.6
+        },
+        {
+          "param": "res",
+          "amount": 0.4
+        }
+      ]
+    }
+  ],
+  "voice": [
+    {
+      "id": "saws",
+      "type": "supersaw",
+      "in": {
+        "freq": "pitch",
+        "detune": "detune",
+        "mix": 0.7
+      }
+    },
+    {
+      "id": "sub",
+      "type": "osc",
+      "wave": "sine",
+      "in": {
+        "freq": "pitch / 2"
+      }
+    },
+    {
+      "id": "fenv",
+      "type": "adsr",
+      "in": {
+        "a": 0.4,
+        "d": 1.2,
+        "s": 0.3,
+        "r": 1.5
+      }
+    },
+    {
+      "id": "breath",
+      "type": "lfo",
+      "shape": "smooth",
+      "in": {
+        "rate": "lforate"
+      }
+    },
+    {
+      "id": "filt",
+      "type": "filter",
+      "mode": "lp",
+      "in": {
+        "in": "saws + sub * 0.4",
+        "cutoff": "clamp(cutoff * (1 + fenv * envamt) * (1 + breath * lfoamt), 40, 16000)",
+        "res": "res"
+      }
+    }
+  ],
+  "voice_out": "filt * 0.6",
+  "global": [
+    {
+      "id": "shim",
+      "type": "shift",
+      "in": {
+        "in": "rev * 0.5",
+        "semis": 12
+      }
+    },
+    {
+      "id": "rev",
+      "type": "reverb",
+      "in": {
+        "in": "voices + shim * 0.25",
+        "size": "size",
+        "damp": 0.35
+      }
+    },
+    {
+      "id": "wob",
+      "type": "lfo",
+      "in": {
+        "rate": 0.13
+      }
+    }
+  ],
+  "out": {
+    "left": "voices + rev * verb",
+    "right": "voices * 0.98 + rev * verb * (1 + wob * 0.1)"
+  }
+}

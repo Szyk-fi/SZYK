@@ -106,6 +106,10 @@ pub mod cv_out;
 pub mod collection;
 #[path = "../src/apps/forge.rs"]
 pub mod forge;
+#[path = "../src/apps/oracle/mod.rs"]
+pub mod oracle;
+#[path = "../src/apps/pulsar/mod.rs"]
+pub mod pulsar;
 #[path = "../src/apps/vector_filter.rs"]
 pub mod vector_filter;
 #[path = "../src/apps/morph.rs"]
@@ -168,7 +172,7 @@ mod apps {
     pub use super::{
         analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, forge, natural_gate, nautilus,
         nebula, pams, plaits, plaits_layout, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
-        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps,
+        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar,
     };
 }
 
@@ -207,6 +211,8 @@ const HOME_VISIBLE_ROWS: usize = 6;
 
 slint::slint! {
     import { ForgePanel } from "slint_common/forge_panel.slint";
+    import { OraclePanel } from "slint_common/oracle_panel.slint";
+    import { PulsarPanel } from "slint_common/pulsar_panel.slint";
     import { VectorFilterPanel } from "slint_common/vector_filter_panel.slint";
     import { SettingsPanel } from "slint_common/settings_panel.slint";
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
@@ -248,7 +254,7 @@ slint::slint! {
         ] : [
             { label: root.on-home ? (root.has-settings ? "F1  SETTINGS" : "F1  —") : "F1  HOME", active: false },
             {
-                label: root.on-home ? "F2  CATEGORY" : root.grid-mode-label != "" ? (root.grid-mode-label == "STEP" ? "F2  PAD MODE" : "F2  STEP MODE") : (root.midi-target-label != "" ? "F2  UNLOCK" : root.pad-lock-available && !root.on-home ? "F2  PAD LOCK" : "F2  —"),
+                label: root.on-home ? "F2  CATEGORY" : root.grid-mode-label != "" ? (root.grid-mode-label == "STEP" ? "F2  PAD MODE" : root.grid-mode-label == "PAD" ? "F2  STEP MODE" : "F2  PADS: " + root.grid-mode-label) : (root.midi-target-label != "" ? "F2  UNLOCK" : root.pad-lock-available && !root.on-home ? "F2  PAD LOCK" : "F2  —"),
                 active: root.grid-mode-label != "" ? root.grid-mode-label == "PAD" : root.midi-target-label != "",
             },
             { label: root.on-home ? "F3  RECENT" : root.transport-action == "" ? "F3  —" : "F3  " + root.transport-action, active: !root.on-home && root.transport-label == "RUNNING" },
@@ -762,6 +768,60 @@ slint::slint! {
         in property <bool> forge-busy;
         in property <bool> forge-recording;
         in property <float> forge-duration;
+
+        // --- Oracle (active-kind == 35): see `OracleExtra`. ---
+        in property <string> oracle-patch-name;
+        in property <string> oracle-kind-label;
+        in property <int> oracle-mode;
+        in property <[float]> oracle-node-x;
+        in property <[float]> oracle-node-y;
+        in property <[float]> oracle-node-w;
+        in property <float> oracle-node-h: 12;
+        in property <[string]> oracle-node-label;
+        in property <[float]> oracle-node-activity;
+        in property <[bool]> oracle-node-voice;
+        in property <[float]> oracle-edge-mid-x;
+        in property <[float]> oracle-edge-mid-y;
+        in property <[float]> oracle-edge-length;
+        in property <[float]> oracle-edge-angle;
+        in property <int> oracle-forward-edges;
+        in property <[float]> oracle-scope-mid-x;
+        in property <[float]> oracle-scope-mid-y;
+        in property <[float]> oracle-scope-length;
+        in property <[float]> oracle-scope-angle;
+        in property <[int]> oracle-snaps;
+        in property <bool> oracle-morph-on;
+        in property <float> oracle-morph;
+        in property <string> oracle-info;
+        in property <string> oracle-status;
+        in property <bool> oracle-unstable;
+        in property <string> oracle-explain;
+        in property <string> oracle-thinking;
+        in property <float> oracle-mic-level;
+        // --- Pulsar (active-kind == 36): see `PulsarExtra`. ---
+        in property <string> pulsar-genre;
+        in property <float> pulsar-bpm: 120;
+        in property <int> pulsar-slot;
+        in property <int> pulsar-playing-slot: -1;
+        in property <[bool]> pulsar-slot-filled;
+        in property <bool> pulsar-in-fill;
+        in property <int> pulsar-bar;
+        in property <int> pulsar-bars: 1;
+        in property <string> pulsar-pad-mode;
+        in property <bool> pulsar-record;
+        in property <[string]> pulsar-lane-names;
+        in property <int> pulsar-lane;
+        in property <[bool]> pulsar-lane-locked;
+        in property <[bool]> pulsar-lane-muted;
+        in property <[float]> pulsar-lane-flash;
+        in property <[float]> pulsar-cell-vel;
+        in property <[int]> pulsar-cell-mark;
+        in property <int> pulsar-playhead: -1;
+        in property <int> pulsar-cursor-lane: -1;
+        in property <int> pulsar-cursor-col: -1;
+        in property <float> pulsar-swing: 50;
+        in property <float> pulsar-peak;
+        in property <string> pulsar-status;
         in property <[float]> filter-xyz;
         in property <[float]> filter-wave;
         in property <string> filter-source;
@@ -894,6 +954,31 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
+            if !root.on-home && root.active-kind == 35 : OraclePanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                patch-name: root.oracle-patch-name; kind-label: root.oracle-kind-label; mode: root.oracle-mode;
+                node-x: root.oracle-node-x; node-y: root.oracle-node-y; node-w: root.oracle-node-w; node-h: root.oracle-node-h;
+                node-label: root.oracle-node-label; node-activity: root.oracle-node-activity; node-voice: root.oracle-node-voice;
+                edge-mid-x: root.oracle-edge-mid-x; edge-mid-y: root.oracle-edge-mid-y; edge-length: root.oracle-edge-length; edge-angle: root.oracle-edge-angle;
+                forward-edges: root.oracle-forward-edges;
+                scope-mid-x: root.oracle-scope-mid-x; scope-mid-y: root.oracle-scope-mid-y; scope-length: root.oracle-scope-length; scope-angle: root.oracle-scope-angle;
+                snaps: root.oracle-snaps; morph-on: root.oracle-morph-on; morph: root.oracle-morph;
+                info: root.oracle-info; status: root.oracle-status; unstable: root.oracle-unstable;
+                explain: root.oracle-explain; thinking: root.oracle-thinking; mic-level: root.oracle-mic-level;
+            }
+            if !root.on-home && root.active-kind == 36 : PulsarPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                genre: root.pulsar-genre; bpm: root.pulsar-bpm; slot: root.pulsar-slot; playing-slot: root.pulsar-playing-slot;
+                slot-filled: root.pulsar-slot-filled; in-fill: root.pulsar-in-fill; bar: root.pulsar-bar; bars: root.pulsar-bars;
+                pad-mode: root.pulsar-pad-mode; record: root.pulsar-record;
+                lane-names: root.pulsar-lane-names; lane: root.pulsar-lane; lane-locked: root.pulsar-lane-locked;
+                lane-muted: root.pulsar-lane-muted; lane-flash: root.pulsar-lane-flash;
+                cell-vel: root.pulsar-cell-vel; cell-mark: root.pulsar-cell-mark; playhead: root.pulsar-playhead;
+                cursor-lane: root.pulsar-cursor-lane; cursor-col: root.pulsar-cursor-col;
+                swing: root.pulsar-swing; peak: root.pulsar-peak; status: root.pulsar-status;
+            }
             if !root.on-home && root.active-kind == 34 : ForgePanel {
                 width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
                 names:root.row-names;values:root.row-values;selected:root.selected-row;more-above:root.more-above;more-below:root.more-below;
@@ -3365,6 +3450,8 @@ fn app_palette(name: &str) -> Option<(slint::Color, slint::Color, slint::Color, 
         "Analyzer" => (0x101b22, 0xe5eff3, 0x75dcd3, 0x81959e),
         "Synth" => (0x151c21, 0xe5eff3, 0x8adbc4, 0x81959e),
         "Forge" => (0x211b18, 0xeee5d9, 0xf0ac70, 0x967d6a),
+        "Oracle" => (0x13122a, 0xece8fb, 0xe7c46e, 0x8a84ad),
+        "Pulsar" => (0x1c1014, 0xf6e7ea, 0xff5d73, 0x9a6f78),
         "Vector Filter" => (0x101e25, 0xe4f0e8, 0x79e2cf, 0x729d9e),
         "Settings" => (0x14191f, 0xe7edf4, 0xa5bce9, 0x8994aa),
         "Bloom" => (0x0c1918, 0xe7edda, 0xd8f580, 0x203b33),
@@ -3967,6 +4054,65 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     if let Some(image) = rgba_frame_to_slint_image(&r.frame_rgba, r.frame_w, r.frame_h) {
                         ui.set_retro_frame(image);
                     }
+                }
+                app::SlintExtra::Oracle(o) => {
+                    ui.set_active_kind(35);
+                    ui.set_oracle_patch_name(o.patch_name.into());
+                    ui.set_oracle_kind_label(o.kind_label.into());
+                    ui.set_oracle_mode(o.mode as i32);
+                    ui.set_oracle_node_h(o.nodes.first().map_or(12.0, |n| n.h));
+                    ui.set_oracle_node_x(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.x).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_y(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.y).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_w(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.w).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_activity(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.activity).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_voice(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.voice).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_label(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| slint::SharedString::from(n.label.as_str())).collect::<Vec<_>>())).into());
+                    ui.set_oracle_edge_mid_x(Rc::new(slint::VecModel::from(o.edges.mid_x)).into());
+                    ui.set_oracle_edge_mid_y(Rc::new(slint::VecModel::from(o.edges.mid_y)).into());
+                    ui.set_oracle_edge_length(Rc::new(slint::VecModel::from(o.edges.length)).into());
+                    ui.set_oracle_edge_angle(Rc::new(slint::VecModel::from(o.edges.angle_deg)).into());
+                    ui.set_oracle_forward_edges(o.forward_edges as i32);
+                    let (mid_x, mid_y, length, angle_deg) = app::polyline_segments(&o.scope, 290.0, 28.0, true);
+                    ui.set_oracle_scope_mid_x(Rc::new(slint::VecModel::from(mid_x)).into());
+                    ui.set_oracle_scope_mid_y(Rc::new(slint::VecModel::from(mid_y)).into());
+                    ui.set_oracle_scope_length(Rc::new(slint::VecModel::from(length)).into());
+                    ui.set_oracle_scope_angle(Rc::new(slint::VecModel::from(angle_deg)).into());
+                    ui.set_oracle_snaps(Rc::new(slint::VecModel::from(o.snaps.iter().map(|s| *s as i32).collect::<Vec<_>>())).into());
+                    ui.set_oracle_morph_on(o.morph.is_some());
+                    ui.set_oracle_morph(o.morph.unwrap_or(0.0));
+                    ui.set_oracle_info(o.info.into());
+                    ui.set_oracle_status(o.status.into());
+                    ui.set_oracle_unstable(o.unstable);
+                    ui.set_oracle_explain(o.explain.into());
+                    ui.set_oracle_thinking(o.thinking.into());
+                    ui.set_oracle_mic_level(o.mic_level);
+                }
+                app::SlintExtra::Pulsar(p) => {
+                    ui.set_active_kind(36);
+                    ui.set_pulsar_genre(p.genre_name.into());
+                    ui.set_pulsar_bpm(p.bpm);
+                    ui.set_pulsar_slot(p.slot as i32);
+                    ui.set_pulsar_playing_slot(p.playing_slot.map_or(-1, |s| s as i32));
+                    ui.set_pulsar_slot_filled(Rc::new(slint::VecModel::from(p.slot_filled.to_vec())).into());
+                    ui.set_pulsar_in_fill(p.in_fill);
+                    ui.set_pulsar_bar(p.bar as i32);
+                    ui.set_pulsar_bars(p.bars as i32);
+                    ui.set_pulsar_pad_mode(p.pad_mode.into());
+                    ui.set_pulsar_record(p.record);
+                    ui.set_pulsar_lane_names(Rc::new(slint::VecModel::from(p.lane_names.iter().map(|n| slint::SharedString::from(*n)).collect::<Vec<_>>())).into());
+                    ui.set_pulsar_lane(p.lane as i32);
+                    ui.set_pulsar_lane_locked(Rc::new(slint::VecModel::from(p.lane_locked.to_vec())).into());
+                    ui.set_pulsar_lane_muted(Rc::new(slint::VecModel::from(p.lane_muted.to_vec())).into());
+                    ui.set_pulsar_lane_flash(Rc::new(slint::VecModel::from(p.lane_flash.to_vec())).into());
+                    ui.set_pulsar_cell_vel(Rc::new(slint::VecModel::from(p.cell_vel)).into());
+                    ui.set_pulsar_cell_mark(Rc::new(slint::VecModel::from(p.cell_mark)).into());
+                    ui.set_pulsar_playhead(p.playhead.map_or(-1, |c| c as i32));
+                    let (cl, cc) = p.cursor.map_or((-1, -1), |(l, c)| (l as i32, c as i32));
+                    ui.set_pulsar_cursor_lane(cl);
+                    ui.set_pulsar_cursor_col(cc);
+                    ui.set_pulsar_swing(p.swing_pct);
+                    ui.set_pulsar_peak(p.peak);
+                    ui.set_pulsar_status(p.status.into());
                 }
                 app::SlintExtra::None => ui.set_active_kind(0),
             }

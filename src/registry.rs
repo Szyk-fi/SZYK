@@ -17,6 +17,7 @@ use crate::apps::{
     queen_of_pentacles::QueenOfPentaclesApp, rainmaker::RainmakerApp, sample_drum::SampleDrumApp, sequencer::SequencerApp, settings::SettingsApp, singularity::SingularityApp,
     starlab::StarlabApp, synth::SynthApp, tape::TapeApp, tonestack::TonestackApp, turing_machine::TuringMachineApp, visualizer::VisualizerApp, voltage::VoltageApp,
     warps::WarpsApp,
+    oracle::OracleApp, pulsar::PulsarApp,
 };
 use crate::audio_bus::AudioBus;
 use crate::audio_devices::AudioDeviceState;
@@ -501,6 +502,38 @@ impl Registry {
             let bus=audio_bus.clone(); let mods=modbus.clone(); let mixer=mixer_bus.clone(); let nav=nav_speed.clone();
             constructors.insert(id.into(), Rc::new(move || if kind==crate::apps::collection::Kind::Portal {Box::new(crate::apps::collection::portal::PortalApp::new(bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>} else {Box::new(crate::apps::collection::CollectionApp::new(kind,bus.clone(),mods.clone(),mixer.clone(),nav.clone())) as Box<dyn App>}));
         }
+        constructors.insert("oracle".into(), {
+            let sensitivity = Arc::clone(&sensitivity);
+            let nav_speed = Arc::clone(&nav_speed);
+            let modbus = Arc::clone(&modbus);
+            let audio_bus = Arc::clone(&audio_bus);
+            let mixer_bus = Arc::clone(&mixer_bus);
+            Rc::new(move || {
+                Box::new(OracleApp::new(
+                    Arc::clone(&sensitivity),
+                    Arc::clone(&nav_speed),
+                    Arc::clone(&modbus),
+                    Arc::clone(&audio_bus),
+                    Arc::clone(&mixer_bus),
+                )) as Box<dyn App>
+            })
+        });
+        constructors.insert("pulsar".into(), {
+            let sensitivity = Arc::clone(&sensitivity);
+            let nav_speed = Arc::clone(&nav_speed);
+            let modbus = Arc::clone(&modbus);
+            let audio_bus = Arc::clone(&audio_bus);
+            let mixer_bus = Arc::clone(&mixer_bus);
+            Rc::new(move || {
+                Box::new(PulsarApp::new(
+                    Arc::clone(&sensitivity),
+                    Arc::clone(&nav_speed),
+                    Arc::clone(&modbus),
+                    Arc::clone(&audio_bus),
+                    Arc::clone(&mixer_bus),
+                )) as Box<dyn App>
+            })
+        });
         Self { constructors, audio_bus }
     }
 
@@ -563,9 +596,11 @@ mod installation_contract_tests {
 fn audio_outputs(id:&str)->Vec<String>{
     if id=="natural_gate" {return (1..=2).map(|i|format!("Natural Gate: Ch{i}")).collect();}
     if id=="warps" {return vec!["Warps".into(),"Warps (Aux)".into()];}
+    // Pulsar also publishes its kick lane alone, for sidechain ducking.
+    if id=="pulsar" {return vec!["Pulsar".into(),"Pulsar Kick".into()];}
     if id=="portal" {return std::iter::once("Portal".into()).chain((1..=4).map(|i|format!("Portal Aux {i}"))).collect();}
     if let Some((_,_,name))=crate::apps::collection::APPS.iter().find(|(_,app,_)|*app==id){return vec![(*name).into()];}
     let name=match id {
-        "forge"=>"Forge","synth"=>"Synth","analyzer"=>"Analyzer","visualizer"=>"Visualizer","plaits"=>"Plaits","beads"=>"Beads","black_hole"=>"Black Hole","bloom"=>"Bloom","cascade"=>"Cascade","clouds"=>"Clouds","madness"=>"Madness","magnito"=>"Magnito","morph"=>"Morph","nautilus"=>"Nautilus","nebula"=>"Nebula","prism"=>"Prism","rainmaker"=>"Rainmaker","sample_drum"=>"Sample Drum","sequencer"=>"Sequencer","singularity"=>"Singularity","starlab"=>"Starlab","tape"=>"Tape","tonestack"=>"Tonestack","voltage"=>"Voltage","retro"=>"Retro","vector_filter"=>"Vector Filter",_=>return Vec::new(),
+        "forge"=>"Forge","synth"=>"Synth","analyzer"=>"Analyzer","visualizer"=>"Visualizer","plaits"=>"Plaits","beads"=>"Beads","black_hole"=>"Black Hole","bloom"=>"Bloom","cascade"=>"Cascade","clouds"=>"Clouds","madness"=>"Madness","magnito"=>"Magnito","morph"=>"Morph","nautilus"=>"Nautilus","nebula"=>"Nebula","prism"=>"Prism","rainmaker"=>"Rainmaker","sample_drum"=>"Sample Drum","sequencer"=>"Sequencer","singularity"=>"Singularity","starlab"=>"Starlab","tape"=>"Tape","tonestack"=>"Tonestack","voltage"=>"Voltage","retro"=>"Retro","vector_filter"=>"Vector Filter","oracle"=>"Oracle","pulsar"=>"Pulsar",_=>return Vec::new(),
     };vec![name.into()]
 }

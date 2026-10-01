@@ -375,6 +375,8 @@ pub enum SlintExtra {
     Retro(RetroExtra),
     Collection(CollectionExtra),
     Portal(PortalExtra),
+    Oracle(OracleExtra),
+    Pulsar(PulsarExtra),
 }
 
 /// Retro's real per-frame telemetry -- see `RetroApp::slint_extra`.
@@ -457,6 +459,88 @@ pub struct TonestackExtra {
     pub waveform: Vec<f32>,
     pub output_peak: f32,
     pub gate_closed: bool,
+}
+
+// Read only by the Slint GUI (examples/slint_home_live.rs), which the
+// framebuffer binary doesn't build -- hence the allow.
+#[allow(dead_code)]
+/// One block of Oracle's live signal graph, already laid out in the
+/// side panel's own pixel space -- see `OracleApp::slint_extra`.
+pub struct OracleNode {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub label: String,
+    /// Real per-block output activity, 0..1.
+    pub activity: f32,
+    /// Per-voice block (instrument patches) vs. shared/global block.
+    pub voice: bool,
+}
+
+// Read only by the Slint GUI (examples/slint_home_live.rs), which the
+// framebuffer binary doesn't build -- hence the allow.
+#[allow(dead_code)]
+/// Oracle's live patch telemetry -- see `OracleApp::slint_extra`.
+pub struct OracleExtra {
+    pub patch_name: String,
+    pub kind_label: String,
+    /// 0 = signal graph, 1 = snapshot grid, 2 = AI thinking /
+    /// transcribing, 3 = the AI's explanation text, 4 = listening.
+    pub mode: u8,
+    pub nodes: Vec<OracleNode>,
+    /// Graph wiring as line segments, forward edges first; the first
+    /// `forward_edges` segments are forward, the rest feedback.
+    pub edges: CurveSegments,
+    pub forward_edges: usize,
+    /// Real output scope (oldest first), -1..1.
+    pub scope: Vec<f32>,
+    /// Per snapshot pad: 0 empty, 1 stored, 2 morph A, 3 morph B.
+    pub snaps: [u8; 16],
+    /// Morph position when two snapshots are being morphed.
+    pub morph: Option<f32>,
+    pub info: String,
+    pub status: String,
+    pub unstable: bool,
+    pub explain: String,
+    pub thinking: String,
+    /// Live voice-input level while listening, 0..1.
+    pub mic_level: f32,
+}
+
+// Read only by the Slint GUI (examples/slint_home_live.rs), which the
+// framebuffer binary doesn't build -- hence the allow.
+#[allow(dead_code)]
+/// Pulsar's live pattern state -- see `PulsarApp::slint_extra`.
+pub struct PulsarExtra {
+    pub genre_name: String,
+    pub bpm: f32,
+    pub slot: usize,
+    pub playing_slot: Option<usize>,
+    /// Per slot A-H: holds a pattern.
+    pub slot_filled: [bool; 8],
+    pub in_fill: bool,
+    pub bar: usize,
+    pub bars: usize,
+    pub pad_mode: String,
+    pub record: bool,
+    pub lane_names: [&'static str; 8],
+    pub lane: usize,
+    pub lane_locked: [bool; 8],
+    pub lane_muted: [bool; 8],
+    pub lane_flash: [f32; 8],
+    /// 8 lanes x 16 steps of the bar in view, row-major: velocity
+    /// 0..1 (0 = no hit).
+    pub cell_vel: Vec<f32>,
+    /// Same layout: 0 plain, 1 chance < 100 %, 2 roll/ratchet.
+    pub cell_mark: Vec<i32>,
+    /// Column of the playhead within the bar in view, if it's there.
+    pub playhead: Option<usize>,
+    /// Step-edit cursor (lane, column) when the pads are in Steps mode.
+    pub cursor: Option<(usize, usize)>,
+    pub swing_pct: f32,
+    pub peak: f32,
+    pub status: String,
 }
 
 /// Settings' live color-wheel state -- see `SettingsApp::slint_extra`.
