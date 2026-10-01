@@ -42,7 +42,7 @@ pub struct SttProvider {
 
 impl SttProvider {
     pub fn from_env() -> Option<SttProvider> {
-        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+        let var = super::llm::config_var;
         let model = var("ORACLE_STT_MODEL").unwrap_or_else(|| "whisper-1".into());
         let lang = var("ORACLE_STT_LANG");
         if let Some(url) = var("ORACLE_STT_URL") {

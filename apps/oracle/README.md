@@ -50,6 +50,16 @@ Speech-to-text and the patch AI are set up separately, so you can mix them, for 
 | `OPENAI_API_KEY=... ORACLE_MODEL=... cargo run` | OpenAI |
 | nothing | manual mode: Oracle writes `apps/oracle/prompt.txt`; paste it into any chatbot, then paste the JSON reply into the terminal |
 
+
+**Keep keys in `.env`.** Instead of typing them on the command line, put them in a file named `.env` in the project folder, one per line, and just `cargo run`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+ORACLE_STT_URL=http://127.0.0.1:8080/v1
+```
+
+`.env` is gitignored, so keys there are never committed or pushed. A variable set in your shell overrides the file.
+
 ## Playing
 
 - **Pages 1-4**: up to 64 named parameters. Knob 2 edits, knob 2 press resets, knob 1 press **locks** a param so randomize and mutate leave it alone.

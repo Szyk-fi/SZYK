@@ -26,6 +26,44 @@ pub const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-5-5";
 const MAX_REPAIRS: u32 = 2;
 const MAX_TOKENS: u32 = 8192;
 
+/// Reads one Oracle setting: the process environment first, then the
+/// project's `.env` file (`KEY=value` lines, `#` comments). `.env` is
+/// gitignored, so API keys kept there never reach the repository -- the
+/// whole point of supporting it instead of editing a tracked config file.
+pub fn config_var(key: &str) -> Option<String> {
+    if let Some(v) = std::env::var(key).ok().filter(|v| !v.trim().is_empty()) {
+        return Some(v);
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".env");
+    parse_dotenv(&std::fs::read_to_string(path).ok()?, key)
+}
+
+/// `KEY=value` lookup in `.env` text; tolerates `export `, quotes and
+/// trailing comments after quoted values.
+pub fn parse_dotenv(text: &str, key: &str) -> Option<String> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((k, v)) = line.split_once('=') else { continue };
+        if k.trim() != key {
+            continue;
+        }
+        let v = v.trim();
+        let v = if let Some(rest) = v.strip_prefix('"') {
+            rest.split('"').next().unwrap_or("")
+        } else if let Some(rest) = v.strip_prefix('\'') {
+            rest.split('\'').next().unwrap_or("")
+        } else {
+            v.split(" #").next().unwrap_or("").trim()
+        };
+        return (!v.is_empty()).then(|| v.to_string());
+    }
+    None
+}
+
 #[derive(Clone, Debug)]
 pub enum Provider {
     Anthropic { key: String, model: String },
@@ -35,7 +73,7 @@ pub enum Provider {
 
 impl Provider {
     pub fn from_env() -> Provider {
-        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+        let var = config_var;
         if let Some(key) = var("ANTHROPIC_API_KEY") {
             return Provider::Anthropic { key, model: var("ORACLE_MODEL").unwrap_or_else(|| DEFAULT_CLAUDE_MODEL.into()) };
         }
@@ -393,6 +431,16 @@ const PROMPT_TAIL: &str = r#"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dotenv_lines_parse() {
+        let text = "# keys\nexport ANTHROPIC_API_KEY=\"abc123\" # mine\nORACLE_MODEL = some-model\nEMPTY=\nOTHER='q v'\n";
+        assert_eq!(parse_dotenv(text, "ANTHROPIC_API_KEY").as_deref(), Some("abc123"));
+        assert_eq!(parse_dotenv(text, "ORACLE_MODEL").as_deref(), Some("some-model"));
+        assert_eq!(parse_dotenv(text, "OTHER").as_deref(), Some("q v"));
+        assert_eq!(parse_dotenv(text, "EMPTY"), None);
+        assert_eq!(parse_dotenv(text, "MISSING"), None);
+    }
 
     #[test]
     fn system_prompt_covers_every_block_and_its_example_compiles() {
