@@ -47,8 +47,17 @@ comes back.
    id = "<id>"
    name = "<Display Name>"
    ```
-   (See any existing `apps/*/manifest.toml` for the exact shape — it's
-   always just these two fields.)
+   If the app registers modulation inputs (`modbus.register("<Name>:
+   <Param>")`), list them in the manifest too, so every source can patch to
+   them before the app has ever been opened:
+   ```toml
+   mod_inputs = ["<Name>: <Param>", "Mixer: <Name> Level"]
+   ```
+   You don't have to write that list by hand: `PORTAMAX_WRITE_MANIFESTS=1
+   cargo test manifest_contract` fills it in from what the code registers,
+   and plain `cargo test` fails if the two drift apart. Name inputs
+   `"<App>: <Param>"` — the part before `: ` is the app a source's picker
+   files it under.
 4. **Register the constructor** in `src/registry.rs`:
    - Add the app's type to the big `use crate::apps::{...}` import list near
      the top of the file.

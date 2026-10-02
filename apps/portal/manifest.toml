@@ -1,2 +1,8 @@
 id = "portal"
 name = "Portal"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Portal Level",
+    "Portal: LFO 1 rate",
+    "Portal: LFO 2 rate",
+]

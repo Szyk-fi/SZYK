@@ -1,2 +1,14 @@
 id = "sequencer"
 name = "Sequencer"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Sequencer Level",
+    "Sequencer: Track 1 Volume",
+    "Sequencer: Track 2 Volume",
+    "Sequencer: Track 3 Volume",
+    "Sequencer: Track 4 Volume",
+    "Sequencer: Track 5 Volume",
+    "Sequencer: Track 6 Volume",
+    "Sequencer: Track 7 Volume",
+    "Sequencer: Track 8 Volume",
+]

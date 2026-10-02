@@ -1,2 +1,6 @@
 id = "vinyl"
 name = "Vinyl"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Vinyl Level",
+]

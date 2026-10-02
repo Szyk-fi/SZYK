@@ -1,2 +1,6 @@
 id = "forge"
 name = "Forge"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Forge Level",
+]

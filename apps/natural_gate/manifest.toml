@@ -1,2 +1,11 @@
 id = "natural_gate"
 name = "Natural Gate"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Natural Gate Ch1 Level",
+    "Natural Gate: Ch1 Decay CV",
+    "Natural Gate: Ch1 Ctrl CV",
+    "Mixer: Natural Gate Ch2 Level",
+    "Natural Gate: Ch2 Decay CV",
+    "Natural Gate: Ch2 Ctrl CV",
+]

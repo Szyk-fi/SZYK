@@ -1,2 +1,12 @@
 id = "tape_machine"
 name = "Tape Machine"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Tape Machine Level",
+    "Tape Machine: Speed",
+    "Tape Machine: Head spacing",
+    "Tape Machine: Feedback",
+    "Tape Machine: Wow",
+    "Tape Machine: Flutter",
+    "Tape Machine: Drive",
+]

@@ -1,2 +1,13 @@
 id = "mutant"
 name = "Mutant"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Mutant Level",
+    "Mutant: Parent blend",
+    "Mutant: Mutation",
+    "Mutant: Harmonics",
+    "Mutant: Root note",
+    "Mutant: Brightness",
+    "Mutant: Release",
+    "Mutant: Tone color",
+]

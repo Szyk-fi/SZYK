@@ -1,2 +1,8 @@
 id = "nebula"
 name = "Nebula"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Nebula Level",
+    "Nebula: Gravity",
+    "Nebula: Damping",
+]

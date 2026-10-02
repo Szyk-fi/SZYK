@@ -1,2 +1,6 @@
 id = "tape"
 name = "Tape"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Tape Level",
+]

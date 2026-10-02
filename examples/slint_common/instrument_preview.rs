@@ -30,7 +30,7 @@ pub fn render(directory: &str) {
     let mut manifests = manifest::discover(std::path::Path::new(APPS_DIR));
     for (id, name) in [("analyzer", "Analyzer"), ("synth", "Synth")] {
         if !manifests.iter().any(|m| m.id == id) {
-            manifests.push(manifest::AppManifest { id: id.into(), name: name.into() });
+            manifests.push(manifest::AppManifest { id: id.into(), name: name.into(), mod_inputs: Vec::new() });
         }
     }
     let _catalog=registry.build(&manifests);

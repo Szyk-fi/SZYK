@@ -227,6 +227,7 @@ enum Selection {
     Purge,
     SonarMode,
     SonarTarget,
+    SonarInput,
     SonarLevel,
 }
 
@@ -405,7 +406,7 @@ impl NautilusApp {
             1 => vec![Selection::DelayMode, Selection::Rate, Selection::Resolution, Selection::Sensors, Selection::Dispersal, Selection::Reversal],
             2 => vec![Selection::FeedbackMode, Selection::Feedback],
             3 => vec![Selection::Chroma, Selection::Depth],
-            _ => vec![Selection::Mix, Selection::Freeze, Selection::Purge, Selection::SonarMode, Selection::SonarTarget, Selection::SonarLevel],
+            _ => vec![Selection::Mix, Selection::Freeze, Selection::Purge, Selection::SonarMode, Selection::SonarTarget, Selection::SonarInput, Selection::SonarLevel],
         }
     }
 
@@ -463,14 +464,6 @@ impl NautilusApp {
         self.audio_bus.source_name(self.params.source.load(Ordering::Relaxed))
     }
 
-    fn target_name(&self, idx: usize) -> String {
-        if idx == 0 {
-            "None".into()
-        } else {
-            self.modbus.names().get(idx - 1).cloned().unwrap_or_else(|| "None".into())
-        }
-    }
-
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::Source => "Source".into(),
@@ -488,7 +481,8 @@ impl NautilusApp {
             Selection::Freeze => "Freeze".into(),
             Selection::Purge => "Purge".into(),
             Selection::SonarMode => "Sonar Mode".into(),
-            Selection::SonarTarget => "Sonar Target".into(),
+            Selection::SonarTarget => "Sonar App".into(),
+            Selection::SonarInput => "Sonar Input".into(),
             Selection::SonarLevel => "Sonar Level".into(),
         }
     }
@@ -516,7 +510,8 @@ impl NautilusApp {
             Selection::Freeze => if self.params.freeze.load(Ordering::Relaxed) { "on".into() } else { "off".into() },
             Selection::Purge => "press to clear".into(),
             Selection::SonarMode => SONAR_MODE_NAMES[self.params.sonar_mode.load(Ordering::Relaxed) as usize % 4].into(),
-            Selection::SonarTarget => self.target_name(self.params.sonar_target.load(Ordering::Relaxed)),
+            Selection::SonarTarget => crate::modbus::Patch::app_label(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed)),
+            Selection::SonarInput => crate::modbus::Patch::input_label(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed)),
             Selection::SonarLevel => format!("{:.0}%", self.params.sonar_level.get() * 100.0),
         }
     }
@@ -570,12 +565,8 @@ impl NautilusApp {
                 let cur = self.params.sonar_mode.load(Ordering::Relaxed) as i32;
                 self.params.sonar_mode.store((cur + step).rem_euclid(4) as u32, Ordering::Relaxed);
             }
-            Selection::SonarTarget => {
-                let n = self.modbus.len();
-                let cur = self.params.sonar_target.load(Ordering::Relaxed) as i32;
-                let next = (cur + step).rem_euclid(n as i32 + 1);
-                self.params.sonar_target.store(next as usize, Ordering::Relaxed);
-            }
+            Selection::SonarTarget => self.params.sonar_target.store(crate::modbus::Patch::step_app(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed), step), Ordering::Relaxed),
+            Selection::SonarInput => self.params.sonar_target.store(crate::modbus::Patch::step_input(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::SonarLevel => bump(&self.params.sonar_level, delta, sensitivity, 0.0, 1.0),
         }
     }
@@ -600,6 +591,7 @@ impl NautilusApp {
             Selection::Purge => self.params.purge_pending.store(true, Ordering::Relaxed),
             Selection::SonarMode => self.params.sonar_mode.store(0, Ordering::Relaxed),
             Selection::SonarTarget => self.params.sonar_target.store(0, Ordering::Relaxed),
+            Selection::SonarInput => self.params.sonar_target.store(crate::modbus::Patch::first_input(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed)), Ordering::Relaxed),
             Selection::SonarLevel => self.params.sonar_level.set(1.0),
         }
     }

@@ -197,6 +197,7 @@ enum Selection {
     CtrlAmount(usize),
     Level(usize),
     OutTarget(usize),
+    OutInput(usize),
     OutLevel(usize),
 }
 
@@ -393,6 +394,7 @@ impl NaturalGateApp {
             Selection::CtrlAmount(c),
             Selection::Level(c),
             Selection::OutTarget(c),
+            Selection::OutInput(c),
             Selection::OutLevel(c),
         ]
     }
@@ -437,14 +439,6 @@ impl NaturalGateApp {
         }
     }
 
-    fn out_target_name(&self, idx: usize) -> String {
-        if idx == 0 {
-            "None".into()
-        } else {
-            self.modbus.names().get(idx - 1).cloned().unwrap_or_else(|| "None".into())
-        }
-    }
-
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::InSource(_) => "In Source".into(),
@@ -455,7 +449,8 @@ impl NaturalGateApp {
             Selection::Open(_) => "Open".into(),
             Selection::CtrlAmount(_) => "Ctrl Amt".into(),
             Selection::Level(_) => "Level".into(),
-            Selection::OutTarget(_) => "Env Out Target".into(),
+            Selection::OutTarget(_) => "Env Out App".into(),
+            Selection::OutInput(_) => "Env Out Input".into(),
             Selection::OutLevel(_) => "Env Out Level".into(),
         }
     }
@@ -472,7 +467,8 @@ impl NaturalGateApp {
             Selection::Open(c) => format!("{:.0}%", self.params.channels[c].open.get() * 100.0),
             Selection::CtrlAmount(c) => format!("{:+.0}%", self.params.channels[c].ctrl_amount.get() * 100.0),
             Selection::Level(c) => format!("{:.0}%", self.params.channels[c].level.get() * 100.0),
-            Selection::OutTarget(c) => self.out_target_name(self.params.channels[c].out_target.load(Ordering::Relaxed)),
+            Selection::OutTarget(c) => crate::modbus::Patch::app_label(&self.modbus, self.params.channels[c].out_target.load(Ordering::Relaxed)),
+            Selection::OutInput(c) => crate::modbus::Patch::input_label(&self.modbus, self.params.channels[c].out_target.load(Ordering::Relaxed)),
             Selection::OutLevel(c) => format!("{:.0}%", self.params.channels[c].out_level.get() * 100.0),
         }
     }
@@ -505,12 +501,8 @@ impl NaturalGateApp {
             Selection::Open(c) => bump(&self.params.channels[c].open, delta, sensitivity, 0.0, 1.0),
             Selection::CtrlAmount(c) => bump(&self.params.channels[c].ctrl_amount, delta, sensitivity, -1.0, 1.0),
             Selection::Level(c) => bump(&self.params.channels[c].level, delta, sensitivity, 0.0, 1.0),
-            Selection::OutTarget(c) => {
-                let n = self.modbus.len();
-                let cur = self.params.channels[c].out_target.load(Ordering::Relaxed) as i32;
-                let next = (cur + step).rem_euclid(n as i32 + 1);
-                self.params.channels[c].out_target.store(next as usize, Ordering::Relaxed);
-            }
+            Selection::OutTarget(c) => self.params.channels[c].out_target.store(crate::modbus::Patch::step_app(&self.modbus, self.params.channels[c].out_target.load(Ordering::Relaxed), step), Ordering::Relaxed),
+            Selection::OutInput(c) => self.params.channels[c].out_target.store(crate::modbus::Patch::step_input(&self.modbus, self.params.channels[c].out_target.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::OutLevel(c) => bump(&self.params.channels[c].out_level, delta, sensitivity, 0.0, 1.0),
         }
     }
@@ -526,6 +518,7 @@ impl NaturalGateApp {
             Selection::CtrlAmount(c) => self.params.channels[c].ctrl_amount.set(0.0),
             Selection::Level(c) => self.params.channels[c].level.set(1.0),
             Selection::OutTarget(c) => self.params.channels[c].out_target.store(0, Ordering::Relaxed),
+            Selection::OutInput(c) => self.params.channels[c].out_target.store(crate::modbus::Patch::first_input(&self.modbus, self.params.channels[c].out_target.load(Ordering::Relaxed)), Ordering::Relaxed),
             Selection::OutLevel(c) => self.params.channels[c].out_level.set(1.0),
         }
     }

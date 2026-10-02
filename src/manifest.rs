@@ -14,6 +14,12 @@ use std::path::Path;
 pub struct AppManifest {
     pub id: String,
     pub name: String,
+    /// The modulation inputs this app registers on the ModBus, by full
+    /// name ("Plaits: Harmonics"). Declared at startup so every source can
+    /// patch to them before the app has ever been opened. Kept in step
+    /// with the code by `registry::manifest_contract_tests`.
+    #[serde(default)]
+    pub mod_inputs: Vec<String>,
 }
 
 /// Scans `dir` for app manifests. Missing directory, unreadable entries, or

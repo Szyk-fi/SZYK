@@ -1,2 +1,7 @@
 id = "cascade"
 name = "Cascade"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Cascade Level",
+    "Cascade: Feedback",
+]

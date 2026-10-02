@@ -1,2 +1,13 @@
 id = "constellation"
 name = "Constellation"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Constellation Level",
+    "Constellation: Root note",
+    "Constellation: Octave spread",
+    "Constellation: Inversion",
+    "Constellation: Glide",
+    "Constellation: Tension",
+    "Constellation: Voices",
+    "Constellation: Tone color",
+]

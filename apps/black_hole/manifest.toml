@@ -1,2 +1,6 @@
 id = "black_hole"
 name = "Black Hole"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Black Hole Level",
+]

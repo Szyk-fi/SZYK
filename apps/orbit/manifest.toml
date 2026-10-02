@@ -1,2 +1,13 @@
 id = "orbit"
 name = "Orbit"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Orbit Level",
+    "Orbit: Tempo",
+    "Orbit: Orbit ratio",
+    "Orbit: Gravity / pitch",
+    "Orbit: Gate length",
+    "Orbit: Probability",
+    "Orbit: Swing",
+    "Orbit: Tone color",
+]

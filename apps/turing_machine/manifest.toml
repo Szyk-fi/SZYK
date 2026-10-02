@@ -1,2 +1,6 @@
 id = "turing_machine"
 name = "Turing Machine"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Turing Machine: Locks CV",
+]

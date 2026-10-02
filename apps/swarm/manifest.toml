@@ -1,2 +1,13 @@
 id = "swarm"
 name = "Swarm"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Swarm Level",
+    "Swarm: Voices",
+    "Swarm: Cohesion",
+    "Swarm: Pitch spread",
+    "Swarm: Root note",
+    "Swarm: Mutation",
+    "Swarm: Release",
+    "Swarm: Tone color",
+]

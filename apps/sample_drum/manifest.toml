@@ -1,2 +1,16 @@
 id = "sample_drum"
 name = "Sample Drum"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Sample Drum Level",
+    "Sample Drum: Ch1 Tune",
+    "Sample Drum: Ch1 Start",
+    "Sample Drum: Ch1 End",
+    "Sample Drum: Ch1 Slice CV",
+    "Sample Drum: Ch1 Trig",
+    "Sample Drum: Ch2 Tune",
+    "Sample Drum: Ch2 Start",
+    "Sample Drum: Ch2 End",
+    "Sample Drum: Ch2 Slice CV",
+    "Sample Drum: Ch2 Trig",
+]

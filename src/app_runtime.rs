@@ -13,11 +13,17 @@ pub struct LazyApp {
     screen_open: bool,
     last_input: Option<Instant>,
     bus: Arc<AudioBus>,
+    /// Writing into one of this app's declared modulation inputs wakes it.
+    modbus: Option<Arc<crate::modbus::ModBus>>,
     outputs: Vec<usize>,
 }
 impl LazyApp {
     pub fn new(id: String, make: Rc<dyn Fn() -> Box<dyn App>>, bus: Arc<AudioBus>) -> Self {
-        Self { id, make, instance: None, processor: Arc::new(Mutex::new(None)), enabled: Arc::new(AtomicBool::new(false)), screen_open: false, last_input: None, bus, outputs: Vec::new() }
+        Self { id, make, instance: None, processor: Arc::new(Mutex::new(None)), enabled: Arc::new(AtomicBool::new(false)), screen_open: false, last_input: None, bus, modbus: None, outputs: Vec::new() }
+    }
+    pub fn with_modbus(mut self, modbus: Arc<crate::modbus::ModBus>) -> Self {
+        self.modbus = Some(modbus);
+        self
     }
     fn ensure(&mut self) -> &mut dyn App {
         if self.instance.is_none() {
@@ -33,7 +39,7 @@ impl LazyApp {
     }
     fn wake(&mut self) { self.last_input = Some(Instant::now()); self.enabled.store(true, Ordering::Release); }
     fn update_activity(&mut self) {
-        let requested=self.bus.requested(&self.id);
+        let requested=self.bus.requested(&self.id) || self.modbus.as_ref().is_some_and(|m| m.requested(&self.id));
         if requested {self.ensure();}
         let needed = self.instance.as_ref().is_some_and(|app| requested || self.screen_open || app.running() == Some(true) || app.needs_background_audio()
             || self.last_input.is_some_and(|t| t.elapsed() < Duration::from_secs(5)));

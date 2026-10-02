@@ -74,8 +74,25 @@ For an external microphone or interface: pick it in **Settings → Input**
 first, then select **Hardware input** as the receiving app's Source. Nothing
 opens the input device until you do that.
 
-Portal is the dedicated patch-bay app (see §5) — open a destination app once
-to register its parameters as modulation targets, then wire it up in Portal.
+### 2.1 Patching modulation
+
+Modulation works the same way. Every app lists the parameters it accepts
+modulation on (its *inputs*), and every installed app's inputs are
+available from the moment Portamax starts — you don't have to open an app
+first. Any modulation source (Turing Machine, Pam's, Queen of Pentacles,
+Natural Gate's envelope out, Nautilus's sonar, Portal, MIDI Learn) picks a
+destination in two steps:
+
+1. **… App** — turn knob 2 to choose the app (or None). Landing on an app
+   selects its first input.
+2. **… Input** — the row right below it; knob 2 now walks only that app's
+   inputs.
+
+Each app's level fader also shows up as an input, under **Mixer**.
+Patching into an app you haven't opened yet wakes it up so it can hear the
+modulation. Portal (see §5) is the dedicated patch bay for LFOs and audio
+followers; its **Destination** / **Destination input** rows work the same
+way.
 
 ## 3. Instruments
 
@@ -89,6 +106,7 @@ to register its parameters as modulation targets, then wire it up in Portal.
 | **Nebula** | A small real 2D gravity simulation — particles drift and get captured into orbits, each capture fires a note. |
 | **Queen of Pentacles** | CV/gate generator driven by real 1D chaotic maps (logistic map and two relatives), not a disguised sequencer. |
 | **StarLab** | Strymon StarLab-inspired: a Karplus-Strong string voice sharing a comb/allpass reverb tank with the effect side. |
+| **Tinkertone** | An early-80s home keyboard with the MT-40's feature set (37 keys, 22 tones, 15-key bass, 6 rhythms) in an original look. Analog-modelled bass and drums, and you can record your own looping bass line (see §3.2). |
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
 
 ### 3.1 Playing Plaits
@@ -112,6 +130,29 @@ Every routing above lives in the menu's **Play Surface** group. Expression is
 always an offset on top of the knobs, never overwriting them. Moments are
 saved to `saves/plaits/moments.json` (the SD card on hardware). The camera is
 not used by Plaits.
+
+### 3.2 Tinkertone's bass line
+
+The bass keys (F2 → **BASS**) play in three modes, set by **Bass** in the
+menu or the **Bass Mode** control:
+
+- **Manual** — the bass key you hold sounds.
+- **Auto** — with the rhythm running, the held key is the root of a bass
+  pattern in the **Auto Chord** you choose (Major / Minor / Minor 7th).
+- **My Line** — your own recorded line loops with the rhythm.
+
+To record one: turn **Record Line** on (it switches to My Line), set
+**Line Length** (1, 2 or 4 bars), and play the bass keys. If the rhythm is
+stopped, your first key starts it. Notes snap to the nearest step; holding
+a key holds the note, and playing over an earlier take replaces only the
+steps you play. Turn Record Line off to hear it loop. While it loops,
+holding a bass key moves the whole line to start from that key, and a
+Minor chord flattens its thirds and sevenths. **Clear Line** empties it.
+The line is saved to the SD card (`saves/tinkertone/bassline.json`) and
+comes back next time.
+
+The power-on tempo is 84 BPM, in the 80–110 range where the original's
+Rock rhythm found its second life in dancehall.
 
 ## 4. Effects
 

@@ -28,6 +28,7 @@ use std::sync::Arc;
 enum Selection {
     Mapping(usize),
     Target,
+    TargetInput,
     LearnCc,
 }
 
@@ -67,7 +68,7 @@ impl MidiLearnApp {
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         match g {
             0 => (0..self.midi_map.len()).map(Selection::Mapping).collect(),
-            _ => vec![Selection::Target, Selection::LearnCc],
+            _ => vec![Selection::Target, Selection::TargetInput, Selection::LearnCc],
         }
     }
 
@@ -98,14 +99,11 @@ impl MidiLearnApp {
         }
     }
 
-    fn target_name(&self) -> String {
-        self.modbus.names().get(self.target_browse).cloned().unwrap_or_else(|| "none found".into())
-    }
-
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::Mapping(_) => "Mapping".into(),
-            Selection::Target => "Target".into(),
+            Selection::Target => "Target App".into(),
+            Selection::TargetInput => "Target Input".into(),
             Selection::LearnCc => "Learn CC".into(),
         }
     }
@@ -116,7 +114,12 @@ impl MidiLearnApp {
                 Some((cc, name)) => format!("CC{cc} -> {name}"),
                 None => String::new(),
             },
-            Selection::Target => self.target_name(),
+            Selection::Target => {
+                if self.modbus.len() == 0 { "none found".into() } else { crate::modbus::Patch::app_label(&self.modbus, self.target_browse + 1) }
+            }
+            Selection::TargetInput => {
+                if self.modbus.len() == 0 { "--".into() } else { crate::modbus::Patch::input_label(&self.modbus, self.target_browse + 1) }
+            }
             Selection::LearnCc => {
                 if self.midi_map.is_armed() {
                     "listening... (press to cancel)".into()
@@ -131,17 +134,27 @@ impl MidiLearnApp {
         if delta == 0 {
             return;
         }
-        if let Selection::Target = sel {
-            let n = self.modbus.len().max(1);
-            let cur = self.target_browse as i32;
-            self.target_browse = (cur + delta.signum()).rem_euclid(n as i32) as usize;
+        if self.modbus.len() == 0 {
+            return;
         }
+        let route = self.target_browse + 1;
+        let next = match sel {
+            // App first (never "None": a mapping always has a target)...
+            Selection::Target => {
+                let r = crate::modbus::Patch::step_app(&self.modbus, route, delta);
+                if r == 0 { crate::modbus::Patch::step_app(&self.modbus, 0, delta) } else { r }
+            }
+            // ...then that app's input.
+            Selection::TargetInput => crate::modbus::Patch::step_input(&self.modbus, route, delta),
+            _ => route,
+        };
+        self.target_browse = next.max(1) - 1;
     }
 
     fn press(&mut self, sel: Selection) {
         match sel {
             Selection::Mapping(i) => self.midi_map.remove_at(i),
-            Selection::Target => {}
+            Selection::Target | Selection::TargetInput => {}
             Selection::LearnCc => {
                 if self.midi_map.is_armed() {
                     self.midi_map.cancel_learn();

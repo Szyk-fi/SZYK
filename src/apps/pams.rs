@@ -135,6 +135,7 @@ fn quantize(value: f32, scale_idx: usize, root: u32) -> f32 {
 enum Selection {
     Bpm,
     Target(usize),
+    TargetInput(usize),
     ClockMod(usize),
     Shape(usize),
     Width(usize),
@@ -352,6 +353,7 @@ impl PamsApp {
             }
         }
         leaves.push(Selection::Target(c));
+        leaves.push(Selection::TargetInput(c));
         leaves.push(Selection::ClockMod(c));
         leaves.push(Selection::Slew(c));
         leaves.push(Selection::Level(c));
@@ -384,6 +386,7 @@ impl PamsApp {
         match sel {
             Selection::Bpm => None,
             Selection::Target(c)
+            | Selection::TargetInput(c)
             | Selection::ClockMod(c)
             | Selection::Shape(c)
             | Selection::Width(c)
@@ -417,17 +420,14 @@ impl PamsApp {
     }
 
     fn target_name(&self, idx: usize) -> String {
-        if idx == 0 {
-            "None".into()
-        } else {
-            self.modbus.names().get(idx - 1).cloned().unwrap_or_else(|| "None".into())
-        }
+        crate::modbus::Patch::label(&self.modbus, idx)
     }
 
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::Bpm => "BPM".into(),
-            Selection::Target(_) => "Target".into(),
+            Selection::Target(_) => "Target App".into(),
+            Selection::TargetInput(_) => "Target Input".into(),
             Selection::ClockMod(_) => "Clock Mod".into(),
             Selection::Shape(_) => "Shape".into(),
             Selection::Width(_) => "Width".into(),
@@ -450,7 +450,8 @@ impl PamsApp {
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
             Selection::Bpm => format!("{:.0}", self.params.bpm.get()),
-            Selection::Target(c) => self.target_name(self.params.channels[c].target.load(Ordering::Relaxed)),
+            Selection::Target(c) => crate::modbus::Patch::app_label(&self.modbus, self.params.channels[c].target.load(Ordering::Relaxed)),
+            Selection::TargetInput(c) => crate::modbus::Patch::input_label(&self.modbus, self.params.channels[c].target.load(Ordering::Relaxed)),
             Selection::ClockMod(c) => {
                 CLOCK_MODS[self.params.channels[c].clock_mod.load(Ordering::Relaxed) % CLOCK_MODS.len()].0.to_string()
             }
@@ -504,12 +505,8 @@ impl PamsApp {
                 let next = (self.params.bpm.get() + accelerate(delta) * sensitivity * 2.0).clamp(MIN_BPM, MAX_BPM);
                 self.params.bpm.set(next);
             }
-            Selection::Target(c) => {
-                let n = self.modbus.len();
-                let cur = self.params.channels[c].target.load(Ordering::Relaxed) as i32;
-                let next = (cur + step).rem_euclid(n as i32 + 1);
-                self.params.channels[c].target.store(next as usize, Ordering::Relaxed);
-            }
+            Selection::Target(c) => self.params.channels[c].target.store(crate::modbus::Patch::step_app(&self.modbus, self.params.channels[c].target.load(Ordering::Relaxed), step), Ordering::Relaxed),
+            Selection::TargetInput(c) => self.params.channels[c].target.store(crate::modbus::Patch::step_input(&self.modbus, self.params.channels[c].target.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::ClockMod(c) => {
                 let cur = self.params.channels[c].clock_mod.load(Ordering::Relaxed) as i32;
                 let next = (cur + step).rem_euclid(CLOCK_MODS.len() as i32);
@@ -563,6 +560,7 @@ impl PamsApp {
         match sel {
             Selection::Bpm => self.params.bpm.set(DEFAULT_BPM),
             Selection::Target(c) => self.params.channels[c].target.store(0, Ordering::Relaxed),
+            Selection::TargetInput(c) => self.params.channels[c].target.store(crate::modbus::Patch::first_input(&self.modbus, self.params.channels[c].target.load(Ordering::Relaxed)), Ordering::Relaxed),
             Selection::ClockMod(c) => self.params.channels[c].clock_mod.store(3, Ordering::Relaxed),
             Selection::Width(c) => self.params.channels[c].width.set(0.5),
             Selection::Phase(c) => self.params.channels[c].phase.set(0.0),

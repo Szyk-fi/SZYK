@@ -109,6 +109,7 @@ enum Selection {
     GateMode,
     VoltsWeight(usize),
     OutputTarget(usize),
+    OutputInput(usize),
     OutputLevel(usize),
 }
 
@@ -342,7 +343,7 @@ impl TuringMachineApp {
             CORE_GROUP => vec![Selection::Rate, Selection::Locks, Selection::Length, Selection::Write],
             GATE_GROUP => vec![Selection::GateBitA, Selection::GateBitB, Selection::GateMode],
             CV_GROUP => (0..NUM_VOLTS_WEIGHTS).map(Selection::VoltsWeight).collect(),
-            _ => (0..NUM_OUTPUTS).flat_map(|c| [Selection::OutputTarget(c), Selection::OutputLevel(c)]).collect(),
+            _ => (0..NUM_OUTPUTS).flat_map(|c| [Selection::OutputTarget(c), Selection::OutputInput(c), Selection::OutputLevel(c)]).collect(),
         }
     }
 
@@ -401,14 +402,6 @@ impl TuringMachineApp {
         }
     }
 
-    fn target_name(&self, idx: usize) -> String {
-        if idx == 0 {
-            "None".into()
-        } else {
-            self.modbus.names().get(idx - 1).cloned().unwrap_or_else(|| "None".into())
-        }
-    }
-
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::Rate => "Rate".into(),
@@ -419,7 +412,8 @@ impl TuringMachineApp {
             Selection::GateBitB => "Gate Bit B".into(),
             Selection::GateMode => "Gate Mode".into(),
             Selection::VoltsWeight(i) => format!("CV Weight {}", i + 1),
-            Selection::OutputTarget(c) => format!("{} Target", OUTPUT_NAMES[c]),
+            Selection::OutputTarget(c) => format!("{} App", OUTPUT_NAMES[c]),
+            Selection::OutputInput(c) => format!("{} Input", OUTPUT_NAMES[c]),
             Selection::OutputLevel(c) => format!("{} Level", OUTPUT_NAMES[c]),
         }
     }
@@ -456,7 +450,8 @@ impl TuringMachineApp {
             }
             Selection::GateMode => GATE_MODE_NAMES[self.params.gate_mode.load(Ordering::Relaxed) as usize % 3].into(),
             Selection::VoltsWeight(i) => format!("{:.0}%", self.params.volts_weight[i].get() * 100.0),
-            Selection::OutputTarget(c) => self.target_name(self.params.outputs[c].target.load(Ordering::Relaxed)),
+            Selection::OutputTarget(c) => crate::modbus::Patch::app_label(&self.modbus, self.params.outputs[c].target.load(Ordering::Relaxed)),
+            Selection::OutputInput(c) => crate::modbus::Patch::input_label(&self.modbus, self.params.outputs[c].target.load(Ordering::Relaxed)),
             Selection::OutputLevel(c) => format!("{:.0}%", self.params.outputs[c].level.get() * 100.0),
         }
     }
@@ -495,12 +490,8 @@ impl TuringMachineApp {
                 self.params.gate_mode.store((cur + step).rem_euclid(3) as u32, Ordering::Relaxed);
             }
             Selection::VoltsWeight(i) => bump(&self.params.volts_weight[i], delta, sensitivity, 0.0, 1.0),
-            Selection::OutputTarget(c) => {
-                let n = self.modbus.len();
-                let cur = self.params.outputs[c].target.load(Ordering::Relaxed) as i32;
-                let next = (cur + step).rem_euclid(n as i32 + 1);
-                self.params.outputs[c].target.store(next as usize, Ordering::Relaxed);
-            }
+            Selection::OutputTarget(c) => self.params.outputs[c].target.store(crate::modbus::Patch::step_app(&self.modbus, self.params.outputs[c].target.load(Ordering::Relaxed), step), Ordering::Relaxed),
+            Selection::OutputInput(c) => self.params.outputs[c].target.store(crate::modbus::Patch::step_input(&self.modbus, self.params.outputs[c].target.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::OutputLevel(c) => bump(&self.params.outputs[c].level, delta, sensitivity, 0.0, 1.0),
         }
     }
@@ -516,6 +507,7 @@ impl TuringMachineApp {
             Selection::GateMode => self.params.gate_mode.store(0, Ordering::Relaxed),
             Selection::VoltsWeight(i) => self.params.volts_weight[i].set(1.0),
             Selection::OutputTarget(c) => self.params.outputs[c].target.store(0, Ordering::Relaxed),
+            Selection::OutputInput(c) => self.params.outputs[c].target.store(crate::modbus::Patch::first_input(&self.modbus, self.params.outputs[c].target.load(Ordering::Relaxed)), Ordering::Relaxed),
             Selection::OutputLevel(c) => self.params.outputs[c].level.set(1.0),
         }
     }

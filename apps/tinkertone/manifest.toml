@@ -1,2 +1,9 @@
 id = "tinkertone"
 name = "Tinkertone"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Tinkertone Level",
+    "Tinkertone: Volume",
+    "Tinkertone: Accomp Volume",
+    "Tinkertone: Tempo",
+]

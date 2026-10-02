@@ -37,6 +37,7 @@ type Constructor = Rc<dyn Fn() -> Box<dyn App>>;
 pub struct Registry {
     constructors: HashMap<String, Constructor>,
     audio_bus: Arc<AudioBus>,
+    modbus: Arc<ModBus>,
 }
 
 impl Registry {
@@ -554,7 +555,7 @@ impl Registry {
                 )) as Box<dyn App>
             })
         });
-        Self { constructors, audio_bus }
+        Self { constructors, audio_bus, modbus }
     }
 
     /// Builds the launcher's app list from discovered manifests, in the
@@ -562,6 +563,9 @@ impl Registry {
     /// with a warning rather than panicking the whole OS.
     pub fn build(&self, manifests: &[AppManifest]) -> Vec<(String, Box<dyn App>)> {
         for m in manifests {if self.constructors.contains_key(&m.id) {for name in audio_outputs(&m.id) {self.audio_bus.declare(&m.id,&name);}}}
+        // Every installed app's modulation inputs, before any app exists,
+        // so sources can list and patch them (see modbus.rs).
+        for m in manifests {if self.constructors.contains_key(&m.id) {for name in &m.mod_inputs {self.modbus.declare(&m.id, name);}}}
         let mut seen = HashSet::new();
         manifests
             .iter()
@@ -571,7 +575,7 @@ impl Registry {
                 }
             })
             .filter_map(|m| match self.constructors.get(&m.id) {
-                Some(make) => Some((m.name.clone(), Box::new(runtime::LazyApp::new(m.id.clone(), Rc::clone(make), Arc::clone(&self.audio_bus))) as Box<dyn App>)),
+                Some(make) => Some((m.name.clone(), Box::new(runtime::LazyApp::new(m.id.clone(), Rc::clone(make), Arc::clone(&self.audio_bus)).with_modbus(Arc::clone(&self.modbus))) as Box<dyn App>)),
                 None => {
                     eprintln!("apps: no implementation registered for id '{}'", m.id);
                     None
@@ -596,11 +600,11 @@ mod installation_contract_tests {
     fn missing_duplicate_and_renamed_apps_are_independent() {
         let mut constructors: HashMap<String, Constructor> = HashMap::new();
         constructors.insert("mixer".into(), Rc::new(|| Box::new(OptionalApp)));
-        let registry = Registry { constructors, audio_bus: Arc::new(AudioBus::new()) };
+        let registry = Registry { constructors, audio_bus: Arc::new(AudioBus::new()), modbus: Arc::new(ModBus::new()) };
         let manifests = vec![
-            AppManifest { id: "removed".into(), name: "Unavailable".into() },
-            AppManifest { id: "mixer".into(), name: "Renamed service".into() },
-            AppManifest { id: "mixer".into(), name: "Duplicate".into() },
+            AppManifest { id: "removed".into(), name: "Unavailable".into(), mod_inputs: Vec::new() },
+            AppManifest { id: "mixer".into(), name: "Renamed service".into(), mod_inputs: Vec::new() },
+            AppManifest { id: "mixer".into(), name: "Duplicate".into(), mod_inputs: Vec::new() },
         ];
         let mut apps = registry.build(&manifests);
         assert_eq!(apps.len(), 1);
@@ -623,4 +627,93 @@ fn audio_outputs(id:&str)->Vec<String>{
     let name=match id {
         "forge"=>"Forge","synth"=>"Synth","analyzer"=>"Analyzer","visualizer"=>"Visualizer","plaits"=>"Plaits","beads"=>"Beads","black_hole"=>"Black Hole","bloom"=>"Bloom","cascade"=>"Cascade","clouds"=>"Clouds","madness"=>"Madness","magnito"=>"Magnito","morph"=>"Morph","nautilus"=>"Nautilus","nebula"=>"Nebula","prism"=>"Prism","rainmaker"=>"Rainmaker","sample_drum"=>"Sample Drum","sequencer"=>"Sequencer","singularity"=>"Singularity","starlab"=>"Starlab","tape"=>"Tape","tonestack"=>"Tonestack","voltage"=>"Voltage","retro"=>"Retro","vector_filter"=>"Vector Filter","oracle"=>"Oracle","pulsar"=>"Pulsar","tinkertone"=>"Tinkertone",_=>return Vec::new(),
     };vec![name.into()]
+}
+
+/// The manifest is the patching contract: each app's `mod_inputs` must
+/// list exactly what the app registers on the ModBus when built, so its
+/// inputs can be offered before it's ever opened. Run with
+/// `PORTAMAX_WRITE_MANIFESTS=1` to rewrite the manifests from the code.
+#[cfg(test)]
+mod manifest_contract_tests {
+    use super::*;
+    use crate::theme;
+
+    fn fresh_registry(modbus: Arc<ModBus>) -> Registry {
+        Registry::new(
+            Arc::new(AtomicF32::new(1000.0)),
+            Arc::new(AudioDeviceState::new("test".into())),
+            Arc::new(AtomicF32::new(0.1)),
+            Arc::new(AtomicF32::new(3.0)),
+            modbus,
+            Arc::new(AudioBus::new()),
+            Arc::new(AtomicF32::new(1.0)),
+            Arc::new(MixerBus::new()),
+            Arc::new(PrismCcTargets::new()),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Arc::new(MidiMap::new()),
+            Arc::new(theme::ThemeColor::new(theme::ACCENT_DEFAULT_HUE, theme::ACCENT_DEFAULT_SAT, theme::ACCENT_DEFAULT_VAL)),
+            Arc::new(theme::ThemeColor::new(theme::BG_DEFAULT_HUE, theme::BG_DEFAULT_SAT, theme::BG_DEFAULT_VAL)),
+        )
+    }
+
+    fn manifest_text(m: &AppManifest, inputs: &[String]) -> String {
+        let mut s = format!("id = {:?}\nname = {:?}\n", m.id, m.name);
+        if !inputs.is_empty() {
+            s.push_str("# Modulation inputs this app registers (checked by registry.rs's tests).\nmod_inputs = [\n");
+            for n in inputs {
+                s.push_str(&format!("    {n:?},\n"));
+            }
+            s.push_str("]\n");
+        }
+        s
+    }
+
+    #[test]
+    fn every_manifest_declares_exactly_the_inputs_its_app_registers() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let write = std::env::var_os("PORTAMAX_WRITE_MANIFESTS").is_some();
+        let mut wrong = Vec::new();
+        for m in crate::manifest::discover(dir) {
+            let modbus = Arc::new(ModBus::new());
+            let registry = fresh_registry(Arc::clone(&modbus));
+            let Some(make) = registry.constructors.get(&m.id) else { continue };
+            let _app = make();
+            let registered = modbus.names();
+            if registered != m.mod_inputs {
+                if write {
+                    let path = if dir.join(&m.id).is_dir() { dir.join(&m.id).join("manifest.toml") } else { dir.join(format!("{}.toml", m.id)) };
+                    std::fs::write(path, manifest_text(&m, &registered)).unwrap();
+                }
+                wrong.push(format!("{}: manifest {:?} vs code {:?}", m.id, m.mod_inputs, registered));
+            }
+        }
+        assert!(write || wrong.is_empty(), "manifests out of date (rerun with PORTAMAX_WRITE_MANIFESTS=1):\n{}", wrong.join("\n"));
+    }
+
+    /// The whole point: an app nobody has opened still shows its inputs,
+    /// a source can write into them, and that write wakes the app, which
+    /// picks up the very handle the source was writing.
+    #[test]
+    fn an_unopened_apps_inputs_are_patchable_and_wake_it() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let manifests: Vec<_> = crate::manifest::discover(dir).into_iter().filter(|m| m.id == "plaits" || m.id == "turing_machine").collect();
+        let modbus = Arc::new(ModBus::new());
+        let registry = fresh_registry(Arc::clone(&modbus));
+        let mut apps = registry.build(&manifests);
+        let idx = modbus.index_of("Plaits: Harmonics").expect("declared before Plaits exists");
+        let groups = modbus.apps();
+        assert!(groups.iter().any(|(a, v)| a == "Plaits" && v.contains(&idx)), "{groups:?}");
+        assert!(!modbus.is_claimed(idx), "Plaits isn't built yet");
+        // a source writes into it...
+        modbus.get(idx).unwrap().set(0.25);
+        // ...and the next background tick builds Plaits, which registers
+        // its Harmonics input and gets the patched handle back.
+        let before = modbus.len();
+        for (_, app) in apps.iter_mut() {
+            app.background_tick();
+        }
+        assert!(modbus.is_claimed(idx), "the write woke Plaits");
+        assert_eq!(modbus.len(), before, "registering reused the declared inputs");
+        assert_eq!(modbus.get(idx).unwrap().get(), 0.25);
+    }
 }

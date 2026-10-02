@@ -1,2 +1,9 @@
 id = "vector_filter"
 name = "Vector Filter"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Vector Filter Level",
+    "Vector Filter: Cutoff",
+    "Vector Filter: Resonance",
+    "Vector Filter: Drive",
+]

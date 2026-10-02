@@ -1,2 +1,12 @@
 id = "ghosts"
 name = "Ghosts"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Ghosts Level",
+    "Ghosts: Loop seconds",
+    "Ghosts: Decay",
+    "Ghosts: Drift",
+    "Ghosts: Low pass",
+    "Ghosts: Reverse",
+    "Ghosts: Wet",
+]
