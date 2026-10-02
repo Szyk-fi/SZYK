@@ -17,7 +17,7 @@ use crate::apps::{
     queen_of_pentacles::QueenOfPentaclesApp, rainmaker::RainmakerApp, sample_drum::SampleDrumApp, sequencer::SequencerApp, settings::SettingsApp, singularity::SingularityApp,
     starlab::StarlabApp, synth::SynthApp, tape::TapeApp, tonestack::TonestackApp, turing_machine::TuringMachineApp, visualizer::VisualizerApp, voltage::VoltageApp,
     warps::WarpsApp,
-    oracle::OracleApp, pulsar::PulsarApp, tinkertone::TinkertoneApp,
+    oracle::OracleApp, pulsar::PulsarApp, tinkertone::TinkertoneApp, controller_setup::ControllerSetupApp,
 };
 use crate::audio_bus::AudioBus;
 use crate::audio_devices::AudioDeviceState;
@@ -95,6 +95,10 @@ impl Registry {
                     Arc::clone(&background),
                 )) as Box<dyn App>
             })
+        });
+        constructors.insert("controller".into(), {
+            let nav_speed = Arc::clone(&nav_speed);
+            Rc::new(move || Box::new(ControllerSetupApp::new(Arc::clone(&nav_speed))) as Box<dyn App>)
         });
         constructors.insert("plaits".into(), {
             let sensitivity = Arc::clone(&sensitivity);

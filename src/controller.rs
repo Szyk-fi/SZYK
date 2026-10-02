@@ -39,6 +39,12 @@ pub const TOP_NOTES: [u8; 4] = [68, 69, 70, 71]; // G#4 A4 A#4 B4
 
 pub struct ControllerState {
     pub grid: [AtomicBool; 16],
+    /// Pads held by a game controller (see controller_map.rs), kept apart
+    /// from `grid` so a controller poll never cancels a MIDI pad press.
+    pub gamepad_grid: [AtomicBool; 16],
+    /// Discrete D-pad row steps from a game controller (like the device's
+    /// own D-pad, unaffected by encoder sensitivity).
+    nav_delta: AtomicI32,
     top: [AtomicBool; 4],
     knob1_delta: AtomicI32,
     knob2_delta: AtomicI32,
@@ -66,6 +72,8 @@ impl ControllerState {
     pub fn new() -> Self {
         Self {
             grid: std::array::from_fn(|_| AtomicBool::new(false)),
+            gamepad_grid: std::array::from_fn(|_| AtomicBool::new(false)),
+            nav_delta: AtomicI32::new(0),
             top: std::array::from_fn(|_| AtomicBool::new(false)),
             knob1_delta: AtomicI32::new(0),
             knob2_delta: AtomicI32::new(0),
@@ -162,6 +170,20 @@ impl ControllerState {
     }
     pub fn take_home(&self) -> bool {
         self.home.swap(false, Ordering::Relaxed)
+    }
+    /// A pad held from any source: MIDI or a game controller.
+    #[allow(dead_code)] // not every preview binary reads the pads
+    pub fn pad_down(&self, i: usize) -> bool {
+        self.grid[i].load(Ordering::Relaxed) || self.gamepad_grid[i].load(Ordering::Relaxed)
+    }
+    // Written only by the game-controller backends.
+    #[allow(dead_code)]
+    pub fn add_nav_delta(&self, delta: i32) {
+        self.nav_delta.fetch_add(delta, Ordering::Relaxed);
+    }
+    #[allow(dead_code)]
+    pub fn take_nav_delta(&self) -> i32 {
+        self.nav_delta.swap(0, Ordering::Relaxed)
     }
     pub fn add_knob1_delta(&self, delta: i32) {
         self.knob1_delta.fetch_add(delta, Ordering::Relaxed);

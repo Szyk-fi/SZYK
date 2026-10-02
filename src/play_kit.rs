@@ -219,6 +219,7 @@ impl PlayKit {
 
     /// Jump straight to a native layer (an app whose own mode button
     /// changes what the pads do keeps F2 and this in step).
+    #[allow(dead_code)]
     pub fn set_native(&mut self, id: u8) {
         if let Some(i) = self.cfg.layers.iter().position(|l| matches!(l, Layer::Native(n, _) if *n == id)) {
             self.layer = i;
@@ -234,6 +235,7 @@ impl PlayKit {
         if self.status_frames > 0 { &self.status } else { "" }
     }
 
+    #[allow(dead_code)] // tests and previews read stored moments
     pub fn moment(&self, i: usize) -> Option<&serde_json::Value> {
         self.moments.get(i).and_then(|m| m.as_ref())
     }

@@ -17,6 +17,7 @@ pub mod pams;
 pub mod plaits;
 pub mod plaits_layout;
 pub mod plaits_play;
+pub mod controller_setup;
 pub mod prism;
 pub mod queen_of_pentacles;
 pub mod rainmaker;

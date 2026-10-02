@@ -45,6 +45,10 @@ mod audio_devices;
 mod clouds_ffi;
 #[path = "../src/controller.rs"]
 mod controller;
+#[path = "../src/controller_map.rs"]
+mod controller_map;
+#[path = "../src/gamepad_gilrs.rs"]
+mod gamepad_gilrs;
 #[path = "../src/display.rs"]
 mod display;
 // Same real GameController.framework-based gamepad support the main
@@ -112,6 +116,8 @@ pub mod oracle;
 pub mod pulsar;
 #[path = "../src/apps/tinkertone.rs"]
 pub mod tinkertone;
+#[path = "../src/apps/controller_setup.rs"]
+pub mod controller_setup;
 #[path = "../src/apps/vector_filter.rs"]
 pub mod vector_filter;
 #[path = "../src/apps/morph.rs"]
@@ -175,7 +181,7 @@ pub mod visualizer;
 mod apps {
     pub use super::{
         analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, forge, natural_gate, nautilus,
-        nebula, pams, plaits, plaits_layout, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
+        nebula, pams, plaits, plaits_layout, controller_setup, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
         starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar, tinkertone,
     };
 }
@@ -219,6 +225,7 @@ slint::slint! {
     import { PulsarPanel } from "slint_common/pulsar_panel.slint";
     import { TinkertonePanel } from "slint_common/tinkertone_panel.slint";
     import { PlayColumn } from "slint_common/play_column.slint";
+    import { ControllerPanel } from "slint_common/controller_panel.slint";
     import { VectorFilterPanel } from "slint_common/vector_filter_panel.slint";
     import { SettingsPanel } from "slint_common/settings_panel.slint";
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
@@ -840,6 +847,14 @@ slint::slint! {
         in property <float> pulsar-swing: 50;
         in property <float> pulsar-peak;
         in property <string> pulsar-status;
+        // --- Controller app (active-kind == 39): see `ControllerExtra`. ---
+        in property <string> ctl-name;
+        in property <bool> ctl-connected;
+        in property <string> ctl-map;
+        in property <string> ctl-learning;
+        in property <[bool]> ctl-buttons;
+        in property <[float]> ctl-axes;
+        in property <string> ctl-status;
         // --- Shared play column (src/play_kit.rs), in place of the list. ---
         in property <bool> pc-active;
         in property <string> pc-layer;
@@ -1026,6 +1041,12 @@ slint::slint! {
                 stick-x: root.pc-stick-x; stick-y: root.pc-stick-y; stick-label: root.pc-stick-label;
                 hand-l: root.pc-hand-l; hand-r: root.pc-hand-r; hand-l-label: root.pc-hand-l-label; hand-r-label: root.pc-hand-r-label;
                 line: root.pc-line; status: root.pc-status;
+            }
+            if !root.on-home && root.active-kind == 39 : ControllerPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                pad-name: root.ctl-name; connected: root.ctl-connected; map: root.ctl-map; learning: root.ctl-learning;
+                buttons: root.ctl-buttons; axes: root.ctl-axes; status: root.ctl-status;
             }
             if !root.on-home && root.active-kind == 37 : TinkertonePanel {
                 width: 306px;
@@ -3537,6 +3558,7 @@ fn app_palette(name: &str) -> Option<(slint::Color, slint::Color, slint::Color, 
         "Oracle" => (0x13122a, 0xece8fb, 0xe7c46e, 0x8a84ad),
         "Pulsar" => (0x1c1014, 0xf6e7ea, 0xff5d73, 0x9a6f78),
         "Tinkertone" => (0xece4d0, 0x2b2620, 0xd2532c, 0x8a7f6c),
+        "Controller" => (0x0f1611, 0xdcefe0, 0x5fe07a, 0x6f8a74),
         "Vector Filter" => (0x101e25, 0xe4f0e8, 0x79e2cf, 0x729d9e),
         "Settings" => (0x14191f, 0xe7edf4, 0xa5bce9, 0x8994aa),
         "Bloom" => (0x0c1918, 0xe7edda, 0xd8f580, 0x203b33),
@@ -4230,6 +4252,16 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_pulsar_peak(p.peak);
                     ui.set_pulsar_status(p.status.into());
                 }
+                app::SlintExtra::Controller(c) => {
+                    ui.set_active_kind(39);
+                    ui.set_ctl_name(c.name.into());
+                    ui.set_ctl_connected(c.connected);
+                    ui.set_ctl_map(c.map.to_uppercase().into());
+                    ui.set_ctl_learning(c.learning.into());
+                    ui.set_ctl_buttons(Rc::new(slint::VecModel::from(c.buttons)).into());
+                    ui.set_ctl_axes(Rc::new(slint::VecModel::from(c.axes)).into());
+                    ui.set_ctl_status(c.status.into());
+                }
                 app::SlintExtra::Tinkertone(t) => {
                     ui.set_active_kind(37);
                     ui.set_tt_keys_held(Rc::new(slint::VecModel::from(t.keys_held)).into());
@@ -4366,6 +4398,11 @@ fn main() {
     {
         let gamepad_controller = Arc::clone(&controller);
         std::thread::spawn(move || gamepad::run_gamepad_listener(gamepad_controller));
+    }
+    // Every other controller, on every OS (gamepad_gilrs.rs).
+    {
+        let gamepad_controller = Arc::clone(&controller);
+        std::thread::spawn(move || gamepad_gilrs::run_gilrs_listener(gamepad_controller));
     }
 
     let grid_held: Rc<RefCell<[bool; 16]>> = Rc::new(RefCell::new([false; 16]));
@@ -4516,7 +4553,7 @@ fn main() {
             else { stick_nav = if y > 0.0 { 1 } else { -1 }; }
             last_stick_step = std::time::Instant::now();
         }
-        let navigation = ui.get_navigation_delta() + stick_nav;
+        let navigation = ui.get_navigation_delta() + stick_nav + controller.take_nav_delta();
         ui.set_navigation_delta(0);
         let k1 = ui.get_knob1_delta().round() as i32 + midi_k1;
         let k2 = ui.get_knob2_delta().round() as i32 + midi_k2 + stick_edit;
@@ -4532,7 +4569,7 @@ fn main() {
         }
         let press1 = std::mem::take(&mut *knob1_press.borrow_mut()) || controller.take_knob1_press();
         let press2 = std::mem::take(&mut *knob2_press.borrow_mut()) || controller.take_knob2_press();
-        let grid: [bool; 16] = std::array::from_fn(|i| grid_for_timer.borrow()[i] || controller.grid[i].load(Ordering::Relaxed));
+        let grid: [bool; 16] = std::array::from_fn(|i| grid_for_timer.borrow()[i] || controller.pad_down(i));
 
         // Boot sequence: any input at all dismisses it outright (not
         // just advancing to the next stage), same as the real

@@ -24,9 +24,11 @@ mod audio_bus;
 mod audio_devices;
 mod clouds_ffi;
 mod controller;
+mod controller_map;
 mod display;
 #[cfg(target_os = "macos")]
 mod gamepad;
+mod gamepad_gilrs;
 mod led_output;
 mod manifest;
 mod midi_map;
@@ -192,6 +194,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let gamepad_controller = Arc::clone(&controller);
         thread::spawn(move || gamepad::run_gamepad_listener(gamepad_controller));
+    }
+    // Every other controller (and every OS): gilrs. On macOS it steps
+    // aside whenever the native backend has a pad -- see gamepad_gilrs.rs.
+    {
+        let gamepad_controller = Arc::clone(&controller);
+        thread::spawn(move || gamepad_gilrs::run_gilrs_listener(gamepad_controller));
     }
 
     // The mixing bus every app's audio processor renders into -- see

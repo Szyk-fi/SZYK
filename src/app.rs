@@ -127,7 +127,8 @@ impl Input {
         let mut grid = [false; 16];
         for (i, (slot, key)) in grid.iter_mut().zip(Self::GRID_KEYS).enumerate() {
             *slot = window.is_key_down(key)
-                || (midi_armed && controller.grid[i].load(std::sync::atomic::Ordering::Relaxed));
+                || (midi_armed && controller.grid[i].load(std::sync::atomic::Ordering::Relaxed))
+                || controller.gamepad_grid[i].load(std::sync::atomic::Ordering::Relaxed);
         }
         let mut top = [false; 4];
         for (i, (slot, key)) in top.iter_mut().zip(Self::TOP_KEYS).enumerate() {
@@ -142,12 +143,13 @@ impl Input {
         let knob2 = repeating(Key::Period) as i32 - repeating(Key::Comma) as i32
             + controller.take_knob2_delta();
         let knob1_press = pressed(Key::Backslash) || controller.take_knob1_press();
+        let navigation_steps = controller.take_nav_delta();
 
         Self {
             grid,
             top,
             knob1,
-            navigation_steps: 0,
+            navigation_steps,
             knob2,
             knob1_press,
             knob2_press: pressed(Key::Slash) || controller.take_knob2_press(),
@@ -158,8 +160,8 @@ impl Input {
             // select -- lets a MIDI controller (or the keyboard knob
             // keys) navigate the launcher too, not just arrow keys/
             // Enter, without needing its own separate mapping.
-            nav_up: pressed(Key::Up) || knob1 < 0,
-            nav_down: pressed(Key::Down) || knob1 > 0,
+            nav_up: pressed(Key::Up) || knob1 < 0 || navigation_steps < 0,
+            nav_down: pressed(Key::Down) || knob1 > 0 || navigation_steps > 0,
             nav_select: pressed(Key::Enter) || knob1_press,
             ..controller.play_surface_input(Self::keyboard_play_surface(window))
         }
@@ -404,6 +406,7 @@ pub fn polyline_segments(samples: &[f32], width_px: f32, height_px: f32, centere
 pub enum SlintExtra {
     None,
     Plaits(PlaitsExtra),
+    Controller(ControllerExtra),
     Analyzer(AnalyzerExtra),
     Voltage(VoltageExtra),
     Cascade(CascadeExtra),
@@ -926,6 +929,21 @@ pub struct PlayColumn {
     pub status: String,
 }
 
+
+/// The Controller app's live view of the connected game controller.
+#[derive(Default)]
+#[allow(dead_code)] // read only by the Slint renderer
+pub struct ControllerExtra {
+    pub name: String,
+    pub connected: bool,
+    pub map: String,
+    /// The action being learned, or empty.
+    pub learning: String,
+    /// In controller_map::BUTTON_NAMES / AXIS_NAMES order.
+    pub buttons: Vec<bool>,
+    pub axes: Vec<f32>,
+    pub status: String,
+}
 
 pub struct PlaitsExtra {
     pub engine_name: String,
