@@ -444,6 +444,24 @@ pub enum SlintExtra {
     Pulsar(PulsarExtra),
     Tinkertone(TinkertoneExtra),
     Norns(NornsExtra),
+    Grid(GridExtra),
+}
+
+/// A text grid panel -- see `GridPanel` in the Slint GUI. Used by
+/// Ledger (the pattern), Mosaic (its step rows) and Squeeze (meters).
+#[allow(dead_code)] // Slint GUI only
+pub struct GridExtra {
+    pub caption: String,
+    pub title: String,
+    /// Row-major cells, `col_x.len()` per row.
+    pub cells: Vec<String>,
+    /// Each column's x position, px.
+    pub col_x: Vec<f32>,
+    /// Row to highlight, or -1.
+    pub highlight: i32,
+    pub footer: String,
+    /// A bar under the title (0..1), or negative for none.
+    pub meter: f32,
 }
 
 /// The norns cartridge's screen and status -- see `NornsApp::slint_extra`.

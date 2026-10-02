@@ -1,0 +1,9 @@
+id = "squeeze"
+name = "Squeeze"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Squeeze Level",
+    "Squeeze: Threshold",
+    "Squeeze: Ratio",
+    "Squeeze: Mix",
+]

@@ -118,6 +118,12 @@ pub const ENGINE_NAMES: [&str; NUM_ENGINES as usize] = [
     "String", "Modal", "Bass Drum", "Snare Drum", "Hi-Hat",
 ];
 
+/// [Harmonics, Timbre, Morph] labels for engine `i` (other apps that
+/// host Plaits voices, like Trio, label their knobs with these).
+pub fn engine_param_names(i: usize) -> [&'static str; 3] {
+    ENGINE_PARAM_NAMES[i % ENGINE_PARAM_NAMES.len()]
+}
+
 /// [Harmonics, Timbre, Morph] labels per engine, same order as ENGINE_NAMES.
 const ENGINE_PARAM_NAMES: [[&str; 3]; NUM_ENGINES as usize] = [
     ["Detune", "Cutoff", "Resonance"],

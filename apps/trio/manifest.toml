@@ -1,0 +1,12 @@
+id = "trio"
+name = "Trio"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Trio Level",
+    "Trio: A Timbre",
+    "Trio: A Morph",
+    "Trio: B Timbre",
+    "Trio: B Morph",
+    "Trio: C Timbre",
+    "Trio: C Morph",
+]

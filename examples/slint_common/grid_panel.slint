@@ -1,0 +1,61 @@
+// A text grid for apps whose state reads best in rows and columns:
+// Ledger's pattern, Mosaic's step rows, Squeeze's meters. Cells are
+// row-major, `cols` per row, each column at a fixed x (no monospace font
+// is bundled, so alignment can't rely on character widths). One row can
+// be highlighted (the cursor / focused row).
+import { InstrumentPanel, InstrumentLabel } from "instrument_widgets.slint";
+
+export component GridPanel inherits InstrumentPanel {
+    in property <string> title;
+    in property <[string]> cells;
+    in property <int> cols: 1;
+    in property <[float]> col-x;
+    in property <int> rows: 0;
+    in property <int> highlight: -1;
+    in property <string> footer;
+    in property <float> meter: -1;
+
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: root.title;
+            color: root.ink;
+            font-family: "Space Grotesk";
+            font-size: 15px;
+            font-weight: 600;
+            overflow: elide;
+            height: 20px;
+        }
+        if root.meter >= 0 : Rectangle {
+            height: 6px;
+            background: root.ink.with-alpha(0.08);
+            Rectangle { x: 0; width: parent.width * min(1, root.meter); background: root.accent; }
+        }
+        Rectangle {
+            height: root.rows * 11px;
+            for r in root.rows : Rectangle {
+                y: r * 11px;
+                height: 11px;
+                background: r == root.highlight ? root.accent.with-alpha(0.22) : transparent;
+            }
+            for cell[i] in root.cells : Text {
+                x: (mod(i, root.cols) < root.col-x.length ? root.col-x[mod(i, root.cols)] : 0) * 1px + 2px;
+                y: floor(i / root.cols) * 11px;
+                height: 11px;
+                text: cell;
+                color: floor(i / root.cols) == root.highlight ? root.ink : root.ink.with-alpha(0.72);
+                font-family: "JetBrains Mono";
+                font-size: 8px;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        Text {
+            text: root.footer;
+            color: root.ink.with-alpha(0.55);
+            font-family: "JetBrains Mono";
+            font-size: 8px;
+            wrap: word-wrap;
+        }
+    }
+}

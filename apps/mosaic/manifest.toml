@@ -1,0 +1,10 @@
+id = "mosaic"
+name = "Mosaic"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Mosaic Level",
+    "Mosaic: Slot 1 Amount",
+    "Mosaic: Slot 2 Amount",
+    "Mosaic: Slot 3 Amount",
+    "Mosaic: Slot 4 Amount",
+]

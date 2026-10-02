@@ -47,3 +47,7 @@ pub mod oracle;
 pub mod pulsar;
 pub mod tinkertone;
 pub mod norns;
+pub mod ledger;
+pub mod trio;
+pub mod mosaic;
+pub mod squeeze;

@@ -106,6 +106,7 @@ way.
 | **Nebula** | A small real 2D gravity simulation — particles drift and get captured into orbits, each capture fires a note. |
 | **Queen of Pentacles** | CV/gate generator driven by real 1D chaotic maps (logistic map and two relatives), not a disguised sequencer. |
 | **StarLab** | Strymon StarLab-inspired: a Karplus-Strong string voice sharing a comb/allpass reverb tank with the effect side. |
+| **Trio** | Three layered Plaits engines that split what you play: Full, Bass, Top or Arp per layer; pads play the scale or diatonic chords. |
 | **Tinkertone** | An early-80s home keyboard with the MT-40's feature set (37 keys, 22 tones, 15-key bass, 6 rhythms) in an original look. Analog-modelled bass and drums, and you can record your own looping bass line (see §3.2). |
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
 
@@ -173,6 +174,8 @@ row) rather than generating their own signal.
 | **Natural Gate** | Rabid Elephant Natural Gate clone: dual-channel zero-bleed low-pass gate. |
 | **Tonestack** | Guitar amp-sim / effects-chain processor. |
 | **Vector Filter** | 3D "vector" filter interface — drag a projected cube face: X = cutoff (log, 40–16kHz), Y = resonance, Z-strip = drive. Low/band/high-pass share one control surface. |
+| **Mosaic** | Four effects in series (filters, delay, repeat, reverse, crush, drive, gate, ring, pitch, reverb), each switched and shaped by its own 16-step pattern. Pads = the focused slot's steps; hold one and turn knob 2 to lock its Amount. |
+| **Squeeze** | Compressor with soft knee, makeup and parallel mix; pick another app as Sidechain to duck under it. |
 | **Fracture / Ghosts / Tape Machine / Portal** | Collection-engine effects — see §7. |
 
 ## 5. Sequencing & modulation
@@ -183,6 +186,7 @@ row) rather than generating their own signal.
 | **Pam's** | Clone of the core of Pamela's Pro Workout — multi-channel clock/gate generator with logic combinators between channels. |
 | **Turing Machine** | Music Thing Modular Turing Machine clone: clocked 16-bit shift register, "Locks" sets random-vs-repeat. |
 | **Sequencer** | Multi-track step sequencer in the spirit of Sugar Bytes DrumComputer. |
+| **Ledger** | A tracker: 8 tracks × up to 64 rows × 16 patterns, each track a Plaits voice. Play view = performance (pads 1–8 mute, 9–16 loop / reverse / octave / half speed / dark); R1 = the editor (knob 1 rows, press for next field; knob 2 value, press to clear; pads enter notes). Effects: T M H D (sound locks), R retrigger, P chance, N nudge. |
 | **CV Out** | 32 independent CV outputs sent as MIDI CC to an external MIDI-to-CV box. |
 | **MIDI Learn** | Browse/add/remove CC → modulation-target mappings. |
 | **Portal** | Eight-cable patch matrix: any registered source (LFOs, clocked random, audio buses) to any registered destination (Portal's own sends, or another app's modulation parameter). Direct monitor is off by default. Patches last for the session only — no patch-file persistence yet. |
