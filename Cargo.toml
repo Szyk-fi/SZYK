@@ -130,6 +130,10 @@ z80 = "2.0"
 # class chip types, not an approximation via a similar-but-different
 # chip.
 ymfm-sys = "0.2"
+# The Norns cartridge (src/apps/norns) runs norns scripts, which are Lua
+# 5.3 -- the same version norns uses. `vendored` builds Lua itself from
+# source (MIT), so nothing needs installing on the host.
+mlua = { version = "0.10", features = ["lua53", "vendored"] }
 
 
 # GameController.framework bindings -- the correct, native macOS API

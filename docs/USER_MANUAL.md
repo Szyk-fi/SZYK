@@ -283,6 +283,34 @@ own module doc comment.
 
 Save states aren't supported for Neo Geo yet.
 
+## 8.1 Norns — run norns scripts
+
+**Norns** runs scripts written for monome's norns, the Lua sound computer.
+Copy a script folder to the SD card as `saves/norns/dust/code/<name>/`
+(the same layout as norns' `dust/code`), open Norns, pick it from the
+SELECT list and press a knob. **tidepool** is built in as a demo.
+
+| norns | Portamax |
+|---|---|
+| E2 / E3 | knob 1 / knob 2 |
+| E1 | hold pad 16 and turn a knob (or pads 9 / 10) |
+| K2 / K3 | knob 1 press / knob 2 press, or pads 14 / 15 |
+| K1 (hold) | pad 13 |
+| PARAMS menu | pad 11 or F2 (knob 1 picks, knob 2 changes, knob 1 press returns) |
+| back to SELECT | pad 12 or F3 |
+| MIDI notes in | pads 1–8 (C major from middle C, MIDI device 1) |
+
+What works: the screen, encoders and keys, params (number, option,
+control, taper, binary, trigger, groups), clock (`run`, `sync`, `sleep`,
+tempo), metro, MIDI input, `musicutil`/`util`/`controlspec`, the
+**PolyPerc** engine and **softcut** (6 voices, 2 × 60 s buffers, loops,
+overdub, filters). Scripts keep running when you leave the app.
+
+Not yet: other engines (a script that asks for one still runs, but its
+engine commands are silent, and the status line says so), grid and arc
+(scripts see them as unplugged), crow, audio input into softcut, MIDI out,
+and saving params sets. awake runs unmodified.
+
 ## 9. Game controllers (PS5 and any other)
 
 A DualSense, Xbox or MFi controller works on macOS through Apple's

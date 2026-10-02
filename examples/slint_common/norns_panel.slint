@@ -1,0 +1,59 @@
+// The Norns cartridge's right-hand panel: the script's own 128x64 screen
+// at 2x (pixel-exact, OLED white on black), the running script and
+// engine, and how norns' three encoders and three keys land on Portamax.
+import { InstrumentPanel, InstrumentLabel } from "instrument_widgets.slint";
+
+export component NornsPanel inherits InstrumentPanel {
+    in property <color> paper;
+    in property <image> frame;
+    in property <string> title;
+    in property <string> mode;
+    in property <string> status;
+    in property <float> peak;
+
+    caption: "NORNS / " + root.title;
+
+    VerticalLayout {
+        spacing: 6px;
+        Rectangle {
+            height: 132px;
+            background: #000000;
+            border-radius: 3px;
+            Image {
+                source: root.frame;
+                width: 256px;
+                height: 128px;
+                image-rendering: pixelated;
+            }
+        }
+        HorizontalLayout {
+            height: 12px;
+            spacing: 6px;
+            InstrumentLabel { text: root.mode; ink: root.accent; font-size: 8px; }
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 4px;
+                y: 4px;
+                background: root.ink.with-alpha(0.1);
+                Rectangle { x: 0; width: parent.width * root.peak; background: root.accent; }
+            }
+        }
+        Text {
+            text: root.status;
+            color: root.ink.with-alpha(0.6);
+            font-family: "JetBrains Mono";
+            font-size: 8px;
+            overflow: elide;
+            height: 11px;
+        }
+        Text {
+            text: root.mode == "SELECT"
+                ? "KNOB turn: choose  ·  press: run"
+                : "KNOB1/2 = E2/E3 (+PAD16 = E1)  ·  PRESS = K2/K3\nPADS 13-15 = K1-K3  ·  11 PARAMS  ·  12 SELECT  ·  1-8 NOTES";
+            color: root.ink.with-alpha(0.45);
+            font-family: "JetBrains Mono";
+            font-size: 7px;
+            wrap: word-wrap;
+        }
+    }
+}

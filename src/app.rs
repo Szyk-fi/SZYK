@@ -443,6 +443,19 @@ pub enum SlintExtra {
     Oracle(OracleExtra),
     Pulsar(PulsarExtra),
     Tinkertone(TinkertoneExtra),
+    Norns(NornsExtra),
+}
+
+/// The norns cartridge's screen and status -- see `NornsApp::slint_extra`.
+#[allow(dead_code)] // Slint GUI only
+pub struct NornsExtra {
+    /// 128x64 RGBA: the script's screen, or the SELECT / PARAMS menus.
+    pub frame_rgba: Vec<u8>,
+    pub title: String,
+    /// "SELECT", "PLAY" or "PARAMS".
+    pub mode: String,
+    pub status: String,
+    pub peak: f32,
 }
 
 /// Retro's real per-frame telemetry -- see `RetroApp::slint_extra`.

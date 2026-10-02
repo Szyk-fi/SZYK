@@ -46,3 +46,4 @@ pub mod forge;
 pub mod oracle;
 pub mod pulsar;
 pub mod tinkertone;
+pub mod norns;

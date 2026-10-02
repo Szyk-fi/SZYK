@@ -116,6 +116,8 @@ pub mod oracle;
 pub mod pulsar;
 #[path = "../src/apps/tinkertone.rs"]
 pub mod tinkertone;
+#[path = "../src/apps/norns/mod.rs"]
+pub mod norns;
 #[path = "../src/apps/controller_setup.rs"]
 pub mod controller_setup;
 #[path = "../src/apps/vector_filter.rs"]
@@ -182,7 +184,7 @@ mod apps {
     pub use super::{
         analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, forge, natural_gate, nautilus,
         nebula, pams, plaits, plaits_layout, controller_setup, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
-        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar, tinkertone,
+        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar, tinkertone, norns,
     };
 }
 
@@ -230,6 +232,7 @@ slint::slint! {
     import { SettingsPanel } from "slint_common/settings_panel.slint";
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
     import { RetroPanel } from "slint_common/retro_panel.slint";
+    import { NornsPanel } from "slint_common/norns_panel.slint";
     import { PortalPanel } from "slint_common/portal_panel.slint";
     import { ScalePanel } from "slint_common/scale_panel.slint";
     import { CollectionPanel } from "slint_common/collection_panel.slint";
@@ -940,6 +943,12 @@ slint::slint! {
         // --- Retro-specific state (active-kind == 30): the NES's own
         // real rendered frame, straight from `tetanes_core` -- see
         // `RetroExtra`. ---
+        // --- Norns (active-kind == 40): the script's own screen ---
+        in property <image> norns-frame;
+        in property <string> norns-title;
+        in property <string> norns-mode;
+        in property <string> norns-status;
+        in property <float> norns-peak;
         in-out property <string> retro-console-name: "NES";
         in-out property <string> retro-rom-name: "";
         in-out property <bool> retro-running: false;
@@ -1050,6 +1059,12 @@ slint::slint! {
                 ink: root.live-ink; accent: root.accent; paper: root.live-bg;
                 pad-name: root.ctl-name; connected: root.ctl-connected; map: root.ctl-map; learning: root.ctl-learning;
                 buttons: root.ctl-buttons; axes: root.ctl-axes; status: root.ctl-status;
+            }
+            if !root.on-home && root.active-kind == 40 : NornsPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                frame: root.norns-frame; title: root.norns-title; mode: root.norns-mode;
+                status: root.norns-status; peak: root.norns-peak;
             }
             if !root.on-home && root.active-kind == 37 : TinkertonePanel {
                 width: 306px;
@@ -4203,6 +4218,16 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_portal_targets(Rc::new(slint::VecModel::from(p.targets.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
                     ui.set_portal_amounts(Rc::new(slint::VecModel::from(p.amounts)).into());ui.set_portal_levels(Rc::new(slint::VecModel::from(p.levels)).into());ui.set_portal_enabled(Rc::new(slint::VecModel::from(p.enabled)).into());
                     ui.set_portal_cable(p.selected);ui.set_portal_active(p.active);ui.set_portal_status(p.status.into());
+                }
+                app::SlintExtra::Norns(n) => {
+                    ui.set_active_kind(40);
+                    ui.set_norns_title(n.title.into());
+                    ui.set_norns_mode(n.mode.into());
+                    ui.set_norns_status(n.status.into());
+                    ui.set_norns_peak(n.peak);
+                    if let Some(image) = rgba_frame_to_slint_image(&n.frame_rgba, 128, 64) {
+                        ui.set_norns_frame(image);
+                    }
                 }
                 app::SlintExtra::Retro(r) => {
                     ui.set_active_kind(30);
