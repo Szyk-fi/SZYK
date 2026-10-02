@@ -142,7 +142,7 @@ pub fn render(directory: &str) {
         // Plaits opens on its play view, where the D-pad steps engines;
         // the list-navigation checks below belong to its menu (R1).
         if name == "Plaits" {
-            assert!(matches!(app.slint_extra(), app::SlintExtra::PlaitsPlay(_)), "Plaits must open on its play view");
+            assert!(app.play_column().is_some(), "Plaits must open on its play view");
             app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
         }
         if ["Plaits", "Pam's Workout", "Beads", "Black Hole", "Bloom"].contains(&name) {
@@ -207,6 +207,7 @@ pub fn render(directory: &str) {
         let (bg, ink, accent, _) = app_palette(name).unwrap_or((slint::Color::from_rgb_u8(20,25,31), slint::Color::from_rgb_u8(231,237,244), slint::Color::from_rgb_u8(165,188,233), slint::Color::from_rgb_u8(137,148,170)));
         ui.set_live_bg(bg); ui.set_live_ink(ink); ui.set_live_accent(accent);
         apply_scale_visual(&ui, app.slint_scale_info());
+        apply_play_column(&ui, app.play_column());
         apply_instrument_visual(&ui, app.slint_extra());
         slint::platform::update_timers_and_animations();
         window.request_redraw();

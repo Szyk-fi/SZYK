@@ -4,6 +4,8 @@
 
 #[path = "music_scales.rs"]
 pub mod music_scales;
+#[path = "play_kit.rs"]
+pub mod play_kit;
 
 use crate::audio::AudioProcessor;
 use crate::controller::ControllerState;
@@ -196,6 +198,9 @@ pub trait App {
     /// fields). The shell then stops using those for navigation while
     /// this app is on screen.
     fn play_surface(&self) -> bool { false }
+    /// The shared play column (see play_kit.rs) when the app is on its
+    /// play view; `None` shows the usual parameter list instead.
+    fn play_column(&self) -> Option<PlayColumn> { None }
     /// The action F3 will perform, supplied by the app rather than inferred by name.
     fn transport_action(&self) -> Option<&'static str> {
         self.running().map(|running| if running { "STOP" } else { "PLAY" })
@@ -399,7 +404,6 @@ pub fn polyline_segments(samples: &[f32], width_px: f32, height_px: f32, centere
 pub enum SlintExtra {
     None,
     Plaits(PlaitsExtra),
-    PlaitsPlay(PlaitsPlayExtra),
     Analyzer(AnalyzerExtra),
     Voltage(VoltageExtra),
     Cascade(CascadeExtra),
@@ -892,49 +896,36 @@ pub struct SequencerExtra {
     pub pad_loaded: Vec<bool>,
 }
 
-/// One of the four dials on Plaits' play view. `knob` says which
-/// encoder turns it right now (0 = neither), so the screen can badge it.
-#[derive(Default)]
-#[allow(dead_code)] // read only by the Slint renderer, not by the bin target
-pub struct PlaitsDial {
+/// One of the four dials on a play view. `knob` says which encoder
+/// turns it right now (0 = neither), so the screen can badge it.
+#[derive(Default, Clone)]
+pub struct PlayDial {
     pub label: String,
     pub value: String,
     pub norm: f32,
     pub knob: u8,
 }
 
-/// Plaits' play view (see src/apps/plaits_play.rs): what you hear and
-/// what every surface is doing, without a menu in the way.
-#[derive(Default)]
-#[allow(dead_code)] // read only by the Slint renderer, not by the bin target
-pub struct PlaitsPlayExtra {
-    pub engine_name: String,
-    pub engine_index: usize,
-    pub engine_bank: usize,
-    pub engine_led: usize,
+/// The shared play column (play_kit.rs): what the pads, knobs and
+/// expression surfaces are doing, in place of the parameter list.
+#[derive(Default, Clone)]
+pub struct PlayColumn {
     pub layer: String,
-    pub dials: Vec<PlaitsDial>,
+    pub dials: Vec<PlayDial>,
+    /// The control knob 2 turns when it isn't one of the dials.
+    pub knob2_extra: String,
     /// Physical pad order (row 0 on top), like `Input::grid`.
     pub pad_labels: Vec<String>,
-    /// Per pad: 0 off, 1 root note, 2 chord, 3 lit (held / focused /
-    /// stored) -- the same meaning as the controller LEDs.
+    /// 0 off, 1 marked, 2 available, 3 lit, 4 held.
     pub pad_state: Vec<i32>,
-    /// Pitch rank of the grabbed control on the Controls layer, else -1.
-    pub focused_control: i32,
-    /// Live Timbre/Morph offsets (-0.5..0.5) -- where the stick has
-    /// pushed the sound, after routing.
     pub stick: [f32; 2],
+    pub stick_label: String,
     pub hands: [f32; 2],
-    pub hand_targets: [String; 2],
-    /// Expression pitch offset in semitones.
-    pub pitch: f32,
-    pub key: String,
-    pub sounding: String,
-    pub voices: usize,
-    pub arp: bool,
-    pub scope: CurveSegments,
+    pub hand_labels: [String; 2],
+    pub line: String,
     pub status: String,
 }
+
 
 pub struct PlaitsExtra {
     pub engine_name: String,

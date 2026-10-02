@@ -63,7 +63,8 @@
 //! `draw_mod_panel`) -- the ADSR gets one too (`draw_adsr_panel`).
 
 use super::plaits_layout::LayoutWatcher;
-use super::plaits_play::{self as play, ExprSettings, KeySrc, Layer, Moment, Moments, Surfaces, Target, Voices};
+use super::plaits_play::{self as play, ExprSettings, KeySrc, Moment, Surfaces, Target, Voices};
+use crate::app::play_kit::{KitConfig, Layer, PlayHost, PlayKit, Routes};
 use crate::app::{App, Input};
 use crate::arpeggiator::{Arpeggiator, PATTERN_NAMES as ARP_PATTERN_NAMES};
 use crate::audio::AudioProcessor;
@@ -543,30 +544,14 @@ pub struct PlaitsApp {
     current_index: Option<usize>,
     // --- play surface ---
     audio_bus: Arc<AudioBus>,
-    /// R1 toggles between the play view (default) and the full menu.
-    menu_view: bool,
-    layer: Layer,
-    /// Which `play::HERO_PAGES` pair the knobs turn.
-    hero_page: usize,
-    /// The Controls layer's grabbed control (`play::CONTROL_NAMES`).
-    focused_control: usize,
+    /// The shared play view (play_kit.rs): menu toggle, pad layers,
+    /// knobs, moments.
+    kit: PlayKit,
     expr: ExprSettings,
     voices: Voices,
-    moments: Moments,
-    /// When each pad went down (Moments: tap recalls, hold stores).
-    pad_since: [Option<std::time::Instant>; 16],
-    pad_stored: [bool; 16],
-    prev_grid: [bool; 16],
-    /// Stick position "kept" by a click, cancelled until it re-centres.
-    stick_hold: [f32; 2],
+    /// A stick click kept the sound; the stick is ignored until centred.
+    stick_kept: bool,
     audio_env: f32,
-    /// Last depth readings, for the panel's hand meters.
-    last_hands: [f32; 2],
-    /// Pad layer as last seen by `tick` (L1 peek included), for drawing.
-    shown_layer: Layer,
-    /// Short message on the play view ("Stored moment 3"...).
-    status: String,
-    status_frames: u32,
 }
 
 // --- Plaits' own palette: warm cream and ink, not a device-wide
@@ -606,22 +591,11 @@ impl PlaitsApp {
             mod_expanded: [false; NUM_MOD_SLOTS],
             current_index: None,
             audio_bus,
-            menu_view: false,
-            layer: Layer::Notes,
-            hero_page: 0,
-            focused_control: 0,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
             expr: ExprSettings::default(),
             voices: Voices::default(),
-            moments: Moments::load(if cfg!(test) { None } else { Some(Moments::default_path()) }),
-            pad_since: [None; 16],
-            pad_stored: [false; 16],
-            prev_grid: [false; 16],
-            stick_hold: [0.0; 2],
+            stick_kept: false,
             audio_env: 0.0,
-            last_hands: [0.0; 2],
-            shown_layer: Layer::Notes,
-            status: String::new(),
-            status_frames: 0,
         }
     }
 
@@ -1337,6 +1311,27 @@ impl PlaitsApp {
 }
 
 /// Play-surface behaviour (see plaits_play.rs for the pure pieces).
+/// Plaits' own pad layers (see play_kit.rs for the shared ones).
+const LAYER_NOTES: u8 = 0;
+const LAYER_CHORDS: u8 = 1;
+/// Indexes into `PlaitsApp::control_sel`.
+const C_ENGINE: usize = 8;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "plaits",
+        layers: vec![Layer::Native(LAYER_NOTES, "NOTES"), Layer::Native(LAYER_CHORDS, "CHORDS"), Layer::Controls, Layer::Moments],
+        hero: play::HERO_PAGES.to_vec(),
+        browse: Some(C_ENGINE),
+        // Shown only: Plaits renders its expression in the DSP (`perf`),
+        // so the kit doesn't push these controls itself.
+        routes: Routes { stick_x: Some(1), stick_y: Some(2), hand_l: Some(0), hand_r: None },
+        throws: Vec::new(),
+        midi_to_pads: false,
+        own_expression: true,
+    }
+}
+
 impl PlaitsApp {
     /// The Selection a Controls-layer / hero control edits.
     fn control_sel(c: usize) -> Selection {
@@ -1370,31 +1365,20 @@ impl PlaitsApp {
         }
     }
 
-    /// A control's 0..1 position for dials (None = not a continuous one).
-    fn control_norm(&self, c: usize) -> Option<f32> {
+    /// The atomic behind a continuous control.
+    fn knob(&self, c: usize) -> Option<&AtomicF32> {
         let p = &self.params;
         Some(match c {
-            0 => p.harmonics.get(),
-            1 => p.timbre.get(),
-            2 => p.morph.get(),
-            3 => p.decay.get(),
-            4 => p.attack.get(),
-            5 => p.sustain.get(),
-            6 => p.release.get(),
-            7 => p.colour.get(),
-            9 => (p.octave.load(Ordering::Relaxed) + 4) as f32 / 8.0,
-            14 => (p.arp.rate_hz.get() - 0.5) / 29.5,
+            0 => &p.harmonics,
+            1 => &p.timbre,
+            2 => &p.morph,
+            3 => &p.decay,
+            4 => &p.attack,
+            5 => &p.sustain,
+            6 => &p.release,
+            7 => &p.colour,
             _ => return None,
         })
-    }
-
-    fn effective_layer(&self, input: &Input) -> Layer {
-        if input.shoulders[0] { Layer::Controls } else { self.layer }
-    }
-
-    fn flash(&mut self, msg: impl Into<String>) {
-        self.status = msg.into();
-        self.status_frames = 90;
     }
 
     fn snapshot(&self) -> Moment {
@@ -1427,35 +1411,10 @@ impl PlaitsApp {
         p.octave.store(m.octave, Ordering::Relaxed);
     }
 
-    /// Knobs and D-pad on the play view: the knobs turn the current hero
-    /// pair (knob 2 turns the grabbed control on the Controls layer),
-    /// knob-1 press flips pairs, knob-2 press resets the pair, D-pad
-    /// up/down steps through the 24 engines.
-    fn play_controls(&mut self, input: &Input, layer: Layer) {
-        if input.knob1_press {
-            self.hero_page = (self.hero_page + 1) % play::HERO_PAGES.len();
-        }
-        let [a, b] = play::HERO_PAGES[self.hero_page];
-        if input.knob2_press {
-            if layer == Layer::Controls {
-                self.reset(Self::control_sel(self.focused_control));
-            } else {
-                self.reset(Self::control_sel(a));
-                self.reset(Self::control_sel(b));
-            }
-        }
-        self.edit(Self::control_sel(a), input.knob1);
-        let k2 = if layer == Layer::Controls { self.focused_control } else { b };
-        self.edit(Self::control_sel(k2), input.knob2);
-        // D-pad up = next engine (navigation_steps is -1 for up).
-        self.edit(Selection::Engine, -input.navigation_steps);
-    }
-
-    /// Pads, MIDI keyboard and the theremin hand into the voice
-    /// allocator; expression into the audio thread's offsets.
-    fn play_notes(&mut self, input: &Input, layer: Layer) {
+    /// Pads (Notes / Chords layers), MIDI keyboard and the theremin hand
+    /// into the voice allocator; expression into the audio thread's offsets.
+    fn play_notes(&mut self, input: &Input, native: Option<u8>) {
         let p = Arc::clone(&self.params);
-        let now = std::time::Instant::now();
         let mut wanted: Vec<(KeySrc, f32, f32)> = Vec::new();
         let mut arp_held = [false; 16];
         let octave = p.octave.load(Ordering::Relaxed);
@@ -1463,49 +1422,24 @@ impl PlaitsApp {
         let scale = p.scale_type.load(Ordering::Relaxed) as usize;
 
         for i in 0..16 {
-            let (down, was) = (input.grid[i], self.prev_grid[i]);
+            if !input.grid[i] {
+                continue;
+            }
             let rank = pad_rank(i as i32);
-            match layer {
-                Layer::Notes if down => {
+            match native {
+                Some(LAYER_NOTES) => {
                     wanted.push((KeySrc::Pad(i as u8, 0), p.note_for(rank) as f32, 1.0));
                     arp_held[i] = true;
                 }
-                Layer::Chords if down => {
+                Some(LAYER_CHORDS) => {
                     let notes = play::chord_notes(rank, scale, root, BASE_NOTE + octave * 12, self.expr.sevenths);
                     for (j, n) in notes.into_iter().enumerate() {
                         wanted.push((KeySrc::Pad(i as u8, j as u8), n.clamp(NOTE_MIN, NOTE_MAX) as f32, 1.0));
                     }
                 }
-                Layer::Controls if down && !was => self.focused_control = rank as usize,
-                Layer::Moments => {
-                    let slot = rank as usize;
-                    if down && !was {
-                        self.pad_since[i] = Some(now);
-                        self.pad_stored[i] = false;
-                    } else if down && !self.pad_stored[i] && self.pad_since[i].is_some_and(|t| t.elapsed().as_secs_f32() >= play::STORE_HOLD_S) {
-                        self.pad_stored[i] = true;
-                        let snap = self.snapshot();
-                        match self.moments.store(slot, snap) {
-                            Ok(()) => self.flash(format!("Stored moment {}", slot + 1)),
-                            Err(e) => self.flash(format!("Couldn't save moment: {e}")),
-                        }
-                    } else if !down && was {
-                        if !self.pad_stored[i] {
-                            match self.moments.slots[slot] {
-                                Some(m) => {
-                                    self.recall(m);
-                                    self.flash(format!("Moment {}", slot + 1));
-                                }
-                                None => self.flash(format!("Moment {} is empty: hold to store", slot + 1)),
-                            }
-                        }
-                        self.pad_since[i] = None;
-                    }
-                }
                 _ => {}
             }
         }
-        self.prev_grid = input.grid;
         *p.held.lock().unwrap() = arp_held;
 
         for (k, &v) in input.midi_keys.0.iter().enumerate() {
@@ -1524,10 +1458,9 @@ impl PlaitsApp {
         }
         self.voices.sync(&wanted);
 
-        let poly = p.poly_mode.load(Ordering::Relaxed);
         // Mono stays mono for a MIDI keyboard too (newest note wins, like
         // the real module); only Poly or a chord pad needs several voices.
-        let slot_mode = poly || layer == Layer::Chords;
+        let slot_mode = p.poly_mode.load(Ordering::Relaxed) || native == Some(LAYER_CHORDS);
         p.slot_mode.store(slot_mode, Ordering::Relaxed);
         {
             let mut slots = p.slots.lock().unwrap();
@@ -1549,26 +1482,24 @@ impl PlaitsApp {
             }
         }
 
-        // Stick click keeps the bent sound: fold the offset into the knobs.
-        let stick = input.stick;
-        if input.stick_click {
-            let kept = play::perf(&self.expr, &Surfaces { stick, ..Default::default() }, self.stick_hold, false);
-            for (i, sel) in [Selection::Harmonics, Selection::Timbre, Selection::Morph, Selection::Decay].into_iter().enumerate() {
-                let v = match sel {
-                    Selection::Harmonics => &p.harmonics,
-                    Selection::Timbre => &p.timbre,
-                    Selection::Morph => &p.morph,
-                    _ => &p.decay,
-                };
-                v.set((v.get() + kept.offsets[i]).clamp(0.0, 1.0));
+        // Stick click keeps the bent sound: fold the offset into the knobs,
+        // then ignore the stick until it springs back to centre (so letting
+        // go doesn't push the sound the other way).
+        if input.stick_click && !self.stick_kept {
+            let kept = play::perf(&self.expr, &Surfaces { stick: input.stick, ..Default::default() }, [0.0; 2], false);
+            for i in 0..4 {
+                if let Some(k) = self.knob(i) {
+                    k.set((k.get() + kept.offsets[i]).clamp(0.0, 1.0));
+                }
             }
             p.colour.set((p.colour.get() + kept.offsets[4]).clamp(0.0, 1.0));
-            self.stick_hold = stick;
-            self.flash("Kept the stick's sound");
+            self.stick_kept = true;
+            self.kit.flash("Kept the stick's sound");
         }
-        if stick[0].abs() < 0.08 && stick[1].abs() < 0.08 {
-            self.stick_hold = [0.0; 2];
+        if input.stick[0].abs() < 0.08 && input.stick[1].abs() < 0.08 {
+            self.stick_kept = false;
         }
+        let stick = if self.stick_kept { [0.0; 2] } else { input.stick };
 
         // Audio-in envelope follower (only reads the input when routed).
         if self.expr.audio_in != Target::Off {
@@ -1590,162 +1521,10 @@ impl PlaitsApp {
             audio_env: self.audio_env,
             velocity: newest.map_or(1.0, |v| v.vel),
         };
-        let perf = play::perf(&self.expr, &surfaces, self.stick_hold, hand_playing);
+        let perf = play::perf(&self.expr, &surfaces, [0.0; 2], hand_playing);
         for (dst, v) in p.perf.iter().zip(perf.offsets) {
             dst.set(v);
         }
-        if self.status_frames > 0 {
-            self.status_frames -= 1;
-        }
-    }
-
-    /// What a pad means right now, as a controller LED colour -- also
-    /// drives the on-screen pad map so the two never disagree.
-    fn pad_color(&self, i: usize) -> crate::led_output::PadColor {
-        use crate::led_output::PadColor;
-        let p = &self.params;
-        let rank = pad_rank(i as i32);
-        let held = self.prev_grid[i];
-        match self.shown_layer {
-            Layer::Notes if held => PadColor::Green,
-            Layer::Notes => {
-                let root = p.root_note.load(Ordering::Relaxed) as i32;
-                if (p.note_for(rank) - root).rem_euclid(12) == 0 { PadColor::Blue } else { PadColor::Off }
-            }
-            Layer::Chords => if held { PadColor::Green } else { PadColor::Yellow },
-            Layer::Controls => if rank as usize == self.focused_control { PadColor::Green } else { PadColor::Off },
-            Layer::Moments => if self.moments.slots[rank as usize].is_some() { PadColor::Green } else { PadColor::Off },
-        }
-    }
-
-    /// The embedded-graphics play view: the instrument at a glance.
-    fn draw_play(&self, fb: &mut FrameBuffer) {
-        use crate::led_output::PadColor;
-        let p = &self.params;
-        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
-            .into_styled(PrimitiveStyle::with_fill(PLAITS_BG))
-            .draw(fb)
-            .ok();
-        let title = MonoTextStyle::new(&SPLEEN_16X32, PLAITS_TITLE);
-        let big = MonoTextStyle::new(&SPLEEN_8X16, PLAITS_ACCENT);
-        let ink = MonoTextStyle::new(&SPLEEN_8X16, PLAITS_TITLE);
-        let small = MonoTextStyle::new(&SPLEEN_6X12, PLAITS_DIM);
-        let small_ink = MonoTextStyle::new(&SPLEEN_6X12, PLAITS_TITLE);
-        let small_bg = MonoTextStyle::new(&SPLEEN_6X12, PLAITS_BG);
-
-        Text::new("Plaits", Point::new(16, 30), title).draw(fb).ok();
-        let engine = p.engine.load(Ordering::Relaxed) as usize % ENGINE_NAMES.len();
-        let bank = engine / BANK_SIZE;
-        Text::new(&format!("{:>2} {}", engine + 1, ENGINE_NAMES[engine]), Point::new(126, 24), big).draw(fb).ok();
-        let layer = format!("PADS: {}", self.shown_layer.label().to_uppercase());
-        Text::new(&layer, Point::new(624 - layer.len() as i32 * 8, 24), ink).draw(fb).ok();
-
-        // All 24 engines as a strip, so D-pad stepping always shows where
-        // you are in the bank rather than just a name.
-        let cell = 608 / NUM_ENGINES as i32;
-        for e in 0..NUM_ENGINES as usize {
-            let fill = if e == engine { BANK_COLORS[bank] } else if e / BANK_SIZE == bank { PLAITS_MID } else { PLAITS_FAINT };
-            Rectangle::new(Point::new(16 + e as i32 * cell, 36), Size::new((cell - 2) as u32, 6))
-                .into_styled(PrimitiveStyle::with_fill(fill))
-                .draw(fb)
-                .ok();
-        }
-
-        // Four dials, the turned pair badged with their knob number.
-        let [a, b] = play::HERO_PAGES[self.hero_page];
-        let k2 = if self.shown_layer == Layer::Controls { self.focused_control } else { b };
-        let group: [usize; 4] = if self.hero_page < 2 { [0, 1, 2, 3] } else { [4, 6, 7, 9] };
-        for (row, &c) in group.iter().enumerate() {
-            let y = 56 + row as i32 * 30;
-            let knob = if c == a { "1" } else if c == k2 { "2" } else { "" };
-            if !knob.is_empty() {
-                Circle::new(Point::new(16, y), 12).into_styled(PrimitiveStyle::with_fill(PLAITS_ACCENT)).draw(fb).ok();
-                Text::new(knob, Point::new(19, y + 9), small_bg).draw(fb).ok();
-            }
-            Text::new(&self.control_label(c), Point::new(34, y + 9), small_ink).draw(fb).ok();
-            let value = self.leaf_value(Self::control_sel(c));
-            Text::new(&value, Point::new(306 - value.len() as i32 * 6, y + 9), small).draw(fb).ok();
-            let norm = self.control_norm(c).unwrap_or(0.0).clamp(0.0, 1.0);
-            Rectangle::new(Point::new(34, y + 14), Size::new(272, 5)).into_styled(PrimitiveStyle::with_fill(PLAITS_FAINT)).draw(fb).ok();
-            Rectangle::new(Point::new(34, y + 14), Size::new((272.0 * norm) as u32, 5))
-                .into_styled(PrimitiveStyle::with_fill(if knob.is_empty() { PLAITS_MID } else { PLAITS_ACCENT }))
-                .draw(fb)
-                .ok();
-        }
-        if self.shown_layer == Layer::Controls && !group.contains(&k2) {
-            let line = format!("2: {} {}", self.control_label(k2), self.leaf_value(Self::control_sel(k2)));
-            Text::new(&line, Point::new(34, 178), small_ink).draw(fb).ok();
-        }
-
-        // Scope of what's actually coming out.
-        Rectangle::new(Point::new(16, 186), Size::new(290, 56))
-            .into_styled(PrimitiveStyle::with_stroke(PLAITS_OUTLINE, 1))
-            .draw(fb)
-            .ok();
-        self.draw_oscilloscope_panel(fb, 18, 188, 286, 52);
-
-        // Stick: where expression has pushed Timbre (x) / Morph (y).
-        let (sx, sy) = (16, 250);
-        Rectangle::new(Point::new(sx, sy), Size::new(64, 64)).into_styled(PrimitiveStyle::with_stroke(PLAITS_OUTLINE, 1)).draw(fb).ok();
-        Line::new(Point::new(sx + 32, sy), Point::new(sx + 32, sy + 63)).into_styled(PrimitiveStyle::with_stroke(PLAITS_FAINT, 1)).draw(fb).ok();
-        Line::new(Point::new(sx, sy + 32), Point::new(sx + 63, sy + 32)).into_styled(PrimitiveStyle::with_stroke(PLAITS_FAINT, 1)).draw(fb).ok();
-        let dot = Point::new(sx + 32 + (p.perf[1].get() * 60.0) as i32 - 4, sy + 32 - (p.perf[2].get() * 60.0) as i32 - 4);
-        Circle::new(dot, 9).into_styled(PrimitiveStyle::with_fill(PLAITS_ACCENT)).draw(fb).ok();
-        Text::new("STICK", Point::new(sx + 70, sy + 10), small).draw(fb).ok();
-        Text::new(&format!("{}/{}", self.expr.stick_x.name(), self.expr.stick_y.name()), Point::new(sx + 70, sy + 24), small_ink).draw(fb).ok();
-
-        // Depth sensors: one meter per hand with what it's routed to.
-        for (h, x) in [(0usize, 196), (1, 256)] {
-            let v = self.last_hands[h].clamp(0.0, 1.0);
-            Rectangle::new(Point::new(x, sy), Size::new(14, 50)).into_styled(PrimitiveStyle::with_fill(PLAITS_FAINT)).draw(fb).ok();
-            let hgt = (50.0 * v) as u32;
-            Rectangle::new(Point::new(x, sy + 50 - hgt as i32), Size::new(14, hgt)).into_styled(PrimitiveStyle::with_fill(PLAITS_ACCENT)).draw(fb).ok();
-            let target = if h == 0 { self.expr.hand_l } else { self.expr.hand_r };
-            Text::new(if h == 0 { "L" } else { "R" }, Point::new(x + 18, sy + 10), small_ink).draw(fb).ok();
-            let name: String = target.name().chars().take(5).collect();
-            Text::new(&name, Point::new(x - 6, sy + 62), small).draw(fb).ok();
-        }
-
-        // The pad map, in physical layout, coloured like the LEDs.
-        let (gx, gy, cw, ch) = (336, 56, 70, 46);
-        for i in 0..16usize {
-            let (col, row) = ((i % 4) as i32, (i / 4) as i32);
-            let x = gx + col * (cw + 2);
-            let y = gy + row * (ch + 2);
-            let (fill, text) = match self.pad_color(i) {
-                PadColor::Green => (PLAITS_ACCENT, small_bg),
-                PadColor::Blue => (PLAITS_MID, small_ink),
-                PadColor::Yellow => (PLAITS_FAINT, small_ink),
-                _ => (PLAITS_BG, small_ink),
-            };
-            Rectangle::new(Point::new(x, y), Size::new(cw as u32, ch as u32)).into_styled(PrimitiveStyle::with_fill(fill)).draw(fb).ok();
-            Rectangle::new(Point::new(x, y), Size::new(cw as u32, ch as u32)).into_styled(PrimitiveStyle::with_stroke(PLAITS_OUTLINE, 1)).draw(fb).ok();
-            let label = self.pad_label(i);
-            let first: String = label.chars().take(11).collect();
-            Text::new(&first, Point::new(x + 4, y + 14), text).draw(fb).ok();
-            if label.chars().count() > 11 {
-                let rest: String = label.chars().skip(11).take(11).collect();
-                Text::new(&rest, Point::new(x + 4, y + 28), text).draw(fb).ok();
-            }
-        }
-
-        let key = format!("{} {}", ROOT_NAMES[p.root_note.load(Ordering::Relaxed) as usize % 12], SCALE_TYPES[p.scale_type.load(Ordering::Relaxed) as usize % SCALE_TYPES.len()].0);
-        Text::new(&key, Point::new(336, 266), small_ink).draw(fb).ok();
-        let mode = format!(
-            "{}{}",
-            if p.poly_mode.load(Ordering::Relaxed) { "POLY" } else { "MONO" },
-            if p.arp.enabled.load(Ordering::Relaxed) { " + ARP" } else { "" }
-        );
-        Text::new(&mode, Point::new(624 - mode.len() as i32 * 6, 266), small_ink).draw(fb).ok();
-        let sounding = self.sounding_names(6);
-        let pitch = p.perf[5].get();
-        let line = if sounding.is_empty() { "-".to_string() } else { sounding.join(" ") };
-        let line = if pitch.abs() > 0.05 { format!("{line}  {pitch:+.1} st") } else { line };
-        Text::new(&line, Point::new(336, 290), big).draw(fb).ok();
-        if self.status_frames > 0 {
-            Text::new(&self.status, Point::new(336, 312), small_ink).draw(fb).ok();
-        }
-        Text::new("R1 menu  F2 pads  L1 peek  knob1 press: next pair  stick-click keeps", Point::new(16, 337), small).draw(fb).ok();
     }
 
     /// Notes actually sounding: in Mono only the newest held note plays.
@@ -1756,84 +1535,105 @@ impl PlaitsApp {
             self.voices.newest().map(|s| note_name(s.note.round() as i32)).into_iter().collect()
         }
     }
+}
 
-    /// A pad's short label on the current layer (physical index).
-    fn pad_label(&self, i: usize) -> String {
+impl PlayHost for PlaitsApp {
+    fn kit_control_count(&self) -> usize {
+        16
+    }
+    fn kit_label(&self, i: usize) -> String {
+        self.control_label(i)
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(Self::control_sel(i))
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
         let p = &self.params;
-        let rank = pad_rank(i as i32);
-        match self.shown_layer {
-            Layer::Notes => note_name(p.note_for(rank)),
-            Layer::Chords => {
-                let octave = p.octave.load(Ordering::Relaxed);
-                let n = play::chord_notes(rank, p.scale_type.load(Ordering::Relaxed) as usize, p.root_note.load(Ordering::Relaxed) as i32, BASE_NOTE + octave * 12, self.expr.sevenths);
-                let name = note_name(n[0]);
-                let pc = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-');
-                format!("{}{}", pc, if n.len() > 1 && n[1] - n[0] == 3 { "m" } else { "" })
-            }
-            Layer::Controls => self.control_label(rank as usize),
-            Layer::Moments => match self.moments.slots[rank as usize] {
-                Some(m) => format!("{} {}", rank + 1, ENGINE_NAMES[m.engine as usize % ENGINE_NAMES.len()]),
-                None => format!("{} -", rank + 1),
-            },
+        let frac = |v: u32, n: usize| v as f32 / (n.max(2) - 1) as f32;
+        if let Some(k) = self.knob(i) {
+            return Some(k.get());
+        }
+        Some(match i {
+            C_ENGINE => frac(p.engine.load(Ordering::Relaxed), NUM_ENGINES as usize),
+            9 => (p.octave.load(Ordering::Relaxed) + 4) as f32 / 8.0,
+            10 => frac(p.root_note.load(Ordering::Relaxed), 12),
+            11 => frac(p.scale_type.load(Ordering::Relaxed), SCALE_TYPES.len()),
+            12 => p.poly_mode.load(Ordering::Relaxed) as u32 as f32,
+            13 => p.arp.enabled.load(Ordering::Relaxed) as u32 as f32,
+            14 => (p.arp.rate_hz.get() - 0.5) / 29.5,
+            15 => frac(p.arp.pattern.load(Ordering::Relaxed), ARP_PATTERN_NAMES.len()),
+            _ => return None,
+        })
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        i >= C_ENGINE && i != 14
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(Self::control_sel(i), delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(Self::control_sel(i));
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let p = &self.params;
+        let v = v.clamp(0.0, 1.0);
+        let pick = |n: usize| (v * (n.max(2) - 1) as f32).round() as u32;
+        if let Some(k) = self.knob(i) {
+            k.set(v);
+            return;
+        }
+        match i {
+            C_ENGINE => p.engine.store(pick(NUM_ENGINES as usize), Ordering::Relaxed),
+            9 => p.octave.store((v * 8.0).round() as i32 - 4, Ordering::Relaxed),
+            10 => p.root_note.store(pick(12), Ordering::Relaxed),
+            11 => p.scale_type.store(pick(SCALE_TYPES.len()), Ordering::Relaxed),
+            12 => p.poly_mode.store(v >= 0.5, Ordering::Relaxed),
+            13 => p.arp.enabled.store(v >= 0.5, Ordering::Relaxed),
+            14 => p.arp.rate_hz.set(0.5 + v * 29.5),
+            15 => p.arp.pattern.store(pick(ARP_PATTERN_NAMES.len()), Ordering::Relaxed),
+            _ => {}
         }
     }
-
-    /// Everything the Slint play view shows.
-    #[allow(dead_code)] // the bin draws with embedded-graphics; Slint reads this
-    fn play_extra(&self) -> crate::app::PlaitsPlayExtra {
-        let input_layer = self.shown_layer;
-        let (engine_bank, engine_led) = self.engine_bank_and_led();
-        let [a, b] = play::HERO_PAGES[self.hero_page];
-        let b = if input_layer == Layer::Controls { self.focused_control } else { b };
-        let group = if self.hero_page < 2 { [0, 1, 2, 3] } else { [4, 6, 7, 9] };
-        let dials = group
-            .iter()
-            .map(|&c| crate::app::PlaitsDial {
-                label: self.control_label(c),
-                value: self.leaf_value(Self::control_sel(c)),
-                norm: self.control_norm(c).unwrap_or(0.0).clamp(0.0, 1.0),
-                knob: if c == a { 1 } else if c == b { 2 } else { 0 },
-            })
-            .collect();
-        // Auto-ranged like a scope's vertical gain: the panel is about the
-        // waveform's shape, which a quiet engine would otherwise flatten.
-        let mut raw = self.waveform_samples();
-        let peak = raw.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        if peak > 0.01 {
-            raw.iter_mut().for_each(|v| *v *= 0.9 / peak);
+    /// The same moment format the first play view wrote, so saved
+    /// moments carry over.
+    fn kit_snapshot(&self) -> serde_json::Value {
+        self.snapshot().to_json()
+    }
+    fn kit_recall(&mut self, v: &serde_json::Value) {
+        if let Some(m) = Moment::from_json(v) {
+            self.recall(m);
         }
-        let (mid_x, mid_y, length, angle_deg) = crate::app::polyline_segments(&raw, 160.0, 96.0, true);
+    }
+    fn kit_line(&self) -> String {
+        let s = self.sounding_names(4);
+        let line = if s.is_empty() { "-".to_string() } else { s.join(" ") };
+        let pitch = self.params.perf[5].get();
+        if pitch.abs() > 0.05 { format!("{line} {pitch:+.1}st") } else { line }
+    }
+    fn kit_pad_label(&self, layer: u8, pad: usize) -> String {
         let p = &self.params;
-        let pad_labels = (0..16).map(|i| self.pad_label(i)).collect();
-        let sounding = self.sounding_names(4);
-        crate::app::PlaitsPlayExtra {
-            engine_name: self.engine_name().to_string(),
-            engine_index: p.engine.load(Ordering::Relaxed) as usize,
-            engine_bank,
-            engine_led,
-            layer: input_layer.label().to_string(),
-            dials,
-            pad_labels,
-            pad_state: (0..16)
-                .map(|i| match self.pad_color(i) {
-                    crate::led_output::PadColor::Blue => 1,
-                    crate::led_output::PadColor::Yellow => 2,
-                    crate::led_output::PadColor::Off => 0,
-                    _ => 3,
-                })
-                .collect(),
-            focused_control: if input_layer == Layer::Controls { self.focused_control as i32 } else { -1 },
-            stick: [p.perf[1].get(), p.perf[2].get()],
-            hands: self.last_hands,
-            hand_targets: [self.expr.hand_l.name().to_string(), self.expr.hand_r.name().to_string()],
-            pitch: p.perf[5].get(),
-            key: format!("{} {}", ROOT_NAMES[p.root_note.load(Ordering::Relaxed) as usize % 12], SCALE_TYPES[p.scale_type.load(Ordering::Relaxed) as usize % SCALE_TYPES.len()].0),
-            sounding: sounding.join(" "),
-            voices: if self.params.slot_mode.load(Ordering::Relaxed) { self.voices.sounding() } else { self.voices.sounding().min(1) },
-            arp: p.arp.enabled.load(Ordering::Relaxed),
-            scope: crate::app::CurveSegments { mid_x, mid_y, length, angle_deg },
-            status: if self.status_frames > 0 { self.status.clone() } else { String::new() },
+        let rank = pad_rank(pad as i32);
+        if layer == LAYER_CHORDS {
+            let octave = p.octave.load(Ordering::Relaxed);
+            let n = play::chord_notes(rank, p.scale_type.load(Ordering::Relaxed) as usize, p.root_note.load(Ordering::Relaxed) as i32, BASE_NOTE + octave * 12, self.expr.sevenths);
+            let name = note_name(n[0]);
+            let pc = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-');
+            format!("{}{}", pc, if n.len() > 1 && n[1] - n[0] == 3 { "m" } else { "" })
+        } else {
+            note_name(p.note_for(rank))
         }
+    }
+    fn kit_pad_color(&self, layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        let p = &self.params;
+        if held {
+            return PadColor::Green;
+        }
+        if layer == LAYER_CHORDS {
+            return PadColor::Yellow;
+        }
+        let root = p.root_note.load(Ordering::Relaxed) as i32;
+        if (p.note_for(pad_rank(pad as i32)) - root).rem_euclid(12) == 0 { PadColor::Blue } else { PadColor::Off }
     }
 }
 
@@ -1842,11 +1642,20 @@ impl App for PlaitsApp {
     fn play_surface(&self) -> bool { true }
     /// F2 cycles what the 16 pads are: notes, chords, controls, moments.
     fn grid_mode_label(&self) -> Option<&'static str> {
-        Some(self.layer.label())
+        Some(self.kit.layer_label())
     }
     fn toggle_grid_mode(&mut self) {
-        self.layer = self.layer.next();
-        self.flash(format!("Pads: {}", self.layer.label()));
+        self.kit.next_layer();
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        if self.kit.menu {
+            return None;
+        }
+        let mut col = self.kit.column(self);
+        // Plaits routes expression in its own DSP; show what it really does.
+        col.stick_label = format!("{} / {}", self.expr.stick_x.name(), self.expr.stick_y.name());
+        col.hand_labels = [self.expr.hand_l.name().to_string(), if self.expr.theremin && self.expr.hand_r == Target::Pitch { "Theremin".into() } else { self.expr.hand_r.name().to_string() }];
+        Some(col)
     }
     /// F3 runs the arpeggiator -- Plaits has no transport of its own.
     fn running(&self) -> Option<bool> {
@@ -1858,10 +1667,10 @@ impl App for PlaitsApp {
     fn toggle_running(&mut self) {
         let on = !self.params.arp.enabled.load(Ordering::Relaxed);
         self.params.arp.enabled.store(on, Ordering::Relaxed);
-        self.flash(if on { "Arp on: hold Notes pads" } else { "Arp off" });
+        self.kit.flash(if on { "Arp on: hold Notes pads" } else { "Arp off" });
     }
     fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
-        std::array::from_fn(|i| self.pad_color(i))
+        self.kit.led_overlay(self)
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1878,9 +1687,6 @@ impl App for PlaitsApp {
     }
 
     fn slint_extra(&mut self) -> crate::app::SlintExtra {
-        if !self.menu_view {
-            return crate::app::SlintExtra::PlaitsPlay(self.play_extra());
-        }
         let (engine_bank, engine_led) = self.engine_bank_and_led();
         let (analyzer_kind, analyzer_name) = self.analyzer_kind();
         let mut spectrum = Vec::new();
@@ -1920,18 +1726,11 @@ impl App for PlaitsApp {
 
     fn tick(&mut self, input: &Input) {
         self.layout.poll();
-        // R1 flips between playing and the full parameter list. Notes
-        // keep sounding either way: the menu is for deep edits, not a
-        // place where the instrument stops being an instrument.
-        if input.shoulder_press[1] {
-            self.menu_view = !self.menu_view;
-            self.flash(if self.menu_view { "Menu (R1: back to play)" } else { "Play" });
-        }
-        let layer = self.effective_layer(input);
-        self.shown_layer = layer;
-        self.last_hands = input.hands;
-
-        if self.menu_view {
+        let mut kit = std::mem::take(&mut self.kit);
+        let step = kit.tick(self, input);
+        self.kit = kit;
+        let input = &step.input;
+        if step.menu {
             let rows = self.visible_rows();
             self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
             let current = rows.get(self.list.selected).copied();
@@ -1948,10 +1747,10 @@ impl App for PlaitsApp {
                     self.reset(sel);
                 }
             }
-        } else {
-            self.play_controls(input, layer);
         }
-        self.play_notes(input, layer);
+        // Notes keep sounding in the menu too: it's for deep edits, not a
+        // place where the instrument stops being an instrument.
+        self.play_notes(input, step.native);
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
@@ -1977,10 +1776,6 @@ impl App for PlaitsApp {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        if !self.menu_view {
-            self.draw_play(fb);
-            return;
-        }
         Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
             .into_styled(PrimitiveStyle::with_fill(PLAITS_BG))
             .draw(fb)
@@ -2011,7 +1806,9 @@ impl App for PlaitsApp {
         // by any test -- nothing here measures cross-app text/roll
         // collisions the way the list-vs-panel overlap tests do).
         const ROLL_BOTTOM: i32 = 322;
-        let roll_visible = self.params.roll_visible.load(Ordering::Relaxed);
+        // The play column's pad map already shows what's held, so the
+        // roll only appears with the menu.
+        let roll_visible = self.kit.menu && self.params.roll_visible.load(Ordering::Relaxed);
         let roll_height = self.params.roll_height.load(Ordering::Relaxed);
         let content_bottom = ROLL_BOTTOM - if roll_visible { roll_height + 10 } else { 0 };
 
@@ -2041,7 +1838,12 @@ impl App for PlaitsApp {
         let layout = self.layout.get();
         const MENU_ROW_H: i32 = 24; // taller row to fit ParamList's SPLEEN_8X16 -- see paramlist.rs
         let visible_menu_rows = (((content_bottom - layout.menu_y) / MENU_ROW_H).max(1)) as usize;
-        self.list.draw_themed(fb, layout.menu_x, layout.menu_y, MENU_ROW_H, visible_menu_rows, &display_rows, PLAITS_BG, PLAITS_DIM, PLAITS_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, layout.menu_x, layout.menu_y, MENU_ROW_H, visible_menu_rows, &display_rows, PLAITS_BG, PLAITS_DIM, PLAITS_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = crate::app::play_kit::draw::Palette { bg: PLAITS_BG, ink: PLAITS_TITLE, accent: PLAITS_ACCENT, dim: PLAITS_DIM, faint: PLAITS_FAINT };
+            crate::app::play_kit::draw::column(fb, &col, layout.menu_x, layout.menu_y - 6, layout.panel_x - layout.menu_x - 16, content_bottom - layout.menu_y + 6, pal);
+        }
 
         // --- Right: context-sensitive visualizer -- Plaits' output
         // spectrum by default, or a live view of the ADSR/modulator
@@ -2094,11 +1896,13 @@ impl App for PlaitsApp {
             }
         }
 
-        let hint = match rows.get(self.list.selected) {
+        let hint = if !self.kit.menu {
+            "knobs: dials   F2: pads   L1: peek controls   R1: menu   stick-click: keep".to_string()
+        } else { match rows.get(self.list.selected) {
             Some(Row::Group(_)) | Some(Row::ModSlot(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
             None => String::new(),
-        };
+        } };
         Text::new(&hint, Point::new(16, 337), small_dim).draw(fb).ok();
     }
 }
@@ -2638,7 +2442,7 @@ mod tests {
     fn opens_on_the_play_view_and_a_pad_plays_then_releases() {
         let mut a = app();
         let mut proc = a.audio_processor().unwrap();
-        assert!(matches!(a.slint_extra(), crate::app::SlintExtra::PlaitsPlay(_)), "play view must be the default");
+        assert!(a.play_column().is_some(), "play view must be the default");
         a.tick(&pad(LOWEST_PAD));
         assert_eq!(a.params.note.get(), a.params.note_for(0) as f32);
         assert!(render(&mut proc, 20) > 0.01, "a held pad must sound");
@@ -2651,11 +2455,11 @@ mod tests {
         let mut a = app();
         let mut proc = a.audio_processor().unwrap();
         a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
-        assert!(matches!(a.slint_extra(), crate::app::SlintExtra::Plaits(_)));
+        assert!(a.play_column().is_none(), "R1 shows the menu");
         a.tick(&pad(LOWEST_PAD));
         assert!(render(&mut proc, 20) > 0.01, "the menu must not mute the pads");
         a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
-        assert!(matches!(a.slint_extra(), crate::app::SlintExtra::PlaitsPlay(_)));
+        assert!(a.play_column().is_some());
     }
 
     #[test]
@@ -2684,7 +2488,7 @@ mod tests {
         i.shoulders = [true, false];
         a.tick(&i);
         assert_eq!(a.voices.sounding(), 0, "L1 peek must not play notes");
-        assert_eq!(a.focused_control, pad_rank(1) as usize);
+        assert_eq!(a.kit.focused, pad_rank(1) as usize);
         a.tick(&Input::default());
         assert_eq!(a.grid_mode_label(), Some("NOTES"), "letting go of L1 returns to the real layer");
     }
@@ -2757,10 +2561,10 @@ mod tests {
         a.params.timbre.set(0.9);
         a.params.engine.store(13, Ordering::Relaxed);
         a.tick(&pad(LOWEST_PAD));
-        std::thread::sleep(std::time::Duration::from_secs_f32(play::STORE_HOLD_S + 0.05));
+        std::thread::sleep(std::time::Duration::from_secs_f32(crate::app::play_kit::STORE_HOLD_S + 0.05));
         a.tick(&pad(LOWEST_PAD));
         a.tick(&Input::default());
-        assert!(a.moments.slots[0].is_some(), "holding stores");
+        assert!(a.kit.moment(0).is_some(), "holding stores");
         assert_eq!(a.voices.sounding(), 0, "the Moments layer never plays notes");
 
         a.params.timbre.set(0.1);
@@ -2782,7 +2586,7 @@ mod tests {
         a.tick(&Input { stick: [0.4, -0.3], hands: [0.6, 0.0], midi_keys: keys, ..pad(LOWEST_PAD) });
         render(&mut proc, 10);
         for (name, menu) in [("plaits-play", false), ("plaits-menu", true)] {
-            a.menu_view = menu;
+            a.kit.menu = menu;
             let mut fb = FrameBuffer::new();
             a.draw(&mut fb);
             assert!(fb.buffer().iter().any(|&p| p != fb.buffer()[0]), "{name} must draw something");

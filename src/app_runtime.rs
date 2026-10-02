@@ -58,6 +58,7 @@ impl App for LazyApp {
     fn system_role(&self) -> Option<SystemRole> { match self.id.as_str() { "mixer" => Some(SystemRole::Mixer), "settings" => Some(SystemRole::Settings), _ => self.instance.as_ref().and_then(|a| a.system_role()) } }
     fn supports_pad_lock(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.supports_pad_lock()) }
     fn play_surface(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.play_surface()) }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> { self.instance.as_ref().and_then(|a| a.play_column()) }
     fn transport_action(&self) -> Option<&'static str> { self.instance.as_ref().and_then(|a| a.transport_action()) }
     fn running(&self) -> Option<bool> { self.instance.as_ref().and_then(|a| a.running()) }
     fn wants_fullscreen(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.wants_fullscreen()) }

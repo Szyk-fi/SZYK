@@ -2,9 +2,9 @@
 //! one playable instrument, kept apart from the Plaits menu/engine code
 //! (plaits.rs) so it can be tested on its own.
 //!
-//! - **Pad layers** (F2 cycles, L1 held peeks at Controls):
-//!   Notes (in key), Chords (a chord per pad, built from the key),
-//!   Controls (16 parameters on the pads), Moments (16 saved sounds).
+//! - **Pad layers**: Notes (in key) and Chords (a chord per pad, built
+//!   from the key) are Plaits' own; Controls and Moments come from the
+//!   shared play kit (src/play_kit.rs).
 //! - **Voices**: one allocator for every note source -- pads, a MIDI
 //!   keyboard (real note numbers + velocity) and the right hand as a
 //!   theremin -- so they all play the same 16-voice Plaits engine.
@@ -12,38 +12,10 @@
 //!   mod wheel, aftertouch and an audio-input envelope follower, each
 //!   routed to a Plaits control (`Target`). Values are offsets on top of
 //!   the knob settings, never overwriting them.
-//! - **Moments**: 16 whole-sound snapshots, saved to the SD card
+//! - **Moments**: the whole-sound format the kit saves for Plaits
 //!   (`saves/plaits/moments.json` in the sim).
 
 use crate::app::music_scales::SCALE_TYPES;
-use std::path::PathBuf;
-
-pub const LAYER_NAMES: [&str; 4] = ["NOTES", "CHORDS", "CONTROLS", "MOMENTS"];
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Layer {
-    Notes,
-    Chords,
-    Controls,
-    Moments,
-}
-
-impl Layer {
-    pub fn index(self) -> usize {
-        self as usize
-    }
-    pub fn next(self) -> Layer {
-        match self {
-            Layer::Notes => Layer::Chords,
-            Layer::Chords => Layer::Controls,
-            Layer::Controls => Layer::Moments,
-            Layer::Moments => Layer::Notes,
-        }
-    }
-    pub fn label(self) -> &'static str {
-        LAYER_NAMES[self.index()]
-    }
-}
 
 /// Where an expression source is routed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -322,14 +294,14 @@ pub struct Moment {
 }
 
 impl Moment {
-    fn to_json(self) -> serde_json::Value {
+    pub fn to_json(self) -> serde_json::Value {
         serde_json::json!({
             "engine": self.engine, "harmonics": self.harmonics, "timbre": self.timbre, "morph": self.morph,
             "decay": self.decay, "attack": self.attack, "sustain": self.sustain, "release": self.release,
             "colour": self.colour, "octave": self.octave,
         })
     }
-    fn from_json(v: &serde_json::Value) -> Option<Moment> {
+    pub fn from_json(v: &serde_json::Value) -> Option<Moment> {
         let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).map(|x| (x as f32).clamp(0.0, 1.0));
         Some(Moment {
             engine: (v.get("engine")?.as_u64()? as u32).min(23),
@@ -345,49 +317,6 @@ impl Moment {
         })
     }
 }
-
-/// 16 moment slots, persisted to the SD card as JSON.
-pub struct Moments {
-    pub slots: [Option<Moment>; 16],
-    path: Option<PathBuf>,
-}
-
-impl Moments {
-    pub fn default_path() -> PathBuf {
-        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/saves/plaits/moments.json"))
-    }
-
-    /// Loads from `path` (missing or unreadable = empty slots). `None` =
-    /// in-memory only (tests, previews).
-    pub fn load(path: Option<PathBuf>) -> Moments {
-        let mut slots = [None; 16];
-        if let Some(text) = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()) {
-            if let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(&text) {
-                for (i, item) in items.iter().take(16).enumerate() {
-                    slots[i] = Moment::from_json(item);
-                }
-            }
-        }
-        Moments { slots, path }
-    }
-
-    pub fn store(&mut self, i: usize, m: Moment) -> Result<(), String> {
-        self.slots[i] = Some(m);
-        self.save()
-    }
-
-    fn save(&self) -> Result<(), String> {
-        let Some(path) = &self.path else { return Ok(()) };
-        let arr: Vec<serde_json::Value> = self.slots.iter().map(|s| s.map_or(serde_json::Value::Null, |m| m.to_json())).collect();
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(path, serde_json::to_string_pretty(&arr).unwrap_or_default()).map_err(|e| e.to_string())
-    }
-}
-
-/// Holding a Moments pad this long stores instead of recalling.
-pub const STORE_HOLD_S: f32 = 0.6;
 
 #[cfg(test)]
 mod tests {
@@ -440,14 +369,9 @@ mod tests {
     }
 
     #[test]
-    fn moments_round_trip_through_the_sd_card() {
-        let path = std::env::temp_dir().join(format!("plaits_moments_{}.json", std::process::id()));
+    fn moments_round_trip_through_json() {
         let m = Moment { engine: 13, harmonics: 0.1, timbre: 0.2, morph: 0.3, decay: 0.4, attack: 0.0, sustain: 1.0, release: 0.3, colour: 0.7, octave: -1 };
-        let mut a = Moments::load(Some(path.clone()));
-        a.store(5, m).unwrap();
-        let b = Moments::load(Some(path.clone()));
-        assert_eq!(b.slots[5], Some(m));
-        assert!(b.slots[0].is_none());
-        std::fs::remove_file(path).ok();
+        assert_eq!(Moment::from_json(&m.to_json()), Some(m));
+        assert_eq!(Moment::from_json(&serde_json::json!({"engine": 3})), None, "a broken entry is skipped, not guessed");
     }
 }

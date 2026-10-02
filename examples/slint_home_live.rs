@@ -218,7 +218,7 @@ slint::slint! {
     import { OraclePanel } from "slint_common/oracle_panel.slint";
     import { PulsarPanel } from "slint_common/pulsar_panel.slint";
     import { TinkertonePanel } from "slint_common/tinkertone_panel.slint";
-    import { PlaitsPlayPanel } from "slint_common/plaits_play_panel.slint";
+    import { PlayColumn } from "slint_common/play_column.slint";
     import { VectorFilterPanel } from "slint_common/vector_filter_panel.slint";
     import { SettingsPanel } from "slint_common/settings_panel.slint";
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
@@ -840,33 +840,25 @@ slint::slint! {
         in property <float> pulsar-swing: 50;
         in property <float> pulsar-peak;
         in property <string> pulsar-status;
-        // --- Plaits play view (active-kind == 38): see `PlaitsPlayExtra`. ---
-        in property <string> pp-engine-name;
-        in property <int> pp-engine-index;
-        in property <int> pp-engine-bank;
-        in property <string> pp-layer;
-        in property <[string]> pp-dial-labels;
-        in property <[string]> pp-dial-values;
-        in property <[float]> pp-dial-norms;
-        in property <[int]> pp-dial-knobs;
-        in property <[string]> pp-pad-labels;
-        in property <[int]> pp-pad-state;
-        in property <float> pp-stick-x;
-        in property <float> pp-stick-y;
-        in property <float> pp-hand-l;
-        in property <float> pp-hand-r;
-        in property <string> pp-hand-l-target;
-        in property <string> pp-hand-r-target;
-        in property <float> pp-pitch;
-        in property <string> pp-key;
-        in property <string> pp-sounding;
-        in property <int> pp-voices;
-        in property <bool> pp-arp;
-        in property <[float]> pp-scope-mid-x;
-        in property <[float]> pp-scope-mid-y;
-        in property <[float]> pp-scope-length;
-        in property <[float]> pp-scope-angle;
-        in property <string> pp-status;
+        // --- Shared play column (src/play_kit.rs), in place of the list. ---
+        in property <bool> pc-active;
+        in property <string> pc-layer;
+        in property <[string]> pc-dial-labels;
+        in property <[string]> pc-dial-values;
+        in property <[float]> pc-dial-norms;
+        in property <[int]> pc-dial-knobs;
+        in property <string> pc-knob2-extra;
+        in property <[string]> pc-pad-labels;
+        in property <[int]> pc-pad-state;
+        in property <float> pc-stick-x;
+        in property <float> pc-stick-y;
+        in property <string> pc-stick-label;
+        in property <float> pc-hand-l;
+        in property <float> pc-hand-r;
+        in property <string> pc-hand-l-label;
+        in property <string> pc-hand-r-label;
+        in property <string> pc-line;
+        in property <string> pc-status;
         // --- Tinkertone (active-kind == 37): see `TinkertoneExtra`. ---
         in property <[bool]> tt-keys-held;
         in property <int> tt-window;
@@ -1009,7 +1001,7 @@ slint::slint! {
             }
             // Bloom keeps its dedicated orbital layout; all other apps use
             // the shared parameter rail with their own ink, paper, and accent.
-            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 38 : ParamListColumn {
+            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && !root.pc-active : ParamListColumn {
                 width: 278px;
                 row-names: root.row-names;
                 row-values: root.row-values;
@@ -1024,19 +1016,16 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
-            if !root.on-home && root.active-kind == 38 : PlaitsPlayPanel {
-                width: 604px;
+            if !root.on-home && root.pc-active && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 : PlayColumn {
+                width: 278px;
                 ink: root.live-ink; accent: root.accent; paper: root.live-bg;
-                bank-colors: root.plaits-bank-colors;
-                engine-name: root.pp-engine-name; engine-index: root.pp-engine-index; engine-bank: root.pp-engine-bank;
-                layer: root.pp-layer;
-                dial-labels: root.pp-dial-labels; dial-values: root.pp-dial-values; dial-norms: root.pp-dial-norms; dial-knobs: root.pp-dial-knobs;
-                pad-labels: root.pp-pad-labels; pad-state: root.pp-pad-state;
-                stick-x: root.pp-stick-x; stick-y: root.pp-stick-y;
-                hand-l: root.pp-hand-l; hand-r: root.pp-hand-r; hand-l-target: root.pp-hand-l-target; hand-r-target: root.pp-hand-r-target;
-                pitch: root.pp-pitch; key: root.pp-key; sounding: root.pp-sounding; voices: root.pp-voices; arp: root.pp-arp;
-                scope-mid-x: root.pp-scope-mid-x; scope-mid-y: root.pp-scope-mid-y; scope-length: root.pp-scope-length; scope-angle: root.pp-scope-angle;
-                status: root.pp-status;
+                layer: root.pc-layer;
+                dial-labels: root.pc-dial-labels; dial-values: root.pc-dial-values; dial-norms: root.pc-dial-norms; dial-knobs: root.pc-dial-knobs;
+                knob2-extra: root.pc-knob2-extra;
+                pad-labels: root.pc-pad-labels; pad-state: root.pc-pad-state;
+                stick-x: root.pc-stick-x; stick-y: root.pc-stick-y; stick-label: root.pc-stick-label;
+                hand-l: root.pc-hand-l; hand-r: root.pc-hand-r; hand-l-label: root.pc-hand-l-label; hand-r-label: root.pc-hand-r-label;
+                line: root.pc-line; status: root.pc-status;
             }
             if !root.on-home && root.active-kind == 37 : TinkertonePanel {
                 width: 306px;
@@ -3614,6 +3603,37 @@ fn apply_scale_visual(ui: &LiveHomeScreen, info: Option<app::music_scales::Scale
     }
 }
 
+/// The shared play column (play_kit.rs) when the app is on its play
+/// view; otherwise the parameter list shows.
+fn apply_play_column(ui: &LiveHomeScreen, col: Option<app::PlayColumn>) {
+    let Some(c) = col else {
+        ui.set_pc_active(false);
+        return;
+    };
+    let strings = |v: Vec<String>| -> slint::ModelRc<slint::SharedString> {
+        Rc::new(slint::VecModel::from(v.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into()
+    };
+    ui.set_pc_active(true);
+    ui.set_pc_layer(c.layer.into());
+    ui.set_pc_dial_labels(strings(c.dials.iter().map(|d| d.label.clone()).collect()));
+    ui.set_pc_dial_values(strings(c.dials.iter().map(|d| d.value.clone()).collect()));
+    ui.set_pc_dial_norms(Rc::new(slint::VecModel::from(c.dials.iter().map(|d| d.norm).collect::<Vec<_>>())).into());
+    ui.set_pc_dial_knobs(Rc::new(slint::VecModel::from(c.dials.iter().map(|d| d.knob as i32).collect::<Vec<_>>())).into());
+    ui.set_pc_knob2_extra(c.knob2_extra.into());
+    ui.set_pc_pad_labels(strings(c.pad_labels));
+    ui.set_pc_pad_state(Rc::new(slint::VecModel::from(c.pad_state)).into());
+    ui.set_pc_stick_x(c.stick[0]);
+    ui.set_pc_stick_y(c.stick[1]);
+    ui.set_pc_stick_label(c.stick_label.into());
+    ui.set_pc_hand_l(c.hands[0]);
+    ui.set_pc_hand_r(c.hands[1]);
+    let [l, r] = c.hand_labels;
+    ui.set_pc_hand_l_label(l.into());
+    ui.set_pc_hand_r_label(r.into());
+    ui.set_pc_line(c.line.into());
+    ui.set_pc_status(c.status.into());
+}
+
 fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
             match extra {
                 app::SlintExtra::Plaits(p) => {
@@ -4210,39 +4230,6 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_pulsar_peak(p.peak);
                     ui.set_pulsar_status(p.status.into());
                 }
-                app::SlintExtra::PlaitsPlay(p) => {
-                    let strings = |v: Vec<String>| -> slint::ModelRc<slint::SharedString> {
-                        Rc::new(slint::VecModel::from(v.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into()
-                    };
-                    ui.set_active_kind(38);
-                    ui.set_pp_engine_name(p.engine_name.into());
-                    ui.set_pp_engine_index(p.engine_index as i32);
-                    ui.set_pp_engine_bank(p.engine_bank as i32);
-                    ui.set_pp_layer(p.layer.to_uppercase().into());
-                    ui.set_pp_dial_labels(strings(p.dials.iter().map(|d| d.label.clone()).collect()));
-                    ui.set_pp_dial_values(strings(p.dials.iter().map(|d| d.value.clone()).collect()));
-                    ui.set_pp_dial_norms(Rc::new(slint::VecModel::from(p.dials.iter().map(|d| d.norm).collect::<Vec<_>>())).into());
-                    ui.set_pp_dial_knobs(Rc::new(slint::VecModel::from(p.dials.iter().map(|d| d.knob as i32).collect::<Vec<_>>())).into());
-                    ui.set_pp_pad_labels(strings(p.pad_labels));
-                    ui.set_pp_pad_state(Rc::new(slint::VecModel::from(p.pad_state)).into());
-                    ui.set_pp_stick_x(p.stick[0]);
-                    ui.set_pp_stick_y(p.stick[1]);
-                    ui.set_pp_hand_l(p.hands[0]);
-                    ui.set_pp_hand_r(p.hands[1]);
-                    let [hl, hr] = p.hand_targets;
-                    ui.set_pp_hand_l_target(hl.into());
-                    ui.set_pp_hand_r_target(hr.into());
-                    ui.set_pp_pitch(p.pitch);
-                    ui.set_pp_key(p.key.into());
-                    ui.set_pp_sounding(p.sounding.into());
-                    ui.set_pp_voices(p.voices as i32);
-                    ui.set_pp_arp(p.arp);
-                    ui.set_pp_scope_mid_x(Rc::new(slint::VecModel::from(p.scope.mid_x)).into());
-                    ui.set_pp_scope_mid_y(Rc::new(slint::VecModel::from(p.scope.mid_y)).into());
-                    ui.set_pp_scope_length(Rc::new(slint::VecModel::from(p.scope.length)).into());
-                    ui.set_pp_scope_angle(Rc::new(slint::VecModel::from(p.scope.angle_deg)).into());
-                    ui.set_pp_status(p.status.into());
-                }
                 app::SlintExtra::Tinkertone(t) => {
                     ui.set_active_kind(37);
                     ui.set_tt_keys_held(Rc::new(slint::VecModel::from(t.keys_held)).into());
@@ -4764,6 +4751,7 @@ fn main() {
             // Plaits' bespoke visual (engine dots + real analyzer) --
             // every other app just gets `active_kind = 0` (the
             // generic full-width list).
+            apply_play_column(&ui, app.play_column());
             apply_instrument_visual(&ui, app.slint_extra());
         }
     });
