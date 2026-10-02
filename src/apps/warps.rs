@@ -65,6 +65,7 @@
 //! bank (some other Mutable modules have one); Warps does not have
 //! one, so none was invented here.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -299,6 +300,68 @@ pub struct WarpsApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's continuous controls, most important first: Timbre and
+/// the Algorithm knob (with its real adjacent-slot crossfade) on the first
+/// knob pair, the two levels on the second. The carrier/modulator sources
+/// stay menu-only -- they're routing, not something to play.
+const CONTROLS: [(Selection, &str); 6] = [
+    (Selection::Timbre, "Timbre"),
+    (Selection::Algorithm, "Algorithm"),
+    (Selection::Level1, "Level 1"),
+    (Selection::Level2, "Level 2"),
+    (Selection::OscEnabled, "Int. Osc"),
+    (Selection::OscWaveform, "Osc Wave"),
+];
+/// One more control after `CONTROLS`: the same Algorithm knob, but stepped
+/// a whole slot at a time. The menu's Algorithm row moves in sensitivity-
+/// sized nudges (it's a continuous knob on the real module), which is
+/// right for crossfading but far too fine for the D-pad to browse with.
+const C_ALGO_STEP: usize = CONTROLS.len();
+
+/// The Algorithm knob position that sits squarely inside slot `idx`. The
+/// tiny offset keeps float rounding (e.g. 5/7*7 = 4.9999995) from landing
+/// a hair below the slot, which would read as a 99.99% crossfade from the
+/// previous algorithm; 2e-4 stays under the processor's 0.0005 crossfade
+/// threshold, so the slot plays pure.
+fn slot_norm(idx: usize) -> f32 {
+    (idx.min(VOCODER_IDX) as f32 + 2e-4) / NUM_ALGORITHMS as f32
+}
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "warps",
+        // Warps never used the pads, so the first layer is Throws: hold
+        // a pad to slam into another algorithm or push a level, let go
+        // to come straight back.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[0, 1], [2, 3]],
+        browse: Some(C_ALGO_STEP),
+        // Stick: Timbre on X, the Algorithm knob on Y -- pushing through
+        // it is the real module's CV crossfade between neighbouring
+        // algorithms. Hands: the two levels; with the internal oscillator
+        // on, Level 1 is its pitch, so the left hand plays it theremin-
+        // style.
+        routes: Routes { stick_x: Some(0), stick_y: Some(1), hand_l: Some(2), hand_r: Some(3) },
+        throws: vec![
+            Throw { control: 0, to: 1.0, label: "TIMBRE" },
+            // Level 2 at 200%: the manual's "warm overdrive".
+            Throw { control: 3, to: 1.0, label: "DRIVE" },
+            Throw { control: 3, to: 0.0, label: "MOD OFF" },
+            Throw { control: 1, to: slot_norm(1), label: "FOLD" },
+            Throw { control: 1, to: slot_norm(3), label: "RING" },
+            Throw { control: 1, to: slot_norm(4), label: "XOR" },
+            // Fully clockwise inside the Vocoder slot freezes its
+            // spectral envelope, per the manual.
+            Throw { control: 1, to: 1.0, label: "FREEZE" },
+            Throw { control: 4, to: 1.0, label: "INT OSC" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Warps's own palette: flat solid colors, not a
@@ -308,6 +371,7 @@ const WARPS_BG: Rgb565 = Rgb565::new(1, 2, 1);
 const WARPS_TITLE: Rgb565 = Rgb565::new(31, 56, 27);
 const WARPS_ACCENT: Rgb565 = Rgb565::new(31, 11, 10);
 const WARPS_DIM: Rgb565 = Rgb565::new(15, 18, 10);
+const WARPS_FAINT: Rgb565 = Rgb565::new(5, 6, 4);
 
 impl WarpsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -318,6 +382,7 @@ impl WarpsApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -548,6 +613,75 @@ impl WarpsApp {
     }
 }
 
+impl WarpsApp {
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS.get(i).map(|c| c.0) {
+            Some(Selection::Timbre) => Knob::F(&p.timbre, 0.0, 1.0),
+            Some(Selection::Algorithm) => Knob::F(&p.algorithm, 0.0, 1.0),
+            Some(Selection::Level1) => Knob::F(&p.level1, 0.0, 1.0),
+            Some(Selection::Level2) => Knob::F(&p.level2, 0.0, 1.0),
+            Some(Selection::OscEnabled) => Knob::B(&p.osc_enabled),
+            Some(Selection::OscWaveform) => Knob::U(&p.osc_waveform, 3),
+            // The slot stepper has no position of its own (it's the
+            // Algorithm knob, already on a dial), so it never lands in
+            // moments or under expression twice.
+            _ => Knob::None,
+        }
+    }
+
+    /// Next/previous whole algorithm slot. Stepping down from inside a
+    /// crossfade lands on the slot it started from rather than skipping it.
+    fn step_algorithm(&mut self, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+        let (idx, frac) = self.algorithm_slot();
+        let next = if delta > 0 {
+            (idx + 1).min(VOCODER_IDX)
+        } else if frac > 0.03 {
+            idx
+        } else {
+            idx.saturating_sub(1)
+        };
+        self.params.algorithm.set(slot_norm(next));
+    }
+}
+
+impl PlayHost for WarpsApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len() + 1
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or("Algo Step", |c| c.1).to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS.get(i).map_or(Selection::Algorithm, |c| c.0))
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        match CONTROLS.get(i) {
+            Some(c) => self.edit(c.0, delta),
+            None => self.step_algorithm(delta),
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS.get(i).map_or(Selection::Algorithm, |c| c.0));
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    fn kit_line(&self) -> String {
+        let algo = self.leaf_value(Selection::Algorithm);
+        if self.params.osc_enabled.load(Ordering::Relaxed) { format!("{algo} + {}", self.osc_waveform_name()) } else { algo }
+    }
+}
+
 fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     let next = (value.get() + accelerate(delta) * sensitivity * 0.01).clamp(min, max);
     value.set(next);
@@ -713,7 +847,29 @@ fn vocoder_band_freqs() -> [f32; VOCODER_BANDS] {
 
 impl App for WarpsApp {
     fn needs_background_audio(&self) -> bool { self.params.source_a.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE || self.params.source_b.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -791,8 +947,13 @@ impl App for WarpsApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, WARPS_BG, WARPS_DIM, WARPS_ACCENT);
-        let _ = dim;
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, WARPS_BG, WARPS_DIM, WARPS_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: WARPS_BG, ink: WARPS_TITLE, accent: WARPS_ACCENT, dim: WARPS_DIM, faint: WARPS_FAINT };
+            kit::draw::column(fb, &col, 16, 44, 380, 280, pal);
+            Text::new("knobs: timbre/algorithm   D-pad: algorithm   F2: pads   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
+        }
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1420,5 +1581,38 @@ mod tests {
         assert!(visual.vocoder_band_levels.iter().any(|&level| level > 0.001), "expected at least one real, nonzero band envelope, got {:?}", visual.vocoder_band_levels);
         let first = visual.vocoder_band_levels[0];
         assert!(visual.vocoder_band_levels.iter().any(|&level| (level - first).abs() > 1e-6), "expected genuinely distinct per-band levels, not a flat/fabricated array, got {:?}", visual.vocoder_band_levels);
+    }
+
+    #[test]
+    fn opens_playable_knob1_is_timbre_and_d_pad_steps_whole_algorithms() {
+        let (mut app, _bus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let timbre = app.params.timbre.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.timbre.get() > timbre, "knob 1 is Timbre on the play view");
+        // Default is Digital Ring (slot 3); D-pad up is the next slot.
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.algorithm_slot().0, 4, "D-pad up = XOR");
+        assert_eq!(app.leaf_value(Selection::Algorithm), "XOR", "squarely in the slot, no crossfade");
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        assert_eq!(app.algorithm_slot().0, 2, "two down = Diode Ring");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn throws_freeze_the_vocoder_and_switch_the_oscillator_then_spring_back() {
+        let (mut app, _bus) = new_app();
+        let algo = app.params.algorithm.get();
+        let hold = |rank: usize| Input { grid: std::array::from_fn(|i| i == kit::rank_pad(rank)), ..Default::default() };
+        app.tick(&hold(6));
+        assert!(app.output_visual().vocoder_frozen, "FREEZE holds the Vocoder fully clockwise");
+        app.tick(&Input::default());
+        assert!((app.params.algorithm.get() - algo).abs() < 1e-5, "back to the knob's algorithm");
+        app.tick(&hold(7));
+        assert!(app.params.osc_enabled.load(Ordering::Relaxed), "INT OSC switches the oscillator in");
+        app.tick(&Input::default());
+        assert!(!app.params.osc_enabled.load(Ordering::Relaxed), "and out again on release");
     }
 }

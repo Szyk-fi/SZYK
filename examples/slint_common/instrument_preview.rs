@@ -82,6 +82,14 @@ pub fn render(directory: &str) {
         // Device discovery is not part of a headless UI render. The real Settings
         // constructor and theme state remain in use; its device lists stay empty.
         if name != "Settings" { app.on_enter(); }
+        // Apps with a play view open on it, where the D-pad browses; the
+        // menu-driven setup and list-navigation checks below belong to
+        // their menu (R1); the render returns to the play view after.
+        let has_play_view = app.play_column().is_some();
+        if has_play_view {
+            app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+            assert!(app.play_column().is_none(), "{name}: R1 must open the menu");
+        }
         if collection::APPS.iter().any(|a|a.2==name) || name=="Morph" {
             // Actual engine input, explicitly named as a verification tone.
             // Empty media libraries remain empty; no fabricated tracks or meters.
@@ -138,13 +146,6 @@ pub fn render(directory: &str) {
             app.toggle_running();
             assert_eq!(app.running(), Some(false));
             app.toggle_running();
-        }
-        // Apps with a play view open on it, where the D-pad browses; the
-        // list-navigation checks below belong to their menu (R1).
-        let has_play_view = app.play_column().is_some();
-        if has_play_view {
-            app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
-            assert!(app.play_column().is_none(), "{name}: R1 must open the menu");
         }
         if ["Plaits", "Pam's Workout", "Beads", "Black Hole", "Bloom"].contains(&name) {
         // Exercise actual short pointer taps all the way into the module menu,
@@ -232,6 +233,11 @@ pub fn render(directory: &str) {
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.write_header().unwrap().write_image_data(pixels.as_bytes()).unwrap();
+        // Everything below drives the menu again.
+        if has_play_view {
+            app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+            apply_play_column(&ui, app.play_column());
+        }
         if name == "Plaits" {
             // Show the actual pressed-state styling, without synthetic audio data.
             let position = slint::LogicalPosition::new(913.0, 149.0);

@@ -70,6 +70,7 @@
 //!   reverse, buffer clear, etc.) -- no generic trigger/gate input is
 //!   routed to this app.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -255,6 +256,70 @@ pub struct RainmakerApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first. Rainmaker is a
+/// rhythm instrument as much as a delay, so the beat (Time) and how
+/// long it keeps raining (Feedback) take the first pair; the per-tap
+/// pages stay in the menu -- 16 taps x 7 fields don't fit on 16 pads,
+/// and the global controls are what you reach for while playing.
+/// Source is deliberately absent: routing stays a menu job.
+const CONTROLS: [(Selection, &str); 11] = [
+    (Selection::Time, "Time"),
+    (Selection::Feedback, "Feedback"),
+    (Selection::DryWet, "Dry/Wet"),
+    (Selection::GrooveAmount, "Groove Amt"),
+    (Selection::FeedbackTone, "Fb Tone"),
+    (Selection::Level, "Level"),
+    (Selection::Grid, "Grid"),
+    (Selection::GlobalPitch, "Pitch"),
+    (Selection::GrooveType, "Groove"),
+    (Selection::FeedbackTap, "Fb Tap"),
+    (Selection::FeedbackPitch, "Fb Pitch"),
+];
+const C_TIME: usize = 0;
+const C_FEEDBACK: usize = 1;
+const C_DRY_WET: usize = 2;
+const C_GROOVE_AMT: usize = 3;
+const C_GRID: usize = 6;
+const C_PITCH: usize = 7;
+
+/// Global pitch is -24..+24 semitones, so an octave sits a quarter of
+/// the way from centre.
+const PITCH_OCT_UP: f32 = 36.0 / 48.0;
+const PITCH_OCT_DOWN: f32 = 12.0 / 48.0;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "rainmaker",
+        // Rainmaker has never done anything with the pads, so there's no
+        // native layer to keep: an effect opens on Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_TIME, C_FEEDBACK], [C_DRY_WET, C_GROOVE_AMT], [4, 5], [C_GRID, C_PITCH]],
+        // GRID is the move that changes the rhythm outright (quarter
+        // notes to triplets to 16ths), so it gets the D-pad.
+        browse: Some(C_GRID),
+        // Stick X sweeps the beat time: every tap's read head glides to
+        // its new position (see `RainmakerProcessor`'s re-centring), so
+        // pushing it is the classic tape-delay pitch warble. Stick Y
+        // rides the feedback. Hands wash the echoes in, and smear the
+        // rhythm with groove.
+        routes: Routes { stick_x: Some(C_TIME), stick_y: Some(C_FEEDBACK), hand_l: Some(C_DRY_WET), hand_r: Some(C_GROOVE_AMT) },
+        throws: vec![
+            Throw { control: C_FEEDBACK, to: 1.0, label: "FB MAX" },
+            Throw { control: C_DRY_WET, to: 1.0, label: "WET" },
+            Throw { control: C_DRY_WET, to: 0.0, label: "DRY" },
+            Throw { control: C_GRID, to: 1.0, label: "16/BEAT" },
+            Throw { control: C_TIME, to: 0.0, label: "SHORT" },
+            Throw { control: C_TIME, to: 1.0, label: "LONG" },
+            Throw { control: C_PITCH, to: PITCH_OCT_DOWN, label: "OCT DN" },
+            Throw { control: C_PITCH, to: PITCH_OCT_UP, label: "OCT UP" },
+        ],
+        midi_to_pads: false,
+        own_expression: false,
+    }
 }
 
 // --- Rainmaker's own palette: flat solid colors, not a
@@ -264,6 +329,7 @@ const RAINMAKER_BG: Rgb565 = Rgb565::new(2, 6, 4);
 const RAINMAKER_TITLE: Rgb565 = Rgb565::new(26, 57, 29);
 const RAINMAKER_ACCENT: Rgb565 = Rgb565::new(14, 42, 24);
 const RAINMAKER_DIM: Rgb565 = Rgb565::new(10, 26, 15);
+const RAINMAKER_FAINT: Rgb565 = Rgb565::new(4, 11, 7);
 
 impl RainmakerApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -274,6 +340,7 @@ impl RainmakerApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -580,9 +647,100 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     value.set(next);
 }
 
+impl RainmakerApp {
+    /// Ranges match what `edit` clamps each control to.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Selection::Time => Knob::F(&p.time, 0.0, 1.0),
+            Selection::Feedback => Knob::F(&p.feedback, 0.0, 0.95),
+            Selection::DryWet => Knob::F(&p.dry_wet, 0.0, 1.0),
+            Selection::GrooveAmount => Knob::F(&p.groove_amount, 0.0, 1.0),
+            Selection::FeedbackTone => Knob::F(&p.feedback_tone, -1.0, 1.0),
+            Selection::Level => Knob::F(&p.level, 0.0, 1.0),
+            Selection::GlobalPitch => Knob::I(&p.global_pitch, -24, 24),
+            Selection::GrooveType => Knob::U(&p.groove_type, GROOVE_NAMES.len() as u32),
+            Selection::FeedbackPitch => Knob::I(&p.feedback_pitch, -24, 24),
+            _ => Knob::None,
+        }
+    }
+
+    /// GRID and FEEDBACK:TAP# live in `AtomicUsize`s, which `Knob` has
+    /// no variant for, so their position is worked out here: (atomic,
+    /// number of choices).
+    fn usize_choice(&self, i: usize) -> Option<(&AtomicUsize, usize)> {
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Selection::Grid => Some((&self.params.grid, GRID_VALUES.len())),
+            Selection::FeedbackTap => Some((&self.params.feedback_tap, NUM_TAPS + 1)),
+            _ => None,
+        }
+    }
+}
+
+impl PlayHost for RainmakerApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % CONTROLS.len()].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % CONTROLS.len()].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        match self.usize_choice(i) {
+            Some((a, n)) => Some((a.load(Ordering::Relaxed) % n) as f32 / (n - 1) as f32),
+            None => self.knob(i).norm(),
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.usize_choice(i).is_some() || self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % CONTROLS.len()].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % CONTROLS.len()].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        match self.usize_choice(i) {
+            Some((a, n)) => a.store((v.clamp(0.0, 1.0) * (n - 1) as f32).round() as usize, Ordering::Relaxed),
+            None => self.knob(i).set(v),
+        }
+    }
+    fn kit_line(&self) -> String {
+        // An effect with nothing patched in is silent whatever the knobs
+        // do -- say so rather than show timings for an empty delay line.
+        if self.params.source.load(Ordering::Relaxed) == crate::audio_bus::NO_SOURCE {
+            "R1: pick a Source".into()
+        } else {
+            self.group_summary(GROUP_TIMING)
+        }
+    }
+}
+
 impl App for RainmakerApp {
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu
+        // they pass straight through to the list below.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -646,8 +804,13 @@ impl App for RainmakerApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, RAINMAKER_BG, RAINMAKER_DIM, RAINMAKER_ACCENT);
-        let _ = dim;
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, RAINMAKER_BG, RAINMAKER_DIM, RAINMAKER_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: RAINMAKER_BG, ink: RAINMAKER_TITLE, accent: RAINMAKER_ACCENT, dim: RAINMAKER_DIM, faint: RAINMAKER_FAINT };
+            kit::draw::column(fb, &col, 16, 40, 350, 285, pal);
+            Text::new("knobs: time / feedback   D-pad: grid   F2: pads   R1: menu", Point::new(16, 340), dim).draw(fb).ok();
+        }
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1183,5 +1346,39 @@ mod tests {
 
         let differs = straight.taps.iter().zip(swung.taps.iter()).any(|(a, b)| (a.0 - b.0).abs() > 1e-4);
         assert!(differs, "expected GROOVE amount to change at least one tap's time_fraction");
+    }
+
+    fn pad(rank: usize) -> Input {
+        Input { grid: std::array::from_fn(|k| k == kit::rank_pad(rank)), ..Default::default() }
+    }
+
+    #[test]
+    fn opens_playable_knob1_turns_time_and_r1_opens_the_menu() {
+        let (mut app, _bus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let time = app.params.time.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.time.get() > time, "knob 1 is Time on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.grid.load(Ordering::Relaxed), 4, "D-pad up steps GRID (4/beat -> 6/beat)");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn throws_push_feedback_and_grid_and_spring_back_exactly() {
+        let (mut app, _bus) = new_app();
+        app.tick(&pad(0));
+        assert!((app.params.feedback.get() - 0.95).abs() < 1e-5, "FB MAX holds feedback at its ceiling");
+        app.tick(&Input::default());
+        assert!((app.params.feedback.get() - 0.3).abs() < 1e-5, "released: back to the knob's 30%");
+        app.tick(&pad(3));
+        assert_eq!(app.params.grid.load(Ordering::Relaxed), GRID_VALUES.len() - 1, "16/BEAT holds the densest grid");
+        app.tick(&Input::default());
+        assert_eq!(app.params.grid.load(Ordering::Relaxed), 3, "and puts the stepped GRID back exactly");
+        app.tick(&pad(7));
+        assert_eq!(app.params.global_pitch.load(Ordering::Relaxed), 12, "OCT UP");
+        app.tick(&Input::default());
+        assert_eq!(app.params.global_pitch.load(Ordering::Relaxed), 0);
     }
 }

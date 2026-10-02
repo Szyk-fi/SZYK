@@ -33,9 +33,11 @@
 //!
 //! Controls on Portamax: 37 + 15 keys don't fit on 16 pads, so F2 flips the
 //! pads between KEYS (a 16-note window you slide across the 37 keys from
-//! the menu) and BASS (the 15 bass keys, pad 16 = Fill-in). F3 starts and
-//! stops the rhythm.
+//! the menu) and BASS (the 15 bass keys, pad 16 = Fill-in) -- the first two
+//! of the shared play kit's pad layers, followed by its Controls and
+//! Moments. F3 starts and stops the rhythm.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -705,6 +707,63 @@ pub struct TinkertoneApp {
     pad_keys: [Option<usize>; 16],
     /// Frames left on a menu-triggered fill.
     menu_fill_frames: u32,
+    /// The shared play view (play_kit.rs). Its two native layers *are*
+    /// `bass_layer`: KEYS = 0, BASS = 1, kept in step by `set_layer`.
+    kit: PlayKit,
+}
+
+const LAYER_KEYS: u8 = 0;
+const LAYER_BASS: u8 = 1;
+
+/// The play view's controls, most important first. The MT-40's only
+/// continuous controls are the two volumes and the tempo (vibrato and
+/// sustain are switches on the real thing, not depths), so those take the
+/// first knob pair and the expression routes; the panel's buttons follow.
+const CONTROLS: [(Sel, &str); 12] = [
+    (Sel::Volume, "Volume"),
+    (Sel::Accomp, "Accomp"),
+    (Sel::Tempo, "Tempo"),
+    (Sel::Rhythm, "Rhythm"),
+    (Sel::Preset, "Tone Preset"),
+    (Sel::PresetTone, "Tone"),
+    (Sel::Vibrato, "Vibrato"),
+    (Sel::Sustain, "Sustain"),
+    (Sel::BassMode, "Auto Bass"),
+    (Sel::Chord, "Chord"),
+    (Sel::Synchro, "Synchro"),
+    (Sel::KeyWindow, "Key Window"),
+];
+const C_VOLUME: usize = 0;
+const C_ACCOMP: usize = 1;
+const C_TEMPO: usize = 2;
+const C_PRESET: usize = 4;
+/// Key Window positions: the 16-pad window's first key, 0..=KEYS-16.
+const WINDOWS: usize = KEYS - 16 + 1;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "tinkertone",
+        layers: vec![Layer::Native(LAYER_KEYS, "KEYS"), Layer::Native(LAYER_BASS, "BASS"), Layer::Controls, Layer::Moments],
+        hero: vec![[C_VOLUME, C_ACCOMP], [C_TEMPO, 3], [C_PRESET, 5], [6, 7]],
+        // The four tone-preset buttons are what an MT-40 player reaches
+        // for most; D-pad up/down steps them.
+        browse: Some(C_PRESET),
+        // Stick Y swells the master volume like an expression pedal, X
+        // pushes the tempo (rushing/dragging the rhythm); the left hand
+        // rides the accompaniment level, the right the master volume.
+        routes: Routes { stick_x: Some(C_TEMPO), stick_y: Some(C_VOLUME), hand_l: Some(C_ACCOMP), hand_r: Some(C_VOLUME) },
+        throws: Vec::new(),
+        midi_to_pads: true,
+        own_expression: false,
+    }
+}
+
+fn usize_norm(v: usize, n: usize) -> f32 {
+    if n < 2 { 0.0 } else { v.min(n - 1) as f32 / (n - 1) as f32 }
+}
+
+fn usize_pick(v: f32, n: usize) -> usize {
+    (v.clamp(0.0, 1.0) * n.saturating_sub(1) as f32).round() as usize
 }
 
 impl TinkertoneApp {
@@ -720,6 +779,7 @@ impl TinkertoneApp {
             prev_grid: [false; 16],
             pad_keys: [None; 16],
             menu_fill_frames: 0,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -850,6 +910,37 @@ impl TinkertoneApp {
             self.release_pads();
             self.bass_layer = bass;
         }
+        // The menu's Pads row and F2 are two ways to the same thing.
+        self.kit.set_native(if bass { LAYER_BASS } else { LAYER_KEYS });
+    }
+
+    /// After F2 moves the kit: if it landed on KEYS or BASS, the app's own
+    /// mode follows (releasing anything the other layer held).
+    fn sync_layer(&mut self) {
+        if let Layer::Native(id, _) = self.kit.layer() {
+            self.set_layer(id == LAYER_BASS);
+        }
+    }
+
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let s = &self.shared;
+        // Ranges are exactly what `edit` clamps each one to; the
+        // AtomicUsize choices have no Knob variant and are handled by hand
+        // in kit_norm/kit_set_norm.
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Sel::Volume => Knob::F(&s.volume, 0.0, 1.0),
+            Sel::Accomp => Knob::F(&s.accomp, 0.0, 1.0),
+            Sel::Tempo => Knob::F(&s.tempo, 40.0, 240.0),
+            Sel::Vibrato => Knob::B(&s.vibrato),
+            Sel::Sustain => Knob::B(&s.sustain),
+            Sel::BassMode => Knob::B(&s.bass_auto),
+            Sel::Synchro => Knob::B(&s.synchro),
+            _ => Knob::None,
+        }
+    }
+
+    fn preset_index(&self) -> usize {
+        self.shared.preset.load(Ordering::Relaxed).min(3)
     }
 
     fn handle_pads(&mut self, grid: &[bool; 16]) {
@@ -931,8 +1022,149 @@ impl TinkertoneApp {
     }
 }
 
+impl PlayHost for TinkertoneApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % CONTROLS.len()].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % CONTROLS.len()].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        let s = &self.shared;
+        Some(match CONTROLS[i % CONTROLS.len()].0 {
+            Sel::Rhythm => usize_norm(s.rhythm.load(Ordering::Relaxed), RHYTHMS.len()),
+            Sel::Preset => usize_norm(self.preset_index(), 4),
+            Sel::PresetTone => usize_norm(s.tone(), TONES.len()),
+            Sel::Chord => usize_norm(s.chord.load(Ordering::Relaxed), 3),
+            Sel::KeyWindow => usize_norm(self.window, WINDOWS),
+            _ => return self.knob(i).norm(),
+        })
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        !matches!(CONTROLS[i % CONTROLS.len()].0, Sel::Volume | Sel::Accomp | Sel::Tempo)
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % CONTROLS.len()].0, delta);
+    }
+    /// Tinkertone's menu has no reset (knob 2 press *presses* a button
+    /// there), so these are `Shared::new`'s power-on settings.
+    fn kit_reset(&mut self, i: usize) {
+        let s = Arc::clone(&self.shared);
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Sel::Volume => s.volume.set(0.8),
+            Sel::Accomp => s.accomp.set(0.7),
+            Sel::Tempo => s.tempo.set(120.0),
+            Sel::Rhythm => s.rhythm.store(0, Ordering::Relaxed),
+            Sel::Preset => s.preset.store(0, Ordering::Relaxed),
+            Sel::PresetTone => {
+                let p = self.preset_index();
+                s.preset_tones[p].store(DEFAULT_PRESETS[p], Ordering::Relaxed);
+            }
+            Sel::Vibrato => s.vibrato.store(false, Ordering::Relaxed),
+            Sel::Sustain => s.sustain.store(false, Ordering::Relaxed),
+            Sel::BassMode => s.bass_auto.store(false, Ordering::Relaxed),
+            Sel::Chord => s.chord.store(0, Ordering::Relaxed),
+            Sel::Synchro => s.synchro.store(false, Ordering::Relaxed),
+            Sel::KeyWindow => {
+                if self.window != 12 {
+                    self.release_pads();
+                    self.window = 12;
+                }
+            }
+            _ => {}
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let s = Arc::clone(&self.shared);
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Sel::Rhythm => s.rhythm.store(usize_pick(v, RHYTHMS.len()), Ordering::Relaxed),
+            Sel::Preset => s.preset.store(usize_pick(v, 4), Ordering::Relaxed),
+            // Into whichever preset is selected -- Preset sits before Tone
+            // in CONTROLS, so a recalled moment picks the preset first.
+            Sel::PresetTone => s.preset_tones[self.preset_index()].store(usize_pick(v, TONES.len()), Ordering::Relaxed),
+            Sel::Chord => s.chord.store(usize_pick(v, 3), Ordering::Relaxed),
+            Sel::KeyWindow => {
+                let w = usize_pick(v, WINDOWS);
+                if w != self.window {
+                    // Same as the menu's Key Window: moving it lets go of
+                    // the keys the pads were holding.
+                    self.release_pads();
+                    self.window = w;
+                }
+            }
+            _ => self.knob(i).set(v),
+        }
+    }
+    /// KEYS: a key presses the pad that plays it in the current window;
+    /// BASS: the bass key of that pitch (never the Fill-in pad). Keys
+    /// outside the pads' range fold in by octaves.
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        let fold = |d: i32, span: i32| if (0..span).contains(&d) { d } else { d.rem_euclid(12) };
+        Some(if self.bass_layer {
+            fold(note as i32 - BASS_LOW, BASS_KEYS as i32) as usize
+        } else {
+            fold(note as i32 - (KEY_LOW + self.window as i32), 16) as usize
+        })
+    }
+    fn kit_pad_label(&self, layer: u8, pad: usize) -> String {
+        if layer == LAYER_BASS {
+            if pad == 15 { "FILL".into() } else { note_name(BASS_LOW + pad as i32) }
+        } else {
+            note_name(KEY_LOW + (self.window + pad) as i32)
+        }
+    }
+    /// The colours the pads always had on each layer.
+    fn kit_pad_color(&self, layer: u8, pad: usize, _held: bool) -> PadColor {
+        let s = &self.shared;
+        if layer == LAYER_BASS {
+            if pad == 15 {
+                if s.fill_held.load(Ordering::Relaxed) { PadColor::Yellow } else { PadColor::Blue }
+            } else if s.bass_key.load(Ordering::Relaxed) == pad as i32 {
+                PadColor::Green
+            } else if s.bass_sounding.load(Ordering::Relaxed) == pad as i32 {
+                PadColor::Yellow
+            } else {
+                PadColor::Off
+            }
+        } else {
+            let key = self.window + pad;
+            if s.keys[key].load(Ordering::Relaxed) {
+                PadColor::Green
+            } else if (KEY_LOW + key as i32) % 12 == 0 {
+                PadColor::Blue // mark each C so the window is readable
+            } else {
+                PadColor::Off
+            }
+        }
+    }
+    fn kit_line(&self) -> String {
+        let s = &self.shared;
+        let rhythm = if s.playing.load(Ordering::Relaxed) {
+            let r = &RHYTHMS[s.rhythm.load(Ordering::Relaxed)];
+            format!("{} beat {}", RHYTHM_NAMES[s.rhythm.load(Ordering::Relaxed)], s.step.load(Ordering::Relaxed) / r.steps_per_beat + 1)
+        } else {
+            "stopped".to_string()
+        };
+        format!("{}  {rhythm}", TONES[s.tone()].name)
+    }
+}
+
 impl App for TinkertoneApp {
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. On KEYS/BASS the pads reach the keyboard
+        // exactly as before; on the kit's layers the kit hands us an
+        // empty grid, which lets go of anything held.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        if let Some(id) = step.native {
+            self.set_layer(id == LAYER_BASS);
+        }
+        let input = &step.input;
         if self.menu_fill_frames > 0 {
             self.menu_fill_frames -= 1;
             if self.menu_fill_frames == 0 && !(self.bass_layer && input.grid[15]) {
@@ -975,7 +1207,13 @@ impl App for TinkertoneApp {
             .into_iter()
             .map(|(n, v, g)| (if g { n } else { format!("    {n}") }, v))
             .collect();
-        self.list.draw(fb, 16, 68, 24, 10, &rows);
+        if self.kit.menu {
+            self.list.draw(fb, 16, 68, 24, 10, &rows);
+        } else if let Some(col) = self.play_column() {
+            // Ends at x=352, left of the keyboard strip at x=360.
+            let pal = kit::draw::Palette { bg: BG, ink: TITLE, accent: ACCENT, dim: DIM, faint: Rgb565::new(8, 14, 7) };
+            kit::draw::column(fb, &col, 16, 40, 336, 290, pal);
+        }
 
         // right: a 37-key strip (window outlined) and the 15 bass keys
         let (x0, y0) = (360, 60);
@@ -1048,7 +1286,13 @@ impl App for TinkertoneApp {
             if s.sustain.load(Ordering::Relaxed) { "SUS" } else { "" },
         );
         Text::new(&info, Point::new(x0, by + 62), dim).draw(fb).ok();
-        let hint = if self.bass_layer { "pads 1-15: bass keys   pad 16: fill-in   F2: melody" } else { "pads: 16 melody keys   F2: bass keys   F3: rhythm" };
+        let hint = if !self.kit.menu {
+            "knobs: dials   D-pad: tone preset   F2: keys/bass/pads   F3: rhythm   R1: menu"
+        } else if self.bass_layer {
+            "pads 1-15: bass keys   pad 16: fill-in   F2: melody"
+        } else {
+            "pads: 16 melody keys   F2: bass keys   F3: rhythm"
+        };
         Text::new(hint, Point::new(16, 337), dim).draw(fb).ok();
     }
 
@@ -1102,38 +1346,26 @@ impl App for TinkertoneApp {
         self.shared.active_voices.load(Ordering::Relaxed) > 0 || self.shared.bass_sounding.load(Ordering::Relaxed) >= 0
     }
 
+    fn play_surface(&self) -> bool {
+        true
+    }
+
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+
+    /// F2 cycles KEYS -> BASS -> Controls -> Moments.
     fn grid_mode_label(&self) -> Option<&'static str> {
-        Some(if self.bass_layer { "BASS" } else { "KEYS" })
+        Some(self.kit.layer_label())
     }
 
     fn toggle_grid_mode(&mut self) {
-        self.set_layer(!self.bass_layer);
+        self.kit.next_layer();
+        self.sync_layer();
     }
 
     fn grid_led_overlay(&self) -> [PadColor; 16] {
-        let s = &self.shared;
-        std::array::from_fn(|i| {
-            if self.bass_layer {
-                if i == 15 {
-                    if s.fill_held.load(Ordering::Relaxed) { PadColor::Yellow } else { PadColor::Blue }
-                } else if s.bass_key.load(Ordering::Relaxed) == i as i32 {
-                    PadColor::Green
-                } else if s.bass_sounding.load(Ordering::Relaxed) == i as i32 {
-                    PadColor::Yellow
-                } else {
-                    PadColor::Off
-                }
-            } else {
-                let key = self.window + i;
-                if s.keys[key].load(Ordering::Relaxed) {
-                    PadColor::Green
-                } else if (KEY_LOW + key as i32) % 12 == 0 {
-                    PadColor::Blue // mark each C so the window is readable
-                } else {
-                    PadColor::Off
-                }
-            }
-        })
+        self.kit.led_overlay(self)
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1322,5 +1554,57 @@ mod tests {
         assert!(a.shared.keys[KEYS - 1].load(Ordering::Relaxed), "top key reachable");
         a.toggle_grid_mode();
         assert!(!a.shared.keys[KEYS - 1].load(Ordering::Relaxed), "layer change releases held keys");
+    }
+
+    #[test]
+    fn opens_playable_and_knob1_turns_the_volume() {
+        let mut a = app();
+        assert!(a.play_column().is_some(), "play view first");
+        let v = a.shared.volume.get();
+        a.tick(&Input { knob1: -3, ..Default::default() });
+        assert!(a.shared.volume.get() < v, "knob 1 is Volume on the play view");
+        a.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(a.shared.preset.load(Ordering::Relaxed), 1, "D-pad up = next tone preset");
+        a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(a.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    /// F2 walks KEYS -> BASS -> Controls -> Moments -> KEYS, the app's own
+    /// mode following the two native layers, and kit layers keep the pads
+    /// off the keyboard.
+    #[test]
+    fn f2_cycles_keys_bass_and_the_kit_layers() {
+        let mut a = app();
+        assert_eq!(a.grid_mode_label(), Some("KEYS"));
+        a.toggle_grid_mode();
+        assert!(a.bass_layer && a.grid_mode_label() == Some("BASS"));
+        a.toggle_grid_mode();
+        assert_eq!(a.grid_mode_label(), Some("CONTROLS"));
+        a.tick(&pads(&[3]));
+        assert_eq!(a.shared.bass_key.load(Ordering::Relaxed), -1, "Controls pads don't play bass");
+        a.toggle_grid_mode();
+        a.toggle_grid_mode();
+        assert_eq!(a.grid_mode_label(), Some("KEYS"));
+        assert!(!a.bass_layer);
+        a.tick(&pads(&[0]));
+        assert!(a.shared.keys[a.window].load(Ordering::Relaxed), "back on KEYS the pads play again");
+        // The menu's Pads row moves F2's layer too.
+        a.press(Sel::PadLayer);
+        assert_eq!(a.grid_mode_label(), Some("BASS"));
+    }
+
+    #[test]
+    fn a_midi_key_plays_its_own_pitch_on_both_layers() {
+        let mut a = app();
+        let mut keys = crate::app::MidiKeys::default();
+        keys.0[(KEY_LOW + a.window as i32 + 5) as usize] = 100;
+        a.tick(&Input { midi_keys: keys, ..Default::default() });
+        assert!(a.shared.keys[a.window + 5].load(Ordering::Relaxed));
+        a.tick(&Input::default());
+        a.toggle_grid_mode();
+        let mut keys = crate::app::MidiKeys::default();
+        keys.0[(BASS_LOW + 4) as usize] = 100;
+        a.tick(&Input { midi_keys: keys, ..Default::default() });
+        assert_eq!(a.shared.bass_key.load(Ordering::Relaxed), 4);
     }
 }

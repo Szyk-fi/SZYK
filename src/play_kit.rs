@@ -24,6 +24,11 @@
 //! importance) and a `KitConfig`; this module owns all the shared
 //! behaviour, the play column on screen and the LED colours.
 
+// Reached through app.rs, so every preview binary compiles this module,
+// and most of those include only one app (or none that plays); what a
+// given binary leaves unused here is expected, not dead.
+#![allow(dead_code)]
+
 use crate::app::{Input, PlayColumn, PlayDial};
 use crate::led_output::PadColor;
 use std::path::PathBuf;
@@ -227,7 +232,6 @@ impl PlayKit {
 
     /// Jump straight to a native layer (an app whose own mode button
     /// changes what the pads do keeps F2 and this in step).
-    #[allow(dead_code)]
     pub fn set_native(&mut self, id: u8) {
         if let Some(i) = self.cfg.layers.iter().position(|l| matches!(l, Layer::Native(n, _) if *n == id)) {
             self.layer = i;

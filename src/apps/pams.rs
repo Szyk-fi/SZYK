@@ -26,6 +26,7 @@
 //! Plaits-style context panel (this channel's live output, scrolling)
 //! is the whole control surface.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::apps::plaits::{ROOT_NAMES, SCALE_TYPES};
 use crate::audio::AudioProcessor;
@@ -227,6 +228,72 @@ pub struct PamsApp {
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
     last_channel: usize,
+    /// The shared play view (play_kit.rs). Pam's has no pad behaviour of
+    /// its own, so the pads start on the kit's layers.
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first. All but the master
+/// clock act on the selected channel (`last_channel`, which D-pad
+/// up/down picks on the play view). Rate and the waveform's level/width/
+/// offset are what you ride live; the shape-choosing and Euclidean
+/// controls sit on the upper pads of the Controls layer.
+const C_BPM: usize = 0;
+const C_LEVEL: usize = 1;
+const C_WIDTH: usize = 2;
+const C_OFFSET: usize = 3;
+const C_SLEW: usize = 4;
+const C_PHASE: usize = 5;
+const C_SWING: usize = 6;
+const C_HUMAN: usize = 7;
+const C_CHANNEL: usize = 8;
+const C_SHAPE: usize = 9;
+const C_CLOCK_MOD: usize = 10;
+const C_INVERT: usize = 11;
+const C_QUANTIZER: usize = 12;
+const C_EUCLID_STEPS: usize = 13;
+const C_EUCLID_PULSES: usize = 14;
+const C_EUCLID_ROTATION: usize = 15;
+const NUM_CONTROLS: usize = 16;
+
+/// A clock-mod index as a 0..1 throw/moment position.
+fn clock_mod_norm(idx: usize) -> f32 {
+    idx as f32 / (CLOCK_MODS.len() - 1) as f32
+}
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "pams",
+        // No native layer: Pam's never used the pads (its patterns are
+        // derived, not hand-entered). Throws suit a clock source as much
+        // as an effect: ratchets and momentary mutes are what a player
+        // reaches for on the hardware's own buttons.
+        // Throws first: on Controls, knob 2 follows the grabbed pad
+        // instead of the hero pair, which is the wrong default.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_BPM, C_LEVEL], [C_WIDTH, C_OFFSET], [C_SLEW, C_PHASE], [C_SWING, C_HUMAN]],
+        // D-pad up/down picks the channel -- ten of them, and the play
+        // view would otherwise be stuck shaping only one.
+        browse: Some(C_CHANNEL),
+        // Stick: width (pulse/hump shape) on X, offset (where the
+        // modulation sits) on Y. Hands: slew smooths the output, and the
+        // master clock rushes -- springing back to the set BPM.
+        routes: Routes { stick_x: Some(C_WIDTH), stick_y: Some(C_OFFSET), hand_l: Some(C_SLEW), hand_r: Some(C_BPM) },
+        throws: vec![
+            // Indexes into CLOCK_MODS: 6 = x4, 8 = x16, 2 = /2.
+            Throw { control: C_CLOCK_MOD, to: clock_mod_norm(6), label: "x4" },
+            Throw { control: C_CLOCK_MOD, to: clock_mod_norm(8), label: "x16" },
+            Throw { control: C_CLOCK_MOD, to: clock_mod_norm(2), label: "/2" },
+            // Shape 5 of 0..5 = S&H: a momentary burst of random steps.
+            Throw { control: C_SHAPE, to: 1.0, label: "S&H" },
+            Throw { control: C_INVERT, to: 1.0, label: "INVERT" },
+            Throw { control: C_QUANTIZER, to: 1.0, label: "QUANT" },
+            Throw { control: C_SLEW, to: 1.0, label: "SMOOTH" },
+            Throw { control: C_LEVEL, to: 0.0, label: "MUTE" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Pam's own palette: industrial amber on graphite, not a
@@ -249,6 +316,7 @@ impl PamsApp {
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
             last_channel: 0,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -336,6 +404,11 @@ impl PamsApp {
     }
 
     fn current_channel(&self, rows: &[Row]) -> usize {
+        // On the play view the menu's cursor isn't moving, so D-pad
+        // up/down picks the channel directly (see `C_CHANNEL`).
+        if !self.kit.menu {
+            return self.last_channel;
+        }
         match rows.get(self.list.selected) {
             Some(Row::Group(g)) if *g >= 1 => *g - 1,
             Some(Row::Leaf(sel)) => Self::selection_channel(*sel).unwrap_or(self.last_channel),
@@ -557,7 +630,144 @@ impl PamsApp {
     }
 }
 
+impl PamsApp {
+    /// The menu row behind a play-view control -- label, value, edit and
+    /// reset go through exactly the menu's code. `None` for the channel
+    /// picker, which the menu does by cursor position instead.
+    fn kit_selection(&self, i: usize) -> Option<Selection> {
+        let c = self.last_channel;
+        Some(match i {
+            C_BPM => Selection::Bpm,
+            C_LEVEL => Selection::Level(c),
+            C_WIDTH => Selection::Width(c),
+            C_OFFSET => Selection::Offset(c),
+            C_SLEW => Selection::Slew(c),
+            C_PHASE => Selection::Phase(c),
+            C_SWING => Selection::Swing(c),
+            C_HUMAN => Selection::Human(c),
+            C_SHAPE => Selection::Shape(c),
+            C_CLOCK_MOD => Selection::ClockMod(c),
+            C_INVERT => Selection::Invert(c),
+            C_QUANTIZER => Selection::QuantizerOn(c),
+            C_EUCLID_STEPS => Selection::EuclidSteps(c),
+            C_EUCLID_PULSES => Selection::EuclidPulses(c),
+            C_EUCLID_ROTATION => Selection::EuclidRotation(c),
+            _ => return None,
+        })
+    }
+
+    /// Storage behind each control, with the ranges `edit` clamps to.
+    /// Pulses and rotation are bounded by the channel's own step count,
+    /// as in `edit`. Clock mod is a `usize` (no `Knob` variant), so
+    /// `kit_norm`/`kit_set_norm` handle it by hand.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        let ch = &p.channels[self.last_channel];
+        let steps = ch.euclid_steps.load(Ordering::Relaxed).clamp(1, MAX_EUCLID_STEPS as u32);
+        match i {
+            C_BPM => Knob::F(&p.bpm, MIN_BPM, MAX_BPM),
+            C_LEVEL => Knob::F(&ch.level, 0.0, 1.0),
+            C_WIDTH => Knob::F(&ch.width, 0.0, 1.0),
+            C_OFFSET => Knob::F(&ch.offset, -1.0, 1.0),
+            C_SLEW => Knob::F(&ch.slew, 0.0, 1.0),
+            C_PHASE => Knob::F(&ch.phase, 0.0, 1.0),
+            C_SWING => Knob::F(&ch.swing, 0.0, MAX_SWING),
+            C_HUMAN => Knob::F(&ch.human, 0.0, MAX_HUMAN),
+            C_SHAPE => Knob::U(&ch.shape, SHAPE_NAMES.len() as u32),
+            C_INVERT => Knob::B(&ch.invert),
+            C_QUANTIZER => Knob::B(&ch.quantizer_on),
+            C_EUCLID_STEPS => Knob::UR(&ch.euclid_steps, 1, MAX_EUCLID_STEPS as u32),
+            C_EUCLID_PULSES => Knob::UR(&ch.euclid_pulses, 0, steps),
+            C_EUCLID_ROTATION => Knob::UR(&ch.euclid_rotation, 0, steps - 1),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for PamsApp {
+    fn kit_control_count(&self) -> usize {
+        NUM_CONTROLS
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match i {
+            C_BPM => "Clock".into(),
+            C_CHANNEL => "Channel".into(),
+            C_EUCLID_STEPS => "Eu Steps".into(),
+            C_EUCLID_PULSES => "Eu Pulses".into(),
+            C_EUCLID_ROTATION => "Eu Rotate".into(),
+            _ => self.kit_selection(i).map(|s| self.leaf_name(s)).unwrap_or_default(),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        if i == C_CHANNEL {
+            let c = self.last_channel;
+            return format!("{} {}", c + 1, self.leaf_value(Selection::Shape(c)));
+        }
+        self.kit_selection(i).map(|s| self.leaf_value(s)).unwrap_or_default()
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        match i {
+            // Deliberately no position: recalling a moment shouldn't
+            // change which channel the knobs are on.
+            C_CHANNEL => None,
+            C_CLOCK_MOD => Some(clock_mod_norm(self.params.channels[self.last_channel].clock_mod.load(Ordering::Relaxed) % CLOCK_MODS.len())),
+            _ => self.knob(i).norm(),
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        matches!(i, C_CHANNEL | C_CLOCK_MOD) || self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        if i == C_CHANNEL {
+            if delta != 0 {
+                self.last_channel = (self.last_channel as i32 + delta.signum()).rem_euclid(NUM_CHANNELS as i32) as usize;
+            }
+            return;
+        }
+        if let Some(sel) = self.kit_selection(i) {
+            self.edit(sel, delta);
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(sel) = self.kit_selection(i) {
+            self.reset(sel);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        match i {
+            C_CHANNEL => {}
+            C_CLOCK_MOD => {
+                let idx = (v * (CLOCK_MODS.len() - 1) as f32).round() as usize;
+                self.params.channels[self.last_channel].clock_mod.store(idx.min(CLOCK_MODS.len() - 1), Ordering::Relaxed);
+            }
+            _ => self.knob(i).set(v),
+        }
+    }
+    fn kit_line(&self) -> String {
+        let c = self.last_channel;
+        let ch = &self.params.channels[c];
+        if !self.params.running.load(Ordering::Relaxed) {
+            return format!("Ch{} stopped", c + 1);
+        }
+        format!("Ch{} {:+.2} {}", c + 1, ch.monitor.get(), CLOCK_MODS[ch.clock_mod.load(Ordering::Relaxed) % CLOCK_MODS.len()].0)
+    }
+}
+
 impl App for PamsApp {
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn running(&self) -> Option<bool> { Some(self.params.running.load(Ordering::Relaxed)) }
     fn toggle_running(&mut self) {
         let was_running = self.params.running.load(Ordering::Relaxed);
@@ -582,6 +792,12 @@ impl App for PamsApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. The pads only ever reach the kit.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -634,7 +850,13 @@ impl App for PamsApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, PAMS_BG, PAMS_DIM, PAMS_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, PAMS_BG, PAMS_DIM, PAMS_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Stops short of the monitor panel at x=400.
+            let pal = kit::draw::Palette { bg: PAMS_BG, ink: PAMS_TITLE, accent: PAMS_ACCENT, dim: PAMS_DIM, faint: PAMS_MIDLINE };
+            kit::draw::column(fb, &col, 16, 40, 370, 285, pal);
+        }
 
         // --- Right: the current channel's live output, scrolling --
         // "CV Monitoring", same line-plot technique as Plaits' mod panel.
@@ -676,6 +898,7 @@ impl App for PamsApp {
         .ok();
 
         let hint = match rows.get(self.list.selected) {
+            _ if !self.kit.menu => "knobs: dials   D-pad: channel   F2: pads   F3: clock run/stop   R1: menu".to_string(),
             Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
             None => String::new(),
@@ -842,5 +1065,54 @@ mod transport_contract_tests {
         processor.process(&mut audio, 2, 48000.0);
         assert_eq!(app.running(), Some(true));
         assert_ne!(target.get(), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> PamsApp {
+        PamsApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(1.0)), Arc::new(ModBus::new()))
+    }
+
+    fn pad(rank: usize) -> Input {
+        Input { grid: std::array::from_fn(|k| k == crate::app::play_kit::rank_pad(rank)), ..Default::default() }
+    }
+
+    #[test]
+    fn opens_on_the_play_view_and_knob_1_turns_the_clock() {
+        let mut a = app();
+        assert!(a.play_column().is_some(), "play view first");
+        let bpm = a.params.bpm.get();
+        a.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(a.params.bpm.get() > bpm, "knob 1 is the master clock");
+        a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(a.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn d_pad_picks_the_channel_the_knobs_shape() {
+        let mut a = app();
+        a.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(a.last_channel, 1, "D-pad up = next channel");
+        a.tick(&Input { knob2: -3, ..Default::default() });
+        assert!(a.params.channels[1].level.get() < 1.0, "knob 2 is the selected channel's level");
+        assert_eq!(a.params.channels[0].level.get(), 1.0, "other channels untouched");
+    }
+
+    #[test]
+    fn throws_ratchet_the_clock_and_spring_back() {
+        let mut a = app();
+        assert_eq!(a.grid_mode_label(), Some("THROWS"));
+        assert_eq!(a.params.channels[0].clock_mod.load(Ordering::Relaxed), 3, "x1");
+        a.tick(&pad(0));
+        assert_eq!(CLOCK_MODS[a.params.channels[0].clock_mod.load(Ordering::Relaxed)].0, "x4", "held throw ratchets");
+        a.tick(&Input::default());
+        assert_eq!(a.params.channels[0].clock_mod.load(Ordering::Relaxed), 3, "and is put back exactly");
+        a.tick(&pad(7));
+        assert_eq!(a.params.channels[0].level.get(), 0.0, "MUTE holds the level at zero");
+        a.tick(&Input::default());
+        assert!((a.params.channels[0].level.get() - 1.0).abs() < 1e-5, "and springs back");
     }
 }

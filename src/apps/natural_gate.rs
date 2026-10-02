@@ -82,6 +82,7 @@
 //!   MATERIAL, in the spirit of "different tonal characters" rather
 //!   than a literal circuit model.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -295,6 +296,66 @@ pub struct NaturalGateApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls. The module is two mirrored channels, so
+/// every control comes as a channel 1 / channel 2 pair and each hero
+/// pair is one control on both: knob 1 is always channel 1, knob 2
+/// always channel 2, like the module's two columns of knobs. Sources and
+/// the Env Out target are routing, so they stay in the menu.
+const CONTROLS: [(Selection, &str); 14] = [
+    (Selection::Decay(0), "1 Decay"),
+    (Selection::Decay(1), "2 Decay"),
+    (Selection::Open(0), "1 Open"),
+    (Selection::Open(1), "2 Open"),
+    (Selection::Level(0), "1 Level"),
+    (Selection::Level(1), "2 Level"),
+    (Selection::CtrlAmount(0), "1 Ctrl Amt"),
+    (Selection::CtrlAmount(1), "2 Ctrl Amt"),
+    (Selection::Material(0), "1 Material"),
+    (Selection::Material(1), "2 Material"),
+    (Selection::DecayCvAmount(0), "1 Dec CV"),
+    (Selection::DecayCvAmount(1), "2 Dec CV"),
+    (Selection::OutLevel(0), "1 Env Out"),
+    (Selection::OutLevel(1), "2 Env Out"),
+];
+const C_DECAY: [usize; 2] = [0, 1];
+const C_OPEN: [usize; 2] = [2, 3];
+const C_MATERIAL: [usize; 2] = [8, 9];
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "natural_gate",
+        // The app has never read the pads (HIT comes from a tapped audio
+        // source), so there's no native layer to keep: an effect opens
+        // on Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![C_DECAY, C_OPEN, [4, 5], [6, 7]],
+        // Only one control can have the D-pad; channel 1's MATERIAL is
+        // the tonal switch you flip most. Channel 2's is on the Controls
+        // layer and a throw.
+        browse: Some(C_MATERIAL[0]),
+        // A hand in a beam opens that channel's gate -- the LPG played
+        // directly as a VCA + filter swell, the most physical thing this
+        // module does. The stick's two axes are the two ring times.
+        routes: Routes { stick_x: Some(C_DECAY[0]), stick_y: Some(C_DECAY[1]), hand_l: Some(C_OPEN[0]), hand_r: Some(C_OPEN[1]) },
+        // Channel 1 on the left half of the pads, channel 2 on the
+        // right, mirroring the module's layout.
+        throws: vec![
+            Throw { control: C_OPEN[0], to: 1.0, label: "1 OPEN" },
+            Throw { control: C_DECAY[0], to: 1.0, label: "1 RING" },
+            Throw { control: C_OPEN[1], to: 1.0, label: "2 OPEN" },
+            Throw { control: C_DECAY[1], to: 1.0, label: "2 RING" },
+            Throw { control: C_DECAY[0], to: 0.0, label: "1 DAMP" },
+            Throw { control: C_MATERIAL[0], to: 0.0, label: "1 HARD" },
+            Throw { control: C_DECAY[1], to: 0.0, label: "2 DAMP" },
+            Throw { control: C_MATERIAL[1], to: 0.0, label: "2 HARD" },
+        ],
+        midi_to_pads: false,
+        own_expression: false,
+    }
 }
 
 // --- Natural Gate's own palette: warm wood-bronze on deep forest
@@ -317,6 +378,7 @@ impl NaturalGateApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -531,9 +593,85 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     value.set(next);
 }
 
+impl NaturalGateApp {
+    /// Ranges match what `edit` clamps each control to.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let chs = &self.params.channels;
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Selection::Decay(c) => Knob::F(&chs[c].decay, 0.0, 1.0),
+            Selection::Open(c) => Knob::F(&chs[c].open, 0.0, 1.0),
+            Selection::Level(c) => Knob::F(&chs[c].level, 0.0, 1.0),
+            Selection::CtrlAmount(c) => Knob::F(&chs[c].ctrl_amount, -1.0, 1.0),
+            Selection::Material(c) => Knob::U(&chs[c].material, MATERIAL_NAMES.len() as u32),
+            Selection::DecayCvAmount(c) => Knob::F(&chs[c].decay_cv_amount, -1.0, 1.0),
+            Selection::OutLevel(c) => Knob::F(&chs[c].out_level, 0.0, 1.0),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for NaturalGateApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % CONTROLS.len()].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % CONTROLS.len()].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % CONTROLS.len()].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % CONTROLS.len()].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    fn kit_line(&self) -> String {
+        // With nothing patched into IN or HIT on either channel the gates
+        // only move with OPEN/CTRL -- point at the menu instead of
+        // showing two idle readings.
+        let unpatched = self.params.channels.iter().all(|c| c.in_source.load(Ordering::Relaxed) == 0 && c.hit_source.load(Ordering::Relaxed) == 0);
+        if unpatched {
+            "R1: patch In / Hit".into()
+        } else {
+            let (_, g1) = self.envelope_and_gate(0);
+            let (_, g2) = self.envelope_and_gate(1);
+            format!("1 {:.0}%  2 {:.0}%", g1 * 100.0, g2 * 100.0)
+        }
+    }
+}
+
 impl App for NaturalGateApp {
     fn needs_background_audio(&self) -> bool { self.params.channels.iter().any(|c| c.in_source.load(Ordering::Relaxed) > 0 || c.out_target.load(Ordering::Relaxed) > 0) }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu
+        // they pass straight through to the list below.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -607,7 +745,14 @@ impl App for NaturalGateApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, NATURAL_GATE_BG, NATURAL_GATE_DIM, NATURAL_GATE_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, NATURAL_GATE_BG, NATURAL_GATE_DIM, NATURAL_GATE_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Same left column the list used; the meters stay at x=460.
+            let pal = kit::draw::Palette { bg: NATURAL_GATE_BG, ink: NATURAL_GATE_TITLE, accent: NATURAL_GATE_ACCENT, dim: NATURAL_GATE_DIM, faint: NATURAL_GATE_METER_OUTLINE };
+            kit::draw::column(fb, &col, 16, 40, 350, 285, pal);
+            Text::new("knob1: ch1  knob2: ch2   D-pad: material   F2: pads   R1: menu", Point::new(16, 340), dim).draw(fb).ok();
+        }
 
         // Per-channel live meters -- the gate-open amount as a bar,
         // same "read the real audio-thread state back for a live
@@ -631,7 +776,6 @@ impl App for NaturalGateApp {
                     .ok();
             }
         }
-        let _ = dim;
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1153,5 +1297,53 @@ mod tests {
         assert!(later.channels[1].envelope_trace.iter().all(|&v| v == 0.0));
         assert_eq!(later.channels[1].envelope_now, 0.0);
         assert!(!later.channels[1].hit_flash);
+    }
+
+    fn pad(rank: usize) -> Input {
+        Input { grid: std::array::from_fn(|k| k == kit::rank_pad(rank)), ..Default::default() }
+    }
+
+    #[test]
+    fn opens_playable_knobs_are_the_two_decays_and_r1_opens_the_menu() {
+        let (mut app, _audio_bus, _modbus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let (d1, d2) = (app.params.channels[0].decay.get(), app.params.channels[1].decay.get());
+        app.tick(&Input { knob1: 3, knob2: -3, ..Default::default() });
+        assert!(app.params.channels[0].decay.get() > d1, "knob 1 is channel 1's decay");
+        assert!(app.params.channels[1].decay.get() < d2, "knob 2 is channel 2's decay");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.channels[0].material.load(Ordering::Relaxed), 2, "D-pad up steps channel 1's material (Medium -> Soft)");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    /// A held OPEN throw must actually gate audio through (not just move
+    /// a number), and releasing it must close the gate back to the knob.
+    #[test]
+    fn open_throw_gates_audio_through_and_springs_back() {
+        let (mut app, audio_bus, _modbus) = new_app();
+        let in_buf = audio_bus.register("In Source");
+        *in_buf.lock().unwrap() = vec![0.8; 512];
+        // Natural Gate registers its own 2 channel outputs first -- "In
+        // Source" lands at bus index 2, stored +1.
+        app.params.channels[0].in_source.store(3, Ordering::Relaxed);
+        let mut processor = app.audio_processor().unwrap();
+        let mut buffer = vec![0.0f32; 512 * 2];
+
+        app.tick(&pad(0));
+        assert!((app.params.channels[0].open.get() - 1.0).abs() < 1e-5, "1 OPEN holds channel 1 wide open");
+        let mut peak = 0.0f32;
+        for _ in 0..10 {
+            processor.process(&mut buffer, 2, 48000.0);
+            peak = peak.max(buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs())));
+        }
+        assert!(peak > 0.1, "a held OPEN throw lets the input through, got peak {peak}");
+
+        app.tick(&Input::default());
+        assert!(app.params.channels[0].open.get().abs() < 1e-5, "released: back to the knob's closed gate");
+        app.tick(&pad(7));
+        assert_eq!(app.params.channels[1].material.load(Ordering::Relaxed), 0, "2 HARD throws a stepped control");
+        app.tick(&Input::default());
+        assert_eq!(app.params.channels[1].material.load(Ordering::Relaxed), 1, "and puts it back exactly");
     }
 }

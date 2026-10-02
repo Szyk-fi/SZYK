@@ -1,6 +1,7 @@
 //! Independent mono AudioBus filter. UI coordinates map to normalized parameters;
 //! DSP uses a smoothed topology-preserving state-variable filter.
 use crate::{
+    app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw},
     app::{App, Input, SlintExtra, VectorFilterExtra},
     audio::AudioProcessor,
     audio_bus::{cycle_source, AudioBus, NO_SOURCE},
@@ -8,13 +9,63 @@ use crate::{
     mixer_bus::MixerBus,
     modbus::ModBus,
     paramlist::ParamList,
+    spleen_fonts::SPLEEN_6X12,
     util::AtomicF32,
 };
+use embedded_graphics::{mono_font::MonoTextStyle, pixelcolor::Rgb565, prelude::*, text::Text};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 const MODES: [&str; 3] = ["Low pass", "Band pass", "High pass"];
+/// X (cutoff), Y (resonance), Z (drive) on a fresh start -- shared by
+/// the constructor and the play view's reset.
+const DEFAULT_XYZ: [f32; 3] = [0.65, 0.2, 0.1];
+
+/// The play view's controls: the cube's three axes first, then wet,
+/// the filter type and the on/bypass switch. Source stays in the menu.
+const CONTROLS: [&str; 6] = ["Cutoff", "Resonance", "Drive", "Wet", "Filter type", "Filter on"];
+const C_CUTOFF: usize = 0;
+const C_RESONANCE: usize = 1;
+const C_DRIVE: usize = 2;
+const C_WET: usize = 3;
+const C_MODE: usize = 4;
+const C_ENABLED: usize = 5;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "vector_filter",
+        // The filter has never read the pads, so there's no native layer
+        // to keep: an effect opens on Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_CUTOFF, C_RESONANCE], [C_DRIVE, C_WET]],
+        browse: Some(C_MODE),
+        // The stick *is* the cube's X/Y face: cutoff across, resonance up.
+        // The left hand pushes Z (drive into the filter); the right
+        // sweeps the cutoff open, theremin-style, on top of the stick.
+        routes: Routes { stick_x: Some(C_CUTOFF), stick_y: Some(C_RESONANCE), hand_l: Some(C_DRIVE), hand_r: Some(C_CUTOFF) },
+        throws: vec![
+            Throw { control: C_CUTOFF, to: 1.0, label: "OPEN" },
+            Throw { control: C_CUTOFF, to: 0.0, label: "CLOSE" },
+            Throw { control: C_RESONANCE, to: 1.0, label: "SCREAM" },
+            Throw { control: C_DRIVE, to: 1.0, label: "DRIVE" },
+            Throw { control: C_WET, to: 0.0, label: "DRY" },
+            Throw { control: C_MODE, to: 0.5, label: "BAND" },
+            Throw { control: C_MODE, to: 1.0, label: "HIGH" },
+            Throw { control: C_ENABLED, to: 0.0, label: "BYPASS" },
+        ],
+        midi_to_pads: false,
+        own_expression: false,
+    }
+}
+
+// --- Vector Filter's own palette for the embedded-graphics play column:
+// phosphor cyan on deep navy, a vector-display look. ---
+const VF_BG: Rgb565 = Rgb565::new(1, 4, 8);
+const VF_INK: Rgb565 = Rgb565::new(24, 56, 30);
+const VF_ACCENT: Rgb565 = Rgb565::new(5, 50, 28);
+const VF_DIM: Rgb565 = Rgb565::new(9, 24, 17);
+const VF_FAINT: Rgb565 = Rgb565::new(3, 9, 13);
 struct Shared {
     xyz: [AtomicF32; 3],
     cv: [Arc<AtomicF32>; 3],
@@ -34,6 +85,8 @@ pub struct VectorFilterApp {
     list: ParamList,
     nav: Arc<AtomicF32>,
     taken: bool,
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
 }
 impl VectorFilterApp {
     pub fn new(
@@ -47,11 +100,7 @@ impl VectorFilterApp {
         let (mix, ext) = mixer.register("Vector Filter", &mods);
         Self {
             p: Arc::new(Shared {
-                xyz: [
-                    AtomicF32::new(0.65),
-                    AtomicF32::new(0.2),
-                    AtomicF32::new(0.1),
-                ],
+                xyz: DEFAULT_XYZ.map(AtomicF32::new),
                 cv: [
                     mods.register("Vector Filter: Cutoff"),
                     mods.register("Vector Filter: Resonance"),
@@ -71,6 +120,7 @@ impl VectorFilterApp {
             list: ParamList::new(),
             nav,
             taken: false,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
     fn xyz(&self) -> [f32; 3] {
@@ -107,15 +157,13 @@ impl VectorFilterApp {
             ),
         ]
     }
-}
-impl App for VectorFilterApp {
-    fn tick(&mut self, i: &Input) {
-        self.list.navigate_input(i, 6, self.nav.get() as i32);
-        let d = i.knob2;
+    /// One menu row's knob-2 edit; the play view reuses it so both
+    /// move each control in the same steps.
+    fn edit_row(&mut self, row: usize, d: i32) {
         if d == 0 {
             return;
         }
-        match self.list.selected {
+        match row {
             0 => {
                 let mut s = cycle_source(
                     self.p.source.load(Ordering::Relaxed),
@@ -128,7 +176,7 @@ impl App for VectorFilterApp {
                 self.p.source.store(s, Ordering::Relaxed);
             }
             1..=3 => {
-                let a = &self.p.xyz[self.list.selected - 1];
+                let a = &self.p.xyz[row - 1];
                 a.set((a.get() + d as f32 * 0.02).clamp(0., 1.));
             }
             4 => self
@@ -141,7 +189,115 @@ impl App for VectorFilterApp {
             ),
         }
     }
+    fn knob(&self, i: usize) -> Knob<'_> {
+        match i {
+            C_CUTOFF | C_RESONANCE | C_DRIVE => Knob::F(&self.p.xyz[i], 0., 1.),
+            C_WET => Knob::F(&self.p.wet, 0., 1.),
+            C_ENABLED => Knob::B(&self.p.enabled),
+            // The mode is an AtomicUsize, which Knob has no variant for;
+            // see kit_norm / kit_set_norm.
+            _ => Knob::None,
+        }
+    }
+}
+impl PlayHost for VectorFilterApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % CONTROLS.len()].to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        if i == C_ENABLED {
+            (if self.p.enabled.load(Ordering::Relaxed) { "on" } else { "bypassed" }).into()
+        } else {
+            // rows() is Source then the same order as CONTROLS; it shows
+            // knob + CV, i.e. what is actually heard.
+            self.rows().get(i + 1).map(|r| r.1.clone()).unwrap_or_default()
+        }
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        if i == C_MODE {
+            Some((self.p.mode.load(Ordering::Relaxed) % MODES.len()) as f32 / (MODES.len() - 1) as f32)
+        } else {
+            self.knob(i).norm()
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        i == C_MODE || self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        match i {
+            // The menu has no row for the switch; F3 toggles it there.
+            C_ENABLED if delta != 0 => self.p.enabled.store(delta > 0, Ordering::Relaxed),
+            C_ENABLED => {}
+            _ => self.edit_row(i + 1, delta),
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        match i {
+            C_CUTOFF | C_RESONANCE | C_DRIVE => self.p.xyz[i].set(DEFAULT_XYZ[i]),
+            C_WET => self.p.wet.set(1.),
+            C_MODE => self.p.mode.store(0, Ordering::Relaxed),
+            C_ENABLED => self.p.enabled.store(true, Ordering::Relaxed),
+            _ => {}
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        if i == C_MODE {
+            let idx = (v.clamp(0., 1.) * (MODES.len() - 1) as f32).round() as usize;
+            self.p.mode.store(idx, Ordering::Relaxed);
+        } else {
+            self.knob(i).set(v);
+        }
+    }
+    fn kit_line(&self) -> String {
+        if self.p.source.load(Ordering::Relaxed) == NO_SOURCE {
+            "R1: pick a Source".into()
+        } else if !self.p.enabled.load(Ordering::Relaxed) {
+            "Bypassed".into()
+        } else {
+            let p = self.xyz();
+            format!("{:.0} Hz  Q {:.1}", 40. * 400f32.powf(p[0]), 0.5 + 7.5 * p[1])
+        }
+    }
+}
+impl App for VectorFilterApp {
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+    fn tick(&mut self, i: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu
+        // they pass straight through to the list.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, i);
+        self.kit = play;
+        let i = &step.input;
+        self.list.navigate_input(i, 6, self.nav.get() as i32);
+        self.edit_row(self.list.selected, i.knob2);
+    }
     fn draw(&mut self, f: &mut FrameBuffer) {
+        if !self.kit.menu {
+            if let Some(col) = self.play_column() {
+                let pal = kit::draw::Palette { bg: VF_BG, ink: VF_INK, accent: VF_ACCENT, dim: VF_DIM, faint: VF_FAINT };
+                kit::draw::column(f, &col, 16, 40, 350, 285, pal);
+                let dim = MonoTextStyle::new(&SPLEEN_6X12, VF_DIM);
+                Text::new("knobs: cutoff / reso   D-pad: type   F2: pads   F3: bypass   R1: menu", Point::new(16, 340), dim).draw(f).ok();
+            }
+            return;
+        }
         let r = self
             .rows()
             .into_iter()
@@ -310,6 +466,8 @@ mod tests {
     #[test]
     fn cutoff_changes_audio_and_extreme_controls_stay_finite() {
         let (mut a, input) = fixture();
+        // Drives the menu's Source row with knob 2.
+        a.kit.menu = true;
         a.tick(&Input {
             knob2: 1,
             ..Default::default()
@@ -338,5 +496,39 @@ mod tests {
             p.process(&mut out, 2, 48000.);
             assert!(out.iter().all(|v| v.is_finite() && v.abs() <= 1.));
         }
+    }
+    fn pad(rank: usize) -> Input {
+        Input { grid: std::array::from_fn(|k| k == kit::rank_pad(rank)), ..Default::default() }
+    }
+    #[test]
+    fn opens_playable_knob1_is_cutoff_and_the_stick_is_the_xy_face() {
+        let (mut a, _) = fixture();
+        assert!(a.play_column().is_some(), "play view first");
+        a.tick(&Input { knob1: 3, ..Default::default() });
+        assert!((a.p.xyz[0].get() - 0.71).abs() < 1e-5, "knob 1 is cutoff, in the menu's 2% steps");
+        a.tick(&Input { stick: [-1., 1.], ..Default::default() });
+        assert!((a.p.xyz[0].get() - 0.21).abs() < 1e-5 && (a.p.xyz[1].get() - 0.7).abs() < 1e-5, "stick X/Y push cutoff/resonance");
+        a.tick(&Input::default());
+        assert!((a.p.xyz[0].get() - 0.71).abs() < 1e-5 && (a.p.xyz[1].get() - 0.2).abs() < 1e-5, "and let go back to the knobs");
+        a.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(a.p.mode.load(Ordering::Relaxed), 1, "D-pad up steps the filter type");
+        a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(a.play_column().is_none(), "R1 opens the full menu");
+    }
+    #[test]
+    fn throws_hold_and_put_back_exactly() {
+        let (mut a, _) = fixture();
+        a.tick(&pad(2));
+        assert_eq!(a.p.xyz[1].get(), 1., "SCREAM");
+        a.tick(&Input::default());
+        assert!((a.p.xyz[1].get() - 0.2).abs() < 1e-5);
+        a.tick(&pad(6));
+        assert_eq!(a.p.mode.load(Ordering::Relaxed), 2, "HIGH holds high pass");
+        a.tick(&Input::default());
+        assert_eq!(a.p.mode.load(Ordering::Relaxed), 0);
+        a.tick(&pad(7));
+        assert!(!a.p.enabled.load(Ordering::Relaxed), "BYPASS");
+        a.tick(&Input::default());
+        assert!(a.p.enabled.load(Ordering::Relaxed));
     }
 }

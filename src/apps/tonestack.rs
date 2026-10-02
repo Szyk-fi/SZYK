@@ -43,6 +43,7 @@
 //! reordering (the chain's stage order is fixed, matching a typical
 //! amp-in-a-box pedalboard rather than a fully modular rack).
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -505,6 +506,72 @@ pub struct TonestackApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: gain and the mid
+/// knob (the scoop-vs-honk move that defines an amp tone) on the first
+/// pair, then the rest of the tone stack, the wet effects, and the
+/// voicing/cab/mod choices on the upper pads. Input Gain and Amp Level
+/// are trim stages you set once, so they stay in the menu with Source.
+const CONTROLS: [(Selection, &str); 16] = [
+    (Selection::Drive, "Drive"),
+    (Selection::Mid, "Mid"),
+    (Selection::Bass, "Bass"),
+    (Selection::Treble, "Treble"),
+    (Selection::DelayMix, "Delay Mix"),
+    (Selection::ReverbMix, "Reverb Mix"),
+    (Selection::ModDepth, "Mod Depth"),
+    (Selection::ModRate, "Mod Rate"),
+    (Selection::DelayTime, "Delay Time"),
+    (Selection::DelayFeedback, "Delay Fb"),
+    (Selection::ReverbSize, "Rev Size"),
+    (Selection::Voicing, "Voicing"),
+    (Selection::CabType, "Cab"),
+    (Selection::ModType, "Mod Type"),
+    (Selection::GateThreshold, "Gate"),
+    (Selection::OutputVolume, "Volume"),
+];
+const C_DRIVE: usize = 0;
+const C_MID: usize = 1;
+const C_DELAY_MIX: usize = 4;
+const C_REVERB_MIX: usize = 5;
+const C_DELAY_FB: usize = 9;
+const C_VOICING: usize = 11;
+const C_MOD_TYPE: usize = 13;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "tonestack",
+        // Tonestack has never used the pads, so there's no native layer
+        // to keep: an effect opens on Throws -- a pedalboard of
+        // momentary footswitches.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_DRIVE, C_MID], [2, 3], [C_DELAY_MIX, C_REVERB_MIX], [6, 7]],
+        // The amp voicing is the channel switch on a real amp: the
+        // stepped control a player flips most.
+        browse: Some(C_VOICING),
+        // Stick: gain on X, mids on Y -- pushing up-and-right is a
+        // lead boost, down-and-left a scooped rhythm tone. Hands swell
+        // the delay and the reverb in, like an expression pedal on each.
+        routes: Routes { stick_x: Some(C_DRIVE), stick_y: Some(C_MID), hand_l: Some(C_DELAY_MIX), hand_r: Some(C_REVERB_MIX) },
+        throws: vec![
+            Throw { control: C_DRIVE, to: 1.0, label: "BOOST" },
+            Throw { control: C_DRIVE, to: 0.0, label: "CLEAN" },
+            Throw { control: C_MID, to: 0.0, label: "SCOOP" },
+            Throw { control: C_VOICING, to: 1.0, label: "FUZZ" },
+            Throw { control: C_DELAY_MIX, to: 1.0, label: "ECHO" },
+            // Delay feedback's knob reaches 100%, but `DelayFx` caps it
+            // at 95%, so this swells into near-endless repeats without
+            // running away.
+            Throw { control: C_DELAY_FB, to: 1.0, label: "REPEAT" },
+            Throw { control: C_REVERB_MIX, to: 1.0, label: "HALL" },
+            Throw { control: C_MOD_TYPE, to: 1.0, label: "PHASER" },
+        ],
+        midi_to_pads: false,
+        own_expression: false,
+    }
 }
 
 // --- Tonestack's own palette: flat solid colors, not a
@@ -514,6 +581,8 @@ const TONESTACK_BG: Rgb565 = Rgb565::new(23, 44, 19);
 const TONESTACK_TITLE: Rgb565 = Rgb565::new(7, 11, 4);
 const TONESTACK_ACCENT: Rgb565 = Rgb565::new(14, 15, 2);
 const TONESTACK_DIM: Rgb565 = Rgb565::new(9, 15, 5);
+/// A shade darker than the cream panel, for unlit pads and dial tracks.
+const TONESTACK_FAINT: Rgb565 = Rgb565::new(19, 37, 15);
 
 impl TonestackApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -524,6 +593,7 @@ impl TonestackApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -754,9 +824,93 @@ impl TonestackApp {
     }
 }
 
+impl TonestackApp {
+    /// Ranges match what `edit` clamps each control to.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Selection::Drive => Knob::F(&p.drive, 0.0, 1.0),
+            Selection::Mid => Knob::F(&p.mid, 0.0, 1.0),
+            Selection::Bass => Knob::F(&p.bass, 0.0, 1.0),
+            Selection::Treble => Knob::F(&p.treble, 0.0, 1.0),
+            Selection::DelayMix => Knob::F(&p.delay_mix, 0.0, 1.0),
+            Selection::ReverbMix => Knob::F(&p.reverb_mix, 0.0, 1.0),
+            Selection::ModDepth => Knob::F(&p.mod_depth, 0.0, 1.0),
+            Selection::ModRate => Knob::F(&p.mod_rate, 0.0, 1.0),
+            Selection::DelayTime => Knob::F(&p.delay_time, 0.0, 1.0),
+            Selection::DelayFeedback => Knob::F(&p.delay_feedback, 0.0, 1.0),
+            Selection::ReverbSize => Knob::F(&p.reverb_size, 0.0, 1.0),
+            Selection::Voicing => Knob::U(&p.voicing, VOICING_NAMES.len() as u32),
+            Selection::CabType => Knob::U(&p.cab_type, CAB_NAMES.len() as u32),
+            Selection::ModType => Knob::U(&p.mod_type, MOD_NAMES.len() as u32),
+            Selection::GateThreshold => Knob::F(&p.gate_threshold, 0.0, 1.0),
+            Selection::OutputVolume => Knob::F(&p.output_volume, 0.0, 1.5),
+            Selection::InputGain => Knob::F(&p.input_gain, 0.0, 2.0),
+            Selection::AmpLevel => Knob::F(&p.amp_level, 0.0, 2.0),
+            Selection::Source => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for TonestackApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % CONTROLS.len()].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % CONTROLS.len()].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % CONTROLS.len()].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % CONTROLS.len()].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    fn kit_line(&self) -> String {
+        // An amp with nothing plugged in is silent whatever the knobs do.
+        if self.params.source.load(Ordering::Relaxed) == crate::audio_bus::NO_SOURCE {
+            "R1: pick a Source".into()
+        } else if self.params.gate_closed.load(Ordering::Relaxed) {
+            format!("{}  gated", self.group_summary(1))
+        } else {
+            self.group_summary(1)
+        }
+    }
+}
+
 impl App for TonestackApp {
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu
+        // they pass straight through to the list below.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -827,9 +981,15 @@ impl App for TonestackApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, TONESTACK_BG, TONESTACK_DIM, TONESTACK_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, TONESTACK_BG, TONESTACK_DIM, TONESTACK_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: TONESTACK_BG, ink: TONESTACK_TITLE, accent: TONESTACK_ACCENT, dim: TONESTACK_DIM, faint: TONESTACK_FAINT };
+            kit::draw::column(fb, &col, 16, 40, 350, 285, pal);
+        }
 
         let hint = match rows.get(self.list.selected) {
+            _ if !self.kit.menu => "knobs: drive / mid   D-pad: voicing   F2: pads   R1: menu".to_string(),
             Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
             None => String::new(),
@@ -1185,5 +1345,35 @@ mod tests {
             }
             proc.process(&mut buffer, 2, 48000.0);
         }
+    }
+
+    fn pad(rank: usize) -> Input {
+        Input { grid: std::array::from_fn(|k| k == kit::rank_pad(rank)), ..Default::default() }
+    }
+
+    #[test]
+    fn opens_playable_knob1_turns_drive_and_r1_opens_the_menu() {
+        let (mut app, _bus) = new_app_and_bus();
+        assert!(app.play_column().is_some(), "play view first");
+        let drive = app.params.drive.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.drive.get() > drive, "knob 1 is Drive on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.voicing.load(Ordering::Relaxed), 1, "D-pad up steps the voicing (Clean -> Crunch)");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn throws_stomp_boost_and_fuzz_and_spring_back() {
+        let (mut app, _bus) = new_app_and_bus();
+        app.tick(&pad(0));
+        assert!((app.params.drive.get() - 1.0).abs() < 1e-5, "BOOST holds drive at full");
+        app.tick(&Input::default());
+        assert!((app.params.drive.get() - 0.4).abs() < 1e-5, "released: back to the knob's 40%");
+        app.tick(&pad(3));
+        assert_eq!(app.params.voicing.load(Ordering::Relaxed), 3, "FUZZ holds the Fuzz voicing");
+        app.tick(&Input::default());
+        assert_eq!(app.params.voicing.load(Ordering::Relaxed), 0, "and puts Clean back exactly");
     }
 }

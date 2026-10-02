@@ -7,8 +7,12 @@ export component ForgePanel inherits Rectangle {
  in property <string> clip-name;in property <string> status;in property <string> mode;in property <string> source;
  in property <int> chunk;in property <bool> busy;in property <bool> recording;in property <float> duration;
  callback action(float,float);
+ in property <bool> play;
  HorizontalLayout {spacing:18px;
-  ParamListColumn {width:220px;row-names:root.names;row-values:root.values;selected-row:root.selected;more-above:root.more-above;more-below:root.more-below;paper:root.paper;ink:root.ink;accent:root.accent;instrument-style:true;}
+ // The shared play column (play_kit.rs) is laid over this spot on the
+ // play view, so the list steps aside rather than being drawn under it.
+  if !root.play : ParamListColumn {width:220px;row-names:root.names;row-values:root.values;selected-row:root.selected;more-above:root.more-above;more-below:root.more-below;paper:root.paper;ink:root.ink;accent:root.accent;instrument-style:true;}
+  if root.play : Rectangle {width:220px;}
   VerticalLayout {spacing:7px;padding-top:4px;padding-bottom:8px;
    HorizontalLayout {height:18px;Text {text:"SOUND → INSTRUMENT";color:root.accent;font-size:10px;font-weight:600;}Text {text:root.mode;color:root.ink;font-size:11px;horizontal-alignment:right;}}
    Rectangle {height:90px;border-radius:6px;background:root.ink.with-alpha(0.035);clip:true;

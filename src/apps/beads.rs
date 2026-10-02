@@ -36,6 +36,7 @@
 //! instead) -- that needs a direct coupling into Plaits' wavetable
 //! data this sim doesn't have a path for yet.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -189,6 +190,62 @@ pub struct BeadsApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: where in the buffer
+/// and how long the grains are, then how many and at what pitch, their
+/// envelope and the feedback loop, the mix stage, the four randomizers,
+/// and the stepped modes on the top pads. The Source row stays menu-only.
+const CONTROLS: [(Selection, &str); 15] = [
+    (Selection::Time, "Time"),
+    (Selection::Size, "Size"),
+    (Selection::Density, "Density"),
+    (Selection::Pitch, "Pitch"),
+    (Selection::Shape, "Shape"),
+    (Selection::Feedback, "Feedback"),
+    (Selection::DryWet, "Dry/Wet"),
+    (Selection::Reverb, "Reverb"),
+    (Selection::TimeRandom, "Time Rnd"),
+    (Selection::SizeRandom, "Size Rnd"),
+    (Selection::PitchRandom, "Pitch Rnd"),
+    (Selection::ShapeRandom, "Shape Rnd"),
+    (Selection::Freeze, "Freeze"),
+    (Selection::GrainMode, "Grain Mode"),
+    (Selection::Quality, "Quality"),
+];
+const C_GRAIN_MODE: usize = 13;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "beads",
+        // The pads were (and on SEED still are) the real module's SEED
+        // button: a gate in Gated mode, clock ticks in Clocked mode.
+        layers: vec![Layer::Native(0, "SEED"), Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // Grain mode decides what the SEED pads do at all, so it's the
+        // choice a player flips most.
+        browse: Some(C_GRAIN_MODE),
+        // Stick: scrub through the buffer on X, grain size on Y (pushed
+        // to the top it falls into delay mode). Hands: density, and
+        // reverb to wash the cloud out.
+        routes: Routes { stick_x: Some(0), stick_y: Some(1), hand_l: Some(2), hand_r: Some(7) },
+        throws: vec![
+            Throw { control: 12, to: 1.0, label: "FREEZE" },
+            // Size fully clockwise = "Beads as a delay".
+            Throw { control: 1, to: 1.0, label: "DELAY" },
+            Throw { control: 8, to: 1.0, label: "SCATTER" },
+            Throw { control: 10, to: 1.0, label: "SPRAY" },
+            Throw { control: 5, to: 1.0, label: "FEEDBACK" },
+            // Pitch 0..1 spans -24..+24 st, so 0.75 / 0.25 are +-12.
+            Throw { control: 3, to: 0.75, label: "OCT UP" },
+            Throw { control: 3, to: 0.25, label: "OCT DN" },
+            Throw { control: 6, to: 0.0, label: "DRY" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Beads's own palette: flat solid colors, not a
@@ -198,6 +255,7 @@ const BEADS_BG: Rgb565 = Rgb565::new(4, 7, 2);
 const BEADS_TITLE: Rgb565 = Rgb565::new(29, 54, 23);
 const BEADS_ACCENT: Rgb565 = Rgb565::new(26, 34, 9);
 const BEADS_DIM: Rgb565 = Rgb565::new(17, 28, 11);
+const BEADS_FAINT: Rgb565 = Rgb565::new(8, 13, 5);
 
 impl BeadsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -208,6 +266,7 @@ impl BeadsApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -432,6 +491,85 @@ impl BeadsApp {
     }
 }
 
+impl BeadsApp {
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Selection::Time => Knob::F(&p.time, 0.0, 1.0),
+            Selection::Size => Knob::F(&p.size, 0.0, 1.0),
+            Selection::Density => Knob::F(&p.density, 0.0, 1.0),
+            Selection::Pitch => Knob::F(&p.pitch, 0.0, 1.0),
+            Selection::Shape => Knob::F(&p.shape, 0.0, 1.0),
+            Selection::Feedback => Knob::F(&p.feedback, 0.0, 0.97),
+            Selection::DryWet => Knob::F(&p.dry_wet, 0.0, 1.0),
+            Selection::Reverb => Knob::F(&p.reverb, 0.0, 1.0),
+            Selection::TimeRandom => Knob::F(&p.time_random, 0.0, 1.0),
+            Selection::SizeRandom => Knob::F(&p.size_random, 0.0, 1.0),
+            Selection::PitchRandom => Knob::F(&p.pitch_random, 0.0, 1.0),
+            Selection::ShapeRandom => Knob::F(&p.shape_random, 0.0, 1.0),
+            Selection::Freeze => Knob::B(&p.freeze),
+            Selection::GrainMode => Knob::U(&p.grain_mode, 3),
+            Selection::Quality => Knob::U(&p.quality, 4),
+            Selection::Source => Knob::None,
+        }
+    }
+
+    fn grain_mode(&self) -> u32 {
+        self.params.grain_mode.load(Ordering::Relaxed) % 3
+    }
+}
+
+impl PlayHost for BeadsApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % CONTROLS.len()].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % CONTROLS.len()].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % CONTROLS.len()].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % CONTROLS.len()].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    /// Every pad is the same SEED gate; the label says what a press means
+    /// in the current grain mode (nothing, in Latched).
+    fn kit_pad_label(&self, _layer: u8, _pad: usize) -> String {
+        match self.grain_mode() {
+            1 => "GATE".into(),
+            2 => "CLOCK".into(),
+            _ => String::new(),
+        }
+    }
+    fn kit_pad_color(&self, _layer: u8, _pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if held {
+            PadColor::Green
+        } else if self.grain_mode() != 0 {
+            PadColor::Blue
+        } else {
+            PadColor::Off
+        }
+    }
+    fn kit_line(&self) -> String {
+        let grains = self.params.grain_dots.lock().unwrap().len();
+        let frozen = if self.params.freeze.load(Ordering::Relaxed) { "  FROZEN" } else { "" };
+        format!("{} {grains} grains{frozen}", GRAIN_MODE_NAMES[self.grain_mode() as usize])
+    }
+}
+
 fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     let next = (value.get() + accelerate(delta) * sensitivity * 0.01).clamp(min, max);
     value.set(next);
@@ -440,8 +578,28 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 impl App for BeadsApp {
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE || self.params.freeze.load(Ordering::Relaxed) }
     fn supports_pad_lock(&self) -> bool { true }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. The pads reach SEED only on that layer
+        // (on the kit's layers they arrive cleared, so the gate drops).
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -506,8 +664,13 @@ impl App for BeadsApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, BEADS_BG, BEADS_DIM, BEADS_ACCENT);
-        let _ = dim;
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, BEADS_BG, BEADS_DIM, BEADS_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: BEADS_BG, ink: BEADS_TITLE, accent: BEADS_ACCENT, dim: BEADS_DIM, faint: BEADS_FAINT };
+            kit::draw::column(fb, &col, 16, 44, 380, 280, pal);
+            Text::new("knobs: time/size   D-pad: grain mode   F2: pads (seed/throws)   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
+        }
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1061,5 +1224,39 @@ mod tests {
         assert!(buffer.iter().all(|s| s.is_finite()));
         let peak = buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
         assert!(peak <= 1.0001, "expected soft-clipped output, got peak {peak}");
+    }
+
+    #[test]
+    fn opens_playable_knob1_scrubs_time_and_seed_pads_still_gate() {
+        let (mut app, _bus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let time = app.params.time.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.time.get() > time, "knob 1 is Time on the play view");
+        app.tick(&Input { grid: std::array::from_fn(|i| i == 5), ..Default::default() });
+        assert!(app.params.held.lock().unwrap()[5], "SEED layer: a held pad is the gate, as before");
+        app.tick(&Input::default());
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.grain_mode.load(Ordering::Relaxed), 1, "D-pad up = next grain mode (Gated)");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn throws_freeze_and_spring_back_without_touching_the_seed_gate() {
+        let (mut app, _bus) = new_app();
+        app.toggle_grid_mode();
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        let freeze = kit::rank_pad(0);
+        app.tick(&Input { grid: std::array::from_fn(|i| i == freeze), ..Default::default() });
+        assert!(app.params.freeze.load(Ordering::Relaxed), "FREEZE held");
+        assert!(!app.params.held.lock().unwrap().iter().any(|h| *h), "kit layers never open the SEED gate");
+        app.tick(&Input::default());
+        assert!(!app.params.freeze.load(Ordering::Relaxed), "released, capture runs again");
+        let delay = kit::rank_pad(1);
+        app.tick(&Input { grid: std::array::from_fn(|i| i == delay), ..Default::default() });
+        assert!(app.output_visual().is_delay_mode, "DELAY throws Size fully clockwise");
+        app.tick(&Input::default());
+        assert!((app.params.size.get() - 0.3).abs() < 1e-5, "and back to the knob's size");
     }
 }

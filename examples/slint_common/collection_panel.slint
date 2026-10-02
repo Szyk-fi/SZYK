@@ -25,10 +25,14 @@ export component CollectionPanel inherits Rectangle {
     in property <bool> frozen;
     in property <bool> alternate;
     callback pad(int,bool); callback xy(float,float);
+    in property <bool> play;
     HorizontalLayout {
         spacing: 18px;
-        ParamListColumn { width: 220px; row-names: root.names; row-values: root.values; selected-row: root.selected;
+        // The shared play column (play_kit.rs) is laid over this spot on
+        // the play view, so the list steps aside rather than being drawn under it.
+        if !root.play : ParamListColumn { width: 220px; row-names: root.names; row-values: root.values; selected-row: root.selected;
             more-above: root.more-above; more-below: root.more-below; accent: root.accent; ink: root.ink; paper: root.paper; instrument-style: true; }
+        if root.play : Rectangle { width: 220px; }
         VerticalLayout {
             spacing: 7px; padding-top: 4px; padding-bottom: 10px;
             Label { text: root.kind==14 ? "LIVE ANALYSIS / MONITOR OFF" : root.recording ? "● RECORDING / BOUNDED TAKE" : root.playing ? "● RUNNING / LIVE ENGINE" : "○ READY / LIVE ENGINE"; ink: root.accent; height: 14px; }

@@ -62,6 +62,7 @@
 //! limitation Beads and Turing Machine document) -- Rate stays an
 //! internal free-running clock instead.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
@@ -289,6 +290,70 @@ pub struct QueenOfPentaclesApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: how chaotic and how
+/// fast the map runs, then how its value is slewed and turned into a
+/// gate, then the output levels and the map/mode choices on the upper
+/// pads. The last is CV Target: no position (it indexes a modbus list
+/// that changes as apps register), but grabbing it on the Controls
+/// layer lets knob 2 patch the CV without opening the menu.
+const CONTROLS: [Selection; 16] = [
+    Selection::Chaos,
+    Selection::Rate,
+    Selection::Smooth,
+    Selection::Threshold,
+    Selection::Seed,
+    Selection::Hysteresis,
+    Selection::GateWidth,
+    Selection::OutputLevel(0),
+    Selection::Map,
+    Selection::Freeze,
+    Selection::GateMode,
+    Selection::Range,
+    Selection::OutputLevel(1),
+    Selection::OutputLevel(2),
+    Selection::OutputLevel(3),
+    Selection::OutputTarget(0),
+];
+const C_CHAOS: usize = 0;
+const C_RATE: usize = 1;
+const C_SMOOTH: usize = 2;
+const C_THRESHOLD: usize = 3;
+const C_SEED: usize = 4;
+const C_MAP: usize = 8;
+const C_FREEZE: usize = 9;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "queen_of_pentacles",
+        // The pads were never used here, so there's no native layer to
+        // keep. As a modulation source, Throws suits it best: hold a pad
+        // to freeze the map or slam it into chaos, let go to return.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_CHAOS, C_RATE], [C_SMOOTH, C_THRESHOLD], [C_SEED, 5], [6, 7]],
+        // Each map has its own route to chaos; flipping between them is
+        // the biggest single change.
+        browse: Some(C_MAP),
+        // Stick: chaos on X (calm cycle -> full chaos), rate on Y. Hands:
+        // slew (steppy -> gliding CV) and the gate threshold (how often
+        // the gate opens).
+        routes: Routes { stick_x: Some(C_CHAOS), stick_y: Some(C_RATE), hand_l: Some(C_SMOOTH), hand_r: Some(C_THRESHOLD) },
+        throws: vec![
+            Throw { control: C_FREEZE, to: 1.0, label: "FREEZE" },
+            Throw { control: C_CHAOS, to: 1.0, label: "CHAOS" },
+            Throw { control: C_CHAOS, to: 0.0, label: "CALM" },
+            Throw { control: C_RATE, to: 1.0, label: "FAST" },
+            Throw { control: C_RATE, to: 0.0, label: "SLOW" },
+            Throw { control: C_SMOOTH, to: 1.0, label: "GLIDE" },
+            Throw { control: C_THRESHOLD, to: 0.0, label: "THR LO" },
+            Throw { control: C_THRESHOLD, to: 1.0, label: "THR HI" },
+        ],
+        midi_to_pads: false,
+        own_expression: false,
+    }
 }
 
 // --- Queen of Pentacles' own palette: deep emerald and old gold, not
@@ -304,7 +369,15 @@ const QOP_SCOPE_OUTLINE: Rgb565 = Rgb565::new(4, 10, 5);
 
 impl QueenOfPentaclesApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>) -> Self {
-        Self { params: Arc::new(Params::new()), modbus, sensitivity, nav_speed, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
+        Self {
+            params: Arc::new(Params::new()),
+            modbus,
+            sensitivity,
+            nav_speed,
+            list: ParamList::new(),
+            expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+        }
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
@@ -540,9 +613,89 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     value.set(next);
 }
 
+impl QueenOfPentaclesApp {
+    /// Ranges match `edit()`'s clamps exactly.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % 16] {
+            Selection::Rate => Knob::F(&p.rate_hz, MIN_RATE_HZ, MAX_RATE_HZ),
+            Selection::Map => Knob::U(&p.map, 3),
+            Selection::Chaos => Knob::F(&p.chaos, 0.0, 1.0),
+            Selection::Seed => Knob::F(&p.seed, SEED_EPSILON, 1.0 - SEED_EPSILON),
+            Selection::Freeze => Knob::B(&p.freeze),
+            Selection::Range => Knob::B(&p.bipolar),
+            Selection::Smooth => Knob::F(&p.smooth, 0.0, 1.0),
+            Selection::Threshold => Knob::F(&p.threshold, 0.0, 1.0),
+            Selection::Hysteresis => Knob::F(&p.hysteresis, 0.0, 0.3),
+            Selection::GateMode => Knob::U(&p.gate_mode, 3),
+            Selection::GateWidth => Knob::F(&p.gate_width, 0.0, 1.0),
+            Selection::OutputLevel(c) => Knob::F(&p.outputs[c].level, 0.0, 1.0),
+            Selection::OutputTarget(_) => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for QueenOfPentaclesApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        self.leaf_name(CONTROLS[i % 16])
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % 16])
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % 16], delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % 16]);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+        // Same contract as `edit()`: a new Seed only means anything once
+        // the audio thread re-injects it.
+        if i == C_SEED {
+            self.params.reseed_pending.store(true, Ordering::Relaxed);
+        }
+    }
+    fn kit_line(&self) -> String {
+        let frozen = if self.params.freeze.load(Ordering::Relaxed) { " FROZEN" } else { "" };
+        let gate = if self.params.gate.load(Ordering::Relaxed) { "GATE" } else { "gate" };
+        format!("CV {:.2} {gate}{frozen}", self.params.cv.get())
+    }
+}
+
 impl App for QueenOfPentaclesApp {
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn needs_background_audio(&self) -> bool { self.params.outputs.iter().any(|o| o.target.load(Ordering::Relaxed) > 0) }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -611,7 +764,14 @@ impl App for QueenOfPentaclesApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, QOP_BG, QOP_DIM, QOP_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, QOP_BG, QOP_DIM, QOP_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Ends at x=396, clear of the scope (x=420).
+            let pal = kit::draw::Palette { bg: QOP_BG, ink: QOP_TITLE, accent: QOP_ACCENT, dim: QOP_DIM, faint: QOP_SCOPE_OUTLINE };
+            kit::draw::column(fb, &col, 16, 40, 380, 280, pal);
+            Text::new("knobs: chaos/rate   D-pad: map   F2: pads   R1: menu", Point::new(16, 337), dim).draw(fb).ok();
+        }
 
         let (cv, gate, history) = self.live_state();
         let scope_x = 420;
@@ -1120,5 +1280,44 @@ mod tests {
         assert_eq!(visual.threshold, app.params.threshold.get());
         assert!(!visual.frozen);
         assert!(!visual.bipolar);
+    }
+
+    #[test]
+    fn opens_playable_knob1_is_chaos_and_r1_opens_the_menu() {
+        let (mut app, _modbus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let chaos = app.params.chaos.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.chaos.get() > chaos, "knob 1 is Chaos on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.map_index(), 1, "D-pad up = next map");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    /// Throws is the first pad layer: holding FREEZE really stops the
+    /// map (the processor holds its CV) and letting go releases it.
+    #[test]
+    fn freeze_throw_holds_the_map_while_the_pad_is_down() {
+        let (mut app, _modbus) = new_app();
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        app.params.chaos.set(1.0);
+        app.params.rate_hz.set(MAX_RATE_HZ);
+        let mut processor = app.audio_processor().unwrap();
+        let mut buffer = vec![0.0f32; 2000 * 2];
+        for _ in 0..5 {
+            processor.process(&mut buffer, 2, 48000.0);
+        }
+        let hold = Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0)), ..Default::default() };
+        app.tick(&hold);
+        assert!(app.params.freeze.load(Ordering::Relaxed), "FREEZE pad engages Freeze");
+        let (held, _, _) = app.live_state();
+        for _ in 0..10 {
+            processor.process(&mut buffer, 2, 48000.0);
+            app.tick(&hold);
+        }
+        assert_eq!(app.live_state().0, held, "CV holds while the pad is down");
+        app.tick(&Input::default());
+        assert!(!app.params.freeze.load(Ordering::Relaxed), "released, Freeze goes back off");
     }
 }

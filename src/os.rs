@@ -505,7 +505,7 @@ impl Os {
         let midi_on = self.active.map(|i| self.midi_armed[i]).unwrap_or(false);
         labels[1] = match active {
             Some(a) => match a.grid_mode_label() {
-                Some("STEP") => "PAD MODE".into(), Some("PAD") => "STEP MODE".into(), Some(other) => format!("PADS: {other}"),
+                Some(other) => format!("PADS: {other}"),
                 None if a.supports_pad_lock() => if midi_on { "MIDI ON".into() } else { "MIDI OFF".into() },
                 _ => String::new(),
             },

@@ -39,10 +39,14 @@ export component BloomPanel inherits Rectangle {
     in property <[float]> line-length;
     in property <[float]> line-angle;
     callback toggle-running();
+    in property <bool> play;
     background: BloomTheme.ground;
     HorizontalLayout {
         spacing: 16px;
-        VerticalLayout {
+        // The shared play column (play_kit.rs) is laid over this spot on
+        // the play view, so the list steps aside rather than being drawn under it.
+        if root.play : Rectangle { width: 244px; }
+        if !root.play : VerticalLayout {
             width: 244px;
             spacing: 4px;
             HorizontalLayout {

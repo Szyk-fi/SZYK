@@ -22,6 +22,7 @@
 //! itself be tapped, granulated, or leveled in the Mixer like
 //! anything else.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -156,6 +157,68 @@ pub struct TapeApp {
     audio_bus: Arc<AudioBus>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first. Track levels are the
+/// only continuous controls a looper has, so they take the knobs and the
+/// expression surfaces (riding loop levels live is the mixing move); the
+/// record/mute toggles and input pickers fill the Controls layer, where
+/// knob 2's press toggles a record or mute exactly as the menu row does.
+const CONTROLS: [(Selection, &str); 16] = [
+    (Selection::TrackVolume(0), "Vol 1"),
+    (Selection::TrackVolume(1), "Vol 2"),
+    (Selection::TrackVolume(2), "Vol 3"),
+    (Selection::TrackVolume(3), "Vol 4"),
+    (Selection::TrackRecord(0), "Rec 1"),
+    (Selection::TrackRecord(1), "Rec 2"),
+    (Selection::TrackRecord(2), "Rec 3"),
+    (Selection::TrackRecord(3), "Rec 4"),
+    (Selection::TrackMute(0), "Mute 1"),
+    (Selection::TrackMute(1), "Mute 2"),
+    (Selection::TrackMute(2), "Mute 3"),
+    (Selection::TrackMute(3), "Mute 4"),
+    (Selection::TrackInput(0), "In 1"),
+    (Selection::TrackInput(1), "In 2"),
+    (Selection::TrackInput(2), "In 3"),
+    (Selection::TrackInput(3), "In 4"),
+];
+const C_REC: usize = 4;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "tape",
+        // Tape never used the pads, so there is no native layer to keep.
+        // Throws come first because they are what a looper pedal's
+        // footswitches do: hold to record a take, hold to drop a track out.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        // Only the four levels are continuous; putting a record toggle on
+        // a knob would make knob 2's "reset pair" press start two takes.
+        hero: vec![[0, 1], [2, 3]],
+        // No stepped control here is "the one you flip through" (inputs
+        // are set once per take), so the D-pad is left free rather than
+        // stepping something arbitrary.
+        browse: None,
+        // Stick and hands ride the four loop levels, a live mix.
+        routes: Routes { stick_x: Some(0), stick_y: Some(1), hand_l: Some(2), hand_r: Some(3) },
+        // Held = the toggle is on, release puts it back exactly: a
+        // momentary punch-in record (the falling edge finalises the take,
+        // and the first take still sets the loop length) and a momentary
+        // drop-out mute.
+        throws: vec![
+            Throw { control: C_REC, to: 1.0, label: "REC 1" },
+            Throw { control: C_REC + 1, to: 1.0, label: "REC 2" },
+            Throw { control: C_REC + 2, to: 1.0, label: "REC 3" },
+            Throw { control: C_REC + 3, to: 1.0, label: "REC 4" },
+            Throw { control: 8, to: 1.0, label: "MUTE 1" },
+            Throw { control: 9, to: 1.0, label: "MUTE 2" },
+            Throw { control: 10, to: 1.0, label: "MUTE 3" },
+            Throw { control: 11, to: 1.0, label: "MUTE 4" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Tape's own palette: warm cream and reel-deck amber-red, not a
@@ -172,7 +235,15 @@ const TAPE_PLAYHEAD: Rgb565 = Rgb565::new(31, 28, 8);
 
 impl TapeApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
-        Self { params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)), sensitivity, nav_speed, audio_bus, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
+        Self {
+            params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)),
+            sensitivity,
+            nav_speed,
+            audio_bus,
+            list: ParamList::new(),
+            expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+        }
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
@@ -351,7 +422,102 @@ impl TapeApp {
     }
 }
 
+impl TapeApp {
+    /// Storage for the controls that have an atomic Knob can describe;
+    /// the input pickers are AtomicUsize and are handled by hand.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        match CONTROLS[i % 16].0 {
+            Selection::TrackVolume(t) => Knob::F(&self.params.tracks[t].volume, 0.0, 1.5),
+            Selection::TrackRecord(t) => Knob::B(&self.params.tracks[t].recording),
+            Selection::TrackMute(t) => Knob::B(&self.params.tracks[t].mute),
+            _ => Knob::None,
+        }
+    }
+
+    fn input_count(&self) -> usize {
+        self.audio_bus.len().max(1)
+    }
+}
+
+impl PlayHost for TapeApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % 16].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % 16].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        if let Selection::TrackInput(t) = CONTROLS[i % 16].0 {
+            let n = self.input_count();
+            let idx = self.params.tracks[t].input_source.load(Ordering::Relaxed);
+            return Some(if n > 1 { (idx.min(n - 1)) as f32 / (n - 1) as f32 } else { 0.0 });
+        }
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        i >= C_REC
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % 16].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % 16].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        if let Selection::TrackInput(t) = CONTROLS[i % 16].0 {
+            let n = self.input_count();
+            let idx = (v.clamp(0.0, 1.0) * (n - 1) as f32).round() as usize;
+            self.params.tracks[t].input_source.store(idx, Ordering::Relaxed);
+            return;
+        }
+        self.knob(i).set(v);
+    }
+    /// A moment is a mix (levels, mutes, inputs), never a record state:
+    /// recalling one must not start or cut off a take.
+    fn kit_snapshot(&self) -> serde_json::Value {
+        serde_json::Value::Array(
+            (0..CONTROLS.len())
+                .map(|i| match CONTROLS[i].0 {
+                    Selection::TrackRecord(_) => serde_json::Value::Null,
+                    _ => self.kit_norm(i).map_or(serde_json::Value::Null, |v| serde_json::json!(v)),
+                })
+                .collect(),
+        )
+    }
+    fn kit_line(&self) -> String {
+        let len = self.params.loop_length_samples.load(Ordering::Relaxed);
+        let mut line = if len == 0 { "no loop yet".to_string() } else { format!("loop {:.1}s", len as f32 / 48000.0) };
+        let rec: Vec<String> = (0..NUM_TRACKS).filter(|&t| self.params.tracks[t].recording.load(Ordering::Relaxed)).map(|t| format!("T{}", t + 1)).collect();
+        if !rec.is_empty() {
+            line = format!("{line}  REC {}", rec.join(" "));
+        }
+        if !self.params.running.load(Ordering::Relaxed) {
+            line = format!("{line}  paused");
+        }
+        line
+    }
+}
+
 impl App for TapeApp {
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
     }
@@ -376,6 +542,12 @@ impl App for TapeApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs first; in the menu they pass
+        // straight through. Tape has no pad behaviour of its own.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -428,7 +600,13 @@ impl App for TapeApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, TAPE_BG, TAPE_DIM, TAPE_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, TAPE_BG, TAPE_DIM, TAPE_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Stops short of the track lanes at x = 370.
+            let pal = kit::draw::Palette { bg: TAPE_BG, ink: TAPE_TITLE, accent: TAPE_ACCENT, dim: TAPE_DIM, faint: TAPE_OUTLINE };
+            kit::draw::column(fb, &col, 16, 40, 340, 285, pal);
+        }
 
         // --- Right: 4 track lanes, a playhead line, and a filled
         // bar per track showing how much of the loop has content. ---
@@ -470,6 +648,7 @@ impl App for TapeApp {
         }
 
         let hint = match rows.get(self.list.selected) {
+            _ if !self.kit.menu => "knobs: track levels   F2: pads (hold REC/MUTE)   F3: run   R1: menu".to_string(),
             Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
             None => String::new(),
@@ -894,5 +1073,47 @@ mod tests {
         let mixer_bus = MixerBus::new();
         let params = Params::new(&modbus, &audio_bus, &mixer_bus);
         assert!(!params.running.load(Ordering::Relaxed), "Tape must start stopped, not running");
+    }
+
+    fn app() -> TapeApp {
+        TapeApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(1.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()))
+    }
+
+    fn hold(rank: usize) -> Input {
+        Input { grid: std::array::from_fn(|i| i == kit::rank_pad(rank)), ..Default::default() }
+    }
+
+    #[test]
+    fn opens_playable_and_knob_1_rides_track_1() {
+        let mut a = app();
+        assert!(a.play_column().is_some(), "play view first");
+        let vol = a.params.tracks[0].volume.get();
+        a.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(a.params.tracks[0].volume.get() > vol, "knob 1 is track 1's level on the play view");
+        a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(a.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn throws_punch_in_a_take_and_drop_a_track_out_while_held() {
+        let mut a = app();
+        assert_eq!(a.kit.layer_label(), "THROWS");
+        a.tick(&hold(1));
+        assert!(a.params.tracks[1].recording.load(Ordering::Relaxed), "holding REC 2 records track 2");
+        a.tick(&Input::default());
+        assert!(!a.params.tracks[1].recording.load(Ordering::Relaxed), "letting go ends the take");
+        a.tick(&hold(4));
+        assert!(a.params.tracks[0].mute.load(Ordering::Relaxed), "holding MUTE 1 drops track 1 out");
+        a.tick(&Input::default());
+        assert!(!a.params.tracks[0].mute.load(Ordering::Relaxed), "and lets it back in");
+    }
+
+    #[test]
+    fn a_moment_restores_the_mix_but_never_a_record_state() {
+        let a = app();
+        a.params.tracks[2].recording.store(true, Ordering::Relaxed);
+        let snap = a.kit_snapshot();
+        assert!(snap[C_REC + 2].is_null(), "record state is left out of moments");
+        assert!(snap[2].as_f64().is_some(), "levels are in");
     }
 }

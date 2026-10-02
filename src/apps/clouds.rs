@@ -18,6 +18,7 @@
 //! simplification on our part, that's how the actual hardware panel
 //! works too: those aren't separate knobs there either).
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -175,6 +176,63 @@ pub struct CloudsApp {
     audio_bus: Arc<AudioBus>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: the real panel's
+/// grain knobs (Position/Size, Density/Texture) on the first two knob
+/// pairs, Pitch and Dry/Wet next, then the blend parameters, Freeze, the
+/// playback mode and the Trigger action on the upper pads. The input
+/// mixer's per-source levels stay menu-only -- they're routing.
+const CONTROLS: [(Selection, &str); 12] = [
+    (Selection::Position, "Position"),
+    (Selection::Size, "Size"),
+    (Selection::Density, "Density"),
+    (Selection::Texture, "Texture"),
+    (Selection::Pitch, "Pitch"),
+    (Selection::DryWet, "Dry/Wet"),
+    (Selection::Feedback, "Feedback"),
+    (Selection::Reverb, "Reverb"),
+    (Selection::Spread, "Spread"),
+    (Selection::Freeze, "Freeze"),
+    (Selection::PlaybackMode, "Mode"),
+    (Selection::Trigger, "Trigger"),
+];
+const C_MODE: usize = 10;
+/// Pitch's knob range, the same bounds `edit` and the processor clamp to.
+const PITCH_RANGE: f32 = 48.0;
+
+/// A Pitch throw target: `st` semitones as a 0..1 knob position.
+fn pitch_norm(st: f32) -> f32 {
+    (st + PITCH_RANGE) / (2.0 * PITCH_RANGE)
+}
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "clouds",
+        // Clouds never used the pads, so the first layer is Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // The four playback modes are four different instruments.
+        browse: Some(C_MODE),
+        // Stick: Position (where in the buffer) and Size, the two knobs
+        // a Clouds player rides most. Hands: Density and Texture. Pitch
+        // is left off: half the stick's travel would be 48 semitones.
+        routes: Routes { stick_x: Some(0), stick_y: Some(1), hand_l: Some(2), hand_r: Some(3) },
+        throws: vec![
+            Throw { control: 9, to: 1.0, label: "FREEZE" },
+            Throw { control: 4, to: pitch_norm(12.0), label: "OCT UP" },
+            Throw { control: 4, to: pitch_norm(-12.0), label: "OCT DN" },
+            Throw { control: 1, to: 0.0, label: "TINY" },
+            Throw { control: 1, to: 1.0, label: "HUGE" },
+            Throw { control: 2, to: 1.0, label: "DENSE" },
+            Throw { control: 6, to: 1.0, label: "FEEDBACK" },
+            Throw { control: 7, to: 1.0, label: "REVERB" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Clouds' own palette: pale sky blue on a light ground, not a
@@ -197,6 +255,7 @@ impl CloudsApp {
             audio_bus,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -387,7 +446,75 @@ impl CloudsApp {
     }
 }
 
+impl CloudsApp {
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Selection::Position => Knob::F(&p.position, 0.0, 1.0),
+            Selection::Size => Knob::F(&p.size, 0.0, 1.0),
+            Selection::Density => Knob::F(&p.density, 0.0, 1.0),
+            Selection::Texture => Knob::F(&p.texture, 0.0, 1.0),
+            Selection::Pitch => Knob::F(&p.pitch, -PITCH_RANGE, PITCH_RANGE),
+            Selection::DryWet => Knob::F(&p.dry_wet, 0.0, 1.0),
+            Selection::Feedback => Knob::F(&p.feedback, 0.0, 1.0),
+            Selection::Reverb => Knob::F(&p.reverb, 0.0, 1.0),
+            Selection::Spread => Knob::F(&p.stereo_spread, 0.0, 1.0),
+            Selection::Freeze => Knob::B(&p.freeze),
+            Selection::PlaybackMode => Knob::U(&p.playback_mode, PLAYBACK_MODE_NAMES.len() as u32),
+            // Trigger is an action (fired by knob 2's press, as in the
+            // menu), InputLevel is never on the play view.
+            Selection::Trigger | Selection::InputLevel(_) => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for CloudsApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % CONTROLS.len()].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % CONTROLS.len()].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % CONTROLS.len()].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % CONTROLS.len()].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    fn kit_line(&self) -> String {
+        let frozen = if self.params.freeze.load(Ordering::Relaxed) { "  FROZEN" } else { "" };
+        format!("{}{frozen}", self.leaf_value(Selection::PlaybackMode))
+    }
+}
+
 impl App for CloudsApp {
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn needs_background_audio(&self) -> bool { self.params.input_levels.iter().any(|v| v.get() > 0.0) || self.params.ext_input_level.iter().any(|v| v.get() > 0.0) || self.params.freeze.load(Ordering::Relaxed) }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
@@ -403,6 +530,12 @@ impl App for CloudsApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -418,8 +551,8 @@ impl App for CloudsApp {
                 self.reset(sel);
             }
         }
-        // No grid usage -- Clouds processes whatever audio is routed
-        // in, it isn't played directly.
+        // No grid usage of its own -- Clouds processes whatever audio is
+        // routed in; its pads are the kit's Throws/Controls/Moments.
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
@@ -455,7 +588,13 @@ impl App for CloudsApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, CLOUDS_BG, CLOUDS_DIM, CLOUDS_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, CLOUDS_BG, CLOUDS_DIM, CLOUDS_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Kept left of the output monitor at x = 400.
+            let pal = kit::draw::Palette { bg: CLOUDS_BG, ink: CLOUDS_TITLE, accent: CLOUDS_ACCENT, dim: CLOUDS_DIM, faint: CLOUDS_MIDLINE };
+            kit::draw::column(fb, &col, 16, 40, 370, 280, pal);
+        }
 
         // --- Right: live output monitor, same scrolling-waveform
         // technique as Plaits'/Pam's/Bloom's panels. ---
@@ -490,6 +629,7 @@ impl App for CloudsApp {
         drop(history);
 
         let hint = match rows.get(self.list.selected) {
+            _ if !self.kit.menu => "knobs: position/size   D-pad: mode   F2: pads   R1: menu (inputs)".to_string(),
             Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
             None => String::new(),
@@ -602,5 +742,46 @@ mod tests {
         let leaves = app.group_leaves(0);
         assert_eq!(leaves.len(), 161, "expected all 161 registered sources (160 test ones + itself) to be selectable inputs, got {}", leaves.len());
         assert!(matches!(leaves[160], Selection::InputLevel(160)), "the last source (past the old cap of 128) must still be reachable");
+    }
+
+    fn new_app() -> CloudsApp {
+        CloudsApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(6.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()))
+    }
+
+    #[test]
+    fn opens_playable_knob1_moves_position_and_r1_opens_the_menu() {
+        let mut app = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let pos = app.params.position.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.position.get() > pos, "knob 1 is Position on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.playback_mode.load(Ordering::Relaxed), 1, "D-pad up = next playback mode (Stretch)");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn throws_freeze_and_shift_an_octave_then_spring_back() {
+        let mut app = new_app();
+        let hold = |rank: usize| Input { grid: std::array::from_fn(|i| i == kit::rank_pad(rank)), ..Default::default() };
+        app.tick(&hold(0));
+        assert!(app.params.freeze.load(Ordering::Relaxed), "FREEZE held");
+        app.tick(&Input::default());
+        assert!(!app.params.freeze.load(Ordering::Relaxed), "and released");
+        app.tick(&hold(1));
+        assert!((app.params.pitch.get() - 12.0).abs() < 1e-3, "OCT UP = +12 st, got {}", app.params.pitch.get());
+        app.tick(&Input::default());
+        assert!(app.params.pitch.get().abs() < 1e-4, "back to the knob's pitch");
+    }
+
+    #[test]
+    fn trigger_on_the_controls_layer_fires_one_grain() {
+        let mut app = new_app();
+        app.toggle_grid_mode(); // Controls
+        let trigger = kit::rank_pad(11);
+        app.tick(&Input { grid: std::array::from_fn(|i| i == trigger), ..Default::default() });
+        app.tick(&Input { knob2_press: true, ..Default::default() });
+        assert!(app.params.trigger.load(Ordering::Relaxed), "knob 2's press on the grabbed Trigger pad fires it, as in the menu");
     }
 }

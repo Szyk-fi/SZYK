@@ -267,7 +267,7 @@ slint::slint! {
         ] : [
             { label: root.on-home ? (root.has-settings ? "F1  SETTINGS" : "F1  —") : "F1  HOME", active: false },
             {
-                label: root.on-home ? "F2  CATEGORY" : root.grid-mode-label != "" ? (root.grid-mode-label == "STEP" ? "F2  PAD MODE" : root.grid-mode-label == "PAD" ? "F2  STEP MODE" : "F2  PADS: " + root.grid-mode-label) : (root.midi-target-label != "" ? "F2  UNLOCK" : root.pad-lock-available && !root.on-home ? "F2  PAD LOCK" : "F2  —"),
+                label: root.on-home ? "F2  CATEGORY" : root.grid-mode-label != "" ? "F2  PADS: " + root.grid-mode-label : (root.midi-target-label != "" ? "F2  UNLOCK" : root.pad-lock-available && !root.on-home ? "F2  PAD LOCK" : "F2  —"),
                 active: root.grid-mode-label != "" ? root.grid-mode-label == "PAD" : root.midi-target-label != "",
             },
             { label: root.on-home ? "F3  RECENT" : root.transport-action == "" ? "F3  —" : "F3  " + root.transport-action, active: !root.on-home && root.transport-label == "RUNNING" },
@@ -1085,12 +1085,14 @@ slint::slint! {
                 swing: root.pulsar-swing; peak: root.pulsar-peak; status: root.pulsar-status;
             }
             if !root.on-home && root.active-kind == 34 : ForgePanel {
+                play: root.pc-active;
                 width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
                 names:root.row-names;values:root.row-values;selected:root.selected-row;more-above:root.more-above;more-below:root.more-below;
                 wave:root.forge-wave;starts:root.forge-starts;ends:root.forge-ends;levels:root.forge-levels;labels:root.forge-labels;clip-name:root.forge-name;status:root.forge-status;mode:root.forge-mode;source:root.forge-source;chunk:root.forge-chunk;busy:root.forge-busy;recording:root.forge-recording;duration:root.forge-duration;
                 action(x,y)=>{root.theme-wheel-picked(x,y);}
             }
             if !root.on-home && root.active-kind == 33 : VectorFilterPanel {
+                play: root.pc-active;
                 width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
                 names:root.row-names;values:root.row-values;selected:root.selected-row;
                 xyz:root.filter-xyz;wave:root.filter-wave;source:root.filter-source;mode:root.filter-mode;enabled:root.filter-enabled;
@@ -1103,6 +1105,7 @@ slint::slint! {
                 choose(x,y)=>{root.theme-wheel-picked(x,y);}
             }
             if !root.on-home && root.active-kind == 31 : CollectionPanel {
+                play: root.pc-active;
                 width: 604px;
                 terrain: root.collection-terrain;
                 visual-lines:root.collection-visual-lines;
@@ -1150,10 +1153,10 @@ slint::slint! {
                     }
                     Rectangle { vertical-stretch: 1; }
                     Text {
-                        text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : "MIDI 1: cutoff · MIDI 2: volume. Press MIDI 2 to change waveform.";
+                        text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : "Pads play notes. Knobs: cutoff and volume; D-pad: waveform.";
                         color: root.live-ink.with-alpha(0.6); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap;
                     }
-                    InstrumentLabel { text: root.active-app-name == "Synth" ? "PADS PLAY  ·  R1 RESET CUTOFF" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 9px; }
+                    InstrumentLabel { text: root.active-app-name == "Synth" ? "F2 PAD LAYER  ·  R1 MENU" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 9px; }
                 }
             }
 
@@ -3420,6 +3423,7 @@ slint::slint! {
             }
 
             if !root.on-home && root.active-kind == 29 : BloomPanel {
+                play: root.pc-active;
                 row-names: root.row-names;
                 row-values: root.row-values;
                 row-is-group: root.row-is-group;
@@ -3444,6 +3448,22 @@ slint::slint! {
                 line-angle: root.bloom-line-angle;
                 toggle-running => { root.f-clicked(2); }
             }
+        }
+        // Full-width panels (Bloom, Collection, Vector Filter, Forge) keep
+        // their own layout; on the play view their list steps aside and the
+        // shared play column sits in its place.
+        if !root.on-home && root.pc-active && (root.active-kind == 29 || root.active-kind == 31 || root.active-kind == 33 || root.active-kind == 34) : PlayColumn {
+            x: 18px; y: 4px;
+            width: root.active-kind == 29 ? 244px : 220px;
+            height: 280px;
+            ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+            layer: root.pc-layer;
+            dial-labels: root.pc-dial-labels; dial-values: root.pc-dial-values; dial-norms: root.pc-dial-norms; dial-knobs: root.pc-dial-knobs;
+            knob2-extra: root.pc-knob2-extra;
+            pad-labels: root.pc-pad-labels; pad-state: root.pc-pad-state;
+            stick-x: root.pc-stick-x; stick-y: root.pc-stick-y; stick-label: root.pc-stick-label;
+            hand-l: root.pc-hand-l; hand-r: root.pc-hand-r; hand-l-label: root.pc-hand-l-label; hand-r-label: root.pc-hand-r-label;
+            line: root.pc-line; status: root.pc-status;
         }
 
         }

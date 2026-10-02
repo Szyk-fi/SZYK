@@ -16,14 +16,19 @@
 //!   - a library of starter patches plus saved JSON patches
 //!   - every macro, the morph and the first 16 params as ModBus targets
 //!
-//! Controls:
-//!   knob1  browse menu     press: expand/collapse group, or lock a param
-//!   knob2  edit value      press: reset / run the selected action
-//!   pads   play notes (Play mode) or recall/store/morph snapshots (Snap
-//!          mode: set on the Play > Pads row). Tap an empty pad to store,
-//!          tap a stored pad to recall, hold 0.6 s to overwrite, hold two
-//!          pads to morph between them.
-//!   F2     Start/Stop the transport (clocks, sequencers, echoes sync to it)
+//! Controls (Oracle opens on the shared play view, see play_kit.rs):
+//!   knobs  the patch's macros (then its params) in pairs; press knob1 for
+//!          the next pair, knob2 to reset the pair
+//!   D-pad  up/down steps through the patch library
+//!   R1     the full menu, where:
+//!     knob1  browse menu     press: expand/collapse group, or lock a param
+//!     knob2  edit value      press: reset / run the selected action
+//!   F2     pad layers: PLAY (notes), SNAP (snapshots), Controls, Moments.
+//!          SNAP: tap an empty pad to store, tap a stored pad to recall,
+//!          hold 0.6 s to overwrite, hold two pads to morph between them.
+//!          (The Play > Pads row flips PLAY/SNAP too.)
+//!   F3     Start/Stop a generator's transport (clocks, sequencers, echoes
+//!          sync to it)
 //!
 //! Prompts: pick words in "Ask the Oracle" and press Generate -- or type
 //! free text in the terminal running the sim (type /help there).
@@ -42,6 +47,7 @@ pub mod llm;
 pub mod patch;
 pub mod voice;
 
+use crate::app::play_kit::{self as kit, KitConfig, Layer, PlayHost, PlayKit, Routes};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::{cycle_source, AudioBus, NO_SOURCE};
@@ -57,7 +63,7 @@ use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
-use engine::{Controls, Engine, GraphNode, SCALES};
+use engine::{pad_note, Controls, Engine, GraphNode, SCALES};
 use evolve::Rng;
 use library::Entry;
 use llm::{Job, Provider, Reply, Worker};
@@ -95,6 +101,24 @@ enum B {
     DryWet,
 }
 const NB: usize = 15;
+/// Every built-in, in `Shared::builtins` order.
+const ALL_B: [B; NB] = [
+    B::Level,
+    B::Voices,
+    B::Glide,
+    B::Transpose,
+    B::Root,
+    B::Scale,
+    B::Hold,
+    B::Attack,
+    B::Decay,
+    B::Sustain,
+    B::Release,
+    B::Velocity,
+    B::Tempo,
+    B::InputGain,
+    B::DryWet,
+];
 
 struct BSpec {
     name: &'static str,
@@ -215,23 +239,7 @@ struct Shared {
 impl Shared {
     fn new(modbus: &ModBus, audio_bus: &AudioBus, mixer_bus: &MixerBus) -> Self {
         let (mix_level, ext_mix_level) = mixer_bus.register(APP_NAME, modbus);
-        let all = [
-            B::Level,
-            B::Voices,
-            B::Glide,
-            B::Transpose,
-            B::Root,
-            B::Scale,
-            B::Hold,
-            B::Attack,
-            B::Decay,
-            B::Sustain,
-            B::Release,
-            B::Velocity,
-            B::Tempo,
-            B::InputGain,
-            B::DryWet,
-        ];
+        let all = ALL_B;
         Self {
             norms: std::array::from_fn(|_| AtomicF32::new(0.0)),
             macros: std::array::from_fn(|_| AtomicF32::new(0.0)),
@@ -524,6 +532,42 @@ pub struct OracleApp {
     paste: Option<String>,
     frame: u64,
     breed_partner: usize,
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// One play-view control. Oracle's controls aren't fixed: they're
+/// whatever the current patch exposes, so the list is rebuilt from the
+/// patch (see `OracleApp::kit_controls`) rather than being a const table.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum K {
+    S(Sel),
+    /// Steps through the library (the D-pad's browse).
+    Patch,
+}
+
+/// The library browser always sits on the last Controls pad so the
+/// D-pad's `browse` index never moves when the patch changes.
+const C_PATCH: usize = 15;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "oracle",
+        // Oracle's own Play/Snap pad modes are its first two layers, so F2
+        // reaches them exactly as it did before, then the shared ones.
+        layers: vec![Layer::Native(0, "PLAY"), Layer::Native(1, "SNAP"), Layer::Controls, Layer::Moments],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // D-pad up/down = next/previous library patch: auditioning patches
+        // is the move a player makes most once the AI isn't involved.
+        browse: Some(C_PATCH),
+        // Macros are what a patch designer (human or model) intends to be
+        // performed, and they apply even while morphing, so the stick and
+        // hands push the first four controls (macros first).
+        routes: Routes { stick_x: Some(0), stick_y: Some(1), hand_l: Some(2), hand_r: Some(3) },
+        throws: Vec::new(),
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 static STDIN_RX: OnceLock<Mutex<Option<Receiver<String>>>> = OnceLock::new();
@@ -609,6 +653,7 @@ impl OracleApp {
             paste: None,
             frame: 0,
             breed_partner: 1,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         };
         app.install(first, None, Carry::Fresh, "Loaded");
         app.status = format!("Oracle ready -- {}. Pick words and Generate, or type in the terminal.", app.worker.provider.label());
@@ -1050,6 +1095,7 @@ impl OracleApp {
             self.snaps[12 + k] = Some(Snap { norms: c, macros: m });
         }
         self.snap_mode = true;
+        self.kit.set_native(1);
         self.set_status(format!("{what}: 4 variants on the bottom-right pads (Snap mode)"));
     }
 
@@ -1356,7 +1402,7 @@ impl OracleApp {
                 let next = cycle_source(self.shared.source.load(Ordering::Relaxed), step, self.audio_bus.len());
                 self.shared.source.store(next, Ordering::Relaxed);
             }
-            Sel::PadMode => self.toggle_grid_mode(),
+            Sel::PadMode => self.flip_pad_mode(),
             Sel::Morph => {
                 let v = (self.shared.morph.get() + accelerate(delta) * sens * 0.05).clamp(0.0, 1.0);
                 self.shared.morph.set(v);
@@ -1399,7 +1445,7 @@ impl OracleApp {
                 self.shared.set_b(b, d);
             }
             Sel::Source => self.shared.source.store(NO_SOURCE, Ordering::Relaxed),
-            Sel::PadMode => self.toggle_grid_mode(),
+            Sel::PadMode => self.flip_pad_mode(),
             Sel::Morph => self.shared.morph.set(0.0),
             Sel::Randomize => self.randomize(self.rand_strength),
             Sel::Mutate => self.mutate(),
@@ -1789,6 +1835,340 @@ impl OracleApp {
     }
 }
 
+impl OracleApp {
+    /// Play/Snap with the side effects the old F2 toggle had: entering
+    /// Snap releases un-latched notes so a pad held for a note doesn't
+    /// hang once the pads become snapshot slots.
+    fn set_snap_mode(&mut self, on: bool) {
+        self.snap_mode = on;
+        if on && self.shared.b(B::Hold) < 0.5 {
+            for h in &self.shared.held {
+                h.store(false, Ordering::Relaxed);
+            }
+        }
+        self.set_status(if on {
+            "Snap mode: tap empty pad = store, tap = recall, hold 2 = morph".into()
+        } else {
+            "Play mode: pads play notes".into()
+        });
+    }
+
+    /// The menu's Play > Pads row: flips PLAY/SNAP and moves the kit's
+    /// pad layer with it (F2 now cycles the kit's layers instead).
+    fn flip_pad_mode(&mut self) {
+        let on = !self.snap_mode;
+        self.set_snap_mode(on);
+        self.kit.set_native(u8::from(on));
+    }
+
+    /// Next/previous library patch from wherever the current one sits.
+    /// A patch that isn't in the library (AI-made, pasted) starts from the
+    /// first entry going up and the last going down.
+    fn step_patch(&mut self, delta: i32) {
+        let n = self.library.len() as i32;
+        if n == 0 || delta == 0 {
+            return;
+        }
+        let dir = delta.signum();
+        let cur = self.library.iter().position(|e| e.name == self.patch.name).map_or(if dir > 0 { -1 } else { 0 }, |p| p as i32);
+        self.load_library((cur + dir).rem_euclid(n) as usize);
+    }
+
+    fn pad_tuning(&self) -> (i32, usize, i32) {
+        let s = &self.shared;
+        (s.b(B::Root).round() as i32, s.b(B::Scale).round().max(0.0) as usize, s.b(B::Transpose).round() as i32)
+    }
+
+    /// The built-ins that matter most for this kind of patch, after the
+    /// knobs: level and morph always, then the envelope for enveloped
+    /// instruments, the wet/dry and input for effects, tempo for
+    /// generators.
+    fn kit_tail(&self) -> Vec<K> {
+        let b = |x: B| K::S(Sel::Builtin(x));
+        let mut v = vec![b(B::Level), K::S(Sel::Morph)];
+        match self.patch.kind {
+            Kind::Instrument if self.patch.amp_env => v.extend([b(B::Attack), b(B::Release), b(B::Glide), b(B::Transpose), b(B::Scale)]),
+            Kind::Instrument => v.extend([b(B::Velocity), b(B::Glide), b(B::Transpose), b(B::Root), b(B::Scale)]),
+            Kind::Effect => v.extend([b(B::DryWet), b(B::InputGain), b(B::Tempo), b(B::Transpose), b(B::Scale)]),
+            Kind::Generator => v.extend([b(B::Tempo), b(B::Transpose), b(B::Root), b(B::Scale), b(B::Hold)]),
+        }
+        v
+    }
+
+    /// Continuous built-ins that fill the knobs when a patch has fewer
+    /// than eight macros + params, so the hero pairs never land on a
+    /// stepped choice that expression can't push.
+    fn kit_spare(&self) -> Vec<K> {
+        let b = |x: B| K::S(Sel::Builtin(x));
+        match self.patch.kind {
+            Kind::Instrument if self.patch.amp_env => vec![b(B::Attack), b(B::Release), b(B::Decay), b(B::Sustain), b(B::Glide), b(B::Velocity)],
+            Kind::Instrument => vec![b(B::Glide), b(B::Velocity)],
+            Kind::Effect => vec![b(B::DryWet), b(B::InputGain)],
+            Kind::Generator => vec![b(B::Tempo)],
+        }
+    }
+
+    /// The 16 play-view controls for the current patch, most important
+    /// first: its macros, then its continuous params, then stepped ones
+    /// (knobs 0-7); then the built-ins for its kind; the library browser
+    /// last. Always exactly 16 (Morph + 15 built-ins are 16 distinct
+    /// fillers), so hero/browse indexes stay valid for any patch.
+    fn kit_controls(&self) -> Vec<K> {
+        fn add(v: &mut Vec<K>, k: K) {
+            if !v.contains(&k) {
+                v.push(k);
+            }
+        }
+        let mut v: Vec<K> = Vec::with_capacity(16);
+        for k in 0..self.patch.macros.len().min(MAX_MACROS) {
+            add(&mut v, K::S(Sel::Macro(k)));
+        }
+        let n = self.maps.len().min(self.patch.params.len()).min(MAX_PARAMS);
+        let continuous = (0..n).filter(|&i| self.maps[i].steps().is_none());
+        let stepped = (0..n).filter(|&i| self.maps[i].steps().is_some());
+        for i in continuous.chain(stepped) {
+            if v.len() >= 8 {
+                break;
+            }
+            add(&mut v, K::S(Sel::Param(i)));
+        }
+        v.truncate(8);
+        for k in self.kit_spare() {
+            if v.len() >= 8 {
+                break;
+            }
+            add(&mut v, k);
+        }
+        for k in self.kit_tail() {
+            add(&mut v, k);
+        }
+        for b in ALL_B {
+            if v.len() >= C_PATCH {
+                break;
+            }
+            add(&mut v, K::S(Sel::Builtin(b)));
+        }
+        add(&mut v, K::S(Sel::Morph));
+        v.truncate(C_PATCH);
+        v.push(K::Patch);
+        v
+    }
+
+    fn kit_control(&self, i: usize) -> Option<K> {
+        self.kit_controls().get(i).copied()
+    }
+
+    /// A built-in's range as `edit` clamps it (Voices tops out at what
+    /// the patch allocated).
+    fn builtin_range(&self, b: B) -> (f32, f32) {
+        let s = bspec(b);
+        (s.min, if b == B::Voices { self.patch.voices as f32 } else { s.max })
+    }
+
+    /// Exponential built-ins (attack, decay, release) sit on the dial
+    /// logarithmically, the way `edit` turns them.
+    fn builtin_norm(&self, b: B) -> f32 {
+        let spec = bspec(b);
+        let (lo, hi) = self.builtin_range(b);
+        let v = self.shared.b(b);
+        if hi <= lo {
+            0.0
+        } else if spec.exp && lo > 0.0 {
+            ((v.max(lo) / lo).ln() / (hi / lo).ln()).clamp(0.0, 1.0)
+        } else {
+            ((v - lo) / (hi - lo)).clamp(0.0, 1.0)
+        }
+    }
+
+    fn set_builtin_norm(&mut self, b: B, n: f32) {
+        let spec = bspec(b);
+        let (lo, hi) = self.builtin_range(b);
+        if hi <= lo {
+            return;
+        }
+        let n = n.clamp(0.0, 1.0);
+        let mut v = if spec.exp && lo > 0.0 { lo * (hi / lo).powf(n) } else { lo + n * (hi - lo) };
+        if spec.step > 0.0 {
+            v = lo + ((v - lo) / spec.step).round() * spec.step;
+        }
+        let v = v.clamp(lo, hi);
+        self.shared.set_b(b, v);
+        if b == B::Hold && v < 0.5 {
+            self.latched = [false; 16];
+        }
+    }
+}
+
+impl PlayHost for OracleApp {
+    fn kit_control_count(&self) -> usize {
+        self.kit_controls().len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match self.kit_control(i) {
+            Some(K::S(sel)) => {
+                let l = self.leaf_name(sel);
+                if l.is_empty() { format!("Control {}", i + 1) } else { l }
+            }
+            Some(K::Patch) => "Patch".into(),
+            None => String::new(),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        match self.kit_control(i) {
+            Some(K::S(sel)) => self.leaf_value(sel),
+            Some(K::Patch) => fit(&self.patch.name, 24),
+            None => String::new(),
+        }
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        match self.kit_control(i)? {
+            K::S(Sel::Param(p)) => (p < self.maps.len()).then(|| self.shared.norms[p].get()),
+            K::S(Sel::Macro(k)) => Some(self.shared.macros[k].get()),
+            K::S(Sel::Builtin(b)) => Some(self.builtin_norm(b)),
+            K::S(Sel::Morph) => Some(self.shared.morph.get()),
+            _ => None,
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        match self.kit_control(i) {
+            Some(K::S(Sel::Param(p))) => self.maps.get(p).map_or(true, |m| m.steps().is_some()),
+            Some(K::S(Sel::Builtin(b))) => bspec(b).step > 0.0,
+            Some(K::S(Sel::Macro(_) | Sel::Morph)) => false,
+            _ => true,
+        }
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        match self.kit_control(i) {
+            Some(K::S(sel)) => self.edit(sel, delta),
+            Some(K::Patch) => self.step_patch(delta),
+            None => {}
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        // `press` resets these four; on any other row it runs an action,
+        // which a knob-2 reset must never do.
+        if let Some(K::S(sel @ (Sel::Param(_) | Sel::Macro(_) | Sel::Builtin(_) | Sel::Morph))) = self.kit_control(i) {
+            self.press(sel);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        match self.kit_control(i) {
+            Some(K::S(Sel::Param(p))) => {
+                if let Some(map) = self.maps.get(p) {
+                    let v = match map.steps() {
+                        Some(n) => {
+                            let k = n.saturating_sub(1).max(1) as f32;
+                            (v * k).round() / k
+                        }
+                        None => v,
+                    };
+                    // While morphing the engine reads the A/B snapshots,
+                    // not these; the macros (first on the knobs) still
+                    // apply, which is why they come first.
+                    self.shared.norms[p].set(v);
+                }
+            }
+            Some(K::S(Sel::Macro(k))) => self.shared.macros[k].set(v),
+            Some(K::S(Sel::Builtin(b))) => self.set_builtin_norm(b, v),
+            Some(K::S(Sel::Morph)) => self.shared.morph.set(v),
+            _ => {}
+        }
+    }
+    /// A moment only means something on the patch it was stored on (the
+    /// controls are that patch's macros and params), so it carries the
+    /// patch name and won't land on a different patch.
+    fn kit_snapshot(&self) -> serde_json::Value {
+        let v: Vec<serde_json::Value> = (0..self.kit_control_count()).map(|i| self.kit_norm(i).map_or(serde_json::Value::Null, |x| serde_json::json!(x))).collect();
+        serde_json::json!({ "patch": self.patch.name, "v": v })
+    }
+    fn kit_recall(&mut self, m: &serde_json::Value) {
+        let stored = m.get("patch").and_then(|p| p.as_str()).unwrap_or("");
+        if stored != self.patch.name {
+            self.set_status(format!("That moment belongs to \"{}\" -- load it first (D-pad)", fit(stored, 24)));
+            return;
+        }
+        if let Some(items) = m.get("v").and_then(|v| v.as_array()) {
+            for (i, item) in items.iter().enumerate().take(self.kit_control_count()) {
+                if let Some(x) = item.as_f64() {
+                    self.kit_set_norm(i, (x as f32).clamp(0.0, 1.0));
+                }
+            }
+        }
+        // Like recalling a snapshot: the recalled knobs are what plays.
+        self.shared.morph_on.store(false, Ordering::Relaxed);
+    }
+    fn kit_line(&self) -> String {
+        if let Some(t) = self.voice.as_ref() {
+            return if t.recording() { format!("Listening {:.0}s", t.elapsed()) } else { "Transcribing...".into() };
+        }
+        if self.busy_since.is_some() {
+            return format!("{}...", self.worker.busy.map(|b| b.1).unwrap_or("Thinking"));
+        }
+        if self.snap_mode {
+            return match (self.shared.morph_on.load(Ordering::Relaxed), self.snap_a, self.snap_b) {
+                (true, Some(a), Some(b)) => format!("Morph {}>{} {:.0}%", a + 1, b + 1, self.shared.morph.get() * 100.0),
+                _ => format!("{} snapshots", self.snaps.iter().filter(|s| s.is_some()).count()),
+            };
+        }
+        let (root, scale, tr) = self.pad_tuning();
+        let notes: Vec<String> = (0..16).filter(|&i| self.shared.held[i].load(Ordering::Relaxed)).take(4).map(|i| note_name(pad_note(i, root, scale, tr))).collect();
+        if notes.is_empty() { fit(&self.patch.name, 18) } else { notes.join(" ") }
+    }
+    fn kit_pad_label(&self, layer: u8, pad: usize) -> String {
+        if layer == 1 {
+            return if Some(pad) == self.snap_a {
+                "A".into()
+            } else if Some(pad) == self.snap_b {
+                "B".into()
+            } else if self.snaps[pad].is_some() {
+                format!("{} snap", pad + 1)
+            } else {
+                format!("{} -", pad + 1)
+            };
+        }
+        let (root, scale, tr) = self.pad_tuning();
+        note_name(pad_note(pad, root, scale, tr))
+    }
+    /// The colours the old LED overlay showed, per pad mode, plus the
+    /// held pad on PLAY.
+    fn kit_pad_color(&self, layer: u8, pad: usize, held: bool) -> PadColor {
+        if layer == 1 {
+            if Some(pad) == self.snap_a {
+                PadColor::Yellow
+            } else if Some(pad) == self.snap_b {
+                PadColor::Blue
+            } else if self.snaps[pad].is_some() {
+                PadColor::Green
+            } else {
+                PadColor::Off
+            }
+        } else if self.latched[pad] || held {
+            PadColor::Green
+        } else {
+            PadColor::Off
+        }
+    }
+    /// On PLAY a key presses the pad that sounds its pitch (pads follow
+    /// the scale, so keys outside it fold to the nearest pad of the same
+    /// pitch class, or are ignored if the scale doesn't have it). On SNAP
+    /// keys pick slots the way the shell always mapped them (note % 16).
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        // Controllers send encoder-touch notes below 21; never pads.
+        if note < 21 {
+            return None;
+        }
+        if self.snap_mode {
+            return Some(note as usize % 16);
+        }
+        let (root, scale, tr) = self.pad_tuning();
+        let n = note as i32;
+        (0..16).find(|&p| pad_note(p, root, scale, tr) == n).or_else(|| {
+            (0..16).filter(|&p| (pad_note(p, root, scale, tr) - n).rem_euclid(12) == 0).min_by_key(|&p| (pad_note(p, root, scale, tr) - n).abs())
+        })
+    }
+}
+
 struct GraphBox {
     x: i32,
     y: i32,
@@ -1843,6 +2223,17 @@ fn fit(s: &str, max: usize) -> String {
 
 impl App for OracleApp {
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach handle_pads only on PLAY/SNAP.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
+        if let Some(id) = step.native {
+            if (id == 1) != self.snap_mode {
+                self.set_snap_mode(id == 1);
+            }
+        }
         self.frame = self.frame.wrapping_add(1);
         self.handle_pads(&input.grid);
 
@@ -1899,6 +2290,14 @@ impl App for OracleApp {
         self.patch.kind == Kind::Instrument
     }
 
+    fn play_surface(&self) -> bool {
+        true
+    }
+
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+
     /// Keep DSP (and `background_tick`) alive while something is still
     /// happening: notes ringing out or held by Hold, an effect with a
     /// source patched in, an AI request in flight, or a voice take.
@@ -1915,41 +2314,23 @@ impl App for OracleApp {
     }
 
     fn grid_mode_label(&self) -> Option<&'static str> {
-        Some(if self.snap_mode { "SNAP" } else { "PLAY" })
+        Some(self.kit.layer_label())
     }
 
+    /// F2 cycles PLAY, SNAP, Controls, Moments. Landing on PLAY/SNAP
+    /// switches Oracle's own pad mode right away (not a frame later in
+    /// tick) so a MIDI key that same frame already maps the new way.
     fn toggle_grid_mode(&mut self) {
-        self.snap_mode = !self.snap_mode;
-        if self.snap_mode && self.shared.b(B::Hold) < 0.5 {
-            for h in &self.shared.held {
-                h.store(false, Ordering::Relaxed);
+        self.kit.next_layer();
+        if let Layer::Native(id, _) = self.kit.layer() {
+            if (id == 1) != self.snap_mode {
+                self.set_snap_mode(id == 1);
             }
         }
-        self.set_status(if self.snap_mode {
-            "Snap mode: tap empty pad = store, tap = recall, hold 2 = morph".into()
-        } else {
-            "Play mode: pads play notes".into()
-        });
     }
 
     fn grid_led_overlay(&self) -> [PadColor; 16] {
-        std::array::from_fn(|i| {
-            if self.snap_mode {
-                if Some(i) == self.snap_a {
-                    PadColor::Yellow
-                } else if Some(i) == self.snap_b {
-                    PadColor::Blue
-                } else if self.snaps[i].is_some() {
-                    PadColor::Green
-                } else {
-                    PadColor::Off
-                }
-            } else if self.latched[i] {
-                PadColor::Green
-            } else {
-                PadColor::Off
-            }
-        })
+        self.kit.led_overlay(self)
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
@@ -1991,7 +2372,13 @@ impl App for OracleApp {
                 (fit(&n, 30), fit(&v, room.max(6)))
             })
             .collect();
-        self.list.draw(fb, 16, 68, 24, 10, &rows);
+        if self.kit.menu {
+            self.list.draw(fb, 16, 68, 24, 10, &rows);
+        } else if let Some(col) = self.play_column() {
+            // Oracle's green-on-black, kept clear of the right panel (x 400).
+            let pal = kit::draw::Palette { bg: Rgb565::BLACK, ink: Rgb565::new(20, 44, 22), accent: ACCENT, dim: Rgb565::new(18, 36, 18), faint: Rgb565::new(3, 6, 3) };
+            kit::draw::column(fb, &col, 16, 40, 370, 284, pal);
+        }
 
         // Right panel.
         let (px, py, pw) = (400, 44, 220);
@@ -2061,6 +2448,7 @@ impl App for OracleApp {
         }
 
         let hint = match selected {
+            _ if !self.kit.menu => "knobs: macros   D-pad: patch   F2: pads   F3: play/stop   R1: menu",
             Some(Row::Group(_)) => "knob1: browse   press knob1: open/close   F3: play/stop",
             Some(Row::Leaf(Sel::Param(_))) => "knob2: edit   press knob2: reset   press knob1: lock",
             Some(Row::Leaf(Sel::SpeakNew | Sel::SpeakChange)) => "press knob2: talk   press again: stop (a pause stops too)",
@@ -2256,6 +2644,74 @@ mod tests {
         assert!(compose_prompt(0, 0, 0, 0).contains("pad instrument"));
         assert!(compose_prompt(KINDS.len() - 2, 0, 0, 0).contains("kind: effect"));
         assert!(compose_prompt(KINDS.len() - 1, 0, 0, 0).contains("kind: generator"));
+    }
+
+    #[test]
+    fn opens_on_the_play_view_knob1_turns_the_first_control_pads_play_and_r1_opens_the_menu() {
+        let (mut app, ..) = make();
+        assert!(app.play_column().is_some(), "play view first");
+        assert_eq!(app.kit_control_count(), 16);
+        let before = app.kit_norm(0).expect("knob 1 has a position");
+        app.tick(&Input { knob1: if before > 0.5 { -5 } else { 5 }, ..Default::default() });
+        assert!((app.kit_norm(0).unwrap() - before).abs() > 1e-4, "knob 1 turns control 0 ({})", app.kit_label(0));
+        let mut input = Input::default();
+        input.grid[12] = true;
+        app.tick(&input);
+        assert!(app.shared.held[12].load(Ordering::Relaxed), "PLAY layer plays the pads");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn f2_layers_keep_play_and_snap_in_step_and_kit_layers_keep_the_pads() {
+        let (mut app, ..) = make();
+        let tap = |app: &mut OracleApp, pad: usize| {
+            let mut i = Input::default();
+            i.grid[pad] = true;
+            app.tick(&i);
+            app.tick(&Input::default());
+        };
+        app.toggle_grid_mode();
+        assert!(app.snap_mode && app.kit.layer_label() == "SNAP");
+        tap(&mut app, 0);
+        assert!(app.snaps[0].is_some(), "SNAP stores like the old Snap mode");
+        app.toggle_grid_mode(); // Controls
+        tap(&mut app, 5);
+        assert!(app.snaps[5].is_none(), "kit layers don't reach the snapshot pads");
+        app.toggle_grid_mode(); // Moments
+        app.toggle_grid_mode(); // back to PLAY
+        assert!(!app.snap_mode && app.kit.layer_label() == "PLAY");
+        app.press(Sel::PadMode);
+        assert!(app.snap_mode && app.kit.layer_label() == "SNAP", "the menu's Pads row moves the layer too");
+        app.mutate();
+        assert_eq!(app.kit.layer_label(), "SNAP");
+    }
+
+    #[test]
+    fn d_pad_browses_the_library_and_moments_stay_with_their_patch() {
+        let (mut app, ..) = make();
+        let first = app.patch.name.clone();
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_ne!(app.patch.name, first, "D-pad up loads the next library patch");
+        let moment = app.kit_snapshot();
+        let before = app.kit_norm(0);
+        app.kit_set_norm(0, if before.unwrap_or(0.0) > 0.5 { 0.0 } else { 1.0 });
+        app.kit_recall(&moment);
+        assert_eq!(app.kit_norm(0), before, "recalls on its own patch");
+        app.step_patch(1);
+        let other = app.kit_norm(0);
+        app.kit_recall(&moment);
+        assert_eq!(app.kit_norm(0), other, "never lands on a different patch");
+    }
+
+    #[test]
+    fn a_midi_key_presses_the_pad_with_its_pitch() {
+        let (mut app, ..) = make();
+        let (root, scale, tr) = app.pad_tuning();
+        let mut keys = crate::app::MidiKeys::default();
+        keys.0[pad_note(12, root, scale, tr) as usize] = 100;
+        app.tick(&Input { midi_keys: keys, ..Default::default() });
+        assert!(app.shared.held[12].load(Ordering::Relaxed));
     }
 
     #[test]

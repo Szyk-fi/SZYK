@@ -8,11 +8,19 @@
 //! roll / nudge, a fatten-glue-filter-room master chain, finger drumming
 //! with live recording, and MIDI / WAV / stem export.
 //!
-//! Controls:
-//!   knob1  browse menu      press: open/close group (on a lane row: lock lane)
-//!   knob2  edit value       press: reset / run the selected action
-//!   F2     Start / Stop
-//!   pads   depend on Pads mode (Pads & Slots > Pads):
+//! Controls (Pulsar opens on the shared play view, see play_kit.rs):
+//!   knobs  DJ filter / swing, fatten / room, the selected lane's decay /
+//!          tone, tempo / glue (press knob1 for the next pair)
+//!   D-pad  up/down picks the pattern slot (switches at the bar line)
+//!   stick  X sweeps the DJ filter, Y opens the room; hands push fatten
+//!          and swing -- all spring back on release
+//!   R1     the full menu, where:
+//!     knob1  browse menu      press: open/close group (on a lane row: lock lane)
+//!     knob2  edit value       press: reset / run the selected action
+//!   F3     Start / Stop
+//!   F2     pad layers: PERFORM, STEPS, SLOTS (the old pad modes, also set
+//!          on Pads & Slots > Pads), then Controls, Moments, Throws
+//!   pads   on Pulsar's own layers:
 //!          Perform  top 2 rows play lanes 1-8 (records when Record is on),
 //!                   bottom 2 rows mute/unmute lanes 1-8
 //!          Steps    16 steps of the selected lane in the shown bar
@@ -24,6 +32,7 @@ pub mod export;
 pub mod genres;
 pub mod samples;
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -330,6 +339,33 @@ enum PadMode {
     Slots,
 }
 
+impl PadMode {
+    /// The kit's native layer id for each pad mode (F2 order).
+    fn layer(self) -> u8 {
+        match self {
+            PadMode::Perform => 0,
+            PadMode::Steps => 1,
+            PadMode::Slots => 2,
+        }
+    }
+
+    fn from_layer(id: u8) -> PadMode {
+        match id {
+            1 => PadMode::Steps,
+            2 => PadMode::Slots,
+            _ => PadMode::Perform,
+        }
+    }
+
+    fn next(self) -> PadMode {
+        match self {
+            PadMode::Perform => PadMode::Steps,
+            PadMode::Steps => PadMode::Slots,
+            PadMode::Slots => PadMode::Perform,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Sel {
     Genre,
@@ -429,6 +465,84 @@ pub struct PulsarApp {
     prev_grid: [bool; 16],
     status: String,
     beat_name: String,
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first. The master chain and
+/// groove are what a drum machine is performed with, so they take the
+/// knobs; 4/5 and 8-11 follow the selected lane (a Perform pad hit
+/// selects its lane), so hitting the snare and turning knob 1 shapes the
+/// snare. Slot and genre close the list for the D-pad and the pads.
+const CONTROLS: [(Sel, &str); 16] = [
+    (Sel::Filter, "DJ Filter"),
+    (Sel::Swing, "Swing"),
+    (Sel::Fatten, "Fatten"),
+    (Sel::Room, "Room"),
+    (Sel::Decay, "Decay"),
+    (Sel::Tone, "Tone"),
+    (Sel::Tempo, "Tempo"),
+    (Sel::Glue, "Glue"),
+    (Sel::Tune, "Tune"),
+    (Sel::Punch, "Punch"),
+    (Sel::Level, "Level"),
+    (Sel::Chance, "Chance"),
+    (Sel::HumanTime, "Human Time"),
+    (Sel::HumanVel, "Human Vel"),
+    (Sel::Slot, "Slot"),
+    (Sel::Genre, "Genre"),
+];
+const C_FILTER: usize = 0;
+const C_SWING: usize = 1;
+const C_FATTEN: usize = 2;
+const C_ROOM: usize = 3;
+const C_GLUE: usize = 7;
+const C_SLOT: usize = 14;
+const C_GENRE: usize = 15;
+
+/// Controls that act on the selected lane rather than the whole kit.
+fn lane_control(i: usize) -> bool {
+    matches!(i, 4 | 5 | 8..=11)
+}
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "pulsar",
+        // The old pad modes are Pulsar's own layers, so F2 reaches them
+        // exactly as before, then the shared ones.
+        layers: vec![
+            Layer::Native(0, "PERFORM"),
+            Layer::Native(1, "STEPS"),
+            Layer::Native(2, "SLOTS"),
+            Layer::Controls,
+            Layer::Moments,
+            Layer::Throws,
+        ],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // D-pad up/down = next/previous pattern slot: the song-arranging
+        // move, and audible at the next bar line (genre only changes what
+        // the next Generate makes).
+        browse: Some(C_SLOT),
+        // The DJ filter on stick X is the classic groovebox sweep (centre
+        // = off, left = low-pass, right = high-pass); Y opens the room.
+        // Hands: drive (fatten) and push the swing. All kit-wide, never
+        // per-lane, so changing lanes mid-gesture can't strand an offset.
+        routes: Routes { stick_x: Some(C_FILTER), stick_y: Some(C_ROOM), hand_l: Some(C_FATTEN), hand_r: Some(C_SWING) },
+        // The master chain is effectively an effect over the beat, so it
+        // gets the effects' momentary moves.
+        throws: vec![
+            // Filter -1..1: 0.1 = LP 80%, 0.9 = HP 80%.
+            Throw { control: C_FILTER, to: 0.1, label: "LP SWEEP" },
+            Throw { control: C_FILTER, to: 0.9, label: "HP SWEEP" },
+            Throw { control: C_ROOM, to: 1.0, label: "ROOM WASH" },
+            Throw { control: C_ROOM, to: 0.0, label: "DRY" },
+            Throw { control: C_FATTEN, to: 1.0, label: "FATTEN" },
+            Throw { control: C_GLUE, to: 1.0, label: "SQUASH" },
+            Throw { control: C_SWING, to: 1.0, label: "MAX SWING" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 impl PulsarApp {
@@ -461,6 +575,7 @@ impl PulsarApp {
             prev_grid: [false; 16],
             status: String::new(),
             beat_name: String::new(),
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         };
         app.generate(true);
         app.status = format!("{} beat ready. F3 to play, Generate for another.", GENRES[app.genre].name);
@@ -1163,11 +1278,13 @@ impl PulsarApp {
             Room => Self::bump(&s.room, delta, sens, 0.0, 1.0),
             Master => Self::bump(&s.level, delta, sens, 0.0, 1.5),
             Pads => {
-                self.pad_mode = match (self.pad_mode, step > 0) {
+                let m = match (self.pad_mode, step > 0) {
                     (PadMode::Perform, true) | (PadMode::Slots, false) => PadMode::Steps,
                     (PadMode::Steps, true) | (PadMode::Perform, false) => PadMode::Slots,
                     _ => PadMode::Perform,
-                }
+                };
+                self.pad_mode = m;
+                self.kit.set_native(m.layer());
             }
             Record => self.record = !self.record,
             Slot => self.shared.slot.store(cyc(self.slot(), SLOTS), Ordering::Relaxed),
@@ -1188,7 +1305,13 @@ impl PulsarApp {
             RegenLane => self.regen_lane(self.lane),
             MakeFill => self.make_fill(),
             KitFollows | SwingGrid | Chain | Lock | Mute | Solo | Record => self.edit(sel, 1),
-            Pads => self.toggle_grid_mode(),
+            Pads => {
+                // F2 now cycles the kit's layers; this row still cycles
+                // only the three pad modes, moving the layer with them.
+                let m = self.pad_mode.next();
+                self.set_pad_mode(m);
+                self.kit.set_native(m.layer());
+            }
             Complexity => self.gen.complexity = 0.4,
             Density => self.gen.density = 0.5,
             Variation => self.gen.variation = 0.3,
@@ -1437,6 +1560,224 @@ impl PulsarApp {
 }
 
 impl PulsarApp {
+    fn set_pad_mode(&mut self, m: PadMode) {
+        self.pad_mode = m;
+        self.status = match m {
+            PadMode::Perform => "Pads: top rows play lanes, bottom rows mute".into(),
+            PadMode::Steps => format!("Pads: steps of {} (Lane row picks the lane)", LANE_NAMES[self.lane]),
+            PadMode::Slots => "Pads: top rows pick slots A-H, bottom rows regenerate lanes".into(),
+        };
+    }
+
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let s = &self.shared;
+        let la = &s.lanes[self.lane];
+        match CONTROLS[i % 16].0 {
+            Sel::Filter => Knob::F(&s.filter, -1.0, 1.0),
+            Sel::Swing => Knob::F(&s.swing, 0.0, 1.0),
+            Sel::Fatten => Knob::F(&s.fatten, 0.0, 1.0),
+            Sel::Room => Knob::F(&s.room, 0.0, 1.0),
+            Sel::Decay => Knob::F(&la.decay, 0.0, 1.0),
+            Sel::Tone => Knob::F(&la.tone, 0.0, 1.0),
+            Sel::Tempo => Knob::F(&s.bpm, 40.0, 240.0),
+            Sel::Glue => Knob::F(&s.glue, 0.0, 1.0),
+            Sel::Tune => Knob::F(&la.tune, -24.0, 24.0),
+            Sel::Punch => Knob::F(&la.punch, 0.0, 1.0),
+            Sel::Level => Knob::F(&la.level, 0.0, 1.5),
+            Sel::Chance => Knob::F(&la.chance, 0.0, 1.0),
+            Sel::HumanTime => Knob::F(&s.human_time, 0.0, 1.0),
+            Sel::HumanVel => Knob::F(&s.human_vel, 0.0, 1.0),
+            // Slot (AtomicUsize) and genre (a plain field) have no Knob
+            // variant; PlayHost handles them by hand.
+            _ => Knob::None,
+        }
+    }
+
+    /// The colours the old LED overlay showed for each pad mode.
+    fn mode_pad_color(&self, mode: PadMode, i: usize) -> PadColor {
+        let p = self.pattern();
+        match mode {
+            PadMode::Perform => {
+                if i < 8 {
+                    if p.hits(i) > 0 {
+                        PadColor::Green
+                    } else {
+                        PadColor::Off
+                    }
+                } else if self.shared.lanes[i - 8].mute.load(Ordering::Relaxed) {
+                    PadColor::Red
+                } else {
+                    PadColor::Green
+                }
+            }
+            PadMode::Steps => {
+                let step = self.view_bar() * 16 + i;
+                let playing = self.shared.playing.load(Ordering::Relaxed) && self.shared.step.load(Ordering::Relaxed) == step;
+                if playing {
+                    PadColor::Red
+                } else if step == self.cursor {
+                    PadColor::Yellow
+                } else if p.steps[self.lane][step.min(MAX_STEPS - 1)].on() {
+                    PadColor::Green
+                } else {
+                    PadColor::Off
+                }
+            }
+            PadMode::Slots => {
+                if i < 8 {
+                    let filled = self.shared.bank.lock().map(|b| b.get(i).is_some_and(|p| !p.is_empty())).unwrap_or(false);
+                    if i == self.shared.playing_slot.load(Ordering::Relaxed) && self.shared.playing.load(Ordering::Relaxed) {
+                        PadColor::Yellow
+                    } else if i == self.slot() {
+                        PadColor::Blue
+                    } else if filled {
+                        PadColor::Green
+                    } else {
+                        PadColor::Off
+                    }
+                } else if self.locks[i - 8] {
+                    PadColor::Yellow
+                } else {
+                    PadColor::Blue
+                }
+            }
+        }
+    }
+}
+
+/// General MIDI drum notes to Pulsar's lanes, so a drum pad controller
+/// or a GM-mapped keyboard plays the matching sound on PERFORM.
+fn gm_lane(note: u8) -> Option<usize> {
+    Some(match note {
+        35 | 36 => 0,                // kicks
+        38 | 40 => 1,                // snares
+        39 => 2,                     // hand clap
+        42 | 44 => 3,                // closed / pedal hat
+        46 => 4,                     // open hat
+        37 | 41 | 43 | 45 => 5,      // side stick, low toms
+        47 | 48 | 50 | 56 => 6,      // high toms, cowbell
+        49 | 52 | 55 | 57 => 7,      // crashes, china, splash
+        _ => return None,
+    })
+}
+
+impl PlayHost for PulsarApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        let name = CONTROLS[i % 16].1;
+        if lane_control(i % 16) { format!("{} {name}", LANE_SHORT[self.lane]) } else { name.to_string() }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % 16].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        match i % 16 {
+            C_SLOT => Some(self.slot() as f32 / (SLOTS - 1) as f32),
+            C_GENRE => Some(self.genre as f32 / (GENRES.len().max(2) - 1) as f32),
+            _ => self.knob(i).norm(),
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        match i % 16 {
+            C_SLOT | C_GENRE => true,
+            _ => self.knob(i).stepped(),
+        }
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % 16].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        // `press` resets every continuous control here; slot and genre
+        // have no reset and fall through to its no-op arm.
+        self.press(CONTROLS[i % 16].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        match i % 16 {
+            C_SLOT => self.shared.slot.store((v * (SLOTS - 1) as f32).round() as usize, Ordering::Relaxed),
+            C_GENRE => self.genre = ((v * (GENRES.len().max(2) - 1) as f32).round() as usize).min(GENRES.len() - 1),
+            _ => self.knob(i).set(v),
+        }
+    }
+    /// A moment is the sound and groove: the lane controls are stored
+    /// with the lane they belong to (and recalled onto it, whatever lane
+    /// is selected now), and slot/genre are left out so recalling a sound
+    /// never jumps the arrangement.
+    fn kit_snapshot(&self) -> serde_json::Value {
+        let v: Vec<serde_json::Value> = (0..CONTROLS.len())
+            .map(|i| if i == C_SLOT || i == C_GENRE { serde_json::Value::Null } else { self.kit_norm(i).map_or(serde_json::Value::Null, |x| serde_json::json!(x)) })
+            .collect();
+        serde_json::json!({ "lane": self.lane, "v": v })
+    }
+    fn kit_recall(&mut self, m: &serde_json::Value) {
+        let keep = self.lane;
+        if let Some(l) = m.get("lane").and_then(|l| l.as_u64()) {
+            self.lane = (l as usize).min(LANES - 1);
+        }
+        if let Some(items) = m.get("v").and_then(|v| v.as_array()) {
+            for (i, item) in items.iter().enumerate().take(CONTROLS.len()) {
+                if let Some(x) = item.as_f64() {
+                    self.kit_set_norm(i, (x as f32).clamp(0.0, 1.0));
+                }
+            }
+        }
+        self.lane = keep;
+    }
+    fn kit_line(&self) -> String {
+        let s = &self.shared;
+        let playing = s.playing.load(Ordering::Relaxed);
+        format!(
+            "{} {}  bar {}  {}{}{}",
+            SLOT_NAMES[self.slot()],
+            if playing { ">" } else { "||" },
+            self.view_bar() + 1,
+            LANE_SHORT[self.lane],
+            if playing && s.in_fill.load(Ordering::Relaxed) { "  FILL" } else { "" },
+            if self.record { "  REC" } else { "" }
+        )
+    }
+    fn kit_pad_label(&self, layer: u8, pad: usize) -> String {
+        match PadMode::from_layer(layer) {
+            PadMode::Perform => {
+                if pad < 8 {
+                    LANE_SHORT[pad].to_string()
+                } else if self.shared.lanes[pad - 8].mute.load(Ordering::Relaxed) {
+                    format!("{} MUTED", LANE_SHORT[pad - 8])
+                } else {
+                    format!("{} mute", LANE_SHORT[pad - 8])
+                }
+            }
+            PadMode::Steps => format!("{}", self.view_bar() * 16 + pad + 1),
+            PadMode::Slots => {
+                if pad < 8 {
+                    SLOT_NAMES[pad].to_string()
+                } else {
+                    format!("new {}", LANE_SHORT[pad - 8])
+                }
+            }
+        }
+    }
+    fn kit_pad_color(&self, layer: u8, pad: usize, _held: bool) -> PadColor {
+        self.mode_pad_color(PadMode::from_layer(layer), pad)
+    }
+    /// On PERFORM a GM drum note plays its lane; any other key plays lane
+    /// note % 8, so a keyboard never lands on the mute row. On STEPS and
+    /// SLOTS keys press pads the way the shell always mapped them.
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        // Controllers send encoder-touch notes below 21; never pads.
+        if note < 21 {
+            return None;
+        }
+        Some(match self.pad_mode {
+            PadMode::Perform => gm_lane(note).unwrap_or(note as usize % 8),
+            _ => note as usize % 16,
+        })
+    }
+}
+
+impl PulsarApp {
     #[allow(dead_code)] // Slint GUI only; see app.rs
     /// Everything the Slint home screen's Pulsar panel shows -- the same
     /// state `draw_grid` puts on the device screen.
@@ -1533,6 +1874,19 @@ fn fit(s: &str, max: usize) -> String {
 
 impl App for PulsarApp {
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach handle_pads only on Pulsar's
+        // own layers, and the layer showing is the pad mode.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
+        if let Some(id) = step.native {
+            let m = PadMode::from_layer(id);
+            if m != self.pad_mode {
+                self.set_pad_mode(m);
+            }
+        }
         self.handle_pads(&input.grid);
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
@@ -1572,80 +1926,38 @@ impl App for PulsarApp {
         true
     }
 
+    fn play_surface(&self) -> bool {
+        true
+    }
+
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+
     fn toggle_running(&mut self) {
         let p = !self.shared.playing.load(Ordering::Relaxed);
         self.shared.playing.store(p, Ordering::Relaxed);
     }
 
     fn grid_mode_label(&self) -> Option<&'static str> {
-        Some(match self.pad_mode {
-            PadMode::Perform => "PERFORM",
-            PadMode::Steps => "STEPS",
-            PadMode::Slots => "SLOTS",
-        })
+        Some(self.kit.layer_label())
     }
 
+    /// F2 cycles PERFORM, STEPS, SLOTS, Controls, Moments, Throws. Landing
+    /// on one of Pulsar's own layers switches the pad mode right away (not
+    /// a frame later in tick) so a MIDI key that frame maps the new way.
     fn toggle_grid_mode(&mut self) {
-        self.pad_mode = match self.pad_mode {
-            PadMode::Perform => PadMode::Steps,
-            PadMode::Steps => PadMode::Slots,
-            PadMode::Slots => PadMode::Perform,
-        };
-        self.status = match self.pad_mode {
-            PadMode::Perform => "Pads: top rows play lanes, bottom rows mute".into(),
-            PadMode::Steps => format!("Pads: steps of {} (Lane row picks the lane)", LANE_NAMES[self.lane]),
-            PadMode::Slots => "Pads: top rows pick slots A-H, bottom rows regenerate lanes".into(),
-        };
+        self.kit.next_layer();
+        if let Layer::Native(id, _) = self.kit.layer() {
+            let m = PadMode::from_layer(id);
+            if m != self.pad_mode {
+                self.set_pad_mode(m);
+            }
+        }
     }
 
     fn grid_led_overlay(&self) -> [PadColor; 16] {
-        let p = self.pattern();
-        let bank = self.bank();
-        std::array::from_fn(|i| match self.pad_mode {
-            PadMode::Perform => {
-                if i < 8 {
-                    if p.hits(i) > 0 {
-                        PadColor::Green
-                    } else {
-                        PadColor::Off
-                    }
-                } else if self.shared.lanes[i - 8].mute.load(Ordering::Relaxed) {
-                    PadColor::Red
-                } else {
-                    PadColor::Green
-                }
-            }
-            PadMode::Steps => {
-                let step = self.view_bar() * 16 + i;
-                let playing = self.shared.playing.load(Ordering::Relaxed) && self.shared.step.load(Ordering::Relaxed) == step;
-                if playing {
-                    PadColor::Red
-                } else if step == self.cursor {
-                    PadColor::Yellow
-                } else if p.steps[self.lane][step.min(MAX_STEPS - 1)].on() {
-                    PadColor::Green
-                } else {
-                    PadColor::Off
-                }
-            }
-            PadMode::Slots => {
-                if i < 8 {
-                    if i == self.shared.playing_slot.load(Ordering::Relaxed) && self.shared.playing.load(Ordering::Relaxed) {
-                        PadColor::Yellow
-                    } else if i == self.slot() {
-                        PadColor::Blue
-                    } else if !bank[i].is_empty() {
-                        PadColor::Green
-                    } else {
-                        PadColor::Off
-                    }
-                } else if self.locks[i - 8] {
-                    PadColor::Yellow
-                } else {
-                    PadColor::Blue
-                }
-            }
-        })
+        self.kit.led_overlay(self)
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
@@ -1682,7 +1994,13 @@ impl App for PulsarApp {
                 (fit(&n, 30), fit(&v, room.max(6)))
             })
             .collect();
-        self.list.draw(fb, 16, 68, 24, 10, &rows);
+        if self.kit.menu {
+            self.list.draw(fb, 16, 68, 24, 10, &rows);
+        } else if let Some(col) = self.play_column() {
+            // Pulsar's green-on-black; stops short of the step grid (x 394).
+            let pal = kit::draw::Palette { bg: Rgb565::BLACK, ink: Rgb565::new(24, 48, 24), accent: ACCENT, dim: Rgb565::new(18, 36, 18), faint: Rgb565::new(3, 6, 3) };
+            kit::draw::column(fb, &col, 16, 40, 366, 284, pal);
+        }
 
         let (px, py) = (400, 44);
         let mode = match self.pad_mode {
@@ -1712,6 +2030,7 @@ impl App for PulsarApp {
         }
 
         let hint = match self.visible_rows().get(self.list.selected) {
+            _ if !self.kit.menu => "knobs: filter/swing..   D-pad: slot   F2: pads   F3: play/stop   R1: menu",
             Some(Row::Group(_)) => "knob1: browse   press knob1: open/close   F3: play/stop",
             Some(Row::Leaf(Sel::Lane)) => "knob2: pick lane   press knob1: lock lane",
             Some(Row::Leaf(s)) if self.leaf_name(*s).starts_with(">>") => "press knob2 to run",
@@ -1845,6 +2164,84 @@ mod tests {
             let _ = mode;
             app.toggle_grid_mode();
         }
+    }
+
+    #[test]
+    fn opens_on_the_play_view_knob1_sweeps_the_filter_and_r1_opens_the_menu() {
+        let (mut app, ..) = make();
+        assert!(app.play_column().is_some(), "play view first");
+        let f = app.shared.filter.get();
+        app.tick(&Input { knob1: 5, ..Default::default() });
+        assert!(app.shared.filter.get() > f, "knob 1 is the DJ filter on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.slot(), 1, "D-pad up = next slot");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn f2_layers_are_the_pad_modes_and_kit_layers_keep_the_pads() {
+        let (mut app, ..) = make();
+        let press = |app: &mut PulsarApp, i: usize| {
+            let mut inp = Input::default();
+            inp.grid[i] = true;
+            app.tick(&inp);
+            app.tick(&Input::default());
+        };
+        assert_eq!(app.kit.layer_label(), "PERFORM");
+        press(&mut app, 1);
+        assert_eq!(app.shared.audition[1].load(Ordering::Relaxed), 110, "PERFORM plays lanes");
+        app.toggle_grid_mode();
+        assert_eq!(app.pad_mode, PadMode::Steps);
+        app.toggle_grid_mode();
+        assert_eq!(app.pad_mode, PadMode::Slots);
+        app.toggle_grid_mode(); // Controls
+        press(&mut app, 3);
+        assert_eq!(app.slot(), 0, "kit layers keep the pads from the slot picker");
+        app.press(Sel::Pads);
+        assert!(app.pad_mode == PadMode::Perform && app.kit.layer_label() == "PERFORM", "the menu's Pads row moves the layer");
+        app.edit(Sel::Pads, 1);
+        assert!(app.pad_mode == PadMode::Steps && app.kit.layer_label() == "STEPS");
+    }
+
+    #[test]
+    fn throws_and_the_stick_spring_back_and_moments_keep_their_lane() {
+        let (mut app, ..) = make();
+        for _ in 0..5 {
+            app.toggle_grid_mode(); // ... Controls, Moments, Throws
+        }
+        assert_eq!(app.kit.layer_label(), "THROWS");
+        let room = app.shared.room.get();
+        let mut inp = Input::default();
+        inp.grid[kit::rank_pad(2)] = true; // ROOM WASH
+        app.tick(&inp);
+        assert_eq!(app.shared.room.get(), 1.0, "held throw");
+        app.tick(&Input::default());
+        assert!((app.shared.room.get() - room).abs() < 1e-5, "springs back");
+        app.tick(&Input { stick: [-1.0, 0.0], ..Default::default() });
+        assert!(app.shared.filter.get() < -0.9, "stick left = low-pass");
+        app.tick(&Input::default());
+        assert!(app.shared.filter.get().abs() < 1e-5, "back to off");
+
+        app.lane = 1;
+        app.shared.lanes[1].decay.set(0.9);
+        let moment = app.kit_snapshot();
+        app.shared.lanes[1].decay.set(0.1);
+        app.lane = 3;
+        let hat = app.shared.lanes[3].decay.get();
+        app.kit_recall(&moment);
+        assert!((app.shared.lanes[1].decay.get() - 0.9).abs() < 1e-5, "recalled onto the snare");
+        assert_eq!(app.shared.lanes[3].decay.get(), hat, "the selected lane is left alone");
+        assert_eq!(app.lane, 3);
+    }
+
+    #[test]
+    fn gm_drum_notes_play_their_lane_on_perform() {
+        let (mut app, ..) = make();
+        let mut keys = crate::app::MidiKeys::default();
+        keys.0[38] = 100; // GM snare
+        app.tick(&Input { midi_keys: keys, ..Default::default() });
+        assert_eq!(app.shared.audition[1].load(Ordering::Relaxed), 110);
     }
 
     #[test]

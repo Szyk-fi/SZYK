@@ -64,6 +64,7 @@
 //! list, per the module doc-comment convention this sim already
 //! follows (see beads.rs).
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
@@ -246,6 +247,70 @@ pub struct TuringMachineApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs). The module never used the
+    /// pads, so they start on the kit's layers.
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first -- the real module's
+/// own panel order: the big Locks knob, the clock, the Length switch and
+/// the Scale knob (the CV output's attenuator, i.e. this app's CV
+/// output level), then the Volts expander's five weights that shape the
+/// melody, then the rest of the outputs and the Pulses-style gate.
+const C_LOCKS: usize = 0;
+const C_RATE: usize = 1;
+const C_LENGTH: usize = 2;
+const C_SCALE: usize = 3;
+const C_WEIGHT_1: usize = 4;
+const C_PULSE_LEVEL: usize = 9;
+const C_GATE_LEVEL: usize = 10;
+const C_VOLTS_LEVEL: usize = 11;
+const C_GATE_BIT_A: usize = 12;
+const C_GATE_BIT_B: usize = 13;
+const C_GATE_MODE: usize = 14;
+const C_WRITE: usize = 15;
+const NUM_CONTROLS: usize = 16;
+/// Output indexes into `Params::outputs` (see `OUTPUT_NAMES`).
+const OUT_PULSE: usize = 0;
+const OUT_CV: usize = 1;
+const OUT_EXP_GATE: usize = 2;
+const OUT_EXP_CV: usize = 3;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "turing_machine",
+        // No native layer (the module has no pad behaviour to keep).
+        // Throws carry the real module's momentary WRITE switch -- hold
+        // to write 1s or 0s into the loop, let go and it runs on -- plus
+        // momentary trips to the Locks detents.
+        // Throws first: on Controls, knob 2 follows the grabbed pad
+        // instead of the hero pair, which is the wrong default.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_LOCKS, C_RATE], [C_LENGTH, C_SCALE], [C_WEIGHT_1, C_WEIGHT_1 + 1], [C_WEIGHT_1 + 2, C_WEIGHT_1 + 3]],
+        // D-pad up/down steps the Length switch: the one stepped control
+        // a player turns constantly to make the loop shorter or longer.
+        browse: Some(C_LENGTH),
+        // Stick X sweeps Locks either way from where the knob sits --
+        // right toward a locked loop, left toward double lock -- and Y
+        // the Scale (how wide the melody spreads). Hands only push up, so
+        // they get the two controls that start below their top: the
+        // clock (rush), and Locks (a rising hand walks a random register
+        // into a locked loop, the module's signature gesture).
+        routes: Routes { stick_x: Some(C_LOCKS), stick_y: Some(C_SCALE), hand_l: Some(C_RATE), hand_r: Some(C_LOCKS) },
+        throws: vec![
+            // Write is 0 Normal / 1 Force 1 / 2 Force 0, so 0.5 and 1.0.
+            Throw { control: C_WRITE, to: 0.5, label: "WRITE 1" },
+            Throw { control: C_WRITE, to: 1.0, label: "WRITE 0" },
+            Throw { control: C_LOCKS, to: 1.0, label: "LOCK" },
+            Throw { control: C_LOCKS, to: 0.0, label: "DBL LOCK" },
+            Throw { control: C_LOCKS, to: 0.5, label: "RANDOM" },
+            Throw { control: C_RATE, to: 1.0, label: "FAST" },
+            Throw { control: C_RATE, to: 0.0, label: "SLOW" },
+            Throw { control: C_SCALE, to: 0.0, label: "MUTE CV" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Turing Machine's own palette: warm paper white with bold
@@ -261,7 +326,15 @@ const TURING_LED_OFF: Rgb565 = Rgb565::new(25, 50, 17);
 
 impl TuringMachineApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>) -> Self {
-        Self { params: Arc::new(Params::new(&modbus)), modbus, sensitivity, nav_speed, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
+        Self {
+            params: Arc::new(Params::new(&modbus)),
+            modbus,
+            sensitivity,
+            nav_speed,
+            list: ParamList::new(),
+            expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+        }
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
@@ -533,6 +606,100 @@ impl TuringMachineApp {
 /// as `false` rather than panicking, since a shorter Length or a
 /// fixed Exp CV bit position can legitimately point past the current
 /// loop.
+impl TuringMachineApp {
+    /// The menu row behind each play-view control -- label, value, edit
+    /// and reset go through exactly the menu's code.
+    fn kit_selection(i: usize) -> Selection {
+        match i {
+            C_LOCKS => Selection::Locks,
+            C_RATE => Selection::Rate,
+            C_LENGTH => Selection::Length,
+            C_SCALE => Selection::OutputLevel(OUT_CV),
+            C_PULSE_LEVEL => Selection::OutputLevel(OUT_PULSE),
+            C_GATE_LEVEL => Selection::OutputLevel(OUT_EXP_GATE),
+            C_VOLTS_LEVEL => Selection::OutputLevel(OUT_EXP_CV),
+            C_GATE_BIT_A => Selection::GateBitA,
+            C_GATE_BIT_B => Selection::GateBitB,
+            C_GATE_MODE => Selection::GateMode,
+            C_WRITE => Selection::Write,
+            w => Selection::VoltsWeight((w - C_WEIGHT_1).min(NUM_VOLTS_WEIGHTS - 1)),
+        }
+    }
+
+    /// Storage behind each control, with the ranges `edit` keeps them
+    /// in. Length is a `usize` switch position (no `Knob` variant), so
+    /// `kit_norm`/`kit_set_norm` handle it by hand.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match i {
+            C_LOCKS => Knob::F(&p.locks, 0.0, 1.0),
+            C_RATE => Knob::F(&p.rate_hz, MIN_RATE_HZ, MAX_RATE_HZ),
+            C_LENGTH => Knob::None,
+            C_SCALE => Knob::F(&p.outputs[OUT_CV].level, 0.0, 1.0),
+            C_PULSE_LEVEL => Knob::F(&p.outputs[OUT_PULSE].level, 0.0, 1.0),
+            C_GATE_LEVEL => Knob::F(&p.outputs[OUT_EXP_GATE].level, 0.0, 1.0),
+            C_VOLTS_LEVEL => Knob::F(&p.outputs[OUT_EXP_CV].level, 0.0, 1.0),
+            C_GATE_BIT_A => Knob::UR(&p.gate_bit_a, 0, REGISTER_BITS - 1),
+            // Bit B's range includes the "Off" sentinel, as in `edit`.
+            C_GATE_BIT_B => Knob::UR(&p.gate_bit_b, 0, GATE_BIT_B_OFF),
+            C_GATE_MODE => Knob::U(&p.gate_mode, GATE_MODE_NAMES.len() as u32),
+            C_WRITE => Knob::U(&p.write_mode, WRITE_MODE_NAMES.len() as u32),
+            w if (C_WEIGHT_1..C_WEIGHT_1 + NUM_VOLTS_WEIGHTS).contains(&w) => Knob::F(&p.volts_weight[w - C_WEIGHT_1], 0.0, 1.0),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for TuringMachineApp {
+    fn kit_control_count(&self) -> usize {
+        NUM_CONTROLS
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match i {
+            C_SCALE => "Scale".into(),
+            C_PULSE_LEVEL => "Pulse Lvl".into(),
+            C_GATE_LEVEL => "Gate Lvl".into(),
+            C_VOLTS_LEVEL => "ExpCV Lvl".into(),
+            _ => self.leaf_name(Self::kit_selection(i)),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(Self::kit_selection(i))
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        if i == C_LENGTH {
+            let idx = self.params.length_idx.load(Ordering::Relaxed).min(LENGTH_STEPS.len() - 1);
+            return Some(idx as f32 / (LENGTH_STEPS.len() - 1) as f32);
+        }
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        // `Knob::None` (Length) already counts as stepped.
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(Self::kit_selection(i), delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(Self::kit_selection(i));
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        if i == C_LENGTH {
+            let idx = (v.clamp(0.0, 1.0) * (LENGTH_STEPS.len() - 1) as f32).round() as usize;
+            self.params.length_idx.store(idx.min(LENGTH_STEPS.len() - 1), Ordering::Relaxed);
+            return;
+        }
+        self.knob(i).set(v);
+    }
+    /// The live loop, first step (the one about to shift out) leftmost,
+    /// and where Locks sits.
+    fn kit_line(&self) -> String {
+        let (bits, _, _) = self.register_bits();
+        let loop_bits: String = bits.iter().map(|&b| if b { '1' } else { '0' }).collect();
+        format!("{loop_bits} {}", self.locks_label(self.params.locks.get().clamp(0.0, 1.0)))
+    }
+}
+
 fn bit_at(reg: u16, length: u32, i: u32) -> bool {
     if i >= length {
         return false;
@@ -547,7 +714,26 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 
 impl App for TuringMachineApp {
     fn needs_background_audio(&self) -> bool { self.params.outputs.iter().any(|o| o.target.load(Ordering::Relaxed) > 0) }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. The pads only ever reach the kit.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -613,7 +799,14 @@ impl App for TuringMachineApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, TURING_BG, TURING_DIM, TURING_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, TURING_BG, TURING_DIM, TURING_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Stops short of the register LEDs at x=420.
+            let pal = kit::draw::Palette { bg: TURING_BG, ink: TURING_TITLE, accent: TURING_ACCENT, dim: TURING_DIM, faint: TURING_LED_OFF };
+            kit::draw::column(fb, &col, 16, 46, 384, 280, pal);
+            Text::new("knobs: dials   D-pad: length   F2: pads (Throws: WRITE)   R1: menu", Point::new(16, 337), dim).draw(fb).ok();
+        }
 
         // The register itself, as a row of lit/unlit step LEDs --
         // exactly what the real module's own row of pulse LEDs shows.
@@ -1173,5 +1366,45 @@ mod tests {
             let (exp_gate, _) = app.expander_state();
             assert!(exp_gate, "AND of two set bits must be on");
         }
+    }
+
+    fn pad(rank: usize) -> Input {
+        Input { grid: std::array::from_fn(|k| k == crate::app::play_kit::rank_pad(rank)), ..Default::default() }
+    }
+
+    #[test]
+    fn opens_on_the_play_view_with_locks_on_knob_1() {
+        let (mut app, _modbus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.locks.get() > 0.5, "knob 1 is the big Locks knob");
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        assert_eq!(app.length(), 12, "D-pad down steps the Length switch down from 16");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn write_throws_force_bits_while_held_and_let_go_cleanly() {
+        let (mut app, _modbus) = new_app();
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        app.params.length_idx.store(length_idx_for(8), Ordering::Relaxed);
+        app.params.rate_hz.set(MAX_RATE_HZ);
+        let mut processor = app.audio_processor().unwrap();
+        let mut buffer = vec![0.0f32; 512 * 2];
+
+        app.tick(&pad(0)); // WRITE 1
+        assert_eq!(app.params.write_mode.load(Ordering::Relaxed), 1);
+        for _ in 0..50 {
+            processor.process(&mut buffer, 2, 48000.0);
+        }
+        assert!(app.register_bits().0.iter().all(|&b| b), "holding WRITE 1 fills the loop with ones");
+        app.tick(&Input::default());
+        assert_eq!(app.params.write_mode.load(Ordering::Relaxed), 0, "letting go returns WRITE to Normal");
+
+        app.tick(&pad(3)); // DBL LOCK
+        assert_eq!(app.params.locks.get(), 0.0);
+        app.tick(&Input::default());
+        assert!((app.params.locks.get() - 0.5).abs() < 1e-5, "Locks springs back to the knob");
     }
 }

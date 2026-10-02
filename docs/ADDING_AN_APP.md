@@ -89,3 +89,8 @@ comes back.
   it doesn't pull in something that breaks the existing
   `[target.'cfg(target_os = "macos")'.dependencies]` split (see the
   README's "Platform support" section) before merging.
+
+## Play view
+
+Playable apps open on the shared play view. See [PLAY_KIT.md](PLAY_KIT.md) for
+the structure and the steps to give a new app one.

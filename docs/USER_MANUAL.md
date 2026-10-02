@@ -1,6 +1,6 @@
 # Portamax User Manual
 
-Portamax is a self-contained groovebox/instrument simulator: 51 installed
+Portamax is a self-contained groovebox/instrument simulator: 56 installed
 apps sharing one audio engine, one modulation bus, and one 4x4 pad grid +
 D-pad + four knobs/encoders + F1-F4 control surface. This manual covers
 what's actually implemented today, not a roadmap.
@@ -36,6 +36,29 @@ Library,** and **Utilities**. Up/down selects an app, left/right changes
 category, R1 opens it. F2 cycles categories, F3 opens Recent (last 12 apps
 opened this session, not persisted across restarts), F4 opens Mixer. A green
 dot marks an app with an active transport.
+
+### 1.1 The play view
+
+Every instrument, effect, sequencer and recorder opens on its **play view**:
+the parameter list is replaced by a play column (four dials, the 16 pads
+labelled for what they do right now, the stick and both hand sensors), next
+to the app's own panel. The layout is the same in every app:
+
+| Control | On the play view |
+|---|---|
+| **R1** | Toggle the full menu — everything is still there |
+| **F2** | Cycle pad layers: the app's own (notes, steps, slices, gates...) first, then **Controls**, **Moments**, and **Throws** on effects |
+| **L1 (hold)** | Peek at the Controls layer |
+| **Knob 1 / 2** | Turn the hero pair (badged 1 and 2); knob 1 press = next pair, knob 2 press = reset the pair |
+| **D-pad up/down** | Step the app's main choice (engine, preset, algorithm, octave, track, scene...) |
+| **Stick, hands, mod wheel, aftertouch** | Push the routed controls away from their knob setting; letting go returns exactly to it; stick click keeps the pushed sound |
+| **Controls layer** | 16 parameters on the pads; tap one, knob 2 turns it |
+| **Moments layer** | Tap = recall a whole sound, hold 0.6 s = store (saved to `saves/<app>/moments.json`) |
+| **Throws layer** | Hold a pad to push a control somewhere (feedback up, freeze, octave...); release springs back |
+
+On a play-view app a MIDI keyboard plays the app's pads by pitch where the
+pads are pitched. Utilities (Settings, Mixer, MIDI Learn, CV Out, Portal,
+Scope, Analyzer, Visualizer, Retro, Controller) keep their menus.
 
 ## 2. How routing works
 
@@ -219,13 +242,26 @@ own module doc comment.
 
 Save states aren't supported for Neo Geo yet.
 
-## 9. PS5 controller support
+## 9. Game controllers (PS5 and any other)
 
-A real DualSense (or compatible) controller works out of the box on macOS
-via Apple's `GameController.framework` — D-pad navigates, face buttons map
-to pad actions, sticks drive knobs, shoulder triggers are F2/F3, Menu is
-Home. It needs a real window focused (the actual app, not a bare CLI probe)
-to be detected — that's an Apple platform requirement, not a bug.
+A DualSense, Xbox or MFi controller works on macOS through Apple's
+`GameController.framework`; other USB/HID gamepads (and every controller on
+Linux/Windows) go through `gilrs`. It needs the real app window focused to
+be detected on macOS — an Apple platform requirement, not a bug.
+
+What each button does is a mapping you can change in the **Controller** app
+(Utilities): two maps, **Navigate** (home screen and menus) and **Play**
+(apps on their play view). Select an action, press knob 2, then press the
+button or move the stick/trigger you want; knob 2 left clears it; "Reset
+this map" restores the defaults. Saved to `saves/controller_map.json`.
+
+Defaults: Navigate is the original DualSense layout (D-pad left/right
+browse, up/down edit, Cross select, Circle/Square/Triangle = F1/F2/F3, R1 =
+Mixer, L1/Options/PS/touchpad = Home, right stick browses, left stick
+unused). Play makes the pad an instrument controller: right stick = joystick
+(R3 = keep), L2/R2 pressure = the two hand sensors, L1/R1 = the shoulders
+(R1 toggles the menu), face buttons = the bottom row of pads, Options = F2,
+Create = F3, D-pad = the device D-pad.
 
 ## 10. Known limits (read before filing something as broken)
 

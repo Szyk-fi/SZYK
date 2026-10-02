@@ -44,6 +44,7 @@
 //! comment) -- everything else about crossing detection here is
 //! exact, not a visual approximation.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, ROOT_NAMES, SCALE_TYPES};
 use crate::audio::AudioProcessor;
@@ -1122,6 +1123,65 @@ pub struct BloomApp {
     /// behavior (Bloom otherwise doesn't use the grid at all).
     custom_scale_edit: Option<usize>,
     prev_grid: [bool; 16],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// Play-view control indexes (see `BloomApp::kit_sel`). Every one acts
+/// on the focused shape -- the one the circle shows and F3 runs.
+const C_SPEED: usize = 0;
+const C_OUTER_ANGLE: usize = 1;
+const C_PROBABILITY: usize = 2;
+const C_DOT_ANGLE: usize = 3;
+const C_TIMBRE: usize = 4;
+const C_DECAY: usize = 6;
+const C_RING_ROTATION: usize = 7;
+const C_PATTERN: usize = 10;
+/// Not a parameter: which of the 8 shapes the play view (and F3) acts
+/// on. Kept as the menu's own selection, so R1 lands on that shape.
+const C_SHAPE: usize = 15;
+const KIT_CONTROLS: usize = 16;
+/// The Custom Scale editor as a pad layer: being on it *is* Custom
+/// Scale Edit mode (see `BloomApp::tick`/`toggle_grid_mode`).
+const SCALE_LAYER: u8 = 0;
+const SCALE_LAYER_LABEL: &str = "SCALE";
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "bloom",
+        // Bloom's only pad behaviour is the Custom Scale editor, which used
+        // to be reachable only from the menu and was off by default -- so
+        // it goes last, not first: the app still opens with pads that
+        // can't silently rewrite a scale, and F2 (or the menu's Edit
+        // Custom Scale row, as before) reaches it.
+        // Throws first: on Controls, knob 2 follows the grabbed pad
+        // instead of the hero pair, which is the wrong default.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments, Layer::Native(SCALE_LAYER, SCALE_LAYER_LABEL)],
+        hero: vec![[C_SPEED, C_OUTER_ANGLE], [C_PROBABILITY, C_DOT_ANGLE], [C_TIMBRE, 5], [C_DECAY, C_RING_ROTATION]],
+        // 50 curated patterns: stepping through them is the quickest way
+        // to a new shape.
+        browse: Some(C_PATTERN),
+        // Stick: dot speed on X, rotating the trigger dots on Y (which
+        // angles get crossed -- the rhythm). Hands: fanning the dots apart
+        // (Dot Angle) and density (Probability).
+        routes: Routes { stick_x: Some(C_SPEED), stick_y: Some(C_OUTER_ANGLE), hand_l: Some(C_DOT_ANGLE), hand_r: Some(C_PROBABILITY) },
+        throws: vec![
+            Throw { control: C_SPEED, to: 1.0, label: "FAST" },
+            Throw { control: C_SPEED, to: 0.0, label: "CRAWL" },
+            // Offsets span -1..1 turns, so +-1 is no rotation at all; 0.75
+            // is +half a turn.
+            Throw { control: C_OUTER_ANGLE, to: 0.75, label: "FLIP" },
+            Throw { control: C_DOT_ANGLE, to: 0.6, label: "FAN" },
+            Throw { control: C_RING_ROTATION, to: 0.75, label: "MIRROR" },
+            Throw { control: C_PROBABILITY, to: 0.0, label: "HUSH" },
+            Throw { control: C_TIMBRE, to: 1.0, label: "BRIGHT" },
+            Throw { control: C_DECAY, to: 1.0, label: "LONG" },
+        ],
+        // A keyboard toggling scale degrees would be a surprise, not a
+        // feature.
+        midi_to_pads: false,
+        own_expression: false,
+    }
 }
 
 impl BloomApp {
@@ -1140,7 +1200,31 @@ impl BloomApp {
             rng: seed | 1,
             custom_scale_edit: None,
             prev_grid: [false; 16],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
+    }
+
+    /// The shape the screen, F3 and the play view act on -- whatever the
+    /// menu's selection points into.
+    fn focus_shape(&self) -> usize {
+        let rows = self.visible_rows();
+        self.current_shape(&rows)
+    }
+
+    /// Moves the menu's selection onto shape `s`'s group row, so the
+    /// circle, F3 and a later R1 into the menu all follow.
+    fn set_focus_shape(&mut self, s: usize) {
+        let rows = self.visible_rows();
+        if let Some(idx) = rows.iter().position(|r| matches!(r, Row::Group(g) if *g == s + 1)) {
+            self.list.selected = idx;
+        }
+        self.last_shape = s;
+    }
+
+    /// Ignores L1's peek on purpose: peeking at Controls doesn't leave
+    /// the editor.
+    fn on_scale_layer(&self) -> bool {
+        self.kit.layer_label() == SCALE_LAYER_LABEL
     }
 
     fn next_rand01(&mut self) -> f32 {
@@ -1778,7 +1862,220 @@ impl BloomApp {
     }
 }
 
+impl BloomApp {
+    /// The menu leaf behind each play-view control, for the focused
+    /// shape. Control 0 follows the shape's own Tempo Sync the way its
+    /// menu does: Speed when free-running, Clock Mod when synced.
+    fn kit_sel(&self, i: usize) -> Option<Selection> {
+        let s = self.focus_shape();
+        Some(match i {
+            C_SPEED => {
+                if self.params.shapes[s].tempo_sync.load(Ordering::Relaxed) { Selection::ClockMod(s) } else { Selection::Speed(s) }
+            }
+            C_OUTER_ANGLE => Selection::OuterAngleOffset(s),
+            C_PROBABILITY => Selection::Probability(s),
+            C_DOT_ANGLE => Selection::DotAngleOffset(s),
+            C_TIMBRE => Selection::Timbre(s),
+            5 => Selection::Harmonics(s),
+            C_DECAY => Selection::Decay(s),
+            C_RING_ROTATION => Selection::RingRotationOffset(s),
+            8 => Selection::Dots(s),
+            9 => Selection::OuterDots(s),
+            C_PATTERN => Selection::Pattern(s),
+            11 => Selection::Engine(s),
+            12 => Selection::Scale(s),
+            13 => Selection::Root(s),
+            // An action: grab it on the Controls layer, press knob 2.
+            14 => Selection::Randomize(s),
+            C_SHAPE => return None,
+            _ => return None,
+        })
+    }
+
+    /// Ranges match `edit()`'s clamps exactly.
+    fn knob(&self, sel: Selection) -> Knob<'_> {
+        let p = &self.params;
+        match sel {
+            Selection::Speed(s) => Knob::F(&p.shapes[s].speed_hz, MIN_SPEED_HZ, MAX_SPEED_HZ),
+            Selection::OuterAngleOffset(s) => Knob::F(&p.shapes[s].outer_angle_offset, -1.0, 1.0),
+            Selection::DotAngleOffset(s) => Knob::F(&p.shapes[s].dot_angle_offset, -1.0, 1.0),
+            Selection::RingRotationOffset(s) => Knob::F(&p.shapes[s].ring_rotation_offset, -1.0, 1.0),
+            Selection::Probability(s) => Knob::F(&p.shapes[s].probability, 0.0, 1.0),
+            Selection::Harmonics(s) => Knob::F(&p.shapes[s].harmonics, 0.0, 1.0),
+            Selection::Timbre(s) => Knob::F(&p.shapes[s].timbre, 0.0, 1.0),
+            Selection::Decay(s) => Knob::F(&p.shapes[s].decay, 0.0, 1.0),
+            Selection::Engine(s) => Knob::U(&p.shapes[s].engine, 24),
+            // +1 for the Custom slot, same as `edit()`.
+            Selection::Scale(s) => Knob::U(&p.shapes[s].scale, SCALE_TYPES.len() as u32 + 1),
+            Selection::Root(s) => Knob::U(&p.shapes[s].root, 12),
+            _ => Knob::None,
+        }
+    }
+
+    /// Controls stored in `AtomicUsize`s, which `Knob` has no variant
+    /// for -- (atomic, min, max) handled by hand instead.
+    fn usize_knob(&self, sel: Selection) -> Option<(&AtomicUsize, usize, usize)> {
+        let p = &self.params;
+        match sel {
+            Selection::ClockMod(s) => Some((&p.shapes[s].clock_mod, 0, CLOCK_MODS.len() - 1)),
+            Selection::Dots(s) => Some((&p.shapes[s].dots, MIN_DOTS, MAX_DOTS)),
+            Selection::OuterDots(s) => Some((&p.shapes[s].outer, MIN_OUTER, MAX_OUTER)),
+            Selection::Pattern(s) => Some((&p.shapes[s].pattern, 0, PATTERN_PRESETS.len() - 1)),
+            _ => None,
+        }
+    }
+
+    /// The shape the SCALE layer's pads edit.
+    fn scale_edit_shape(&self) -> usize {
+        self.custom_scale_edit.unwrap_or_else(|| self.focus_shape())
+    }
+}
+
+impl PlayHost for BloomApp {
+    fn kit_control_count(&self) -> usize {
+        KIT_CONTROLS
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match self.kit_sel(i) {
+            Some(sel) => self.leaf_name(sel),
+            None => "Shape".into(),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        match self.kit_sel(i) {
+            Some(sel) => self.leaf_value(sel),
+            None => format!("{} of {NUM_SHAPES}", self.focus_shape() + 1),
+        }
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        let sel = self.kit_sel(i)?;
+        if let Some((a, lo, hi)) = self.usize_knob(sel) {
+            return Some((a.load(Ordering::Relaxed).clamp(lo, hi) - lo) as f32 / (hi - lo) as f32);
+        }
+        self.knob(sel).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        match self.kit_sel(i) {
+            Some(sel) => self.usize_knob(sel).is_some() || self.knob(sel).stepped(),
+            None => true,
+        }
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        match self.kit_sel(i) {
+            // The menu's edit() restarts the orbit after every detent of
+            // these two, a leftover from before they were applied live
+            // (`dot_angle_bias`). On a performance knob that would restart
+            // the pattern while you turn it, so the play view only moves
+            // the value; the menu row keeps its old behaviour.
+            Some(Selection::DotAngleOffset(s)) => bump(&self.params.shapes[s].dot_angle_offset, delta, self.sensitivity.get(), -1.0, 1.0),
+            Some(Selection::RingRotationOffset(s)) => bump(&self.params.shapes[s].ring_rotation_offset, delta, self.sensitivity.get(), -1.0, 1.0),
+            Some(sel) => self.edit(sel, delta),
+            None if delta != 0 => {
+                let next = (self.focus_shape() as i32 + delta.signum()).rem_euclid(NUM_SHAPES as i32) as usize;
+                self.set_focus_shape(next);
+            }
+            None => {}
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(sel) = self.kit_sel(i) {
+            self.reset(sel);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let Some(sel) = self.kit_sel(i) else { return };
+        let Some((cur, lo, hi)) = self.usize_knob(sel).map(|(a, lo, hi)| (a.load(Ordering::Relaxed), lo, hi)) else {
+            self.knob(sel).set(v);
+            return;
+        };
+        let next = lo + (v.clamp(0.0, 1.0) * (hi - lo) as f32).round() as usize;
+        if cur == next {
+            return;
+        }
+        // The same side effects the menu's edit() has: a count change
+        // restarts the dots (rings get reassigned), a pattern applies its
+        // whole bundle.
+        match sel {
+            Selection::Pattern(s) => self.apply_pattern(s, next),
+            Selection::Dots(s) => {
+                self.params.shapes[s].dots.store(next, Ordering::Relaxed);
+                self.reset_dot_phases(s);
+            }
+            Selection::OuterDots(s) => {
+                self.params.shapes[s].outer.store(next, Ordering::Relaxed);
+                self.reset_dot_phases(s);
+            }
+            Selection::ClockMod(s) => self.params.shapes[s].clock_mod.store(next, Ordering::Relaxed),
+            _ => {}
+        }
+    }
+    /// A pattern rewrites dots/outer/offsets, so it has to land first or
+    /// it would wipe out the moment's own values for those.
+    fn kit_recall(&mut self, v: &serde_json::Value) {
+        let Some(items) = v.as_array() else { return };
+        let order = std::iter::once(C_PATTERN).chain((0..KIT_CONTROLS).filter(|&i| i != C_PATTERN));
+        for i in order {
+            if let Some(x) = items.get(i).and_then(|x| x.as_f64()) {
+                self.kit_set_norm(i, (x as f32).clamp(0.0, 1.0));
+            }
+        }
+    }
+    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+        if pad >= NUM_CUSTOM_DEGREES {
+            return String::new();
+        }
+        let root = self.params.shapes[self.scale_edit_shape()].root.load(Ordering::Relaxed) as usize;
+        ROOT_NAMES[(root + pad) % 12].to_string()
+    }
+    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if pad >= NUM_CUSTOM_DEGREES {
+            return PadColor::Off;
+        }
+        let on = self.params.shapes[self.scale_edit_shape()].custom_scale[pad].load(Ordering::Relaxed);
+        if held {
+            PadColor::Red
+        } else if on {
+            PadColor::Green
+        } else if pad == 0 {
+            PadColor::Blue // the root, so the row reads as a keyboard
+        } else {
+            PadColor::Off
+        }
+    }
+    fn kit_line(&self) -> String {
+        if self.on_scale_layer() {
+            let s = self.scale_edit_shape();
+            let custom = self.params.shapes[s].scale.load(Ordering::Relaxed) == custom_scale_index();
+            return format!("Shape {} scale{}", s + 1, if custom { "" } else { ": set Custom" });
+        }
+        let s = self.focus_shape();
+        let sp = &self.params.shapes[s];
+        let state = if sp.running.load(Ordering::Relaxed) { "running" } else { "stopped: F3" };
+        format!("Shape {} {state}", s + 1)
+    }
+}
+
 impl App for BloomApp {
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    /// Landing on the SCALE layer enters Custom Scale Edit for the
+    /// focused shape; leaving it exits.
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+        self.custom_scale_edit = if self.on_scale_layer() { Some(self.focus_shape()) } else { None };
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
     }
@@ -1816,8 +2113,26 @@ impl App for BloomApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // Custom Scale Edit mode needs the pads, which only a native layer
+        // passes through -- so entering it from the menu (or any other
+        // way) puts the pads on the SCALE layer.
+        if self.custom_scale_edit.is_some() && !self.on_scale_layer() {
+            self.kit.set_native(SCALE_LAYER);
+        }
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
+
         if let Some(shape) = self.custom_scale_edit {
             self.tick_custom_scale_edit(shape, input);
+            // Knob 1 (in the menu) exits the mode; the pads leave the
+            // editor with it.
+            if self.custom_scale_edit.is_none() && self.on_scale_layer() {
+                self.kit.next_layer();
+            }
             return;
         }
 
@@ -1837,6 +2152,10 @@ impl App for BloomApp {
             }
         }
         self.last_shape = self.current_shape(&rows);
+        // The menu's Edit Custom Scale row just switched the mode on.
+        if self.custom_scale_edit.is_some() && !self.on_scale_layer() {
+            self.kit.set_native(SCALE_LAYER);
+        }
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
@@ -1878,7 +2197,13 @@ impl App for BloomApp {
         // (`BLOOM_BG`) to read against it, not `BLOOM_ACCENT` (which
         // -- now that the chip itself *is* that same orange -- would
         // be invisible orange-on-orange.
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, BLOOM_BG, BLOOM_DIM, BLOOM_CHIP_BG);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, BLOOM_BG, BLOOM_DIM, BLOOM_CHIP_BG);
+        } else if let Some(col) = self.play_column() {
+            // Ends at x=366, clear of the circle (its left edge is x=390).
+            let pal = kit::draw::Palette { bg: BLOOM_BG, ink: BLOOM_TITLE, accent: BLOOM_ACCENT, dim: BLOOM_DIM, faint: BLOOM_RING };
+            kit::draw::column(fb, &col, 16, 40, 350, 280, pal);
+        }
 
         // --- Right: the fixed circle; static outer dots on its
         // boundary (the trigger references); inner dots each
@@ -1977,6 +2302,7 @@ impl App for BloomApp {
         Text::new(&format!("Shape {} -- {}", shape + 1, status), Point::new(420, 300), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {
+            _ if !self.kit.menu => "knobs: speed/rotate   D-pad: pattern   F2: pads   F3: run shape   R1: menu".to_string(),
             Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
             None => String::new(),
@@ -2424,6 +2750,7 @@ mod tests {
     #[test]
     fn custom_scale_edit_mode_toggles_degrees_via_the_grid_and_exits_on_knob1() {
         let mut app = new_app();
+        app.kit.menu = true; // knob 1 exiting is the menu's gesture
         app.custom_scale_edit = Some(2);
 
         let mut grid = [false; 16];
@@ -2439,6 +2766,53 @@ mod tests {
         assert!(app.custom_scale_edit.is_some(), "must still be in edit mode before knob1 is pressed");
         app.tick(&Input { knob1_press: true, ..Default::default() });
         assert_eq!(app.custom_scale_edit, None, "knob1 press must exit Custom Scale Edit mode");
+        assert_ne!(app.grid_mode_label(), Some(SCALE_LAYER_LABEL), "and the pads leave the editor with it");
+    }
+
+    #[test]
+    fn opens_playable_knob1_is_speed_d_pad_browses_patterns_and_r1_opens_the_menu() {
+        let mut app = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let speed = app.params.shapes[0].speed_hz.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.shapes[0].speed_hz.get() > speed, "knob 1 is shape 1's Speed on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.shapes[0].pattern.load(Ordering::Relaxed), 1, "D-pad up = next pattern");
+        assert_eq!(app.params.shapes[0].dots.load(Ordering::Relaxed), PATTERN_PRESETS[1].dots, "and it really applies");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    /// The shape control on the Controls layer moves what F3 runs.
+    #[test]
+    fn the_controls_layer_shape_pad_picks_what_f3_runs() {
+        let mut app = new_app();
+        app.toggle_grid_mode();
+        assert_eq!(app.grid_mode_label(), Some("CONTROLS"));
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(C_SHAPE)), ..Default::default() });
+        app.tick(&Input { knob2: 1, ..Default::default() });
+        assert_eq!(app.focus_shape(), 1);
+        app.toggle_running();
+        assert!(app.params.shapes[1].running.load(Ordering::Relaxed) && !app.params.shapes[0].running.load(Ordering::Relaxed));
+    }
+
+    /// The old Custom Scale Edit pad behaviour lives on as the SCALE
+    /// layer: reaching it with F2 enters the mode, the pads toggle
+    /// degrees, and F2 off it exits.
+    #[test]
+    fn the_scale_layer_is_custom_scale_edit() {
+        let mut app = new_app();
+        for _ in 0..3 {
+            app.toggle_grid_mode();
+        }
+        assert_eq!(app.grid_mode_label(), Some(SCALE_LAYER_LABEL));
+        assert_eq!(app.custom_scale_edit, Some(0));
+        app.tick(&Input { grid: std::array::from_fn(|i| i == 4), ..Default::default() });
+        assert!(app.params.shapes[0].custom_scale[4].load(Ordering::Relaxed), "pad 4 toggles degree 4");
+        app.toggle_grid_mode();
+        assert_eq!(app.custom_scale_edit, None, "leaving the layer leaves the mode");
+        app.tick(&Input { grid: std::array::from_fn(|i| i == 4), ..Default::default() });
+        assert!(app.params.shapes[0].custom_scale[4].load(Ordering::Relaxed), "and pads no longer edit the scale");
     }
 
     /// Octave Transpose must shift every triggered note by exactly
