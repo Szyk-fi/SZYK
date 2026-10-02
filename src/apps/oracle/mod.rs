@@ -38,13 +38,11 @@
 //! try-locked slot; the old one crossfades out and is handed back to be
 //! freed on the UI thread.
 
-pub mod blocks;
-pub mod engine;
-pub mod evolve;
-pub mod expr;
+// The engine is the shared synth platform (src/synth); Oracle is its
+// AI-driven front end.
+pub use crate::synth::{blocks, engine, evolve, expr, patch};
 pub mod library;
 pub mod llm;
-pub mod patch;
 pub mod voice;
 
 use crate::app::play_kit::{self as kit, KitConfig, Layer, PlayHost, PlayKit, Routes};

@@ -72,6 +72,8 @@ mod modbus;
 mod paramlist;
 #[path = "../src/plaits_ffi.rs"]
 mod plaits_ffi;
+#[path = "../src/synth/mod.rs"]
+mod synth;
 #[path = "../src/registry.rs"]
 mod registry;
 #[path = "../src/spleen_fonts.rs"]
