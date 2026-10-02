@@ -889,7 +889,10 @@ slint::slint! {
         in property <bool> tt-playing;
         in property <bool> tt-synchro;
         in property <bool> tt-fill;
-        in property <bool> tt-bass-auto;
+        in property <string> tt-bass-mode;
+        in property <bool> tt-line-rec;
+        in property <[int]> tt-line;
+        in property <int> tt-line-pos: -1;
         in property <string> tt-chord;
         in property <int> tt-step;
         in property <int> tt-steps: 16;
@@ -1055,7 +1058,7 @@ slint::slint! {
                 bass-held: root.tt-bass-held; bass-sounding: root.tt-bass-sounding;
                 preset: root.tt-preset; preset-tones: root.tt-preset-tones; vibrato: root.tt-vibrato; sustain: root.tt-sustain;
                 rhythm: root.tt-rhythm; tempo: root.tt-tempo; playing: root.tt-playing; synchro: root.tt-synchro; fill: root.tt-fill;
-                bass-auto: root.tt-bass-auto; chord: root.tt-chord;
+                bass-mode: root.tt-bass-mode; line-rec: root.tt-line-rec; line: root.tt-line; line-pos: root.tt-line-pos; chord: root.tt-chord;
                 step: root.tt-step; steps: root.tt-steps; steps-per-beat: root.tt-steps-per-beat; bar: root.tt-bar;
                 drum-flash: root.tt-drum-flash; volume: root.tt-volume; accomp: root.tt-accomp; peak: root.tt-peak;
             }
@@ -4298,7 +4301,10 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_tt_playing(t.playing);
                     ui.set_tt_synchro(t.synchro);
                     ui.set_tt_fill(t.fill);
-                    ui.set_tt_bass_auto(t.bass_auto);
+                    ui.set_tt_bass_mode(t.bass_mode.into());
+                    ui.set_tt_line_rec(t.line_rec);
+                    ui.set_tt_line(Rc::new(slint::VecModel::from(t.line)).into());
+                    ui.set_tt_line_pos(t.line_pos);
                     ui.set_tt_chord(t.chord.into());
                     ui.set_tt_step(t.step as i32);
                     ui.set_tt_steps(t.steps as i32);

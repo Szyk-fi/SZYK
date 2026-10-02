@@ -631,7 +631,14 @@ pub struct TinkertoneExtra {
     pub playing: bool,
     pub synchro: bool,
     pub fill: bool,
-    pub bass_auto: bool,
+    /// "Manual", "Auto" or "My Line".
+    pub bass_mode: String,
+    /// Recording your own line.
+    pub line_rec: bool,
+    /// Your line, one entry per step: bass key, -1 hold, -2 rest.
+    pub line: Vec<i32>,
+    /// Step of the line playing now, or -1.
+    pub line_pos: i32,
     pub chord: String,
     pub step: usize,
     pub steps: usize,

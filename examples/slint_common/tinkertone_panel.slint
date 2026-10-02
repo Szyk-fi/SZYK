@@ -40,7 +40,10 @@ export component TinkertonePanel inherits InstrumentPanel {
     in property <bool> playing;
     in property <bool> synchro;
     in property <bool> fill;
-    in property <bool> bass-auto;
+    in property <string> bass-mode: "Manual";
+    in property <bool> line-rec;
+    in property <[int]> line;
+    in property <int> line-pos: -1;
     in property <string> chord;
     in property <int> step;
     in property <int> steps: 16;
@@ -221,11 +224,28 @@ export component TinkertonePanel inherits InstrumentPanel {
             }
             Rectangle { horizontal-stretch: 1; }
             Text {
-                text: root.bass-auto ? "AUTO BASS · " + root.chord : "MANUAL BASS";
-                color: root.bass-auto ? root.accent : root.ink.with-alpha(0.55);
+                text: root.bass-mode == "Auto" ? "AUTO BASS · " + root.chord
+                    : root.bass-mode == "My Line" ? (root.line-rec ? "● REC MY LINE · " : "MY LINE · ") + root.chord
+                    : "MANUAL BASS";
+                color: root.line-rec && root.bass-mode == "My Line" ? #e0493a
+                    : root.bass-mode != "Manual" ? root.accent : root.ink.with-alpha(0.55);
                 font-family: "JetBrains Mono";
                 font-size: 8px;
                 vertical-alignment: center;
+            }
+        }
+
+        // Your own bass line: one cell per step, height = pitch.
+        if root.bass-mode == "My Line" : Rectangle {
+            height: 14px;
+            for v[i] in root.line : Rectangle {
+                x: parent.width * i / max(1, root.line.length);
+                width: max(1px, parent.width / max(1, root.line.length) - 1px);
+                y: v >= 0 ? parent.height - 3px - (parent.height - 3px) * min(14, v) / 14 : parent.height - 2px;
+                height: v >= 0 ? 3px : (v == -2 ? 1px : 2px);
+                background: i == root.line-pos ? root.ink
+                    : v >= 0 ? (root.line-rec ? #e0493a : root.accent)
+                    : v == -1 ? root.accent.with-alpha(0.25) : root.ink.with-alpha(0.12);
             }
         }
 

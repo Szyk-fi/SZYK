@@ -24,12 +24,36 @@
 //!   sustain length and the drum voices' exact identities.
 //! - The rhythm names follow vintagetechnologyarchive.com (Rock, Samba,
 //!   Swing, Slow Rock, Waltz, Pops); other sources don't list them.
-//! - The tone generator itself: tones here are additive wavetables
-//!   quantised to 8 bits to keep the early-digital grain. They are a
-//!   model of the character, not a capture of the real chip.
+//! - The melody tone generator: tones here are additive wavetables
+//!   quantised to 8 bits, summed and quantised again at one 8-bit "DAC".
+//!   A model of the character, not a capture of the real chip.
+//! - Exact drum and bass circuit values (no MT-40 service data was found):
+//!   kick 64 Hz, snare body 185 Hz, bass low-pass 260 Hz, output low-pass
+//!   9 kHz are chosen in the range of period analog rhythm units.
+//!
+//! How the sound is built (researched October 2026):
+//! - Casio's own staff describe the MT-40's bass and drums as analog,
+//!   "characterized by a thick sound" (note-pr.casio.co.jp, "The 'Song
+//!   Setting' Hidden in the Miniature Mascot of ... the MT-40").
+//!   soundprogramming.net likewise lists "analog percussion sounds" and an
+//!   NEC D775G CPU. So here: the bass is a square wave from a divider
+//!   (what a CPU makes) through a fixed analog-style low-pass and VCA; the
+//!   kick and snare are two-pole resonators pinged by the rhythm trigger
+//!   (bridged-T style), and the snare rattle and metals are one shared
+//!   noise source through their own filters and decaying VCAs.
+//! - Early Casiotones are described as digital oscillators into an analog
+//!   output low-pass, with audible quantisation noise (MetaFilter thread
+//!   "MT-40 Riddim"; secondary). Hence the 8-bit sum and the output LPF.
+//! - The Rock rhythm only came alive slowed to 80-110 BPM (Wikipedia,
+//!   "Sleng Teng"), so the power-on tempo is 84.
 //! - The auto-bass patterns are original. In particular the factory
 //!   "Rock" bassline (the one behind Sleng Teng) is a composed work and is
 //!   deliberately not transcribed here.
+//!
+//! Your own bass line (not on the original): Bass mode My Line loops a
+//! line you record on the bass keys, quantised to the rhythm's steps,
+//! transposed by the held bass key and bent to the Auto Chord. Saved to
+//! `saves/tinkertone/bassline.json`.
 //!
 //! Controls on Portamax: 37 + 15 keys don't fit on 16 pads, so F2 flips the
 //! pads between KEYS (a 16-note window you slide across the 37 keys from
@@ -142,8 +166,45 @@ fn build_table(h: &[f32; 12]) -> Vec<f32> {
     tab
 }
 
-/// The fixed bass timbre: a rounded, slightly hollow square.
-const BASS_HARMONICS: [f32; 12] = [1.0, 0.25, 0.33, 0.1, 0.18, 0.05, 0.1, 0.0, 0.05, 0.0, 0.0, 0.0];
+// ------------------------------------------------------------ bass modes
+
+pub const BASS_MANUAL: usize = 0;
+pub const BASS_AUTO: usize = 1;
+/// Your own recorded line, looping with the rhythm.
+pub const BASS_LINE: usize = 2;
+pub const BASS_MODE_NAMES: [&str; 3] = ["Manual", "Auto", "My Line"];
+
+/// Longest own line: four bars of sixteenths.
+pub const LINE_MAX: usize = 64;
+/// Line lengths on offer, in bars.
+pub const LINE_BARS: [usize; 3] = [1, 2, 4];
+/// Line step values besides a note (semitones from the line's first
+/// recorded key): keep sounding the previous note, or go silent.
+pub const LINE_HOLD: i32 = 1000;
+pub const LINE_REST: i32 = 1001;
+
+/// A recorded interval, bent to the chord the auto-bass is set to: lines
+/// are heard as major, so Minor and Minor 7th flatten the third and the
+/// major seventh.
+fn line_interval(off: i32, chord: usize) -> i32 {
+    if chord == 0 {
+        return off;
+    }
+    let (oct, pc) = (off.div_euclid(12), off.rem_euclid(12));
+    let pc = match pc {
+        4 => 3,
+        11 => 10,
+        x => x,
+    };
+    oct * 12 + pc
+}
+
+/// Tempo knob range, BPM. Unverified for the real knob; wide enough for
+/// the 80-110 BPM range the Rock rhythm is known to be used at.
+pub const TEMPO_MIN: f32 = 40.0;
+pub const TEMPO_MAX: f32 = 240.0;
+/// Power-on tempo: in the reggae/dancehall range (see the module doc).
+pub const TEMPO_DEFAULT: f32 = 84.0;
 
 // ---------------------------------------------------------------- rhythms
 
@@ -253,7 +314,18 @@ struct Shared {
     synchro: AtomicBool,
     fill_held: AtomicBool,
     fill_kind: AtomicUsize,
-    bass_auto: AtomicBool,
+    bass_mode: AtomicUsize,
+    /// Your own bass line: a semitone offset from `line_ref`, or
+    /// LINE_HOLD / LINE_REST, per step.
+    line: [AtomicI32; LINE_MAX],
+    /// The bass key (0..15) the line was first recorded from, -1 = empty.
+    line_ref: AtomicI32,
+    /// Index into LINE_BARS.
+    line_bars: AtomicUsize,
+    line_rec: AtomicBool,
+    /// Bumped on every change to the line, so the UI knows to save it.
+    line_dirty: AtomicU32,
+    line_pos: AtomicUsize,
     chord: AtomicUsize,
     volume: AtomicF32,
     accomp: AtomicF32,
@@ -283,12 +355,18 @@ impl Shared {
             vibrato: AtomicBool::new(false),
             sustain: AtomicBool::new(false),
             rhythm: AtomicUsize::new(0),
-            tempo: AtomicF32::new(120.0),
+            tempo: AtomicF32::new(TEMPO_DEFAULT),
             playing: AtomicBool::new(false),
             synchro: AtomicBool::new(false),
             fill_held: AtomicBool::new(false),
             fill_kind: AtomicUsize::new(1),
-            bass_auto: AtomicBool::new(false),
+            bass_mode: AtomicUsize::new(BASS_MANUAL),
+            line: std::array::from_fn(|_| AtomicI32::new(LINE_HOLD)),
+            line_ref: AtomicI32::new(-1),
+            line_bars: AtomicUsize::new(1),
+            line_rec: AtomicBool::new(false),
+            line_dirty: AtomicU32::new(0),
+            line_pos: AtomicUsize::new(0),
             chord: AtomicUsize::new(0),
             volume: AtomicF32::new(0.8),
             accomp: AtomicF32::new(0.7),
@@ -313,7 +391,8 @@ impl Shared {
 
     /// Bass key press: synchro start, then hold.
     fn press_bass(&self, k: usize) {
-        if self.synchro.load(Ordering::Relaxed) && !self.playing.load(Ordering::Relaxed) {
+        let take = self.line_rec.load(Ordering::Relaxed) && self.bass_mode.load(Ordering::Relaxed) == BASS_LINE;
+        if (self.synchro.load(Ordering::Relaxed) || take) && !self.playing.load(Ordering::Relaxed) {
             self.synchro.store(false, Ordering::Relaxed);
             self.step.store(0, Ordering::Relaxed);
             self.bar.store(0, Ordering::Relaxed);
@@ -353,18 +432,141 @@ fn midi_hz(n: f32) -> f32 {
     440.0 * 2f32.powf((n - 69.0) / 12.0)
 }
 
-/// Analog-style drum voice (simple, deliberately lo-fi).
+/// A two-pole resonator: what an analog drum's bridged-T network does
+/// when the rhythm generator kicks it with a trigger pulse -- rings at
+/// one pitch and dies away exponentially, no oscillator involved.
 #[derive(Clone, Copy, Default)]
-struct Drum {
-    t: f32,
-    on: bool,
-    amp: f32,
+struct Reso {
+    a1: f32,
+    a2: f32,
+    gain: f32,
+    y1: f32,
+    y2: f32,
 }
+
+impl Reso {
+    /// `t60`: seconds to fall 60 dB.
+    fn tune(&mut self, hz: f32, t60: f32, sr: f32) {
+        let w = TAU * hz / sr;
+        let r = 10f32.powf(-3.0 / (t60.max(0.005) * sr));
+        self.a1 = 2.0 * r * w.cos();
+        self.a2 = r * r;
+        self.gain = w.sin(); // unit-amplitude ring for a unit impulse
+    }
+    fn tick(&mut self, x: f32) -> f32 {
+        let y = x * self.gain + self.a1 * self.y1 - self.a2 * self.y2;
+        self.y2 = self.y1;
+        self.y1 = y;
+        y
+    }
+}
+
+/// Zavalishin's TPT state-variable filter, low-pass out. Stands in for
+/// the analog RC/op-amp low-pass stages after the digital oscillators.
+#[derive(Clone, Copy, Default)]
+struct Svf {
+    g: f32,
+    k: f32,
+    ic1: f32,
+    ic2: f32,
+}
+
+impl Svf {
+    fn tune(&mut self, hz: f32, q: f32, sr: f32) {
+        self.g = (std::f32::consts::PI * (hz / sr).min(0.49)).tan();
+        self.k = 1.0 / q.max(0.1);
+    }
+    fn lp(&mut self, x: f32) -> f32 {
+        let a1 = 1.0 / (1.0 + self.g * (self.g + self.k));
+        let v3 = x - self.ic2;
+        let v1 = a1 * self.ic1 + self.g * a1 * v3;
+        let v2 = self.ic2 + self.g * v1;
+        self.ic1 = 2.0 * v1 - self.ic1;
+        self.ic2 = 2.0 * v2 - self.ic2;
+        v2
+    }
+    fn bp(&mut self, x: f32) -> f32 {
+        let a1 = 1.0 / (1.0 + self.g * (self.g + self.k));
+        let v3 = x - self.ic2;
+        let v1 = a1 * self.ic1 + self.g * a1 * v3;
+        let v2 = self.ic2 + self.g * v1;
+        self.ic1 = 2.0 * v1 - self.ic1;
+        self.ic2 = 2.0 * v2 - self.ic2;
+        v1
+    }
+}
+
+/// One-pole high-pass (a coupling capacitor).
+#[derive(Clone, Copy, Default)]
+struct Hp1 {
+    c: f32,
+    x1: f32,
+    y1: f32,
+}
+
+impl Hp1 {
+    fn tune(&mut self, hz: f32, sr: f32) {
+        self.c = (-TAU * hz / sr).exp();
+    }
+    fn tick(&mut self, x: f32) -> f32 {
+        let y = self.c * (self.y1 + x - self.x1);
+        self.x1 = x;
+        self.y1 = y;
+        y
+    }
+}
+
+/// The five analog drum voices. Kick and snare are resonators pinged by
+/// the trigger; the snare's rattle and the metals are the shared noise
+/// source through their own filters and decaying VCAs.
+#[derive(Clone, Copy, Default)]
+struct Drums {
+    kick: Reso,
+    snare: Reso,
+    snare_bp: Svf,
+    hat_hp: [Hp1; 2],
+    cym_bp: Svf,
+    /// Noise VCA levels: snare rattle, closed hat, open hat, cymbal.
+    env: [f32; 4],
+    /// Per-sample decay multipliers for those four.
+    dec: [f32; 4],
+    tuned_sr: f32,
+}
+
+impl Drums {
+    fn retune(&mut self, sr: f32) {
+        if self.tuned_sr == sr {
+            return;
+        }
+        self.tuned_sr = sr;
+        self.kick.tune(KICK_HZ, 0.42, sr);
+        self.snare.tune(SNARE_HZ, 0.16, sr);
+        self.snare_bp.tune(2400.0, 0.9, sr);
+        self.hat_hp[0].tune(6500.0, sr);
+        self.hat_hp[1].tune(6500.0, sr);
+        self.cym_bp.tune(5200.0, 0.7, sr);
+        // time constants (s) of the noise VCAs
+        for (d, tau) in self.dec.iter_mut().zip([0.07f32, 0.022, 0.16, 0.55]) {
+            *d = (-1.0 / (tau * sr)).exp();
+        }
+    }
+}
+
+/// Kick and snare body pitches. Unverified (no MT-40 service data found);
+/// chosen in the range of period analog rhythm units.
+const KICK_HZ: f32 = 64.0;
+const SNARE_HZ: f32 = 185.0;
+
+/// Fixed corner of the bass's analog low-pass. The bass keys span
+/// C2-D3 (65-147 Hz), so it passes the fundamental and a soft third
+/// harmonic: round and thick, the way the bass is described.
+const BASS_LPF_HZ: f32 = 260.0;
+/// Corner of the output stage's low-pass on melody + bass + drums.
+const OUT_LPF_HZ: f32 = 9000.0;
 
 struct Processor {
     shared: Arc<Shared>,
     tables: Arc<Vec<Vec<f32>>>,
-    bass_table: Arc<Vec<f32>>,
     voices: [Voice; VOICES],
     prev_keys: [bool; KEYS],
     clock: u64,
@@ -374,17 +576,25 @@ struct Processor {
     bass_freq: f32,
     bass_env: f32,
     bass_gate: bool,
+    bass_attack: bool,
+    bass_lpf: Svf,
+    bass_hp: Hp1,
     prev_bass_key: i32,
     auto_root: i32,
+    // own-line recording
+    rec_key: i32,
+    rec_step: usize,
+    last_idx: usize,
     // sequencer
     step_pos: f64,
     seq_step: usize,
     seq_bar: usize,
     was_playing: bool,
-    drums: [Drum; 5],
+    drums: Drums,
     noise: u32,
-    hp: f32,
-    hp_prev: f32,
+    out_lpf: Svf,
+    out_hp: Hp1,
+    tuned_sr: f32,
 }
 
 impl Processor {
@@ -418,46 +628,49 @@ impl Processor {
     }
 
     fn trigger(&mut self, d: usize, amp: f32) {
-        self.drums[d] = Drum { t: 0.0, on: true, amp };
-        if d == 2 {
-            self.drums[3].on = false; // closed hat chokes open hat
+        let dr = &mut self.drums;
+        match d {
+            0 => {
+                dr.kick.tick(amp * 1.2);
+            }
+            1 => {
+                dr.snare.tick(amp * 0.8);
+                dr.env[0] = amp;
+            }
+            2 => {
+                dr.env[1] = amp;
+                dr.env[2] = 0.0; // closed hat chokes the open hat
+            }
+            3 => dr.env[2] = amp,
+            _ => dr.env[3] = amp,
         }
         self.shared.drum_flash[d].set(1.0);
     }
 
-    fn drum_sample(&mut self, sr: f32) -> f32 {
-        let dt = 1.0 / sr;
-        let mut out = 0.0;
-        for d in 0..5 {
-            if !self.drums[d].on {
-                continue;
-            }
-            let t = self.drums[d].t;
-            let a = self.drums[d].amp;
-            let n = self.noise();
-            let s = match d {
-                0 => {
-                    let f = 50.0 + 90.0 * (-t * 30.0).exp();
-                    (TAU * f * t).sin() * (-t * 9.0).exp() * 1.1
-                }
-                1 => (n * 0.8 + (TAU * 190.0 * t).sin() * 0.4) * (-t * 18.0).exp() * 0.7,
-                2 => n * (-t * 60.0).exp() * 0.35,
-                3 => n * (-t * 7.0).exp() * 0.3,
-                _ => n * (-t * 2.5).exp() * 0.25,
-            };
-            out += s * a;
-            self.drums[d].t += dt;
-            if t > 2.0 {
-                self.drums[d].on = false;
-            }
+    fn drum_sample(&mut self) -> f32 {
+        let n = self.noise();
+        let dr = &mut self.drums;
+        // The kick's ring is soft-clipped a touch, as the transistor
+        // buffer after a bridged-T would; that's most of its weight.
+        let kick = (dr.kick.tick(0.0) * 1.6).tanh();
+        let body = dr.snare.tick(0.0) * 0.55;
+        let rattle = dr.snare_bp.bp(n) * dr.env[0] * 0.9;
+        let thin = dr.hat_hp[0].tick(n);
+        let hiss = dr.hat_hp[1].tick(thin);
+        let hats = hiss * (dr.env[1] * 0.55 + dr.env[2] * 0.4);
+        let cym = dr.cym_bp.bp(n) * dr.env[3] * 0.35;
+        for (e, d) in dr.env.iter_mut().zip(dr.dec) {
+            *e *= d;
         }
-        // the hats/cymbal want highs, the kick doesn't: a gentle one-pole
-        // high-pass on everything but the kick would cost another split, so
-        // keep one mild HP on the drum bus to thin the noise.
-        let hp = out - self.hp_prev + 0.995 * self.hp;
-        self.hp_prev = out;
-        self.hp = hp;
-        hp
+        kick + body + rattle + hats + cym
+    }
+
+    /// The line step that's playing right now, and the next one to play.
+    fn line_slots(&self, steps: usize) -> (usize, usize) {
+        let bars = LINE_BARS[self.shared.line_bars.load(Ordering::Relaxed).min(2)];
+        let len = (steps * bars).clamp(1, LINE_MAX);
+        let next = ((self.seq_bar % bars) * steps + self.seq_step) % len;
+        (self.last_idx % len, next)
     }
 
     fn sequencer_tick(&mut self) {
@@ -465,6 +678,8 @@ impl Processor {
         let r = &RHYTHMS[s.rhythm.load(Ordering::Relaxed).min(5)];
         let step = self.seq_step % r.steps;
         let bar4 = self.seq_bar % BARS == BARS - 1;
+        let (_, idx) = self.line_slots(r.steps);
+        self.last_idx = idx;
         let fill = s.fill_held.load(Ordering::Relaxed);
         if fill {
             // a pulse every step (sixteenths; triplets on the 12/8 grids)
@@ -480,15 +695,41 @@ impl Processor {
                 }
             }
         }
-        // auto bass (only while the rhythm runs, in Auto mode, with a root)
-        if s.bass_auto.load(Ordering::Relaxed) && self.auto_root >= 0 {
-            let line = if bar4 { r.bass_bar4 } else { r.bass };
-            if let Some(off) = line.as_bytes().get(step).and_then(|c| bass_offset(*c, s.chord.load(Ordering::Relaxed))) {
-                self.bass_note((BASS_LOW + self.auto_root + off) as f32, true);
+        match s.bass_mode.load(Ordering::Relaxed) {
+            // auto bass (only while the rhythm runs, with a root)
+            BASS_AUTO if self.auto_root >= 0 => {
+                let line = if bar4 { r.bass_bar4 } else { r.bass };
+                if let Some(off) = line.as_bytes().get(step).and_then(|c| bass_offset(*c, s.chord.load(Ordering::Relaxed))) {
+                    self.bass_note((BASS_LOW + self.auto_root + off) as f32, true);
+                }
             }
+            BASS_LINE => {
+                if self.rec_key >= 0 {
+                    // Holding a key while recording: it owns every step it
+                    // spans, wiping whatever an earlier take put there.
+                    if idx != self.rec_step {
+                        s.line[idx].store(LINE_HOLD, Ordering::Relaxed);
+                        s.line_dirty.fetch_add(1, Ordering::Relaxed);
+                    }
+                } else {
+                    let reference = s.line_ref.load(Ordering::Relaxed);
+                    let root = if self.auto_root >= 0 { self.auto_root } else { reference };
+                    match s.line[idx].load(Ordering::Relaxed) {
+                        LINE_HOLD => {}
+                        LINE_REST => self.bass_gate = false,
+                        off if reference >= 0 => {
+                            let n = BASS_LOW + root + line_interval(off, s.chord.load(Ordering::Relaxed));
+                            self.bass_note(n as f32, true);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
         }
         s.step.store(step, Ordering::Relaxed);
         s.bar.store(self.seq_bar % BARS, Ordering::Relaxed);
+        s.line_pos.store(idx, Ordering::Relaxed);
         self.seq_step += 1;
         if self.seq_step >= r.steps {
             self.seq_step = 0;
@@ -499,10 +740,41 @@ impl Processor {
     fn bass_note(&mut self, note: f32, retrigger: bool) {
         self.bass_freq = midi_hz(note);
         if retrigger {
-            self.bass_env = 1.0;
+            self.bass_attack = true;
         }
         self.bass_gate = true;
         self.shared.bass_sounding.store(note as i32 - BASS_LOW, Ordering::Relaxed);
+    }
+
+    /// A bass key went down or up while recording your own line. Notes
+    /// land on the nearest step; a key let go inside its own step rests on
+    /// the next one.
+    fn record_key(&mut self, bk: i32, steps: usize) {
+        let s = Arc::clone(&self.shared);
+        let bars = LINE_BARS[s.line_bars.load(Ordering::Relaxed).min(2)];
+        let len = (steps * bars).clamp(1, LINE_MAX);
+        let (now, next) = self.line_slots(steps);
+        let fresh = self.step_pos >= 1.0; // rhythm just started: nothing has played yet
+        let slot = if fresh || self.step_pos >= 0.5 { next } else { now };
+        if bk >= 0 {
+            let mut reference = s.line_ref.load(Ordering::Relaxed);
+            if reference < 0 {
+                reference = bk;
+                s.line_ref.store(bk, Ordering::Relaxed);
+            }
+            s.line[slot].store((bk - reference).clamp(-24, 24), Ordering::Relaxed);
+            self.rec_key = bk;
+            self.rec_step = slot;
+            self.bass_note((BASS_LOW + bk) as f32, true);
+        } else if self.rec_key >= 0 {
+            let at = if slot == self.rec_step { (slot + 1) % len } else { slot };
+            if s.line[at].load(Ordering::Relaxed) == LINE_HOLD {
+                s.line[at].store(LINE_REST, Ordering::Relaxed);
+            }
+            self.rec_key = -1;
+            self.bass_gate = false;
+        }
+        s.line_dirty.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -513,6 +785,14 @@ impl AudioProcessor for Processor {
         }
         let s = Arc::clone(&self.shared);
         s.sample_rate.store(sr as u32, Ordering::Relaxed);
+        if self.tuned_sr != sr {
+            self.tuned_sr = sr;
+            self.bass_lpf.tune(BASS_LPF_HZ, 0.75, sr);
+            self.bass_hp.tune(28.0, sr);
+            self.out_lpf.tune(OUT_LPF_HZ, 0.6, sr);
+            self.out_hp.tune(40.0, sr);
+        }
+        self.drums.retune(sr);
         let tone = s.tone();
 
         // ---- melody keys: diff against last block
@@ -528,17 +808,31 @@ impl AudioProcessor for Processor {
             self.prev_keys[k] = down;
         }
 
-        // ---- bass key (manual, or root for auto)
-        let bk = s.bass_key.load(Ordering::Relaxed);
+        let r = &RHYTHMS[s.rhythm.load(Ordering::Relaxed).min(5)];
         let playing = s.playing.load(Ordering::Relaxed);
-        let auto = s.bass_auto.load(Ordering::Relaxed) && playing;
+        if playing && !self.was_playing {
+            self.seq_step = s.step.load(Ordering::Relaxed);
+            self.seq_bar = s.bar.load(Ordering::Relaxed);
+            self.step_pos = 1.0; // fire the first step right away
+        }
+
+        // ---- bass key (manual, or root for auto / your line, or a take)
+        let bk = s.bass_key.load(Ordering::Relaxed);
+        let mode = s.bass_mode.load(Ordering::Relaxed);
+        let follow = mode != BASS_MANUAL && playing;
+        let recording = mode == BASS_LINE && playing && s.line_rec.load(Ordering::Relaxed);
+        if !recording {
+            self.rec_key = -1;
+        }
         if bk != self.prev_bass_key {
-            if bk >= 0 {
+            if recording {
+                self.record_key(bk, r.steps);
+            } else if bk >= 0 {
                 self.auto_root = bk;
-                if !auto {
+                if !follow {
                     self.bass_note((BASS_LOW + bk) as f32, true);
                 }
-            } else if !auto {
+            } else if !follow {
                 self.bass_gate = false;
             }
             self.prev_bass_key = bk;
@@ -547,15 +841,9 @@ impl AudioProcessor for Processor {
             self.bass_gate = false;
             self.auto_root = if bk >= 0 { bk } else { -1 };
         }
-        if playing && !self.was_playing {
-            self.seq_step = s.step.load(Ordering::Relaxed);
-            self.seq_bar = s.bar.load(Ordering::Relaxed);
-            self.step_pos = 1.0; // fire the first step right away
-        }
         self.was_playing = playing;
 
-        let r = &RHYTHMS[s.rhythm.load(Ordering::Relaxed).min(5)];
-        let bpm = (s.tempo.get() + s.ext_tempo.get() * 100.0).clamp(40.0, 240.0);
+        let bpm = (s.tempo.get() + s.ext_tempo.get() * 100.0).clamp(TEMPO_MIN, TEMPO_MAX);
         let steps_per_sec = bpm / 60.0 * r.steps_per_beat as f32;
         let step_inc = steps_per_sec as f64 / sr as f64;
 
@@ -565,6 +853,10 @@ impl AudioProcessor for Processor {
         let vibrato = s.vibrato.load(Ordering::Relaxed);
         let sustain = s.sustain.load(Ordering::Relaxed);
         let dt = 1.0 / sr;
+        // bass VCA: ~2 ms attack, a slow sag while held, ~45 ms release
+        let bass_att = 1.0 - (-dt / 0.002).exp();
+        let bass_sag = 1.0 - (-dt / 0.45).exp();
+        let bass_rel = 1.0 - (-dt / 0.045).exp();
         let mut peak: f32 = 0.0;
 
         for frame in buffer.chunks_mut(channels) {
@@ -619,24 +911,38 @@ impl AudioProcessor for Processor {
                 let tab = &self.tables[v.tone];
                 mel += tab[(v.phase * TABLE as f32) as usize % TABLE] * v.env;
             }
+            // The voices are summed digitally and leave through one 8-bit
+            // DAC: quantise the sum, grit and all.
+            let mel = (mel / VOICES as f32 * 127.0).round() / 127.0 * VOICES as f32;
 
-            // bass: gated with a little decay so auto lines stay punchy
+            // Bass: a square from the CPU's divider into the analog
+            // low-pass and VCA.
             let bass = if self.bass_gate || self.bass_env > 0.0005 {
-                let target = if self.bass_gate { 0.55 } else { 0.0 };
-                let rate = if self.bass_gate { 3.0 } else { 25.0 };
-                self.bass_env += (target - self.bass_env) * (rate * dt).min(1.0);
+                if self.bass_attack {
+                    self.bass_env += (1.0 - self.bass_env) * bass_att;
+                    if self.bass_env > 0.98 {
+                        self.bass_attack = false;
+                    }
+                } else if self.bass_gate {
+                    self.bass_env += (0.7 - self.bass_env) * bass_sag;
+                } else {
+                    self.bass_env -= self.bass_env * bass_rel;
+                }
                 self.bass_phase = (self.bass_phase + self.bass_freq * dt) % 1.0;
-                self.bass_table[(self.bass_phase * TABLE as f32) as usize % TABLE] * self.bass_env
+                let sq = if self.bass_phase < 0.5 { 1.0 } else { -1.0 };
+                self.bass_hp.tick(self.bass_lpf.lp(sq)) * self.bass_env
             } else {
+                self.bass_lpf.lp(0.0);
                 0.0
             };
 
-            let drums = self.drum_sample(sr);
+            let drums = self.drum_sample();
             // Gains leave headroom for all 8 voices on a sustained tone over
             // the full accompaniment; tanh rounds off anything left rather
             // than hard-clipping (a small speaker amp of the era would have
             // compressed similarly, not squared off).
-            let out = ((mel * 0.12 * vol) + (bass * 0.42 + drums * 0.45) * acc * vol) * mix;
+            let pre = (mel * 0.12 * vol) + (bass * 0.36 + drums * 0.42) * acc * vol;
+            let out = self.out_hp.tick(self.out_lpf.lp(pre)) * mix;
             let out = out.tanh();
             peak = peak.max(out.abs());
             for c in frame.iter_mut() {
@@ -669,6 +975,9 @@ enum Sel {
     FillIn,
     BassMode,
     Chord,
+    LineRec,
+    LineBars,
+    LineClear,
     Volume,
     Accomp,
     PadLayer,
@@ -687,7 +996,7 @@ fn group_leaves(g: usize) -> &'static [Sel] {
     match g {
         0 => &[Sel::Preset, Sel::PresetTone, Sel::Vibrato, Sel::Sustain],
         1 => &[Sel::Rhythm, Sel::Tempo, Sel::StartStop, Sel::Synchro, Sel::FillIn],
-        2 => &[Sel::BassMode, Sel::Chord],
+        2 => &[Sel::BassMode, Sel::Chord, Sel::LineRec, Sel::LineBars, Sel::LineClear],
         3 => &[Sel::Volume, Sel::Accomp],
         _ => &[Sel::PadLayer, Sel::KeyWindow],
     }
@@ -707,6 +1016,11 @@ pub struct TinkertoneApp {
     pad_keys: [Option<usize>; 16],
     /// Frames left on a menu-triggered fill.
     menu_fill_frames: u32,
+    /// Where your own bass line is saved (None in tests).
+    line_path: Option<std::path::PathBuf>,
+    line_saved: u32,
+    line_seen: u32,
+    line_quiet: u32,
     /// The shared play view (play_kit.rs). Its two native layers *are*
     /// `bass_layer`: KEYS = 0, BASS = 1, kept in step by `set_layer`.
     kit: PlayKit,
@@ -719,7 +1033,7 @@ const LAYER_BASS: u8 = 1;
 /// continuous controls are the two volumes and the tempo (vibrato and
 /// sustain are switches on the real thing, not depths), so those take the
 /// first knob pair and the expression routes; the panel's buttons follow.
-const CONTROLS: [(Sel, &str); 12] = [
+const CONTROLS: [(Sel, &str); 13] = [
     (Sel::Volume, "Volume"),
     (Sel::Accomp, "Accomp"),
     (Sel::Tempo, "Tempo"),
@@ -728,10 +1042,11 @@ const CONTROLS: [(Sel, &str); 12] = [
     (Sel::PresetTone, "Tone"),
     (Sel::Vibrato, "Vibrato"),
     (Sel::Sustain, "Sustain"),
-    (Sel::BassMode, "Auto Bass"),
+    (Sel::BassMode, "Bass Mode"),
     (Sel::Chord, "Chord"),
     (Sel::Synchro, "Synchro"),
     (Sel::KeyWindow, "Key Window"),
+    (Sel::LineRec, "Rec Line"),
 ];
 const C_VOLUME: usize = 0;
 const C_ACCOMP: usize = 1;
@@ -768,7 +1083,7 @@ fn usize_pick(v: f32, n: usize) -> usize {
 
 impl TinkertoneApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, _audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
-        Self {
+        let mut app = Self {
             shared: Arc::new(Shared::new(&modbus, &mixer_bus)),
             sensitivity,
             nav_speed,
@@ -779,8 +1094,14 @@ impl TinkertoneApp {
             prev_grid: [false; 16],
             pad_keys: [None; 16],
             menu_fill_frames: 0,
+            line_path: (!cfg!(test)).then(|| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/saves/tinkertone/bassline.json"))),
+            line_saved: 0,
+            line_seen: 0,
+            line_quiet: 0,
             kit: PlayKit::new(kit_config(), !cfg!(test)),
-        }
+        };
+        app.load_line();
+        app
     }
 
     fn visible_rows(&self) -> Vec<Row> {
@@ -807,6 +1128,9 @@ impl TinkertoneApp {
             Sel::FillIn => ">> Fill-in",
             Sel::BassMode => "Bass",
             Sel::Chord => "Auto Chord",
+            Sel::LineRec => "Record Line",
+            Sel::LineBars => "Line Length",
+            Sel::LineClear => ">> Clear Line",
             Sel::Volume => "Volume",
             Sel::Accomp => "Accomp Volume",
             Sel::PadLayer => "Pads",
@@ -827,7 +1151,15 @@ impl TinkertoneApp {
             Sel::StartStop => if s.playing.load(Ordering::Relaxed) { "running" } else { "stopped" }.into(),
             Sel::Synchro => if s.synchro.load(Ordering::Relaxed) { "ARMED" } else { "off" }.into(),
             Sel::FillIn => (if s.fill_kind.load(Ordering::Relaxed) == 0 { "next: kick" } else { "next: snare" }).into(),
-            Sel::BassMode => if s.bass_auto.load(Ordering::Relaxed) { "Auto" } else { "Manual" }.into(),
+            Sel::BassMode => BASS_MODE_NAMES[s.bass_mode.load(Ordering::Relaxed).min(2)].into(),
+            Sel::LineRec => if s.line_rec.load(Ordering::Relaxed) { "REC" } else { "off" }.into(),
+            Sel::LineBars => {
+                let b = LINE_BARS[s.line_bars.load(Ordering::Relaxed).min(2)];
+                format!("{b} bar{}", if b == 1 { "" } else { "s" })
+            }
+            Sel::LineClear => {
+                if s.line_ref.load(Ordering::Relaxed) < 0 { "empty".into() } else { format!("{} notes", self.line_notes()) }
+            }
             Sel::Chord => CHORD_NAMES[s.chord.load(Ordering::Relaxed)].into(),
             Sel::Volume => format!("{:.0}%", s.volume.get() * 100.0),
             Sel::Accomp => format!("{:.0}%", s.accomp.get() * 100.0),
@@ -853,9 +1185,14 @@ impl TinkertoneApp {
             Sel::Vibrato => s.vibrato.store(delta > 0, Ordering::Relaxed),
             Sel::Sustain => s.sustain.store(delta > 0, Ordering::Relaxed),
             Sel::Rhythm => cycle(&s.rhythm, RHYTHMS.len()),
-            Sel::Tempo => nudge(&s.tempo, accelerate(delta) * 10.0 * sens, 40.0, 240.0),
+            Sel::Tempo => nudge(&s.tempo, accelerate(delta) * 10.0 * sens, TEMPO_MIN, TEMPO_MAX),
             Sel::Synchro => s.synchro.store(delta > 0, Ordering::Relaxed),
-            Sel::BassMode => s.bass_auto.store(delta > 0, Ordering::Relaxed),
+            Sel::BassMode => cycle(&s.bass_mode, BASS_MODE_NAMES.len()),
+            Sel::LineRec => self.set_line_rec(delta > 0),
+            Sel::LineBars => {
+                cycle(&s.line_bars, LINE_BARS.len());
+                s.line_dirty.fetch_add(1, Ordering::Relaxed);
+            }
             Sel::Chord => cycle(&s.chord, 3),
             Sel::Volume => nudge(&s.volume, accelerate(delta) * 0.1 * sens, 0.0, 1.0),
             Sel::Accomp => nudge(&s.accomp, accelerate(delta) * 0.1 * sens, 0.0, 1.0),
@@ -864,7 +1201,7 @@ impl TinkertoneApp {
                 self.release_pads();
                 self.window = (self.window as i32 + step).clamp(0, (KEYS - 16) as i32) as usize;
             }
-            Sel::StartStop | Sel::FillIn => {}
+            Sel::StartStop | Sel::FillIn | Sel::LineClear => {}
         }
     }
 
@@ -888,8 +1225,11 @@ impl TinkertoneApp {
                 self.shared.synchro.fetch_xor(true, Ordering::Relaxed);
             }
             Sel::BassMode => {
-                self.shared.bass_auto.fetch_xor(true, Ordering::Relaxed);
+                let m = &self.shared.bass_mode;
+                m.store((m.load(Ordering::Relaxed) + 1) % BASS_MODE_NAMES.len(), Ordering::Relaxed);
             }
+            Sel::LineRec => self.set_line_rec(!self.shared.line_rec.load(Ordering::Relaxed)),
+            Sel::LineClear => self.clear_line(),
             Sel::PadLayer => self.set_layer(!self.bass_layer),
             _ => {}
         }
@@ -930,12 +1270,128 @@ impl TinkertoneApp {
         match CONTROLS[i % CONTROLS.len()].0 {
             Sel::Volume => Knob::F(&s.volume, 0.0, 1.0),
             Sel::Accomp => Knob::F(&s.accomp, 0.0, 1.0),
-            Sel::Tempo => Knob::F(&s.tempo, 40.0, 240.0),
+            Sel::Tempo => Knob::F(&s.tempo, TEMPO_MIN, TEMPO_MAX),
             Sel::Vibrato => Knob::B(&s.vibrato),
             Sel::Sustain => Knob::B(&s.sustain),
-            Sel::BassMode => Knob::B(&s.bass_auto),
+            Sel::LineRec => Knob::B(&s.line_rec),
             Sel::Synchro => Knob::B(&s.synchro),
             _ => Knob::None,
+        }
+    }
+
+    /// Arm or disarm recording your own line. Arming switches the bass to
+    /// My Line; with the rhythm stopped, the first bass key starts it.
+    fn set_line_rec(&mut self, on: bool) {
+        let s = &self.shared;
+        if on {
+            s.bass_mode.store(BASS_LINE, Ordering::Relaxed);
+        }
+        s.line_rec.store(on, Ordering::Relaxed);
+    }
+
+    fn clear_line(&mut self) {
+        let s = &self.shared;
+        for c in &s.line {
+            c.store(LINE_HOLD, Ordering::Relaxed);
+        }
+        s.line_ref.store(-1, Ordering::Relaxed);
+        s.line_dirty.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Steps in the line at its current rhythm and length.
+    fn line_len(&self) -> usize {
+        let s = &self.shared;
+        let r = &RHYTHMS[s.rhythm.load(Ordering::Relaxed).min(5)];
+        (r.steps * LINE_BARS[s.line_bars.load(Ordering::Relaxed).min(2)]).min(LINE_MAX)
+    }
+
+    fn line_notes(&self) -> usize {
+        self.shared.line[..self.line_len()].iter().filter(|c| c.load(Ordering::Relaxed) < LINE_HOLD).count()
+    }
+
+    /// The line for the panel: per step, the bass key it plays (0..15,
+    /// may run past either end), -1 hold, -2 rest.
+    #[allow(dead_code)] // Slint GUI only
+    fn line_view(&self) -> Vec<i32> {
+        let s = &self.shared;
+        let reference = s.line_ref.load(Ordering::Relaxed);
+        s.line[..self.line_len()]
+            .iter()
+            .map(|c| match c.load(Ordering::Relaxed) {
+                LINE_HOLD => -1,
+                LINE_REST => -2,
+                off => (reference + off).max(0),
+            })
+            .collect()
+    }
+
+    /// Writes the line to the SD card once it has been still for half a
+    /// second (so a take isn't saved note by note).
+    fn autosave_line(&mut self) {
+        let Some(path) = self.line_path.clone() else { return };
+        let dirty = self.shared.line_dirty.load(Ordering::Relaxed);
+        if dirty == self.line_saved {
+            self.line_quiet = 0;
+            return;
+        }
+        if dirty != self.line_seen {
+            self.line_seen = dirty;
+            self.line_quiet = 0;
+            return;
+        }
+        self.line_quiet += 1;
+        if self.line_quiet < 30 {
+            return;
+        }
+        self.line_saved = dirty;
+        let s = &self.shared;
+        let steps: Vec<serde_json::Value> = s
+            .line
+            .iter()
+            .map(|c| match c.load(Ordering::Relaxed) {
+                LINE_HOLD => serde_json::Value::from("-"),
+                LINE_REST => serde_json::Value::from("x"),
+                off => serde_json::Value::from(off),
+            })
+            .collect();
+        let doc = serde_json::json!({
+            "reference": s.line_ref.load(Ordering::Relaxed),
+            "bars": LINE_BARS[s.line_bars.load(Ordering::Relaxed).min(2)],
+            "steps": steps,
+        });
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&doc).unwrap_or_default()) {
+            eprintln!("Tinkertone: couldn't save the bass line: {e}");
+        }
+    }
+
+    fn load_line(&mut self) {
+        let Some(path) = &self.line_path else { return };
+        let Ok(text) = std::fs::read_to_string(path) else { return };
+        let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) else {
+            eprintln!("Tinkertone: {} isn't a bass line; ignoring it", path.display());
+            return;
+        };
+        let s = &self.shared;
+        let reference = doc["reference"].as_i64().unwrap_or(-1).clamp(-1, BASS_KEYS as i64 - 1) as i32;
+        s.line_ref.store(reference, Ordering::Relaxed);
+        if let Some(i) = LINE_BARS.iter().position(|&b| Some(b as u64) == doc["bars"].as_u64()) {
+            s.line_bars.store(i, Ordering::Relaxed);
+        }
+        if let Some(steps) = doc["steps"].as_array() {
+            for (c, v) in s.line.iter().zip(steps) {
+                let val = match v {
+                    serde_json::Value::String(x) if x == "x" => LINE_REST,
+                    serde_json::Value::Number(n) => n.as_i64().map_or(LINE_HOLD, |n| n.clamp(-24, 24) as i32),
+                    _ => LINE_HOLD,
+                };
+                c.store(val, Ordering::Relaxed);
+            }
+        }
+        if reference >= 0 {
+            s.bass_mode.store(BASS_LINE, Ordering::Relaxed);
         }
     }
 
@@ -1008,7 +1464,10 @@ impl TinkertoneApp {
             playing,
             synchro: s.synchro.load(Ordering::Relaxed),
             fill: s.fill_held.load(Ordering::Relaxed),
-            bass_auto: s.bass_auto.load(Ordering::Relaxed),
+            bass_mode: BASS_MODE_NAMES[s.bass_mode.load(Ordering::Relaxed).min(2)].into(),
+            line_rec: s.line_rec.load(Ordering::Relaxed),
+            line: self.line_view(),
+            line_pos: if s.bass_mode.load(Ordering::Relaxed) == BASS_LINE && playing { s.line_pos.load(Ordering::Relaxed) as i32 } else { -1 },
             chord: CHORD_NAMES[s.chord.load(Ordering::Relaxed)].into(),
             step: s.step.load(Ordering::Relaxed),
             steps: r.steps,
@@ -1039,6 +1498,7 @@ impl PlayHost for TinkertoneApp {
             Sel::Preset => usize_norm(self.preset_index(), 4),
             Sel::PresetTone => usize_norm(s.tone(), TONES.len()),
             Sel::Chord => usize_norm(s.chord.load(Ordering::Relaxed), 3),
+            Sel::BassMode => usize_norm(s.bass_mode.load(Ordering::Relaxed), BASS_MODE_NAMES.len()),
             Sel::KeyWindow => usize_norm(self.window, WINDOWS),
             _ => return self.knob(i).norm(),
         })
@@ -1056,7 +1516,7 @@ impl PlayHost for TinkertoneApp {
         match CONTROLS[i % CONTROLS.len()].0 {
             Sel::Volume => s.volume.set(0.8),
             Sel::Accomp => s.accomp.set(0.7),
-            Sel::Tempo => s.tempo.set(120.0),
+            Sel::Tempo => s.tempo.set(TEMPO_DEFAULT),
             Sel::Rhythm => s.rhythm.store(0, Ordering::Relaxed),
             Sel::Preset => s.preset.store(0, Ordering::Relaxed),
             Sel::PresetTone => {
@@ -1065,7 +1525,8 @@ impl PlayHost for TinkertoneApp {
             }
             Sel::Vibrato => s.vibrato.store(false, Ordering::Relaxed),
             Sel::Sustain => s.sustain.store(false, Ordering::Relaxed),
-            Sel::BassMode => s.bass_auto.store(false, Ordering::Relaxed),
+            Sel::BassMode => s.bass_mode.store(BASS_MANUAL, Ordering::Relaxed),
+            Sel::LineRec => s.line_rec.store(false, Ordering::Relaxed),
             Sel::Chord => s.chord.store(0, Ordering::Relaxed),
             Sel::Synchro => s.synchro.store(false, Ordering::Relaxed),
             Sel::KeyWindow => {
@@ -1086,6 +1547,8 @@ impl PlayHost for TinkertoneApp {
             // in CONTROLS, so a recalled moment picks the preset first.
             Sel::PresetTone => s.preset_tones[self.preset_index()].store(usize_pick(v, TONES.len()), Ordering::Relaxed),
             Sel::Chord => s.chord.store(usize_pick(v, 3), Ordering::Relaxed),
+            Sel::BassMode => s.bass_mode.store(usize_pick(v, BASS_MODE_NAMES.len()), Ordering::Relaxed),
+            Sel::LineRec => self.set_line_rec(v >= 0.5),
             Sel::KeyWindow => {
                 let w = usize_pick(v, WINDOWS);
                 if w != self.window {
@@ -1172,6 +1635,7 @@ impl App for TinkertoneApp {
             }
         }
         self.handle_pads(&input.grid);
+        self.autosave_line();
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -1281,7 +1745,11 @@ impl App for TinkertoneApp {
         let info = format!(
             "{}  {}  {}{}",
             TONES[s.tone()].name,
-            if s.bass_auto.load(Ordering::Relaxed) { CHORD_NAMES[s.chord.load(Ordering::Relaxed)] } else { "manual bass" },
+            match s.bass_mode.load(Ordering::Relaxed) {
+                BASS_AUTO => CHORD_NAMES[s.chord.load(Ordering::Relaxed)],
+                BASS_LINE => if s.line_rec.load(Ordering::Relaxed) { "my line REC" } else { "my line" },
+                _ => "manual bass",
+            },
             if s.vibrato.load(Ordering::Relaxed) { "VIB " } else { "" },
             if s.sustain.load(Ordering::Relaxed) { "SUS" } else { "" },
         );
@@ -1301,7 +1769,6 @@ impl App for TinkertoneApp {
         Some(Box::new(Processor {
             shared: Arc::clone(&self.shared),
             tables: Arc::new(tables),
-            bass_table: Arc::new(build_table(&BASS_HARMONICS)),
             voices: [Voice::OFF; VOICES],
             prev_keys: [false; KEYS],
             clock: 0,
@@ -1310,16 +1777,23 @@ impl App for TinkertoneApp {
             bass_freq: 65.0,
             bass_env: 0.0,
             bass_gate: false,
+            bass_attack: false,
+            bass_lpf: Svf::default(),
+            bass_hp: Hp1::default(),
             prev_bass_key: -1,
             auto_root: -1,
+            rec_key: -1,
+            rec_step: 0,
+            last_idx: 0,
             step_pos: 0.0,
             seq_step: 0,
             seq_bar: 0,
             was_playing: false,
-            drums: [Drum::default(); 5],
+            drums: Drums::default(),
             noise: 0x1234_5678,
-            hp: 0.0,
-            hp_prev: 0.0,
+            out_lpf: Svf::default(),
+            out_hp: Hp1::default(),
+            tuned_sr: 0.0,
         }))
     }
 
@@ -1496,7 +1970,7 @@ mod tests {
     fn auto_bass_plays_chord_tones_from_the_held_root() {
         let mut a = app();
         let mut p = a.audio_processor().unwrap();
-        a.shared.bass_auto.store(true, Ordering::Relaxed);
+        a.shared.bass_mode.store(BASS_AUTO, Ordering::Relaxed);
         a.shared.rhythm.store(5, Ordering::Relaxed); // Pops: root x4 then fifth x4
         a.shared.tempo.set(200.0);
         a.toggle_grid_mode();
@@ -1606,5 +2080,147 @@ mod tests {
         keys.0[(BASS_LOW + 4) as usize] = 100;
         a.tick(&Input { midi_keys: keys, ..Default::default() });
         assert_eq!(a.shared.bass_key.load(Ordering::Relaxed), 4);
+    }
+
+    /// Magnitude of one frequency in a signal (a single DFT bin).
+    fn bin(x: &[f32], hz: f32, sr: f32) -> f32 {
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (n, v) in x.iter().enumerate() {
+            let ph = TAU * hz * n as f32 / sr;
+            re += v * ph.cos();
+            im += v * ph.sin();
+        }
+        (re * re + im * im).sqrt() / x.len() as f32
+    }
+
+    #[test]
+    fn the_kick_rings_low_and_dies_away_and_the_hats_are_bright() {
+        let mut d = Drums::default();
+        d.retune(48_000.0);
+        d.kick.tick(1.0);
+        let ring: Vec<f32> = (0..4800).map(|_| d.kick.tick(0.0)).collect();
+        let crossings = ring.windows(2).filter(|w| w[0].signum() != w[1].signum()).count();
+        let hz = crossings as f32 / 2.0 / 0.1;
+        assert!((hz - KICK_HZ).abs() < 10.0, "kick rings at {hz} Hz");
+        let late: Vec<f32> = (0..4800).map(|_| d.kick.tick(0.0)).collect();
+        assert!(rms(&late) < rms(&ring) * 0.5, "the ring decays");
+        let mut noise = 1u32;
+        let hiss: Vec<f32> = (0..4800)
+            .map(|_| {
+                noise ^= noise << 13;
+                noise ^= noise >> 17;
+                noise ^= noise << 5;
+                let n = (noise as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                let thin = d.hat_hp[0].tick(n);
+                d.hat_hp[1].tick(thin)
+            })
+            .collect();
+        let zc = hiss.windows(2).filter(|w| w[0].signum() != w[1].signum()).count() as f32 / 2.0 / 0.1;
+        assert!(zc > 6000.0, "hat noise is high-passed (~{zc} Hz)");
+    }
+
+    #[test]
+    fn the_bass_is_a_filtered_square_round_up_top() {
+        let mut a = app();
+        let mut p = a.audio_processor().unwrap();
+        a.shared.accomp.set(1.0);
+        a.toggle_grid_mode();
+        a.tick(&pads(&[0])); // C2
+        render(&mut p, 10);
+        let x = render(&mut p, 40);
+        let f = midi_hz(BASS_LOW as f32);
+        let (h1, h3, h5, h7) = (bin(&x, f, 48_000.0), bin(&x, 3.0 * f, 48_000.0), bin(&x, 5.0 * f, 48_000.0), bin(&x, 7.0 * f, 48_000.0));
+        assert!(h1 > 0.02, "fundamental present ({h1})");
+        assert!(h3 / h1 > 0.15, "a square's third harmonic survives ({})", h3 / h1);
+        assert!(h5 / h1 < 0.15, "the low-pass rounds off the fifth ({}, a raw square has 0.2)", h5 / h1);
+        assert!(h7 / h1 < 0.06, "and the seventh ({})", h7 / h1);
+        assert!(bin(&x, 2.0 * f, 48_000.0) / h1 < 0.05, "a square has no even harmonics");
+    }
+
+    #[test]
+    fn power_on_tempo_sits_in_the_dancehall_range() {
+        let a = app();
+        assert!((80.0..=110.0).contains(&a.shared.tempo.get()));
+    }
+
+    #[test]
+    fn minor_chords_bend_a_recorded_line() {
+        assert_eq!(line_interval(4, 0), 4);
+        assert_eq!(line_interval(4, 1), 3);
+        assert_eq!(line_interval(16, 2), 15);
+        assert_eq!(line_interval(-1, 1), -2, "a major 7th below becomes a minor 7th below");
+        assert_eq!(line_interval(7, 1), 7, "fifths stay");
+    }
+
+    /// Records two notes, then checks the loop plays them back in time
+    /// and moves with whatever bass key is held.
+    #[test]
+    fn record_your_own_line_then_it_loops_and_transposes() {
+        let mut a = app();
+        let mut p = a.audio_processor().unwrap();
+        a.shared.tempo.set(120.0);
+        a.shared.line_bars.store(0, Ordering::Relaxed); // 1 bar
+        a.shared.accomp.set(1.0);
+        a.toggle_grid_mode(); // BASS pads
+        a.set_line_rec(true);
+        assert_eq!(a.shared.bass_mode.load(Ordering::Relaxed), BASS_LINE);
+        // first key starts the rhythm and lands on step 0
+        a.tick(&pads(&[2]));
+        assert_eq!(a.running(), Some(true));
+        render(&mut p, 4);
+        a.tick(&Input::default());
+        // 120 BPM sixteenths = 6000 samples a step; wait to around step 8
+        render(&mut p, 85);
+        a.tick(&pads(&[9]));
+        render(&mut p, 4);
+        a.tick(&Input::default());
+        render(&mut p, 2);
+        let line = a.line_view();
+        assert_eq!(line.len(), 16);
+        assert_eq!(line[0], 2, "first note on the downbeat: {line:?}");
+        let second = line.iter().position(|&v| v == 9).expect("second note recorded");
+        assert!((7..=9).contains(&second), "second note near step 8: {line:?}");
+        assert!(line.contains(&-2), "letting go writes a rest");
+        // play it back
+        a.set_line_rec(false);
+        let mut heard = std::collections::BTreeSet::new();
+        for _ in 0..200 {
+            render(&mut p, 1);
+            heard.insert(a.shared.bass_sounding.load(Ordering::Relaxed));
+        }
+        assert!(heard.contains(&2) && heard.contains(&9), "loop plays both notes: {heard:?}");
+        // hold D#.. two keys up from the line's first note: it moves up two
+        a.tick(&pads(&[4]));
+        let mut moved = std::collections::BTreeSet::new();
+        for _ in 0..200 {
+            render(&mut p, 1);
+            moved.insert(a.shared.bass_sounding.load(Ordering::Relaxed));
+        }
+        assert!(moved.contains(&4) && moved.contains(&11), "transposed by the held key: {moved:?}");
+        a.clear_line();
+        assert!(a.line_view().iter().all(|&v| v == -1));
+    }
+
+    #[test]
+    fn the_line_saves_and_comes_back() {
+        let path = std::env::temp_dir().join(format!("tinkertone-line-{}.json", std::process::id()));
+        let mut a = app();
+        a.line_path = Some(path.clone());
+        a.shared.line_ref.store(3, Ordering::Relaxed);
+        a.shared.line[0].store(0, Ordering::Relaxed);
+        a.shared.line[4].store(LINE_REST, Ordering::Relaxed);
+        a.shared.line[8].store(7, Ordering::Relaxed);
+        a.shared.line_dirty.fetch_add(1, Ordering::Relaxed);
+        for _ in 0..40 {
+            a.tick(&Input::default());
+        }
+        assert!(path.exists(), "saved after it went quiet");
+        let mut b = app();
+        b.line_path = Some(path.clone());
+        b.load_line();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(b.shared.bass_mode.load(Ordering::Relaxed), BASS_LINE);
+        let v = b.line_view();
+        assert_eq!((v[0], v[4], v[8], v[1]), (3, -2, 10, -1));
     }
 }
