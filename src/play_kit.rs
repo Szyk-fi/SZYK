@@ -141,6 +141,12 @@ pub trait PlayHost {
     fn kit_pad_label(&self, _layer: u8, _pad: usize) -> String {
         String::new()
     }
+    /// Which pad a MIDI keyboard note presses on a native layer (with
+    /// `midi_to_pads`). Default: the shell's legacy note % 16. Apps whose
+    /// pads are pitched override this so a key plays its own pitch.
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        (note as usize >= MIN_MIDI_PAD_NOTE).then_some(note as usize % 16)
+    }
     /// A pad's colour on one of the app's own layers.
     fn kit_pad_color(&self, _layer: u8, _pad: usize, held: bool) -> PadColor {
         if held { PadColor::Green } else { PadColor::Off }
@@ -168,6 +174,8 @@ pub struct PlayKit {
     pub focused: usize,
     /// The offset currently applied to each control by expression/throws.
     applied: Vec<f32>,
+    /// A stepped control's own setting while a throw holds it elsewhere.
+    throw_orig: Vec<Option<f32>>,
     /// After a stick click keeps a sound, the stick is ignored until it
     /// springs back to centre -- otherwise letting go would push the
     /// sound the other way.
@@ -252,6 +260,7 @@ impl PlayKit {
     pub fn tick(&mut self, host: &mut dyn PlayHost, input: &Input) -> Step {
         let n = host.kit_control_count();
         self.applied.resize(n, 0.0);
+        self.throw_orig.resize(n, None);
         if self.status_frames > 0 {
             self.status_frames -= 1;
         }
@@ -276,9 +285,11 @@ impl PlayKit {
         // A MIDI keyboard plays the app's own pads, held for as long as
         // the key is (the shell's fallback only pulses them).
         if self.cfg.midi_to_pads && matches!(layer, Layer::Native(..)) {
-            for (k, &v) in input.midi_keys.0.iter().enumerate().skip(MIN_MIDI_PAD_NOTE) {
+            for (k, &v) in input.midi_keys.0.iter().enumerate() {
                 if v > 0 {
-                    out.grid[k % 16] = true;
+                    if let Some(pad) = host.kit_midi_pad(k as u8).filter(|&p| p < 16) {
+                        out.grid[pad] = true;
+                    }
                 }
             }
         }
@@ -437,10 +448,26 @@ impl PlayKit {
             }
         }
         for c in 0..n {
-            if want[c] == 0.0 && fixed[c].is_none() && self.applied[c] == 0.0 {
+            if want[c] == 0.0 && fixed[c].is_none() && self.applied[c] == 0.0 && self.throw_orig[c].is_none() {
                 continue;
             }
             if host.kit_stepped(c) {
+                // Stepped choices (freeze, a mode) can be thrown -- held at
+                // the throw's value, put back exactly on release -- but are
+                // never pushed by the stick or hands.
+                match (fixed[c], self.throw_orig[c]) {
+                    (Some(to), orig) => {
+                        if orig.is_none() {
+                            self.throw_orig[c] = host.kit_norm(c);
+                        }
+                        host.kit_set_norm(c, to);
+                    }
+                    (None, Some(orig)) => {
+                        host.kit_set_norm(c, orig);
+                        self.throw_orig[c] = None;
+                    }
+                    (None, None) => {}
+                }
                 continue;
             }
             let Some(cur) = host.kit_norm(c) else { continue };
@@ -546,6 +573,54 @@ impl PlayKit {
             line: host.kit_line(),
             status: self.status().to_string(),
         }
+    }
+}
+
+/// One control's storage, so an app can describe its controls once and
+/// get position, setting and steppedness for free (see `PlayHost`).
+/// Atomics are shared with the audio thread, so setting through `&self`
+/// is the normal path in this codebase.
+pub enum Knob<'a> {
+    /// A continuous value in min..max.
+    F(&'a crate::util::AtomicF32, f32, f32),
+    /// A choice among `count` options (0..count).
+    U(&'a std::sync::atomic::AtomicU32, u32),
+    /// An integer stepped value in min..=max (unison count, octave).
+    I(&'a std::sync::atomic::AtomicI32, i32, i32),
+    /// An unsigned stepped value in min..=max.
+    UR(&'a std::sync::atomic::AtomicU32, u32, u32),
+    B(&'a std::sync::atomic::AtomicBool),
+    /// No position (an action).
+    None,
+}
+
+impl Knob<'_> {
+    pub fn norm(&self) -> Option<f32> {
+        use std::sync::atomic::Ordering::Relaxed;
+        let frac = |v: f32, lo: f32, hi: f32| if hi > lo { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
+        Some(match self {
+            Knob::F(a, lo, hi) => frac(a.get(), *lo, *hi),
+            Knob::U(a, n) => frac((a.load(Relaxed) % (*n).max(1)) as f32, 0.0, (*n).saturating_sub(1) as f32),
+            Knob::I(a, lo, hi) => frac(a.load(Relaxed) as f32, *lo as f32, *hi as f32),
+            Knob::UR(a, lo, hi) => frac(a.load(Relaxed) as f32, *lo as f32, *hi as f32),
+            Knob::B(a) => a.load(Relaxed) as u8 as f32,
+            Knob::None => return None,
+        })
+    }
+    pub fn set(&self, v: f32) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let v = v.clamp(0.0, 1.0);
+        match self {
+            Knob::F(a, lo, hi) => a.set(lo + v * (hi - lo)),
+            Knob::U(a, n) => a.store((v * (*n).saturating_sub(1) as f32).round() as u32, Relaxed),
+            Knob::I(a, lo, hi) => a.store(lo + (v * (hi - lo) as f32).round() as i32, Relaxed),
+            Knob::UR(a, lo, hi) => a.store(lo + (v * (hi - lo) as f32).round() as u32, Relaxed),
+            Knob::B(a) => a.store(v >= 0.5, Relaxed),
+            Knob::None => {}
+        }
+    }
+    pub fn stepped(&self) -> bool {
+        !matches!(self, Knob::F(..))
     }
 }
 
@@ -807,6 +882,12 @@ mod tests {
         assert_eq!(f.v[3], 1.0, "held throw");
         k.tick(&mut f, &Input::default());
         assert!((f.v[3] - 0.5).abs() < 1e-5, "springs back");
+        k.cfg.throws.push(Throw { control: 6, to: 1.0, label: "MODE 3" });
+        f.mode = 1;
+        k.tick(&mut f, &pad(1));
+        assert_eq!(f.mode, 3, "a stepped control can be thrown");
+        k.tick(&mut f, &Input::default());
+        assert_eq!(f.mode, 1, "and is put back exactly");
     }
 
     #[test]

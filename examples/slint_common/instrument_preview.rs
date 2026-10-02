@@ -139,11 +139,12 @@ pub fn render(directory: &str) {
             assert_eq!(app.running(), Some(false));
             app.toggle_running();
         }
-        // Plaits opens on its play view, where the D-pad steps engines;
-        // the list-navigation checks below belong to its menu (R1).
-        if name == "Plaits" {
-            assert!(app.play_column().is_some(), "Plaits must open on its play view");
+        // Apps with a play view open on it, where the D-pad browses; the
+        // list-navigation checks below belong to their menu (R1).
+        let has_play_view = app.play_column().is_some();
+        if has_play_view {
             app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+            assert!(app.play_column().is_none(), "{name}: R1 must open the menu");
         }
         if ["Plaits", "Pam's Workout", "Beads", "Black Hole", "Bloom"].contains(&name) {
         // Exercise actual short pointer taps all the way into the module menu,
@@ -184,7 +185,7 @@ pub fn render(directory: &str) {
             }
             println!("{name}: pointer tap navigation passed");
         }
-        if name == "Plaits" && std::env::var("PORTAMAX_PLAITS_MENU").is_err() {
+        if has_play_view && std::env::var("PORTAMAX_MENU").is_err() {
             app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
             let mut input = Input::default();
             input.grid[0] = true;

@@ -15,6 +15,7 @@
 //! "16 fixed voices, no stealing needed" convention Plaits' Poly mode
 //! and Cascade both use.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes};
 use crate::app::{App, Input};
 use crate::arpeggiator::{Arpeggiator, PATTERN_NAMES as ARP_PATTERN_NAMES};
 use crate::audio::AudioProcessor;
@@ -23,7 +24,7 @@ use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
-use crate::util::{accelerate, AtomicF32};
+use crate::util::{accelerate, note_name, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -243,6 +244,52 @@ pub struct VoltageApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: the filter and the
+/// oscillator blend on the knobs, the envelope and LFO next, the
+/// patch-shaping choices on the upper pads of the Controls layer.
+const CONTROLS: [(Selection, &str); 16] = [
+    (Selection::FilterCutoff, "Cutoff"),
+    (Selection::FilterResonance, "Resonance"),
+    (Selection::FilterEnvAmount, "Env Amount"),
+    (Selection::OscMix, "Osc Mix"),
+    (Selection::AmpAttack, "Attack"),
+    (Selection::AmpRelease, "Release"),
+    (Selection::LfoDepth, "LFO Depth"),
+    (Selection::LfoRate, "LFO Rate"),
+    (Selection::Osc1Wave, "Osc 1 Wave"),
+    (Selection::Osc2Wave, "Osc 2 Wave"),
+    (Selection::Osc2Detune, "Detune"),
+    (Selection::SubLevel, "Sub"),
+    (Selection::NoiseLevel, "Noise"),
+    (Selection::Unison, "Unison"),
+    (Selection::Octave, "Octave"),
+    (Selection::ArpOn, "Arp"),
+];
+const C_OCTAVE: usize = 14;
+/// Octave range the play view's D-pad and moments use; the menu's own
+/// Octave row is unbounded, so this only bounds the dial's position.
+const OCTAVE_SPAN: i32 = 4;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "voltage",
+        layers: vec![Layer::Native(0, "KEYS"), Layer::Controls, Layer::Moments],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // D-pad up/down shifts the octave: 16 pads only span 16
+        // semitones, so this is the move a player makes most.
+        browse: Some(C_OCTAVE),
+        // Stick: cutoff sweeps on X, LFO depth (vibrato / wobble) on Y,
+        // like a pitch-and-mod-wheel joystick. Hands: resonance, and the
+        // blend between the two oscillators.
+        routes: Routes { stick_x: Some(0), stick_y: Some(6), hand_l: Some(1), hand_r: Some(3) },
+        throws: Vec::new(),
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Voltage's own palette: vintage teal on charcoal, not a
@@ -260,7 +307,14 @@ const VOLTAGE_OUTLINE: Rgb565 = Rgb565::new(5, 10, 6);
 
 impl VoltageApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
-        Self { params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)), sensitivity, nav_speed, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
+        Self {
+            params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)),
+            sensitivity,
+            nav_speed,
+            list: ParamList::new(),
+            expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+        }
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
@@ -818,6 +872,88 @@ impl VoltageApp {
     }
 }
 
+impl VoltageApp {
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % 16].0 {
+            Selection::FilterCutoff => Knob::F(&p.filter_cutoff, 0.0, 1.0),
+            Selection::FilterResonance => Knob::F(&p.filter_resonance, 0.0, 1.0),
+            Selection::FilterEnvAmount => Knob::F(&p.filter_env_amount, -1.0, 1.0),
+            Selection::OscMix => Knob::F(&p.osc_mix, 0.0, 1.0),
+            Selection::AmpAttack => Knob::F(&p.amp_attack, 0.0, 1.0),
+            Selection::AmpRelease => Knob::F(&p.amp_release, 0.0, 1.0),
+            Selection::LfoDepth => Knob::F(&p.lfo_depth, 0.0, 1.0),
+            Selection::LfoRate => Knob::F(&p.lfo_rate, MIN_LFO_RATE, MAX_LFO_RATE),
+            Selection::Osc1Wave => Knob::U(&p.osc1_wave, 4),
+            Selection::Osc2Wave => Knob::U(&p.osc2_wave, 4),
+            Selection::Osc2Detune => Knob::F(&p.osc2_detune, -12.0, 12.0),
+            Selection::SubLevel => Knob::F(&p.sub_level, 0.0, 1.0),
+            Selection::NoiseLevel => Knob::F(&p.noise_level, 0.0, 1.0),
+            Selection::Unison => Knob::UR(&p.unison, MIN_UNISON, MAX_UNISON),
+            Selection::Octave => Knob::I(&p.octave, -OCTAVE_SPAN, OCTAVE_SPAN),
+            Selection::ArpOn => Knob::B(&p.arp.enabled),
+            _ => Knob::None,
+        }
+    }
+
+    fn octave(&self) -> i32 {
+        self.params.octave.load(Ordering::Relaxed)
+    }
+}
+
+impl PlayHost for VoltageApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % 16].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % 16].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % 16].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % 16].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    /// A key plays the pad with its pitch; keys outside the pads'
+    /// 16-semitone window fold into it by octaves (each pad is one fixed
+    /// voice, so the window itself can't move per key).
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        let d = note as i32 - note_for(0, self.octave());
+        let rank = if (0..16).contains(&d) { d } else { d.rem_euclid(12) };
+        Some(pad_rank(rank) as usize)
+    }
+    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+        note_name(note_for(pad_rank(pad as i32), self.octave()))
+    }
+    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if held {
+            PadColor::Green
+        } else if note_for(pad_rank(pad as i32), self.octave()).rem_euclid(12) == 0 {
+            PadColor::Blue
+        } else {
+            PadColor::Off
+        }
+    }
+    fn kit_line(&self) -> String {
+        let held = *self.params.held.lock().unwrap();
+        let notes: Vec<String> = (0..16).filter(|&i| held[i]).take(4).map(|i| note_name(note_for(pad_rank(i as i32), self.octave()))).collect();
+        if notes.is_empty() { "-".into() } else { notes.join(" ") }
+    }
+}
+
 /// See `VoltageApp::voltage_panels`.
 pub(crate) struct VoltagePanels {
     pub oscillator: Vec<f32>,
@@ -830,6 +966,31 @@ pub(crate) struct VoltagePanels {
 
 impl App for VoltageApp {
     fn supports_pad_lock(&self) -> bool { true }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+    /// F3 runs the arpeggiator over the held pads.
+    fn running(&self) -> Option<bool> {
+        Some(self.params.arp.enabled.load(Ordering::Relaxed))
+    }
+    fn transport_action(&self) -> Option<&'static str> {
+        Some(if self.params.arp.enabled.load(Ordering::Relaxed) { "ARP OFF" } else { "ARP" })
+    }
+    fn toggle_running(&mut self) {
+        let on = !self.params.arp.enabled.load(Ordering::Relaxed);
+        self.params.arp.enabled.store(on, Ordering::Relaxed);
+        self.kit.flash(if on { "Arp on: hold some pads" } else { "Arp off" });
+    }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
@@ -867,6 +1028,12 @@ impl App for VoltageApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach the voices only on KEYS.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -916,7 +1083,12 @@ impl App for VoltageApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, VOLTAGE_BG, VOLTAGE_DIM, VOLTAGE_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, VOLTAGE_BG, VOLTAGE_DIM, VOLTAGE_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: VOLTAGE_BG, ink: VOLTAGE_TITLE, accent: VOLTAGE_ACCENT, dim: VOLTAGE_DIM, faint: VOLTAGE_OUTLINE };
+            kit::draw::column(fb, &col, 16, 40, 350, 280, pal);
+        }
 
         // --- Right: one small illustrative panel per menu group --
         // oscillators, filter, amp envelope, LFO -- each a live sketch
@@ -949,6 +1121,7 @@ impl App for VoltageApp {
         self.draw_lfo_panel(fb, panels[3].0, panels[3].1, panel_w, panel_h, accent, dim);
 
         let hint = match rows.get(self.list.selected) {
+            _ if !self.kit.menu => "knobs: dials   D-pad: octave   F2: pads   F3: arp   R1: menu".to_string(),
             Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
             Some(Row::Leaf(Selection::UserPreset(_))) => "knob2: turn one way to save, the other to load   press knob2: clear".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
@@ -1561,5 +1734,45 @@ mod tests {
         app.params.sub_level.set(1.0);
         let mut fb3 = FrameBuffer::new();
         app.draw(&mut fb3); // must not panic
+    }
+
+    fn app() -> VoltageApp {
+        VoltageApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(1.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()))
+    }
+
+    #[test]
+    fn opens_playable_knobs_shape_the_filter_and_pads_still_play() {
+        let mut a = app();
+        assert!(a.play_column().is_some(), "play view first");
+        let cutoff = a.params.filter_cutoff.get();
+        a.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(a.params.filter_cutoff.get() > cutoff, "knob 1 is cutoff on the play view");
+        a.tick(&Input { grid: std::array::from_fn(|i| i == 12), ..Default::default() });
+        assert!(a.params.held.lock().unwrap()[12], "KEYS layer plays the pads");
+        a.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(a.params.octave.load(Ordering::Relaxed), 1, "D-pad up = octave up");
+        a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(a.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn the_stick_sweeps_cutoff_and_returns_and_midi_keys_play_their_pitch() {
+        let mut a = app();
+        let cutoff = a.params.filter_cutoff.get();
+        a.tick(&Input { stick: [1.0, 0.0], ..Default::default() });
+        assert!((a.params.filter_cutoff.get() - (cutoff + 0.5).min(1.0)).abs() < 1e-4, "full right = half the range up");
+        a.tick(&Input::default());
+        assert!((a.params.filter_cutoff.get() - cutoff).abs() < 1e-5, "back to the knob");
+        let mut keys = crate::app::MidiKeys::default();
+        keys.0[note_for(4, 0) as usize] = 100; // E3: rank 4
+        a.tick(&Input { midi_keys: keys, ..Default::default() });
+        assert!(a.params.held.lock().unwrap()[pad_rank(4) as usize], "a key presses the pad with its pitch");
+    }
+
+    #[test]
+    fn f3_runs_the_arp() {
+        let mut a = app();
+        a.toggle_running();
+        assert_eq!(a.running(), Some(true));
     }
 }
