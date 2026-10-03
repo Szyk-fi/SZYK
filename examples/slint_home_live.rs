@@ -95,6 +95,8 @@ mod apps;
 mod note_bus;
 #[path = "../src/midi_devices.rs"]
 mod midi_devices;
+#[path = "../src/io_cards.rs"]
+mod io_cards;
 
 /// Stand-in for the eventual STM32Cube.AI inference call -- same no-op
 /// `main.rs` defines at its own crate root.
@@ -4366,7 +4368,6 @@ fn main() {
 
     let engine = audio::new_engine(Arc::clone(&master_volume));
     let (mut audio_host, device_state) = AudioHost::open_resilient(Arc::clone(&engine));
-    audio_host.attach_input(audio_bus.register("Hardware input"));
     println!("Live Home prototype -- output device: {}", device_state.current_output());
     let device_state = Arc::new(device_state);
 
@@ -4377,7 +4378,12 @@ fn main() {
     let note_bus = Arc::new(note_bus::NoteBus::new());
     // MIDI output ports become instruments any app can play.
     midi_devices::spawn(Arc::clone(&note_bus));
-    let registry = Registry::new(registry::standard_context(
+    // The I/O cards in the slots: read their EEPROMs and put their
+    // inputs and outputs on the buses (see io_cards.rs). The first audio
+    // card's input carries the computer's audio input in the sim.
+    let io_cards = Arc::new(io_cards::IoCards::boot(&audio_bus, &modbus, Some(&note_bus)));
+    audio_host.attach_input(io_cards.host_input.clone().unwrap_or_else(|| audio_bus.register("Hardware input")));
+    let mut context = registry::standard_context(
         Arc::clone(&cutoff),
         Arc::clone(&device_state),
         Arc::clone(&sensitivity),
@@ -4392,7 +4398,9 @@ fn main() {
         Arc::clone(&accent),
         Arc::clone(&background),
         Arc::clone(&note_bus),
-    ));
+    );
+    context.provide(Arc::clone(&io_cards));
+    let registry = Registry::new(context);
     launcher::install_catalog(manifests.iter().filter(|m| registry.implements(m)).map(|m| (m.name.clone(), m.category.clone(), m.description.clone())));
     let mut apps = registry.build(&manifests);
 

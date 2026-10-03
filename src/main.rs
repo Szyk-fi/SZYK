@@ -36,6 +36,7 @@ mod mixer_bus;
 mod modbus;
 mod note_bus;
 mod midi_devices;
+mod io_cards;
 mod os;
 mod paramlist;
 mod plaits_ffi;
@@ -225,7 +226,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // device and Os::run's loop (main thread) applies it — see
     // audio_devices.rs for why that has to happen there.
     let (mut audio_host, device_state) = AudioHost::open_resilient(Arc::clone(&engine));
-    audio_host.attach_input(audio_bus.register("Hardware input"));
     let device_state = Arc::new(device_state);
 
     println!("Running. Send MIDI CC1 on any connected port to sweep the synth cutoff.");
@@ -239,7 +239,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let note_bus = Arc::new(note_bus::NoteBus::new());
     // MIDI output ports become instruments any app can play.
     midi_devices::spawn(Arc::clone(&note_bus));
-    let registry = Registry::new(registry::standard_context(
+    // The I/O cards in the slots: read their EEPROMs and put their
+    // inputs and outputs on the buses (see io_cards.rs). The first audio
+    // card's input carries the computer's audio input in the sim.
+    let io_cards = Arc::new(io_cards::IoCards::boot(&audio_bus, &modbus, Some(&note_bus)));
+    audio_host.attach_input(io_cards.host_input.clone().unwrap_or_else(|| audio_bus.register("Hardware input")));
+    let mut context = registry::standard_context(
         Arc::clone(&cutoff),
         Arc::clone(&device_state),
         Arc::clone(&sensitivity),
@@ -254,7 +259,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&accent),
         Arc::clone(&background),
         Arc::clone(&note_bus),
-    ));
+    );
+    context.provide(Arc::clone(&io_cards));
+    let registry = Registry::new(context);
     let mut apps = registry.build(&manifests);
 
     // Register every app's processor into the mix bus exactly once,

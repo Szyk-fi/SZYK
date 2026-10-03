@@ -1,0 +1,12 @@
+{
+  "name": "MIDI DIN",
+  "vendor": 1,
+  "product": 3,
+  "revision": 1,
+  "current_ma": 40,
+  "description": "MIDI in (opto-isolated) and out on TRS type A minijacks, over the slot's UART at 31250 baud. The thru is wired on the card.",
+  "resources": [
+    { "kind": "midi_in", "count": 1, "lane": "uart" },
+    { "kind": "midi_out", "count": 1, "lane": "uart" }
+  ]
+}
