@@ -30,6 +30,7 @@ mod display;
 mod gamepad;
 mod gamepad_gilrs;
 mod led_output;
+mod pad_lights;
 mod manifest;
 mod midi_map;
 mod mixer_bus;

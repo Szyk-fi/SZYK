@@ -57,7 +57,21 @@ pub struct LedOutput {
     connections: Vec<MidiOutputConnection>,
     pending: Option<std::sync::mpsc::Receiver<Vec<MidiOutputConnection>>>,
     queued: Vec<[u8; 3]>,
+    /// Watch for ports appearing or disappearing (a Push plugged in after
+    /// start-up, or power-cycled). Off for `none()`.
+    rescan: bool,
+    /// The port names `connections` were made from.
+    ports: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    last_scan: std::time::Instant,
+    /// A rescan in flight. Kept apart from `pending` so the existing
+    /// connections keep working while it runs.
+    scan: Option<std::sync::mpsc::Receiver<Vec<MidiOutputConnection>>>,
+    /// Set when a new set of connections arrives, until `take_reconnected`.
+    reconnected: bool,
 }
+
+/// How often to look for MIDI ports coming and going.
+const RESCAN_EVERY: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl LedOutput {
     /// Connects to every available MIDI output port at once. Never
@@ -66,8 +80,58 @@ impl LedOutput {
     /// every `note_on` below becomes a no-op.
     pub fn open_all() -> Self {
         let (send, receive) = std::sync::mpsc::channel();
-        std::thread::spawn(move || { let _ = send.send(Self::connect_all()); });
-        Self { connections: Vec::new(), pending: Some(receive), queued: Vec::new() }
+        let ports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let known = std::sync::Arc::clone(&ports);
+        std::thread::spawn(move || {
+            *known.lock().unwrap() = Self::port_names();
+            let _ = send.send(Self::connect_all());
+        });
+        Self { connections: Vec::new(), pending: Some(receive), queued: Vec::new(), rescan: true, ports, last_scan: std::time::Instant::now(), scan: None, reconnected: false }
+    }
+
+    fn port_names() -> Vec<String> {
+        let Ok(probe) = MidiOutput::new("portamax-sim-led-scan") else { return Vec::new() };
+        probe.ports().iter().map(|p| probe.port_name(p).unwrap_or_default()).collect()
+    }
+
+    /// True once after the set of connected ports changed, so the caller
+    /// can send its whole state again (a freshly plugged-in Push starts
+    /// dark).
+    pub fn take_reconnected(&mut self) -> bool {
+        std::mem::take(&mut self.reconnected)
+    }
+
+    /// Every few seconds, off the UI thread: if the MIDI ports changed,
+    /// reconnect to all of them.
+    fn maybe_rescan(&mut self) {
+        if let Some(scan) = self.scan.as_ref() {
+            match scan.try_recv() {
+                Ok(connections) => {
+                    self.connections = connections;
+                    self.scan = None;
+                    self.reconnected = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.scan = None,
+            }
+            return;
+        }
+        if !self.rescan || self.pending.is_some() || self.last_scan.elapsed() < RESCAN_EVERY {
+            return;
+        }
+        self.last_scan = std::time::Instant::now();
+        let (send, receive) = std::sync::mpsc::channel();
+        let known = std::sync::Arc::clone(&self.ports);
+        std::thread::spawn(move || {
+            let now = Self::port_names();
+            let changed = *known.lock().unwrap() != now;
+            if changed {
+                *known.lock().unwrap() = now;
+                let _ = send.send(Self::connect_all());
+            }
+            // unchanged: dropping `send` ends the scan with no new set
+        });
+        self.scan = Some(receive);
     }
 
     // CoreMIDI discovery can block when the server is unavailable. Keep it
@@ -106,15 +170,17 @@ impl LedOutput {
     /// renders, tests) still needs an `Os::new` to hand *something* to
     /// -- an empty output set that quietly no-ops every send.
     pub fn none() -> Self {
-        Self { connections: Vec::new(), pending: None, queued: Vec::new() }
+        Self { connections: Vec::new(), pending: None, queued: Vec::new(), rescan: false, ports: Default::default(), last_scan: std::time::Instant::now(), scan: None, reconnected: false }
     }
 
     pub fn poll(&mut self) {
+        self.maybe_rescan();
         if let Some(pending) = self.pending.as_ref() {
             match pending.try_recv() {
                 Ok(connections) => {
                     self.connections = connections;
                     self.pending = None;
+                    self.reconnected = true;
                     for message in self.queued.drain(..) {
                         for conn in &mut self.connections { conn.send(&message).ok(); }
                     }
@@ -160,7 +226,7 @@ mod connection_tests {
     #[test]
     fn pending_discovery_keeps_latest_values_without_blocking() {
         let (send, receive) = std::sync::mpsc::channel();
-        let mut output = LedOutput { connections: Vec::new(), pending: Some(receive), queued: Vec::new() };
+        let mut output = LedOutput { pending: Some(receive), ..LedOutput::none() };
         output.note_on(60, 127);
         output.note_on(60, 0);
         output.control_change(0, 1, 10);
@@ -170,5 +236,7 @@ mod connection_tests {
         output.poll();
         assert!(output.pending.is_none());
         assert!(output.queued.is_empty());
+        assert!(output.take_reconnected(), "a new port set is reported once");
+        assert!(!output.take_reconnected());
     }
 }

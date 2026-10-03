@@ -16,7 +16,7 @@
 
 use crate::app::{App, Input};
 use crate::audio_devices::{AudioDeviceState, AudioHost};
-use crate::controller::{ControllerState, GRID_NOTES, TOP_NOTES};
+use crate::controller::ControllerState;
 use crate::display::{self, FrameBuffer};
 use crate::led_output::{LedOutput, PadColor};
 use crate::paramlist::{ACCENT, SELECTED_CHIP_BG};
@@ -89,15 +89,9 @@ pub struct Os {
     /// until it's explicitly armed (F2, independent of F3's Start/Stop
     /// -- see `toggle_midi`/`bottom_bar_labels`).
     midi_armed: Vec<bool>,
-    /// MIDI output to whatever physical controller fed `controller`,
-    /// so its pad/button LEDs can mirror on-screen state -- see
-    /// `led_output.rs` and `update_leds`.
-    leds: LedOutput,
-    /// What `update_leds` last actually sent, so it only sends a
-    /// message when a pad's/button's color changes rather than
-    /// flooding the same Note On every single frame.
-    prev_grid_lit: [PadColor; 16],
-    prev_top_lit: bool,
+    /// A connected controller's pad/button LEDs, kept equal to the
+    /// screen -- see `pad_lights.rs` and `update_leds`.
+    lights: crate::pad_lights::LightSync,
 }
 
 impl Os {
@@ -119,9 +113,7 @@ impl Os {
             prev_top: [false; 4],
             splash: Some((SplashStage::Szyk, Instant::now() + SPLASH_DURATION)),
             midi_armed,
-            leds,
-            prev_grid_lit: [PadColor::Off; 16],
-            prev_top_lit: false,
+            lights: crate::pad_lights::LightSync::new(leds),
         }
     }
 
@@ -327,46 +319,15 @@ impl Os {
         }
     }
 
-    /// Each top button's own fixed color -- distinct per button (not
-    /// just "on") since each does something completely different
-    /// (see `TOP_NOTES` for which physical button is which index):
-    /// yellow for Home (F1), green for context (F2), blue for Start/Stop
-    /// (F3), red for Mixer (F4).
-    const TOP_COLORS: [PadColor; 4] = [PadColor::Yellow, PadColor::Green, PadColor::Blue, PadColor::Red];
-
-    /// Drives a physical controller's LEDs to mirror what's actually
-    /// happening: the top row (F1-F4) is always lit, each in its own
-    /// fixed color (`TOP_COLORS`) -- those always do something no
-    /// matter what's on screen -- and each pad shows red while it's
-    /// currently held (a note actively playing, on whichever app that
-    /// means something to) or whatever color the active app's own
-    /// overlay wants otherwise (`App::grid_led_overlay` -- e.g. the
-    /// Sequencer's programmed-but-not-playing steps show green). Held
-    /// takes priority over the overlay -- a step that's both
-    /// "programmed" (green) and being played right now shows the live
-    /// red, not the static green, same as the on-screen playhead
-    /// border already does. Only ever sends a message when a pad's
-    /// color actually changes since the last frame, not every frame.
+    /// Drives a connected controller's LEDs from the same rule the
+    /// screen uses (`pad_lights::compose`): held pads red, otherwise the
+    /// active app's own pad colours, the top row always lit.
     fn update_leds(&mut self, input: &Input) {
-        self.leds.poll();
         let overlay = match self.active {
             Some(i) => self.apps[i].1.grid_led_overlay(),
             None => [PadColor::Off; 16],
         };
-        let grid_color: [PadColor; 16] = std::array::from_fn(|i| if input.grid[i] { PadColor::Red } else { overlay[i] });
-        for i in 0..16 {
-            if grid_color[i] != self.prev_grid_lit[i] {
-                self.leds.note_on(GRID_NOTES[i], grid_color[i].velocity());
-            }
-        }
-        self.prev_grid_lit = grid_color;
-
-        if !self.prev_top_lit {
-            for (i, &note) in TOP_NOTES.iter().enumerate() {
-                self.leds.note_on(note, Self::TOP_COLORS[i].velocity());
-            }
-            self.prev_top_lit = true;
-        }
+        self.lights.update(crate::pad_lights::compose(overlay, input.grid));
     }
 
     /// F3: toggles whatever the active app's Start/Stop concept

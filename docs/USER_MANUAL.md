@@ -390,7 +390,7 @@ Save states aren't supported for Neo Geo yet.
 **Norns** runs scripts written for monome's norns, the Lua sound computer.
 Copy a script folder to the SD card as `saves/norns/dust/code/<name>/`
 (the same layout as norns' `dust/code`), open Norns, pick it from the
-SELECT list and press SELECT. Twenty-one scripts are built in (see below).
+SELECT list and press SELECT. 121 scripts are built in (see below).
 
 | norns | Portamax |
 |---|---|
@@ -443,6 +443,25 @@ good starting points for your own.
 | life | Conway's Game of Life, scanned column by column |
 | spiral | Sunflower seeds placed by the golden angle |
 | polymeter | A five-step bass against a seven-step melody |
+
+**And 100 more**, all original, each with its controls at the top of its file:
+acid, aeolian, aurora, beatty, bees, bellringers, billiards, breakout, breath, brownian, candle, canon, chance, chorale, chordmem, citylights, clapping, clockwork, collatz, comet, constellations, coral, crickets, dice, dragoncurve, drumcircle, dunes, fibonacci, fireflies, fractree, freezer, gamelan, geyser, glacier, grains, graycode, harmonizer, harp, heartbeat, hilbert, intervals, invaders, kaleidoscope, kalimba, koi, lander, langton, lavalamp, lighthouse, lissajous, logistic, loopdrift, lullaby, magnets, mandel, maze, metronomes, morse, multitap, musicbox, notedelay, pascal, pi, pinball, pingpong, pollen, pong, primes, radio, ratchet, reverso, ripples, riverstones, sandpile, scales, seasons, seismograph, sierpinski, slots, snake, snowfall, sonar, springs, starfield, strum, stutter, surf, tanpura, tapeloop, tempo, thunderhead, traffic, train, tron, tuplets, typewriter, volcano, voronoi, walkingbass, zengarden.
+They cover nature and physics (snowfall, geyser, metronomes that fall into step), maths (Langton's ant, the dragon curve, primes), music (canon, chorale, bell-ringing changes, gamelan, a walking bass), tape and softcut tools (tape loops, stutter, multitap) and games that play themselves (pong, invaders, lander).
+
+### 8.2 Ableton Push 2 lights
+
+With a Push 2 plugged in, the bottom-left 4×4 of its pads are Portamax's
+pads, and the four pads above them are F1–F4. Their lights always match
+the pads on screen; both come from one rule (`src/pad_lights.rs`):
+- a pad you're holding is red;
+- otherwise it shows the app's own colour (the Sequencer's steps, the
+  play view's layers, C notes in blue on the keyboards);
+- F1–F4 are always lit: yellow, green, blue, red.
+
+Plug the Push in or power-cycle it at any time: Portamax notices the MIDI
+port change within a few seconds and sends every light again. It also
+refreshes all of them every few seconds, so a dropped message never
+leaves a pad wrong for long.
 
 ## 9. Game controllers (PS5 and any other)
 

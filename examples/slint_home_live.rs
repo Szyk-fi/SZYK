@@ -60,6 +60,8 @@ mod display;
 mod gamepad;
 #[path = "../src/led_output.rs"]
 mod led_output;
+#[path = "../src/pad_lights.rs"]
+mod pad_lights;
 #[path = "../src/manifest.rs"]
 mod manifest;
 #[path = "../src/midi_map.rs"]
@@ -4554,6 +4556,8 @@ fn main() {
     let apps_for_timer = Rc::clone(&apps);
     let active_for_timer = Rc::clone(&active);
     let grid_for_timer = Rc::clone(&grid_held);
+    // A connected Push's pad and button LEDs, kept equal to the screen.
+    let lights_for_timer = Rc::new(RefCell::new(pad_lights::LightSync::new(led_output::LedOutput::open_all())));
     let home_list_for_timer = Rc::clone(&home_list);
     let launcher_for_timer=launcher.clone();
     let mut previous_visit=None;
@@ -4711,20 +4715,9 @@ fn main() {
                 let play_input = Input { grid, ..Default::default() };
                 apps_ref[play_idx].1.tick(&play_input);
                 let overlay = apps_ref[play_idx].1.grid_led_overlay();
-                let colors: Vec<slint::Color> = (0..16)
-                    .map(|i| match overlay[i] {
-                        led_output::PadColor::Off if grid[i] => slint::Color::from_rgb_u8(0x2E, 0xCC, 0x55),
-                        led_output::PadColor::Off => slint::Color::from_rgb_u8(0x23, 0x23, 0x23),
-                        led_output::PadColor::Green => slint::Color::from_rgb_u8(0x2E, 0xCC, 0x55),
-                        led_output::PadColor::Red => slint::Color::from_rgb_u8(0xFF, 0x4D, 0x4D),
-                        led_output::PadColor::Yellow => slint::Color::from_rgb_u8(0xE0, 0xC0, 0x30),
-                        led_output::PadColor::Blue => slint::Color::from_rgb_u8(0x40, 0x90, 0xE0),
-                    })
-                    .collect();
-                ui.set_live_pad_colors(Rc::new(slint::VecModel::from(colors)).into());
+                show_pads(&ui, &mut lights_for_timer.borrow_mut(), pad_lights::compose(overlay, grid));
             } else {
-                let default_colors: Vec<slint::Color> = (0..16).map(|_| slint::Color::from_rgb_u8(0x23, 0x23, 0x23)).collect();
-                ui.set_live_pad_colors(Rc::new(slint::VecModel::from(default_colors)).into());
+                show_pads(&ui, &mut lights_for_timer.borrow_mut(), pad_lights::compose([led_output::PadColor::Off; 16], grid));
             }
 
             ui.set_live_bg(slint::Color::from_rgb_u8(18,27,27));ui.set_live_ink(slint::Color::from_rgb_u8(241,240,230));ui.set_live_accent(slint::Color::from_rgb_u8(183,214,197));
@@ -4773,7 +4766,6 @@ fn main() {
                 let play_input = Input { grid, ..Default::default() };
                 apps_ref[play_idx].1.tick(&play_input);
             }
-            let pad_overlay = apps_ref[play_idx].1.grid_led_overlay();
             let play_name_upper = apps_ref[play_idx].0.to_uppercase();
             let screen_grid: [bool; 16] = if play_idx == idx { grid } else { [false; 16] };
             let mut input = Input { grid: screen_grid, navigation_steps: navigation, knob1: k1, knob2: k2, nav_x, knob1_press: press1, knob2_press: press2, ..Default::default() };
@@ -4795,6 +4787,8 @@ fn main() {
                 let surface = controller.play_surface_input(frame);
                 input = Input { grid: input.grid, navigation_steps: input.navigation_steps, knob1: input.knob1, knob2: input.knob2, nav_x: input.nav_x, knob1_press: input.knob1_press, knob2_press: input.knob2_press, ..surface };
             }
+            // A pinned app (F2) was ticked above; read its pads now.
+            let pinned_overlay = (play_idx != idx).then(|| apps_ref[play_idx].1.grid_led_overlay());
             let app = &mut apps_ref[idx].1;
             app.tick(&input);
 
@@ -4832,17 +4826,10 @@ fn main() {
             // Plaits/Cascade/Voltage/Starlab all read `Input.grid` as
             // a keyboard, but until now nothing on this shared screen
             // ever reflected that back visually.
-            let colors: Vec<slint::Color> = (0..16)
-                .map(|i| match pad_overlay[i] {
-                    led_output::PadColor::Off if grid[i] => slint::Color::from_rgb_u8(0x2E, 0xCC, 0x55),
-                    led_output::PadColor::Off => slint::Color::from_rgb_u8(0x23, 0x23, 0x23),
-                    led_output::PadColor::Green => slint::Color::from_rgb_u8(0x2E, 0xCC, 0x55),
-                    led_output::PadColor::Red => slint::Color::from_rgb_u8(0xFF, 0x4D, 0x4D),
-                    led_output::PadColor::Yellow => slint::Color::from_rgb_u8(0xE0, 0xC0, 0x30),
-                    led_output::PadColor::Blue => slint::Color::from_rgb_u8(0x40, 0x90, 0xE0),
-                })
-                .collect();
-            ui.set_live_pad_colors(Rc::new(slint::VecModel::from(colors)).into());
+            // Read after this frame's tick, so the screen and the Push
+            // show the pads as they are now, not a frame ago.
+            let pad_overlay = pinned_overlay.unwrap_or_else(|| app.grid_led_overlay());
+            show_pads(&ui, &mut lights_for_timer.borrow_mut(), pad_lights::compose(pad_overlay, grid));
 
             let midi_pinned = midi_target_for_timer.borrow().is_some();
 
@@ -4858,4 +4845,18 @@ fn main() {
     ui.show().unwrap();
     println!("Portamax window shown; starting UI event loop");
     ui.run().unwrap();
+}
+
+/// Shows the pads on screen and sends the same colours to a connected
+/// controller's LEDs (see pad_lights.rs), so the two always match.
+fn show_pads(ui: &LiveHomeScreen, lights: &mut pad_lights::LightSync, pads: [led_output::PadColor; 16]) {
+    let colors: Vec<slint::Color> = pads
+        .iter()
+        .map(|&c| {
+            let (r, g, b) = pad_lights::rgb(c);
+            slint::Color::from_rgb_u8(r, g, b)
+        })
+        .collect();
+    ui.set_live_pad_colors(Rc::new(slint::VecModel::from(colors)).into());
+    lights.update(pads);
 }
