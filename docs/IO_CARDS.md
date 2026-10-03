@@ -1,6 +1,8 @@
 # I/O cards
 
 Portamax's jacks live on small plug-in cards instead of the main board.
+There are six slots on two tiers: three on the top face of the main board
+and three on its underside.
 
 - **Repair:** a broken jack or pot means a new card, not a new unit.
 - **Choice:** the same main board can carry audio, CV, MIDI, or a card
@@ -49,9 +51,47 @@ Why M.2 rather than SO-DIMM:
 
 **Positions:** pins 24–31 are the Key E notch, which leaves 67 contacts.
 
+## Slots: two tiers
+
+| Tier | Slots | Where | Lanes wired |
+|---|---|---|---|
+| Upper | A, B, C | Top face of the main board | A and B: SAI, SPI, UART, GPIO, I2C. C: SPI, UART, GPIO, I2C. |
+| Lower | D, E, F | Underside, directly below A, B and C | SPI, UART, GPIO, I2C |
+
+**The same card fits any slot.** A lower socket uses the same footprint
+flipped to the bottom layer in KiCad. Pin numbers don't change, so the
+nets are identical. A lower card hangs with its components facing away
+from the board, so its jacks form a second row on the same case edge,
+directly under the upper row.
+
+**Row spacing.** The two jack rows sit apart by about the board thickness,
+plus the height of both sockets and cards, plus one jack body: roughly
+14 mm with low-profile sockets and the PJ-324M. Confirm it with the socket
+and jack you choose, because the case-edge cut-outs depend on it.
+
+**Why only A and B have audio.** Six full-duplex audio interfaces is
+more than the STM32N6 can spare next to the RAM, display, SD card and
+camera. So the audio lanes go to A and B, and the other slots take
+cards that need SPI, UART, GPIO or I2C only: CV, gates, MIDI. Each card's
+EEPROM lists the lanes it uses, and the firmware refuses a card whose
+lanes aren't wired in its slot. An audio card in slot D stays off, and
+the Cards screen says why. If the pin plan frees another audio interface
+(SPI in I2S mode, or a spare SAI block), wire it to slot C and add it to
+that slot's lane list in `SLOT_LANES` (`src/io_cards.rs`).
+
+**Build and mechanics:**
+- Sockets on both faces mean double-sided assembly. JLCPCB charges extra
+  for bottom-side parts; the alternative is hand-soldering the three
+  lower sockets.
+- The lower cards need their own standoffs on the underside, and the
+  case's bottom half must come off to reach them.
+- Every jack in both rows still gets a nut on the case wall, so a cable
+  pull on either tier lands on the case, not a socket.
+
 ## Pinout (one slot)
 
-Directions are seen from the card toward the MCU.
+The pinout is the same for all six slots. Directions are seen from the
+card toward the MCU.
 
 The MCU column names the peripheral signal for slot A. The ball/GPIO
 names are left for CubeMX, because they must be picked alongside the
@@ -129,21 +169,28 @@ Notes:
 
 ### Per-slot peripherals
 
-| Slot | Audio | Control (I2C) | SPI chip selects | UART |
-|---|---|---|---|---|
-| A | SAI1 block A/B | mux channel 0 | CS0/CS1 A | USART (TBD) |
-| B | SAI2 block A/B | mux channel 1 | CS0/CS1 B | USART (TBD) |
-| C | SPI in I2S mode, or a third SAI block if the N647 has one free | mux channel 2 | CS0/CS1 C | USART (TBD) |
+| Slot | Tier | Audio | Control (I2C) | SPI chip selects | UART |
+|---|---|---|---|---|---|
+| A | upper | SAI1 block A/B | mux channel 0 | CS0/CS1 A | USART (TBD) |
+| B | upper | SAI2 block A/B | mux channel 1 | CS0/CS1 B | USART (TBD) |
+| C | upper | none in rev A (SPI-I2S if one is free) | mux channel 2 | CS0/CS1 C | USART (TBD) |
+| D | lower | none | mux channel 3 | CS0/CS1 D | USART (TBD) |
+| E | lower | none | mux channel 4 | CS0/CS1 E | USART (TBD) |
+| F | lower | none | mux channel 5 | CS0/CS1 F | USART (TBD) |
+
+The SAI pins (9, 13, 17, 19, 21) are left unconnected on slots C–F.
 
 How the shared buses are split between slots:
-- **I2C:** one bus goes through a TCA9548A mux, so every card's EEPROM
+- **I2C:** one bus goes through a TCA9548A mux (8 channels: 6 used), so every card's EEPROM
   can sit at the same address (0x50). Two identical cards then never
   collide, even though their codecs share a fixed I2C address.
 - **SPI:** one bus is shared, with separate chip selects per slot.
+- **UART:** ideally one per slot, for a MIDI card anywhere. If the pin
+  plan runs short, drop the UART from some lower slots the same way:
+  remove it from `SLOT_LANES` and the firmware will refuse MIDI cards
+  there.
 - **Before laying out:** confirm in CubeMX how many SAI blocks and
-  USARTs are free once the RAM, display, SD card and camera are
-  placed. Slot C's audio lane is the one most likely to need the
-  fallback.
+  USARTs are free once the RAM, display, SD card and camera are placed.
 
 ## Power
 
@@ -153,6 +200,10 @@ How the shared buses are split between slots:
   a TPS2553, set to about 500 mA.
   - It is only switched on after the EEPROM checks out, and the card's
     declared current fits the budget.
+  - Slots are powered A to F. A card that would take the total past the
+    +5 V budget (`FIVE_V_BUDGET_MA`, a 1 A placeholder until the power
+    design fixes it) stays off. Six of today's cards fit: the heaviest
+    draws 150 mA.
   - The switch also gives the soft start that rev B hot-plug will need.
 - **Clean analog rails** are made on the card: an LDO for the codec, a
   charge pump or boost to ±12 V for the CV card.
@@ -201,7 +252,9 @@ entries.
 - a newer format version;
 - a short read;
 - a bad CRC;
-- an unknown kind or lane.
+- an unknown kind or lane;
+- a card needing a lane its slot doesn't have;
+- a card that would go over the +5 V budget.
 
 A refused slot stays unpowered, and the Cards screen says why.
 
@@ -228,7 +281,7 @@ buses already understand, so apps need no changes:
 
 **In the sim:**
 - The slots are set in `saves/io_slots.json`. The default is A = Audio
-  2x2, B = CV 4x4, C = MIDI DIN.
+  2x2, B = CV 4x4, C = MIDI DIN, with the lower tier empty.
 - Changing a slot in the Cards app applies at the next start, as on the
   device.
 - Card inputs read silence, except the first audio input, which carries

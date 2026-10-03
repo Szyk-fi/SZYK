@@ -34,8 +34,33 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// The slots on the main board, left to right.
-pub const SLOTS: [char; 3] = ['A', 'B', 'C'];
+/// The slots, in two tiers: A-C on the main board's top face, D-F on
+/// its underside directly below them (D under A, and so on). Both tiers
+/// exit the same case edge, as two rows of jacks.
+pub const SLOTS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+pub fn tier(slot: usize) -> &'static str {
+    if slot < 3 { "upper" } else { "lower" }
+}
+
+/// Which lanes each slot has wired. Six full-duplex audio interfaces is
+/// more than the STM32N6 can spare next to the RAM, display, SD card and
+/// camera, so only A and B carry an SAI lane; the other slots take cards
+/// that need SPI, UART, GPIO or I2C only (CV, gates, MIDI). If the pin
+/// plan frees another audio interface, add `Lane::Sai` to that slot here.
+pub const SLOT_LANES: [&[Lane]; 6] = [
+    &[Lane::Sai, Lane::Spi, Lane::Uart, Lane::Gpio, Lane::I2c],
+    &[Lane::Sai, Lane::Spi, Lane::Uart, Lane::Gpio, Lane::I2c],
+    &[Lane::Spi, Lane::Uart, Lane::Gpio, Lane::I2c],
+    &[Lane::Spi, Lane::Uart, Lane::Gpio, Lane::I2c],
+    &[Lane::Spi, Lane::Uart, Lane::Gpio, Lane::I2c],
+    &[Lane::Spi, Lane::Uart, Lane::Gpio, Lane::I2c],
+];
+
+/// What the cards may draw from +5 V in total. A placeholder until the
+/// power design sets it: slots are powered A to F, and a card that would
+/// take the total past this stays off.
+pub const FIVE_V_BUDGET_MA: u32 = 1000;
 
 /// EEPROM image layout, version 1 (little-endian):
 ///
@@ -337,7 +362,9 @@ pub struct SlotConfig {
 impl Default for SlotConfig {
     /// The standard build: audio, CV and MIDI.
     fn default() -> Self {
-        SlotConfig { slots: vec!["audio_2x2".into(), "cv_4x4".into(), "midi_din".into()] }
+        let mut slots: Vec<String> = vec!["audio_2x2".into(), "cv_4x4".into(), "midi_din".into()];
+        slots.resize(SLOTS.len(), String::new());
+        SlotConfig { slots }
     }
 }
 
@@ -435,9 +462,32 @@ impl IoCards {
         move |s| images.get(s).cloned().flatten()
     }
 
-    /// Registers every detected card's I/O on the buses.
+    /// Checks each detected card against its slot -- the lanes it needs
+    /// must be wired there, and its current must fit what's left of the
+    /// +5 V budget -- and turns any that don't into faults, which stay
+    /// unpowered. Slots are taken in order, A first.
+    pub fn admit(mut states: Vec<SlotState>) -> Vec<SlotState> {
+        let mut used = 0u32;
+        for (s, state) in states.iter_mut().enumerate() {
+            let SlotState::Card(def) = state else { continue };
+            let lanes = SLOT_LANES.get(s).copied().unwrap_or(&[]);
+            if let Some(r) = def.resources.iter().find(|r| !lanes.contains(&r.lane)) {
+                *state = SlotState::Fault(format!("{} needs a {:?} lane; slot {} has none", def.name, r.lane, SLOTS[s]).replace("Sai", "SAI").replace("Spi", "SPI").replace("Uart", "UART").replace("Gpio", "GPIO").replace("I2c", "I2C"));
+                continue;
+            }
+            let ma = def.current_ma as u32;
+            if used + ma > FIVE_V_BUDGET_MA {
+                *state = SlotState::Fault(format!("over the +5 V budget ({} + {ma} mA > {FIVE_V_BUDGET_MA} mA)", used));
+                continue;
+            }
+            used += ma;
+        }
+        states
+    }
+
+    /// Registers every admitted card's I/O on the buses.
     pub fn install(states: Vec<SlotState>, audio: &AudioBus, mods: &ModBus, notes: Option<&NoteBus>) -> IoCards {
-        let mut cards = IoCards { states, ..IoCards::empty() };
+        let mut cards = IoCards { states: IoCards::admit(states), ..IoCards::empty() };
         let states = cards.states.clone();
         for (s, state) in states.iter().enumerate() {
             let SlotState::Card(def) = state else { continue };
@@ -516,6 +566,40 @@ impl IoCards {
 mod tests {
     use super::*;
 
+    #[test]
+    fn six_slots_on_two_tiers_with_audio_only_where_there_is_a_lane() {
+        let audio = AudioBus::new();
+        let mods = ModBus::new();
+        let notes = NoteBus::new();
+        // An audio card in a lower slot, CV and MIDI below too.
+        let config = SlotConfig { slots: vec!["".into(), "".into(), "".into(), "audio_2x2".into(), "cv_4x4".into(), "midi_din".into()] };
+        let cards = IoCards::install(IoCards::detect(IoCards::sim_reader(&config, &catalog())), &audio, &mods, Some(&notes));
+        assert_eq!(cards.states.len(), 6);
+        assert_eq!(tier(0), "upper");
+        assert_eq!(tier(3), "lower");
+        assert!(matches!(&cards.states[3], SlotState::Fault(e) if e.contains("SAI lane") && e.contains("slot D")), "{:?}", cards.states[3]);
+        assert!(matches!(cards.states[4], SlotState::Card(_)), "CV works in a lower slot");
+        assert!(matches!(cards.states[5], SlotState::Card(_)), "MIDI works in a lower slot");
+        assert!(mods.index_of("Slot E: CV Out 1").is_some());
+        assert!(notes.instrument_index("Slot F MIDI Out").is_some());
+        assert!(!audio.names().iter().any(|n| n.starts_with("Slot D")), "the refused card registered nothing");
+    }
+
+    #[test]
+    fn cards_past_the_power_budget_stay_off() {
+        // The three bundled cards on all six slots fit (6 x 150 mA at
+        // most); a hungrier card doesn't.
+        let all_cv = SlotConfig { slots: ["cv_4x4"; 6].iter().map(|s| s.to_string()).collect() };
+        let states = IoCards::admit(IoCards::detect(IoCards::sim_reader(&all_cv, &catalog())));
+        assert!(states.iter().all(|s| matches!(s, SlotState::Card(_))), "six CV cards fit the budget");
+        let mut hungry = catalog().into_iter().find(|d| d.id == "cv_4x4").unwrap();
+        hungry.current_ma = 400;
+        let states = IoCards::admit(vec![SlotState::Card(hungry.clone()); 6]);
+        let powered = states.iter().filter(|s| matches!(s, SlotState::Card(_))).count() as u32;
+        assert_eq!(powered, FIVE_V_BUDGET_MA / 400, "as many as fit, in slot order");
+        assert!(matches!(&states[5], SlotState::Fault(e) if e.contains("budget")));
+    }
+
     fn def(id: &str) -> CardDef {
         catalog().into_iter().find(|d| d.id == id).unwrap_or_else(|| panic!("{id} in assets/io_cards"))
     }
@@ -565,7 +649,8 @@ mod tests {
         let config = SlotConfig::default();
         let states = IoCards::detect(IoCards::sim_reader(&config, &catalog()));
         let cards = IoCards::install(states, &audio, &mods, Some(&notes));
-        assert!(cards.states.iter().all(|s| matches!(s, SlotState::Card(_))), "all three slots read");
+        assert!(cards.states[..3].iter().all(|s| matches!(s, SlotState::Card(_))), "the upper tier reads");
+        assert!(cards.states[3..].iter().all(|s| matches!(s, SlotState::Empty)), "the lower tier starts empty");
         // Inputs are sources Portal and effects can pick.
         let names = audio.names();
         assert!(names.contains(&"Slot A Audio In 1-2".to_string()), "{names:?}");
@@ -592,7 +677,7 @@ mod tests {
         let states = IoCards::detect(IoCards::sim_reader(&config, &catalog()));
         assert!(matches!(states[0], SlotState::Empty));
         assert!(matches!(&states[1], SlotState::Fault(e) if e == "blank EEPROM"));
-        assert!(matches!(states[2], SlotState::Empty));
+        assert!(states[2..].iter().all(|s| matches!(s, SlotState::Empty)));
         let cards = IoCards::install(states, &audio, &mods, None);
         assert!(cards.ports.is_empty());
         assert_eq!(audio.len(), 0);

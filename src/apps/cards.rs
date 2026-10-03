@@ -10,7 +10,7 @@
 
 use crate::app::{App, Input};
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
-use crate::io_cards::{catalog, CardDef, IoCards, Kind, SlotConfig, SlotState, SLOTS};
+use crate::io_cards::{catalog, tier, CardDef, IoCards, Kind, SlotConfig, SlotState, SLOTS};
 use crate::paramlist::ParamList;
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use crate::util::AtomicF32;
@@ -37,6 +37,8 @@ pub struct CardsApp {
     catalog: Vec<CardDef>,
     /// The slots as they'll be at the next start (sim only).
     pending: SlotConfig,
+    /// The slots as they were read at boot.
+    booted: SlotConfig,
     config_path: Option<PathBuf>,
     list: ParamList,
     nav_speed: Arc<AtomicF32>,
@@ -45,7 +47,7 @@ pub struct CardsApp {
 impl CardsApp {
     pub fn new(cards: Arc<IoCards>, nav_speed: Arc<AtomicF32>, config_path: Option<PathBuf>) -> CardsApp {
         let pending = config_path.as_deref().map(SlotConfig::load).unwrap_or_default();
-        CardsApp { cards, catalog: catalog(), pending, config_path, list: ParamList::new(), nav_speed }
+        CardsApp { cards, catalog: catalog(), booted: pending.clone(), pending, config_path, list: ParamList::new(), nav_speed }
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -79,12 +81,7 @@ impl CardsApp {
 
     /// Whether slot `s` will hold something else after a restart.
     fn changed(&self, s: usize) -> bool {
-        let booted = match self.cards.states.get(s) {
-            Some(SlotState::Card(d)) => d.name.clone(),
-            Some(SlotState::Fault(_)) => "?".into(),
-            _ => "empty".into(),
-        };
-        booted != self.pending_name(s)
+        self.booted.card(s) != self.pending.card(s)
     }
 
     fn port_value(&self, i: usize) -> String {
@@ -110,7 +107,7 @@ impl CardsApp {
                     if self.changed(*s) {
                         v = format!("{v} -> {} at restart", self.pending_name(*s));
                     }
-                    (format!("Slot {}", SLOTS[*s]), v)
+                    (format!("Slot {} ({})", SLOTS[*s], tier(*s)), v)
                 }
                 Row::Port(i) => {
                     let name = &self.cards.ports[*i].name;
@@ -163,7 +160,7 @@ impl App for CardsApp {
             cells.push(match self.cards.states.get(s) {
                 Some(SlotState::Card(d)) => format!("{ports} ports · {} mA", d.current_ma),
                 Some(SlotState::Fault(_)) => "off".into(),
-                _ => "".into(),
+                _ => format!("{} tier", tier(s)),
             });
         }
         let pending = (0..SLOTS.len()).any(|s| self.changed(s));
@@ -173,7 +170,7 @@ impl App for CardsApp {
             None => None,
         };
         crate::app::SlintExtra::Grid(crate::app::GridExtra {
-            caption: format!("I/O CARDS / +5 V {} mA", self.cards.current_ma()),
+            caption: format!("I/O CARDS / +5 V {} OF {} mA", self.cards.current_ma(), crate::io_cards::FIVE_V_BUDGET_MA),
             title: selected_slot
                 .and_then(|s| match &self.cards.states[s] {
                     SlotState::Card(d) => Some(format!("{} · rev {} · #{:04X}", d.name, d.revision, d.serial)),
@@ -198,10 +195,7 @@ impl App for CardsApp {
             }
             if input.knob2_press {
                 // Back to what's actually in the slot.
-                let booted = match &self.cards.states[s] {
-                    SlotState::Card(d) => self.catalog.iter().find(|c| c.name == d.name).map(|c| c.id.clone()).unwrap_or_default(),
-                    _ => String::new(),
-                };
+                let booted = self.booted.card(s).to_string();
                 while self.pending.slots.len() <= s {
                     self.pending.slots.push(String::new());
                 }
@@ -255,9 +249,10 @@ mod tests {
     fn it_lists_every_slot_and_shows_a_patched_cv_out_moving() {
         let (mut app, mods) = booted();
         let rows = app.display();
-        assert_eq!(rows[0], ("Slot A".to_string(), "Audio 2x2".to_string()));
-        assert!(rows.iter().any(|r| r.0 == "Slot B" && r.1 == "CV 4x4"));
-        assert!(rows.iter().any(|r| r.0 == "Slot C" && r.1 == "MIDI DIN"));
+        assert_eq!(rows[0], ("Slot A (upper)".to_string(), "Audio 2x2".to_string()));
+        assert!(rows.iter().any(|r| r.0 == "Slot B (upper)" && r.1 == "CV 4x4"));
+        assert!(rows.iter().any(|r| r.0 == "Slot C (upper)" && r.1 == "MIDI DIN"));
+        assert!(rows.iter().any(|r| r.0 == "Slot F (lower)" && r.1 == "empty"));
         mods.get(mods.index_of("Slot B: CV Out 2").unwrap()).unwrap().set(0.25);
         let rows = app.display();
         assert!(rows.iter().any(|r| r.0 == "  CV Out 2" && r.1 == "+2.50 V"), "{rows:?}");
