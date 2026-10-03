@@ -1,6 +1,6 @@
 # Portamax User Manual
 
-Portamax is a self-contained groovebox/instrument simulator: 66 installed
+Portamax is a self-contained groovebox/instrument simulator: 71 installed
 apps sharing one audio engine, one modulation bus, and one 4x4 pad grid +
 D-pad + four knobs/encoders + F1-F4 control surface. This manual covers
 what's actually implemented today, not a roadmap.
@@ -32,7 +32,7 @@ cargo run --example slint_home_live
   track select, mute/solo...) — each app's own section below says what.
 
 The launcher groups installed apps into **Instruments, Effects, Sequencing,
-Library, Utilities** and **Kids**. Up/down selects an app, left/right changes
+Library, Utilities, AI** and **Kids**. Up/down selects an app, left/right changes
 category, R1 opens it. F2 cycles categories, F3 opens Recent (last 12 apps
 opened this session, not persisted across restarts), F4 opens Mixer. A green
 dot marks an app with an active transport.
@@ -498,6 +498,31 @@ headphones, or the live mic turned down, stop that.
 | Sound Detective | Synthesis: match a mystery sound's wave, octave, filter brightness, attack and length; a level hides one more control each time | 1 hear the mystery, 2 hear yours, 3 check, 4 new case; the rest play your sound | up/down pick a control, left/right turn it; SELECT checks |
 | Ear Quest | Ear training in five quests that unlock in turn: higher or lower, major or minor, same or different, intervals, which solfa note | the answers (halves for two, corners for four) | SELECT hear again; up/down quest; hold SELECT skip |
 | Music Code | Programming: a tune as blocks (PLAY, REST, CHORD, DRUM, UP, DOWN, LEAP, DICE, HOME, REPEAT, IF HIGH) run one step at a time | top three rows insert blocks at the cursor; bottom row cursor left/right, delete, run | left/right cursor; up/down instrument; hold SELECT clears |
+
+### 8.4 AI apps (the NPU)
+
+Five apps in the launcher's **AI** section, each built around a small
+neural network made for the STM32N6's Neural-ART NPU. The networks are
+trained in `tools/npu` (see its README) on data synthesized there,
+quantised to int8, and exported twice: a `.pmxn` file the sim runs, and
+an ONNX file for ST Edge AI to compile for the chip. The sim runs them on
+the computer's CPU with the same int8 maths, and its tests check the
+results bit for bit against the Python reference. Each app's bottom line
+shows how many inferences it runs, how much work that is, and roughly
+what share of the NPU it would use.
+
+| App | What the network does | How you play it |
+|---|---|---|
+| **Hum** | Pitch tracking: 100 times a second, which of 145 pitches (a third of a semitone apart, C2-C6) it hears, or none. Within 50 cents 99% of the time on its test set; the screen is also a tuner. | Sing, hum or play into the input. **Plays** sends the notes to Hum's own sound or any instrument. Scale and key snap the notes; Glide mode follows your voice continuously instead. |
+| **Mouth Drums** | Sound embedding: the first 80 ms of each sound becomes 64 numbers; your taught sounds are averaged into prototypes and each new sound goes to the closest. 98% right picking among 8 sounds taught 3 times each (test set). | Hold one of pads 1-8 and make a sound 3-5 times to teach it; then beatbox. Pad 9 records into a 2-bar loop, 10 plays, 11 clears, 12 click. You hear each hit about 80 ms after you make it (the network needs that much of the sound). |
+| **Conductor** | Gesture recognition on the two depth sensors: swipe right/left, push, wave left/right, tap left/right, 20 times a second. Holding still to play is not a gesture. | Six outputs (left hand, right hand, swipes, push, waves, taps) patch to any modulation input. Its own pad shows the gestures while your hands are over the sensors. |
+| **Timbre Map** | A neural synthesizer: a decoder turns a point on a 2-D map of 16 instrument families, the note, the velocity and the time into 32 harmonic levels, 4 noise bands and a loudness, every 4 ms per voice, played by an additive synth. | Pads, MIDI or other apps play it. D-pad, joystick or hands move across the map (moving morphs sounding notes); SELECT jumps to the next landmark, hold SELECT drifts. |
+| **Band Mate** | Chord recognition: 10 times a second, which of 24 major and minor chords is playing, or none (94% on its test set, including sevenths and inversions). | Play chords into the input; drums and bass follow (Rock, Ballad, Funk, Reggae, Shuffle). The band comes in on your first chord. Pad 1 taps the tempo. |
+
+The listening apps (Hum, Mouth Drums, Band Mate) start on the device's
+hardware input, which only listens once an input is chosen in Settings →
+Input. The network always runs on a worker thread, never the audio
+thread, as it would on the NPU.
 
 ## 9. Game controllers (PS5 and any other)
 

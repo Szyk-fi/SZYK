@@ -143,7 +143,6 @@ impl Note {
         self
     }
     /// Held until `Ev::Off(id)` (or `Sound::off(id)`).
-    #[allow(dead_code)] // no app holds notes yet; the kit's tests do
     pub fn held(mut self, id: u32) -> Note {
         self.len = 0.0;
         self.id = id;
@@ -156,7 +155,6 @@ impl Note {
 pub enum Ev {
     Note(Note),
     /// Release every held note with this id.
-    #[allow(dead_code)] // see `Note::held`
     Off(u32),
     /// A drum hit at a velocity, 0..1.
     Drum(Drum, f32),
@@ -254,7 +252,6 @@ impl Sound {
     pub fn drum(&self, d: Drum, vel: f32) {
         self.send(Ev::Drum(d, vel));
     }
-    #[allow(dead_code)] // see `Note::held`
     pub fn off(&self, id: u32) {
         self.send(Ev::Off(id));
     }

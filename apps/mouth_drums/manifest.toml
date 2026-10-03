@@ -1,0 +1,9 @@
+id = "mouth_drums"
+name = "Mouth Drums"
+category = "ai"
+description = "AI. Teach it your own sounds, then beatbox and it plays drums: a sound-embedding network on the NPU."
+audio_outputs = ["Mouth Drums"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Mouth Drums Level",
+]

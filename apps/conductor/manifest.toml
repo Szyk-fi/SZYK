@@ -1,0 +1,9 @@
+id = "conductor"
+name = "Conductor"
+category = "ai"
+description = "AI. Swipe, push, wave and tap over the depth sensors to drive any app: gesture recognition on the NPU."
+audio_outputs = ["Conductor"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Conductor Level",
+]

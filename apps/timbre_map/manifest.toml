@@ -1,0 +1,10 @@
+id = "timbre_map"
+name = "Timbre Map"
+category = "ai"
+description = "AI. A neural synthesizer: move across a map of instruments while you play, its decoder running on the NPU."
+audio_outputs = ["Timbre Map"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Timbre Map Level",
+]

@@ -1,0 +1,9 @@
+id = "band_mate"
+name = "Band Mate"
+category = "ai"
+description = "AI. Play chords into the input and a drummer and bassist follow: chord recognition on the NPU."
+audio_outputs = ["Band Mate"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Band Mate Level",
+]

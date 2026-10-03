@@ -381,7 +381,7 @@ pub fn render(directory: &str) {
     let names:Vec<String>=manifests.iter().map(|m|m.name.clone()).collect();
     launcher::install_catalog(manifests.iter().map(|m|(m.name.clone(),m.category.clone(),m.description.clone())));
     let mut browser=launcher::Launcher::default();
-    for (category,slug) in [(0,"home"),(1,"home-instruments"),(6,"home-kids"),(launcher::RECENT,"home-recent-empty")] {
+    for (category,slug) in [(0,"home"),(1,"home-instruments"),(6,"home-ai"),(7,"home-kids"),(launcher::RECENT,"home-recent-empty")] {
         browser.category=category;
         let ids=browser.indices(&names);let visible:Vec<_>=ids.iter().copied().take(6).collect();
         ui.set_home_names(Rc::new(slint::VecModel::from(visible.iter().map(|i|slint::SharedString::from(names[*i].as_str())).collect::<Vec<_>>())).into());

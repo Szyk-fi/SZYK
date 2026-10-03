@@ -6,10 +6,10 @@ export component LauncherPanel inherits Rectangle {
     callback category-picked(int); callback open-app(int);
     background:#121b1b;
     HorizontalLayout {spacing:18px;padding-top:7px;padding-bottom:9px;
-        VerticalLayout {width:106px;spacing:4px;
+        VerticalLayout {width:106px;spacing:3px;
             Text {text:"WORKSPACE";color:#809792;font-size:12px;height:22px;}
-            for name[i] in ["ALL APPS","INSTRUMENTS","EFFECTS","SEQUENCING","LIBRARY","UTILITIES","KIDS","RECENT"] : Rectangle {
-                height:23px;border-radius:4px;background:root.category==i?#b7d6c5:#ffffff04;
+            for name[i] in ["ALL APPS","INSTRUMENTS","EFFECTS","SEQUENCING","LIBRARY","UTILITIES","AI","KIDS","RECENT"] : Rectangle {
+                height:21px;border-radius:4px;background:root.category==i?#b7d6c5:#ffffff04;
                 Text {x:8px;text:name;color:root.category==i?#17221c:#a8b8b2;font-size:12px;font-weight:root.category==i?600:400;vertical-alignment:center;}
                 TouchArea {clicked=>{root.category-picked(i);}}
             }

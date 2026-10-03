@@ -1,13 +1,13 @@
 //! Launcher metadata and navigation never construct an app or start DSP.
-pub const CATEGORIES:[&str;8]=["All apps","Instruments","Effects","Sequencing","Library","Utilities","Kids","Recent"];
+pub const CATEGORIES:[&str;9]=["All apps","Instruments","Effects","Sequencing","Library","Utilities","AI","Kids","Recent"];
 /// The Recent section, which lists the apps opened last rather than a category.
-pub const RECENT:usize=7;
+pub const RECENT:usize=8;
 /// What the installed manifests say about each app (name -> section,
 /// description), so a new app files itself in the right section with its
 /// own description. The matches below are only the fallback for an app
 /// whose manifest says nothing.
 fn catalog()->&'static std::sync::Mutex<std::collections::HashMap<String,(usize,String)>>{static C:std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String,(usize,String)>>>=std::sync::OnceLock::new();C.get_or_init(Default::default)}
-pub fn install_catalog(entries:impl Iterator<Item=(String,String,String)>){let mut c=catalog().lock().unwrap();for (name,cat,desc) in entries{let idx=match cat.as_str(){"instrument"=>1,"effect"=>2,"sequencer"=>3,"library"=>4,"kids"=>6,""=>fallback_category(&name),_=>5};c.insert(name,(idx,desc));}}
+pub fn install_catalog(entries:impl Iterator<Item=(String,String,String)>){let mut c=catalog().lock().unwrap();for (name,cat,desc) in entries{let idx=match cat.as_str(){"instrument"=>1,"effect"=>2,"sequencer"=>3,"library"=>4,"ai"=>6,"kids"=>7,""=>fallback_category(&name),_=>5};c.insert(name,(idx,desc));}}
 pub fn category(name:&str)->usize {catalog().lock().unwrap().get(name).map(|e|e.0).unwrap_or_else(||fallback_category(name))}
 fn fallback_category(name:&str)->usize {match name {
     "Forge"|"Orbit"|"Swarm"|"Mutant"|"Constellation"|"Dream"|"Plaits"|"Synth"|"Cascade"|"Sample Drum"|"Queen of Pentacles"|"Tinkertone"|"Oracle"=>1,

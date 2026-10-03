@@ -1,0 +1,10 @@
+id = "hum"
+name = "Hum"
+category = "ai"
+description = "AI. Sing or hum into the mic and any instrument plays your tune: a neural pitch tracker on the NPU."
+audio_outputs = ["Hum"]
+note_outputs = ["Hum"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Hum Level",
+]
