@@ -1282,7 +1282,7 @@ impl OracleApp {
                 if self.worker.busy.is_some() {
                     "thinking...".into()
                 } else {
-                    "press knob2".into()
+                    "hold SELECT".into()
                 }
             }
             Sel::SpeakNew | Sel::SpeakChange => {
@@ -1316,17 +1316,17 @@ impl OracleApp {
             }
             Sel::RandStrength => format!("{:.0}%", self.rand_strength * 100.0),
             Sel::Mutation => format!("{:.0}%", self.mutation * 100.0),
-            Sel::Randomize | Sel::Mutate | Sel::ClearSnaps => "press knob2".into(),
+            Sel::Randomize | Sel::Mutate | Sel::ClearSnaps => "hold SELECT".into(),
             Sel::Breed => {
                 if self.snap_a.is_some() && self.snap_b.is_some() {
-                    "press knob2".into()
+                    "hold SELECT".into()
                 } else {
                     "needs A & B".into()
                 }
             }
             Sel::AiBreed => self.library.get(self.breed_partner).map(|e| e.name.clone()).unwrap_or_default(),
             Sel::Lib(i) => self.library.get(i).map(|e| e.kind.to_string()).unwrap_or_default(),
-            Sel::Save => "press knob2".into(),
+            Sel::Save => "hold SELECT".into(),
             Sel::Undo | Sel::Redo => format!("{}/{}", self.hist_pos + 1, self.history.len()),
         }
     }
@@ -2446,12 +2446,12 @@ impl App for OracleApp {
         }
 
         let hint = match selected {
-            _ if !self.kit.menu => "knobs: macros   D-pad: patch   F2: pads   F3: play/stop   R1: menu",
-            Some(Row::Group(_)) => "knob1: browse   press knob1: open/close   F3: play/stop",
+            _ if !self.kit.menu => "L/R: macros   U/D: patch   F2: pads   F3: play/stop   R1: menu",
+            Some(Row::Group(_)) => "up/down: browse   SELECT: open/close   F3: play/stop",
             Some(Row::Leaf(Sel::Param(_))) => "knob2: edit   press knob2: reset   press knob1: lock",
-            Some(Row::Leaf(Sel::SpeakNew | Sel::SpeakChange)) => "press knob2: talk   press again: stop (a pause stops too)",
-            Some(Row::Leaf(s)) if self.leaf_name(s).starts_with(">>") => "press knob2 to run",
-            _ => "knob2: change   press knob2: reset",
+            Some(Row::Leaf(Sel::SpeakNew | Sel::SpeakChange)) => "hold SELECT: talk   again: stop (a pause stops too)",
+            Some(Row::Leaf(s)) if self.leaf_name(s).starts_with(">>") => "hold SELECT to run",
+            _ => "left/right: change   hold SELECT: reset",
         };
         Text::new(hint, Point::new(16, 337), dim).draw(fb).ok();
     }

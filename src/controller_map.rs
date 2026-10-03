@@ -504,8 +504,8 @@ impl Mapper {
                 match action {
                     Action::NavUp => c.add_nav_delta(-1),
                     Action::NavDown => c.add_nav_delta(1),
-                    Action::ValueUp => c.add_knob2_delta(1),
-                    Action::ValueDown => c.add_knob2_delta(-1),
+                    Action::ValueUp => c.add_nav_x(1),
+                    Action::ValueDown => c.add_nav_x(-1),
                     _ => {}
                 }
             }

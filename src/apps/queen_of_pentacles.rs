@@ -762,7 +762,7 @@ impl App for QueenOfPentaclesApp {
             // Ends at x=396, clear of the scope (x=420).
             let pal = kit::draw::Palette { bg: QOP_BG, ink: QOP_TITLE, accent: QOP_ACCENT, dim: QOP_DIM, faint: QOP_SCOPE_OUTLINE };
             kit::draw::column(fb, &col, 16, 40, 380, 280, pal);
-            Text::new("knobs: chaos/rate   D-pad: map   F2: pads   R1: menu", Point::new(16, 337), dim).draw(fb).ok();
+            Text::new("L/R: chaos/rate   U/D: map   F2: pads   R1: menu", Point::new(16, 337), dim).draw(fb).ok();
         }
 
         let (cv, gate, history) = self.live_state();

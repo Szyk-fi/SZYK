@@ -542,9 +542,9 @@ impl App for SingularityApp {
         Text::new(&format!("chaos: {:.4}", x), Point::new(360, 300), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: amount/rate, feedback/mix   D-pad: mode   F2: pads   R1: menu".to_string(),
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: amount/rate, feedback/mix   U/D: mode   F2: pads   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();

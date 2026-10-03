@@ -246,8 +246,8 @@ slint::slint! {
         navigation-pressed(direction) => {
             if direction == 0 { root.navigation-delta -= 1; }
             if direction == 2 { root.navigation-delta += 1; }
-            if direction == 1 { root.knob2-delta += 1; }
-            if direction == 3 { root.knob2-delta -= 1; }
+            if direction == 1 { root.knob2-delta += 1; root.nav-x-delta += 1; }
+            if direction == 3 { root.knob2-delta -= 1; root.nav-x-delta -= 1; }
             if direction == 4 { root.knob1-clicked(); }
         }
         // While a play-surface app is up, the shoulders are its own held
@@ -268,6 +268,8 @@ slint::slint! {
         in-out property <bool> live-r1-held <=> self.r1-held;
         in-out property <float> knob1-delta: 0;
         in-out property <float> knob2-delta: 0;
+        // D-pad left/right, also counted into knob2-delta (see Input::nav_x)
+        in-out property <int> nav-x-delta: 0;
 
         // Which bespoke visual (if any) the active app gets, beyond
         // the generic list every app already has -- 0 = generic list
@@ -891,6 +893,7 @@ slint::slint! {
         in property <string> norns-status;
         in property <float> norns-peak;
         in-out property <string> retro-console-name: "NES";
+        in-out property <[string]> retro-consoles;
         in-out property <string> retro-rom-name: "";
         in-out property <bool> retro-running: false;
         in-out property <bool> retro-menu-visible: true;
@@ -1273,6 +1276,9 @@ slint::slint! {
                 }
                 Rectangle {
                     vertical-stretch: 1;
+                    // the trace is laid out for a fixed canvas; clip so
+                    // it can never draw past the panel
+                    clip: true;
 
                     if root.analyzer-kind == 0 : HorizontalLayout {
                         x: 0px; y: 0px;
@@ -3380,7 +3386,7 @@ slint::slint! {
             if !root.on-home && root.active-kind == 30 && root.retro-menu-visible : RetroPanel {
                 width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
                 names:root.row-names;values:root.row-values;selected:root.selected-row;
-                console:root.retro-console-name;rom:root.retro-rom-name;loaded:root.retro-loaded-name;count:root.retro-rom-count;
+                console:root.retro-console-name;consoles:root.retro-consoles;rom:root.retro-rom-name;loaded:root.retro-loaded-name;count:root.retro-rom-count;
                 status:root.retro-status;running:root.retro-running;frame:root.retro-frame;has-frame:root.retro-has-frame;
                 action(x,y)=>{root.theme-wheel-picked(x,y);}
             }
@@ -4191,7 +4197,7 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_atlas_morph_label(a.morph_label.into());
                     ui.set_atlas_spectrum_view(a.spectrum_view);
                     ui.set_atlas_spectrum(Rc::new(slint::VecModel::from(a.spectrum)).into());
-                    let (mid_x, mid_y, length, angle_deg) = app::polyline_segments(&a.scope, 290.0, 46.0, true);
+                    let (mid_x, mid_y, length, angle_deg) = app::polyline_segments(&a.scope, 290.0, 34.0, true);
                     ui.set_atlas_scope_mid_x(Rc::new(slint::VecModel::from(mid_x)).into());
                     ui.set_atlas_scope_mid_y(Rc::new(slint::VecModel::from(mid_y)).into());
                     ui.set_atlas_scope_length(Rc::new(slint::VecModel::from(length)).into());
@@ -4227,6 +4233,7 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                 app::SlintExtra::Retro(r) => {
                     ui.set_active_kind(30);
                     ui.set_retro_console_name(r.console_name.into());
+                    ui.set_retro_consoles(Rc::new(slint::VecModel::from(r.consoles.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
                     ui.set_retro_loaded_name(r.loaded_name.into());ui.set_retro_rom_count(r.rom_count);ui.set_retro_has_frame(!r.frame_rgba.is_empty());
                     ui.set_retro_rom_name(r.rom_name.into());
                     ui.set_retro_running(r.running);
@@ -4609,6 +4616,8 @@ fn main() {
         ui.set_navigation_delta(0);
         let k1 = ui.get_knob1_delta().round() as i32 + midi_k1;
         let k2 = ui.get_knob2_delta().round() as i32 + midi_k2 + stick_edit;
+        let nav_x = ui.get_nav_x_delta() + stick_edit + controller.take_nav_x();
+        ui.set_nav_x_delta(0);
         ui.set_knob1_delta(0.0);
         ui.set_knob2_delta(0.0);
         // Retain encoder state for MIDI/API compatibility; the new shell has no knobs.
@@ -4766,7 +4775,7 @@ fn main() {
             let pad_overlay = apps_ref[play_idx].1.grid_led_overlay();
             let play_name_upper = apps_ref[play_idx].0.to_uppercase();
             let screen_grid: [bool; 16] = if play_idx == idx { grid } else { [false; 16] };
-            let mut input = Input { grid: screen_grid, navigation_steps: navigation, knob1: k1, knob2: k2, knob1_press: press1, knob2_press: press2, ..Default::default() };
+            let mut input = Input { grid: screen_grid, navigation_steps: navigation, knob1: k1, knob2: k2, nav_x, knob1_press: press1, knob2_press: press2, ..Default::default() };
             if play_surface {
                 let clicks = ui.get_live_stick_clicks();
                 let (l1p, r1p) = (ui.get_l1_presses(), ui.get_r1_presses());
@@ -4783,7 +4792,7 @@ fn main() {
                     ..Default::default()
                 };
                 let surface = controller.play_surface_input(frame);
-                input = Input { grid: input.grid, navigation_steps: input.navigation_steps, knob1: input.knob1, knob2: input.knob2, knob1_press: input.knob1_press, knob2_press: input.knob2_press, ..surface };
+                input = Input { grid: input.grid, navigation_steps: input.navigation_steps, knob1: input.knob1, knob2: input.knob2, nav_x: input.nav_x, knob1_press: input.knob1_press, knob2_press: input.knob2_press, ..surface };
             }
             let app = &mut apps_ref[idx].1;
             app.tick(&input);

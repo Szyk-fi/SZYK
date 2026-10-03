@@ -514,7 +514,7 @@ impl MadnessApp {
             Selection::Harmonics(s) => format!("{:.2}", self.params.shapes[s].harmonics.get()),
             Selection::Timbre(s) => format!("{:.2}", self.params.shapes[s].timbre.get()),
             Selection::Decay(s) => format!("{:.2}", self.params.shapes[s].decay.get()),
-            Selection::Randomize(_) => "press knob2".into(),
+            Selection::Randomize(_) => "hold SELECT".into(),
         }
     }
 
@@ -1010,9 +1010,9 @@ impl App for MadnessApp {
         Text::new(&format!("Shape {} -- {}", shape + 1, status), Point::new(420, 300), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: speed/drift   D-pad: shape   F2: pads   F3: run shape   R1: menu".to_string(),
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: speed/drift   U/D: shape   F2: pads   F3: run shape   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();

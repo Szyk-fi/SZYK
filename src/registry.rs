@@ -361,4 +361,34 @@ mod manifest_contract_tests {
         assert!(mixer.names().iter().any(|n| n == "Glass Keys"), "with its own mixer channel");
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// Opening an app never starts sound by itself: until you play it or
+    /// press F3, it's silent.
+    #[test]
+    fn no_app_plays_by_itself_when_opened() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let mut loud = Vec::new();
+        for m in crate::manifest::discover(dir) {
+            let ctx = test_context(Arc::new(ModBus::new()));
+            let registry = Registry::new(ctx);
+            let mut apps = registry.build(std::slice::from_ref(&m));
+            let Some((name, app)) = apps.first_mut() else { continue };
+            let engine = crate::audio::new_engine(Arc::new(AtomicF32::new(1.0)));
+            engine.add(app.audio_processor().unwrap());
+            app.on_enter();
+            let mut peak = 0.0f32;
+            for _ in 0..120 {
+                app.tick(&crate::app::Input::default());
+                app.background_tick();
+                let mut out = [0.0f32; 1024];
+                engine.process(&mut out, 2, 48_000.0);
+                peak = peak.max(out.iter().fold(0.0, |a, x| a.max(x.abs())));
+            }
+            // (Plaits' idle engines leave a few thousandths of residue)
+            if peak > 0.01 {
+                loud.push(format!("{name} ({peak:.3})"));
+            }
+        }
+        assert!(loud.is_empty(), "these play on open: {}", loud.join(", "));
+    }
 }

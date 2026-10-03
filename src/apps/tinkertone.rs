@@ -1755,7 +1755,7 @@ impl App for TinkertoneApp {
         );
         Text::new(&info, Point::new(x0, by + 62), dim).draw(fb).ok();
         let hint = if !self.kit.menu {
-            "knobs: dials   D-pad: tone preset   F2: keys/bass/pads   F3: rhythm   R1: menu"
+            "L/R: dial (SELECT: next)   U/D: tone preset   F2: keys/bass/pads   F3: rhythm   R1: menu"
         } else if self.bass_layer {
             "pads 1-15: bass keys   pad 16: fill-in   F2: melody"
         } else {

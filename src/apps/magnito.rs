@@ -768,7 +768,7 @@ impl App for MagnitoApp {
         } else if let Some(col) = self.play_column() {
             let pal = kit::draw::Palette { bg: MAGNITO_BG, ink: MAGNITO_TITLE, accent: MAGNITO_ACCENT, dim: MAGNITO_DIM, faint: MAGNITO_FAINT };
             kit::draw::column(fb, &col, 16, 44, 350, 290, pal);
-            Text::new("knobs: drive/bias (knob 1 press: next pair)   F2: pads   R1: menu", Point::new(16, HEIGHT as i32 - 10), dim).draw(fb).ok();
+            Text::new("L/R: drive/bias (SELECT: next)   F2: pads   R1: menu", Point::new(16, HEIGHT as i32 - 10), dim).draw(fb).ok();
         }
     }
 

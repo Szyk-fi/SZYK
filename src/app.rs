@@ -38,6 +38,10 @@ pub struct Input {
     /// Discrete D-pad/joystick row steps, independent of encoder sensitivity.
     pub navigation_steps: i32,
     pub knob2: i32,
+    /// D-pad left/right steps. Portamax has no encoders: the shell adds
+    /// these into `knob2` too (so every menu edits with them), and the play
+    /// view uses them on its own to turn the focused dial (play_kit.rs).
+    pub nav_x: i32,
     /// Knobs are pushable (a clickable encoder) — real hardware knobs will
     /// be too. Edge-triggered like the other buttons.
     pub knob1_press: bool,
@@ -140,8 +144,11 @@ impl Input {
         let repeating = |k| window.is_key_pressed(k, KeyRepeat::Yes);
         let knob1 = repeating(Key::RightBracket) as i32 - repeating(Key::LeftBracket) as i32
             + controller.take_knob1_delta();
-        let knob2 = repeating(Key::Period) as i32 - repeating(Key::Comma) as i32
-            + controller.take_knob2_delta();
+        // , and . are the D-pad's left/right (Portamax has no encoders):
+        // they edit values everywhere and turn the play view's focused dial.
+        let dpad_x = repeating(Key::Period) as i32 - repeating(Key::Comma) as i32;
+        let knob2 = dpad_x + controller.take_knob2_delta();
+        let nav_x = dpad_x + controller.take_nav_x();
         let knob1_press = pressed(Key::Backslash) || controller.take_knob1_press();
         let navigation_steps = controller.take_nav_delta();
 
@@ -151,6 +158,7 @@ impl Input {
             knob1,
             navigation_steps,
             knob2,
+            nav_x,
             knob1_press,
             knob2_press: pressed(Key::Slash) || controller.take_knob2_press(),
             home: pressed(Key::Escape) || controller.take_home(),
@@ -336,10 +344,16 @@ pub trait App {
     /// `PlaitsApp::windowed_rows`). Returns `(window,
     /// selected_index_in_window, has_more_above, has_more_below)`.
     fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
-        let _ = visible;
+        // Every app's menu is windowed around its selection, so a long
+        // list scrolls instead of running off the bottom of the screen
+        // (into the F-button bar). Same windowing as `ParamList`.
         let rows = self.slint_rows();
-        let selected = self.slint_selected();
-        (rows, selected, false, false)
+        let selected = self.slint_selected().min(rows.len().saturating_sub(1));
+        let mut list = crate::paramlist::ParamList::new();
+        list.selected = selected;
+        let (a, b) = list.centered_scroll_window(visible.max(1), rows.len());
+        let more_below = b < rows.len();
+        (rows[a..b].to_vec(), selected - a, a > 0, more_below)
     }
 
     /// Real fader-level fraction (0..1) per windowed row, aligned with
@@ -479,6 +493,8 @@ pub struct NornsExtra {
 
 /// Retro's real per-frame telemetry -- see `RetroApp::slint_extra`.
 pub struct RetroExtra {
+    /// Every system Retro supports, in chip order.
+    pub consoles: Vec<String>,
     pub loaded_name: String,
     pub rom_count: i32,
     pub console_name: String,

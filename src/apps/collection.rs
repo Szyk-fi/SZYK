@@ -1393,7 +1393,7 @@ impl CollectionApp {
             ""
         };
         format!(
-            "knobs: {} / {}   D-pad: {browse}   F2: pads{f3}   R1: menu",
+            "L/R: {} / {}   U/D: {browse}   F2: pads{f3}   R1: menu",
             self.kit_label(0).to_lowercase(),
             self.kit_label(1).to_lowercase()
         )

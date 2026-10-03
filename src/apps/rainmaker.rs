@@ -809,7 +809,7 @@ impl App for RainmakerApp {
         } else if let Some(col) = self.play_column() {
             let pal = kit::draw::Palette { bg: RAINMAKER_BG, ink: RAINMAKER_TITLE, accent: RAINMAKER_ACCENT, dim: RAINMAKER_DIM, faint: RAINMAKER_FAINT };
             kit::draw::column(fb, &col, 16, 40, 350, 285, pal);
-            Text::new("knobs: time / feedback   D-pad: grid   F2: pads   R1: menu", Point::new(16, 340), dim).draw(fb).ok();
+            Text::new("L/R: time / feedback   U/D: grid   F2: pads   R1: menu", Point::new(16, 340), dim).draw(fb).ok();
         }
     }
 

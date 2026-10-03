@@ -310,7 +310,7 @@ impl TapeApp {
             Selection::Running => {
                 if self.params.running.load(Ordering::Relaxed) { "running".into() } else { "paused".into() }
             }
-            Selection::ClearAll => "press knob2".into(),
+            Selection::ClearAll => "hold SELECT".into(),
             Selection::TrackInput(t) => {
                 let idx = self.params.tracks[t].input_source.load(Ordering::Relaxed);
                 self.audio_bus.names().get(idx).cloned().unwrap_or_else(|| "(none)".into())
@@ -320,7 +320,7 @@ impl TapeApp {
             Selection::TrackMute(t) => {
                 if self.params.tracks[t].mute.load(Ordering::Relaxed) { "MUTED".into() } else { "on".into() }
             }
-            Selection::TrackClear(_) => "press knob2".into(),
+            Selection::TrackClear(_) => "hold SELECT".into(),
         }
     }
 
@@ -648,9 +648,9 @@ impl App for TapeApp {
         }
 
         let hint = match rows.get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: track levels   F2: pads (hold REC/MUTE)   F3: run   R1: menu".to_string(),
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: track levels   F2: pads (hold REC/MUTE)   F3: run   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();

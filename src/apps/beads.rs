@@ -669,7 +669,7 @@ impl App for BeadsApp {
         } else if let Some(col) = self.play_column() {
             let pal = kit::draw::Palette { bg: BEADS_BG, ink: BEADS_TITLE, accent: BEADS_ACCENT, dim: BEADS_DIM, faint: BEADS_FAINT };
             kit::draw::column(fb, &col, 16, 44, 380, 280, pal);
-            Text::new("knobs: time/size   D-pad: grain mode   F2: pads (seed/throws)   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
+            Text::new("L/R: time/size   U/D: grain mode   F2: pads (seed/throws)   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
         }
     }
 

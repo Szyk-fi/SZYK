@@ -507,7 +507,7 @@ impl NebulaApp {
             Selection::Harmonics => format!("{:.2}", self.params.harmonics.get()),
             Selection::Timbre => format!("{:.2}", self.params.timbre.get()),
             Selection::Decay => format!("{:.2}", self.params.decay.get()),
-            Selection::Randomize => "press knob2".into(),
+            Selection::Randomize => "hold SELECT".into(),
         }
     }
 
@@ -873,9 +873,9 @@ impl App for NebulaApp {
             .ok();
 
         let hint = match rows.get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: gravity/damping   D-pad: engine   F2: pads   F3: run   R1: menu".to_string(),
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: gravity/damping   U/D: engine   F2: pads   F3: run   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();

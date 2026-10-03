@@ -6,6 +6,8 @@ export component RetroPanel inherits Rectangle {
     in property <string> status; in property <int> count; in property <bool> running;
     in property <bool> has-frame; in property <image> frame;
     in property <[string]> library; in property <int> library-selected;
+    // every system, from Rust (RetroExtra::consoles) -- never a fixed list
+    in property <[string]> consoles: ["NES","SNES","Arcade","Game Boy","Neo Geo"];
     callback action(float,float);
     HorizontalLayout {spacing:18px;
         VerticalLayout {width:206px;spacing:8px;
@@ -13,8 +15,8 @@ export component RetroPanel inherits Rectangle {
             ParamListColumn {row-names:root.names;row-values:root.values;selected-row:root.selected;ink:root.ink;paper:root.paper;accent:root.accent;instrument-style:true;}
         }
         VerticalLayout {spacing:8px;padding-top:4px;
-            HorizontalLayout {height:25px;spacing:5px;
-                for name[i] in ["NES","SNES","Arcade","Game Boy"] : Rectangle {background:root.console==name?root.accent:root.ink.with-alpha(0.05);border-radius:4px;
+            HorizontalLayout {height:25px;spacing:4px;
+                for name[i] in root.consoles : Rectangle {background:root.console==name?root.accent:root.ink.with-alpha(0.05);border-radius:4px;
                     Text {text:name;color:root.console==name?root.paper:root.ink;font-size:10px;horizontal-alignment:center;vertical-alignment:center;}
                     TouchArea {clicked=>{root.action(i,0);}}
                 }

@@ -62,7 +62,7 @@
 //!   edge-triggered button presses, not press duration or multi-click,
 //!   so "hold to save" / "press twice to recall" collapse into two
 //!   explicit menu rows (Save Patch / Recall Patch) that fire on the
-//!   normal per-leaf "press knob2 to act" gesture already used
+//!   normal per-leaf "hold SELECT to act" gesture already used
 //!   everywhere else for reset-to-default.
 
 use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
@@ -806,7 +806,7 @@ impl App for BlackHoleApp {
         } else if let Some(col) = self.play_column() {
             let pal = kit::draw::Palette { bg: BLACK_HOLE_BG, ink: BLACK_HOLE_TITLE, accent: BLACK_HOLE_ACCENT, dim: BLACK_HOLE_DIM, faint: BLACK_HOLE_FAINT };
             kit::draw::column(fb, &col, 16, 44, 350, 290, pal);
-            Text::new("knobs: P1-P3/wet   D-pad: algorithm   F2: pads   R1: menu", Point::new(16, HEIGHT as i32 - 10), dim).draw(fb).ok();
+            Text::new("L/R: P1-P3/wet   U/D: algorithm   F2: pads   R1: menu", Point::new(16, HEIGHT as i32 - 10), dim).draw(fb).ok();
         }
     }
 

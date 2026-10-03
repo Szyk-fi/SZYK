@@ -391,7 +391,7 @@ enum Selection {
     /// `TrackParams::rate_div`'s doc comment.
     TrackRate(usize),
     /// Refills this track's whole 16-step pattern with a fresh random
-    /// on/off pattern -- press-only action, same "press knob2" idiom
+    /// on/off pattern -- press-only action, same "hold SELECT" idiom
     /// as Bloom/Madness's Randomize.
     RandomizePattern(usize),
     /// Turns every one of this track's 16 steps off -- press-only
@@ -1162,7 +1162,7 @@ impl SequencerApp {
                 INSTRUMENT_NAMES[idx].to_string()
             }
             Selection::GridEdit(t) => {
-                if self.grid_edit_track == Some(t) { "ON -- press knob1 to exit".into() } else { "off".into() }
+                if self.grid_edit_track == Some(t) { "ON -- SELECT to exit".into() } else { "off".into() }
             }
             Selection::DrumKind(t) => {
                 let idx = self.params.tracks[t].drum_kind.load(Ordering::Relaxed) as usize % DRUM_KIND_NAMES.len();
@@ -1225,8 +1225,8 @@ impl SequencerApp {
                 let div = self.params.tracks[t].rate_div.load(Ordering::Relaxed);
                 TRACK_RATES.iter().find(|(_, d)| *d == div).map(|(name, _)| name.to_string()).unwrap_or_else(|| format!("{div}x"))
             }
-            Selection::RandomizePattern(_) => "press knob2".into(),
-            Selection::ClearPattern(_) => "press knob2".into(),
+            Selection::RandomizePattern(_) => "hold SELECT".into(),
+            Selection::ClearPattern(_) => "hold SELECT".into(),
             Selection::Pattern => format!("{}", self.params.current_pattern.load(Ordering::Relaxed) + 1),
             Selection::SongMode => {
                 if self.params.song_mode.load(Ordering::Relaxed) { "ON".into() } else { "off".into() }
@@ -1235,7 +1235,7 @@ impl SequencerApp {
             Selection::SongSlotPattern(s) => format!("Pattern {}", self.params.song_slot_pattern[s].load(Ordering::Relaxed) + 1),
             Selection::SongSlotRepeats(s) => format!("{}x", self.params.song_slot_repeats[s].load(Ordering::Relaxed)),
             Selection::PadPerform => {
-                if self.pad_perform { "ON -- press knob1 to exit".into() } else { "off".into() }
+                if self.pad_perform { "ON -- SELECT to exit".into() } else { "off".into() }
             }
             Selection::PadFile => match self.resolved_pad_sample(self.last_touched_pad).and_then(|i| self.params.samples.get(i)) {
                 Some(slot) => truncate_display(&slot.name, 18),
@@ -1244,11 +1244,11 @@ impl SequencerApp {
             Selection::PadStart => format!("{:.0}%", self.params.pad_start[self.last_touched_pad].get() * 100.0),
             Selection::PadEnd => format!("{:.0}%", self.params.pad_end[self.last_touched_pad].get() * 100.0),
             Selection::PadVolume => format!("{:.2}", self.params.pad_volume[self.last_touched_pad].get()),
-            Selection::AutoChopToPads => "press knob2".into(),
-            Selection::FillBankFromHere => "press knob2".into(),
+            Selection::AutoChopToPads => "hold SELECT".into(),
+            Selection::FillBankFromHere => "hold SELECT".into(),
             Selection::KitSlot => format!("{}", self.params.kit_slot.load(Ordering::Relaxed) + 1),
-            Selection::SaveKit => "press knob2".into(),
-            Selection::LoadKit => "press knob2".into(),
+            Selection::SaveKit => "hold SELECT".into(),
+            Selection::LoadKit => "hold SELECT".into(),
         }
     }
 
@@ -1834,7 +1834,7 @@ impl SequencerApp {
         let header = if self.pad_perform {
             format!("PAD PERFORM -- pad {} focused", self.last_touched_pad + 1)
         } else if self.grid_edit_track == Some(track) {
-            format!("Track {} -- GRID EDIT: knob1 pad, knob2 note{rate_tag}", track + 1)
+            format!("Track {} -- GRID EDIT: up/down pad, left/right note{rate_tag}", track + 1)
         } else {
             format!("Track {} -- grid edits this{rate_tag}", track + 1)
         };
@@ -2278,7 +2278,7 @@ impl SequencerApp {
         let rate_div = self.params.tracks[track].rate_div.load(Ordering::Relaxed).max(1);
         let rate_tag = if rate_div != 1 { format!(" ({rate_div}x rate)") } else { String::new() };
         let header = if self.grid_edit_track == Some(track) {
-            format!("Track {} -- GRID EDIT: knob1 pad, knob2 note{rate_tag}", track + 1)
+            format!("Track {} -- GRID EDIT: up/down pad, left/right note{rate_tag}", track + 1)
         } else {
             format!("Track {} -- grid edits this{rate_tag}", track + 1)
         };
@@ -2357,7 +2357,7 @@ impl SequencerApp {
             // Grid Edit's knob moves live in the menu; on the play view
             // its pads still jump+preview, so say where the rest went.
             let pads = if self.grid_edit_track.is_some() { "pads: grid edit (R1 to exit)" } else { "F2: pads" };
-            format!("knobs: dials   D-pad: track   {pads}   F3: play/stop   R1: menu")
+            format!("L/R: dial (SELECT: next)   U/D: track   {pads}   F3: play/stop   R1: menu")
         } else if self.grid_edit_track == Some(track) {
             format!(
                 "knob1: scroll pad (Step {})   knob2: set note   pad: jump+preview   press knob1: exit",
@@ -2365,8 +2365,8 @@ impl SequencerApp {
             )
         } else {
             match rows.get(self.list.selected) {
-                Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-                Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+                Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+                Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
                 None => String::new(),
             }
         };
@@ -3883,6 +3883,8 @@ mod tests {
         // Per-track knobs follow the selection: knob 1 on the second
         // pair is that track's level.
         let level = app.params.tracks[1].volume.get();
+        // SELECT twice: the first pair's second dial, then the second pair
+        app.tick(&Input { knob1_press: true, ..Default::default() });
         app.tick(&Input { knob1_press: true, ..Default::default() });
         app.tick(&Input { knob1: -3, ..Default::default() });
         assert!(app.params.tracks[1].volume.get() < level);

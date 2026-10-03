@@ -31,8 +31,11 @@ export component GridPanel inherits InstrumentPanel {
             background: root.ink.with-alpha(0.08);
             Rectangle { x: 0; width: parent.width * min(1, root.meter); background: root.accent; }
         }
+        // Takes the room left above the footer and clips to it, so a long
+        // grid never runs down into the F-button bar.
         Rectangle {
-            height: root.rows * 11px;
+            vertical-stretch: 1;
+            clip: true;
             for r in root.rows : Rectangle {
                 y: r * 11px;
                 height: 11px;
@@ -49,7 +52,6 @@ export component GridPanel inherits InstrumentPanel {
                 vertical-alignment: center;
             }
         }
-        Rectangle { vertical-stretch: 1; }
         Text {
             text: root.footer;
             color: root.ink.with-alpha(0.55);

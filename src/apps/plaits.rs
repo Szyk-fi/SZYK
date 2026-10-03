@@ -1903,10 +1903,10 @@ impl App for PlaitsApp {
         }
 
         let hint = if !self.kit.menu {
-            "knobs: dials   F2: pads   L1: peek controls   R1: menu   stick-click: keep".to_string()
+            "L/R: dial (SELECT: next)   F2: pads   L1: peek controls   R1: menu   stick-click: keep".to_string()
         } else { match rows.get(self.list.selected) {
-            Some(Row::Group(_)) | Some(Row::ModSlot(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            Some(Row::Group(_)) | Some(Row::ModSlot(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         } };
         Text::new(&hint, Point::new(16, 337), small_dim).draw(fb).ok();

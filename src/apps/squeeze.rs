@@ -334,7 +334,7 @@ impl App for SqueezeApp {
             .draw(f)
             .ok();
         Text::new(&format!("GR {gr:.1} dB"), Point::new(410, 318), MonoTextStyle::new(&SPLEEN_6X12, INK)).draw(f).ok();
-        Text::new("knobs: threshold / ratio   F2: pads   F3: bypass   R1: menu", Point::new(16, 340), dim).draw(f).ok();
+        Text::new("L/R: threshold / ratio   F2: pads   F3: bypass   R1: menu", Point::new(16, 340), dim).draw(f).ok();
     }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.rows()

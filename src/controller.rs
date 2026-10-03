@@ -48,6 +48,8 @@ pub struct ControllerState {
     top: [AtomicBool; 4],
     knob1_delta: AtomicI32,
     knob2_delta: AtomicI32,
+    /// D-pad left/right from a gamepad (see `Input::nav_x`).
+    nav_x: AtomicI32,
     knob1_press: AtomicBool,
     knob2_press: AtomicBool,
     home: AtomicBool,
@@ -77,6 +79,7 @@ impl ControllerState {
             top: std::array::from_fn(|_| AtomicBool::new(false)),
             knob1_delta: AtomicI32::new(0),
             knob2_delta: AtomicI32::new(0),
+            nav_x: AtomicI32::new(0),
             knob1_press: AtomicBool::new(false),
             knob2_press: AtomicBool::new(false),
             home: AtomicBool::new(false),
@@ -203,6 +206,15 @@ impl ControllerState {
     }
     pub fn take_knob1_delta(&self) -> i32 {
         self.knob1_delta.swap(0, Ordering::Relaxed)
+    }
+    /// A D-pad left/right step: edits values (as knob 2) and turns the
+    /// play view's focused dial.
+    pub fn add_nav_x(&self, delta: i32) {
+        self.knob2_delta.fetch_add(delta, Ordering::Relaxed);
+        self.nav_x.fetch_add(delta, Ordering::Relaxed);
+    }
+    pub fn take_nav_x(&self) -> i32 {
+        self.nav_x.swap(0, Ordering::Relaxed)
     }
     pub fn take_knob2_delta(&self) -> i32 {
         self.knob2_delta.swap(0, Ordering::Relaxed)

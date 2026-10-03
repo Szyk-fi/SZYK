@@ -827,7 +827,7 @@ impl App for TuringMachineApp {
             // Stops short of the register LEDs at x=420.
             let pal = kit::draw::Palette { bg: TURING_BG, ink: TURING_TITLE, accent: TURING_ACCENT, dim: TURING_DIM, faint: TURING_LED_OFF };
             kit::draw::column(fb, &col, 16, 46, 384, 280, pal);
-            Text::new("knobs: dials   D-pad: length   F2: pads (Throws: WRITE)   R1: menu", Point::new(16, 337), dim).draw(fb).ok();
+            Text::new("L/R: dial (SELECT: next)   U/D: length   F2: pads (Throws: WRITE)   R1: menu", Point::new(16, 337), dim).draw(fb).ok();
         }
 
         // The register itself, as a row of lit/unlit step LEDs --

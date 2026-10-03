@@ -294,7 +294,7 @@ impl App for VectorFilterApp {
                 let pal = kit::draw::Palette { bg: VF_BG, ink: VF_INK, accent: VF_ACCENT, dim: VF_DIM, faint: VF_FAINT };
                 kit::draw::column(f, &col, 16, 40, 350, 285, pal);
                 let dim = MonoTextStyle::new(&SPLEEN_6X12, VF_DIM);
-                Text::new("knobs: cutoff / reso   D-pad: type   F2: pads   F3: bypass   R1: menu", Point::new(16, 340), dim).draw(f).ok();
+                Text::new("L/R: cutoff / reso   U/D: type   F2: pads   F3: bypass   R1: menu", Point::new(16, 340), dim).draw(f).ok();
             }
             return;
         }

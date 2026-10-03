@@ -176,6 +176,8 @@ pub struct PlayKit {
     pub menu: bool,
     layer: usize,
     hero_page: usize,
+    /// Which dial of the hero pair the D-pad turns (0 or 1).
+    focus_side: usize,
     pub focused: usize,
     /// The offset currently applied to each control by expression/throws.
     applied: Vec<f32>,
@@ -256,9 +258,16 @@ impl PlayKit {
         self.cfg.hero.get(self.hero_page % self.cfg.hero.len().max(1)).copied()
     }
 
-    /// The control knob 2 turns right now.
+    /// The control a MIDI controller's encoder 2 turns: the pair's second
+    /// dial, or the grabbed pad on Controls.
     pub fn knob2_control(&self) -> Option<usize> {
         if self.layer() == Layer::Controls { Some(self.focused) } else { self.hero_pair().map(|p| p[1]) }
+    }
+
+    /// The focused dial: what the D-pad's left/right turns and holding
+    /// SELECT resets (the grabbed pad on Controls).
+    pub fn focus_control(&self) -> Option<usize> {
+        if self.layer() == Layer::Controls { Some(self.focused) } else { self.hero_pair().map(|p| p[self.focus_side.min(1)]) }
     }
 
     pub fn tick(&mut self, host: &mut dyn PlayHost, input: &Input) -> Step {
@@ -318,31 +327,45 @@ impl PlayKit {
         Step { menu: self.menu, native, input: out }
     }
 
-    /// Knobs and D-pad on the play view.
+    /// The play view's controls. Portamax has no encoders: one dial is
+    /// focused, the D-pad's left/right turns it (`nav_x`), SELECT moves the
+    /// focus on (`knob1_press`: the pair's other dial, then the next pair)
+    /// and holding SELECT resets it (`knob2_press`). Up/down steps the
+    /// app's browse control. A MIDI controller's two encoders, if one is
+    /// plugged in, still turn the pair's two dials directly.
     fn play_controls(&mut self, host: &mut dyn PlayHost, input: &Input, layer: Layer) {
         if input.knob1_press && !self.cfg.hero.is_empty() {
-            self.hero_page = (self.hero_page + 1) % self.cfg.hero.len();
-            if let Some([a, b]) = self.hero_pair() {
-                self.flash(format!("Knobs: {} / {}", host.kit_label(a), host.kit_label(b)));
+            if self.focus_side == 0 && layer != Layer::Controls {
+                self.focus_side = 1;
+            } else {
+                self.focus_side = 0;
+                self.hero_page = (self.hero_page + 1) % self.cfg.hero.len();
+            }
+            if let Some(c) = self.focus_control() {
+                self.flash(format!("◂▸ {}", host.kit_label(c)));
             }
         }
-        let pair = self.hero_pair();
         if input.knob2_press {
-            if layer == Layer::Controls {
-                host.kit_reset(self.focused);
-            } else if let Some([a, b]) = pair {
-                host.kit_reset(a);
-                host.kit_reset(b);
+            if let Some(c) = self.focus_control() {
+                host.kit_reset(c);
+                self.flash(format!("Reset {}", host.kit_label(c)));
             }
         }
-        if let Some([a, _]) = pair {
-            if input.knob1 != 0 {
+        if let Some(c) = self.focus_control() {
+            if input.nav_x != 0 {
+                host.kit_edit(c, input.nav_x);
+            }
+        }
+        // encoders (the D-pad's share of knob2 is taken out above)
+        let encoder2 = input.knob2 - input.nav_x;
+        if let Some([a, _]) = self.hero_pair() {
+            if input.knob1 != 0 && layer != Layer::Controls {
                 host.kit_edit(a, input.knob1);
             }
         }
         if let Some(c) = self.knob2_control() {
-            if input.knob2 != 0 {
-                host.kit_edit(c, input.knob2);
+            if encoder2 != 0 {
+                host.kit_edit(c, encoder2);
             }
         }
         // D-pad up (navigation_steps -1) = next.
@@ -363,7 +386,7 @@ impl PlayKit {
             match layer {
                 Layer::Controls if down && !was && rank < n => {
                     self.focused = rank;
-                    self.flash(format!("Knob 2: {}", host.kit_label(rank)));
+                    self.flash(format!("◂▸ {}", host.kit_label(rank)));
                 }
                 Layer::Moments => {
                     if down && !was {
@@ -537,7 +560,7 @@ impl PlayKit {
     /// labels for an app that renders expression itself.
     pub fn column(&self, host: &dyn PlayHost) -> PlayColumn {
         let pair = self.hero_pair();
-        let k2 = self.knob2_control();
+        let k2 = self.focus_control();
         // Four dials: this page's pair and its neighbour, so the screen
         // doesn't jump on every knob-1 press.
         let pages = self.cfg.hero.len();
@@ -552,7 +575,8 @@ impl PlayKit {
                 label: host.kit_label(c),
                 value: host.kit_value(c),
                 norm: host.kit_norm(c).unwrap_or(0.0).clamp(0.0, 1.0),
-                knob: if pair.is_some_and(|p| p[0] == c) { 1 } else if k2 == Some(c) { 2 } else { 0 },
+                // 2 = the focused dial (the D-pad turns it), 1 = its partner
+                knob: if k2 == Some(c) { 2 } else if pair.is_some_and(|p| p.contains(&c)) { 1 } else { 0 },
             })
             .collect();
         let r = self.cfg.routes;
@@ -830,9 +854,17 @@ mod tests {
         let s = k.tick(&mut f, &Input { knob1: 10, knob2: -10, ..Default::default() });
         assert!((f.v[0] - 0.6).abs() < 1e-5 && (f.v[1] - 0.4).abs() < 1e-5);
         assert_eq!(s.input.knob1, 0, "consumed on the play view");
+        // SELECT moves the focus: the pair's other dial, then the next pair
+        k.tick(&mut f, &Input { knob1_press: true, ..Default::default() });
+        k.tick(&mut f, &Input { knob2: 3, nav_x: 3, ..Default::default() });
+        assert!((f.v[1] - 0.43).abs() < 1e-5, "the D-pad turns the focused (second) dial: {}", f.v[1]);
         k.tick(&mut f, &Input { knob1_press: true, ..Default::default() });
         k.tick(&mut f, &Input { knob1: 5, ..Default::default() });
         assert!((f.v[2] - 0.55).abs() < 1e-5, "second pair");
+        k.tick(&mut f, &Input { knob2: -2, nav_x: -2, ..Default::default() });
+        assert!((f.v[2] - 0.53).abs() < 1e-5, "focus is the second pair's first dial");
+        k.tick(&mut f, &Input { knob2_press: true, ..Default::default() });
+        assert!((f.v[2] - 0.5).abs() < 1e-5, "holding SELECT resets the focused dial");
         k.tick(&mut f, &Input { navigation_steps: -1, ..Default::default() });
         assert_eq!(f.mode, 1, "D-pad up browses");
         let s = k.tick(&mut f, &Input { shoulder_press: [false, true], knob1: 3, ..Default::default() });

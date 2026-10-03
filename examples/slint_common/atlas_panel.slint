@@ -2,7 +2,8 @@
 // the seven performance macros as bars (unused slots dimmed), the MORPH
 // track with its stored states A..D, and the live output -- spectrum or
 // scope, whichever the preset asks for -- with the voice count and CPU
-// load. See `AtlasExtra`.
+// load. See `AtlasExtra`. Sized to fit the 280px content area exactly:
+// nothing may reach the F-button bar.
 import { InstrumentPanel, InstrumentLabel, ScopeSurface, SignalTrace } from "instrument_widgets.slint";
 
 export component AtlasPanel inherits InstrumentPanel {
@@ -28,69 +29,69 @@ export component AtlasPanel inherits InstrumentPanel {
     in property <string> status;
 
     VerticalLayout {
-        spacing: 6px;
+        spacing: 3px;
         HorizontalLayout {
-            height: 20px;
+            height: 18px;
             Text {
                 text: root.name;
                 color: root.ink;
                 font-family: "Space Grotesk";
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: 600;
                 overflow: elide;
                 horizontal-stretch: 1;
+                vertical-alignment: center;
             }
-            InstrumentLabel { text: root.index; ink: root.ink.with-alpha(0.5); font-size: 9px; width: 34px; horizontal-alignment: right; }
+            InstrumentLabel { text: root.category + " · " + root.index; ink: root.accent; font-size: 9px; width: 120px; horizontal-alignment: right; vertical-alignment: center; }
         }
-        InstrumentLabel { text: root.category + "  ·  " + root.depth; ink: root.accent; font-size: 9px; height: 12px; }
         Text {
             text: root.description;
             color: root.ink.with-alpha(0.62);
             font-size: 9px;
             wrap: word-wrap;
-            height: 34px;
+            height: 24px;
             overflow: elide;
         }
 
         // the seven macros
         VerticalLayout {
-        spacing: 1px;
-        for m[i] in root.macro-names : HorizontalLayout {
-            height: 10px;
-            spacing: 6px;
-            InstrumentLabel {
-                text: m;
-                ink: root.macro-used[i] ? root.ink : root.ink.with-alpha(0.25);
-                font-size: 8px;
-                width: 64px;
-                vertical-alignment: center;
-            }
-            Rectangle {
-                horizontal-stretch: 1;
-                Rectangle { y: (parent.height - 5px) / 2; height: 5px; background: root.ink.with-alpha(0.08); border-radius: 2px; }
-                if root.macro-used[i] : Rectangle {
-                    x: 0; y: (parent.height - 5px) / 2;
-                    height: 5px;
-                    width: parent.width * max(0, min(1, root.macro-values[i]));
-                    background: root.accent;
-                    border-radius: 2px;
+            spacing: 1px;
+            for m[i] in root.macro-names : HorizontalLayout {
+                height: 9px;
+                spacing: 6px;
+                InstrumentLabel {
+                    text: m;
+                    ink: root.macro-used[i] ? root.ink : root.ink.with-alpha(0.25);
+                    font-size: 8px;
+                    width: 64px;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    Rectangle { y: (parent.height - 5px) / 2; height: 5px; background: root.ink.with-alpha(0.08); border-radius: 2px; }
+                    if root.macro-used[i] : Rectangle {
+                        x: 0; y: (parent.height - 5px) / 2;
+                        height: 5px;
+                        width: parent.width * max(0, min(1, root.macro-values[i]));
+                        background: root.accent;
+                        border-radius: 2px;
+                    }
                 }
             }
-        }
         }
 
         // MORPH: the states sit evenly along the track
         HorizontalLayout {
-            height: 12px;
+            height: 11px;
             InstrumentLabel { text: "MORPH"; ink: root.ink; font-size: 8px; width: 64px; }
             InstrumentLabel { text: root.morph-label; ink: root.accent; font-size: 8px; horizontal-stretch: 1; horizontal-alignment: right; }
         }
         Rectangle {
-            height: 16px;
-            Rectangle { y: 7px; height: 2px; background: root.ink.with-alpha(0.15); }
+            height: 14px;
+            Rectangle { y: 6px; height: 2px; background: root.ink.with-alpha(0.15); }
             for s in root.states : Rectangle {
                 x: root.states <= 1 ? 0 : (parent.width - 14px) * s / (root.states - 1);
-                width: 14px; height: 14px; y: 1px;
+                width: 14px; height: 14px;
                 border-radius: 7px;
                 background: root.ink.with-alpha(0.1);
                 border-width: 1px;
@@ -99,7 +100,7 @@ export component AtlasPanel inherits InstrumentPanel {
             }
             Rectangle {
                 x: (parent.width - 6px) * max(0, min(1, root.morph));
-                width: 6px; height: 16px;
+                width: 6px; height: 14px;
                 border-radius: 3px;
                 background: root.accent;
             }
@@ -107,7 +108,7 @@ export component AtlasPanel inherits InstrumentPanel {
 
         // live output
         ScopeSurface {
-            height: 46px;
+            height: 34px;
             ink: root.ink; accent: root.accent;
             if root.spectrum-view : Rectangle {
                 for v[i] in root.spectrum : Rectangle {
@@ -122,22 +123,16 @@ export component AtlasPanel inherits InstrumentPanel {
                 width: 100%; height: 100%;
                 mid-x: root.scope-mid-x; mid-y: root.scope-mid-y;
                 lengths: root.scope-length; angles: root.scope-angle;
-                source-width: 290; source-height: 46;
+                source-width: 290; source-height: 34;
                 trace: root.accent;
                 stroke-width: 1.4px;
             }
         }
         HorizontalLayout {
-            height: 12px;
-            InstrumentLabel { text: root.voices; ink: root.ink.with-alpha(0.7); font-size: 8px; horizontal-stretch: 1; }
-            InstrumentLabel { text: "cpu " + Math.round(root.load * 100) + "%"; ink: root.ink.with-alpha(0.7); font-size: 8px; horizontal-alignment: right; }
+            height: 11px;
+            InstrumentLabel { text: root.status != "" ? root.status : root.voices + "  ·  " + root.depth; ink: root.ink.with-alpha(0.7); font-size: 8px; horizontal-stretch: 1; overflow: elide; }
+            InstrumentLabel { text: "cpu " + Math.round(root.load * 100) + "%"; ink: root.ink.with-alpha(0.7); font-size: 8px; horizontal-alignment: right; width: 50px; }
         }
         Rectangle { vertical-stretch: 1; }
-        Text {
-            text: root.status;
-            color: root.ink.with-alpha(0.55);
-            font-size: 8px;
-            wrap: word-wrap;
-        }
     }
 }

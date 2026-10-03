@@ -892,7 +892,7 @@ enum Selection {
     PitchApp,
     PitchInput,
     /// Randomizes every one of the 8 shapes at once -- press-only,
-    /// same "press knob2" idiom as the per-shape `Randomize`, just
+    /// same "hold SELECT" idiom as the per-shape `Randomize`, just
     /// scoped to all of them. Lives in the Master Clock group since
     /// it isn't any one shape's own action.
     RandomizeAll,
@@ -1472,7 +1472,7 @@ impl BloomApp {
             Selection::GateInput => crate::modbus::Patch::input_label(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed)),
             Selection::PitchApp => crate::modbus::Patch::app_label(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed)),
             Selection::PitchInput => crate::modbus::Patch::input_label(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed)),
-            Selection::RandomizeAll => "press knob2".into(),
+            Selection::RandomizeAll => "hold SELECT".into(),
             Selection::Running(s) => {
                 if self.params.shapes[s].running.load(Ordering::Relaxed) { "running".into() } else { "stopped".into() }
             }
@@ -1498,7 +1498,7 @@ impl BloomApp {
                 }
             }
             Selection::ScaleCustomEdit(s) => {
-                if self.custom_scale_edit == Some(s) { "ON -- press knob1 to exit".into() } else { "off".into() }
+                if self.custom_scale_edit == Some(s) { "ON -- SELECT to exit".into() } else { "off".into() }
             }
             Selection::Root(s) => ROOT_NAMES[self.params.shapes[s].root.load(Ordering::Relaxed) as usize % 12].to_string(),
             Selection::OctaveRange(s) => format!("{} oct", self.params.shapes[s].octave_range.load(Ordering::Relaxed)),
@@ -1529,8 +1529,8 @@ impl BloomApp {
             Selection::Harmonics(s) => format!("{:.2}", self.params.shapes[s].harmonics.get()),
             Selection::Timbre(s) => format!("{:.2}", self.params.shapes[s].timbre.get()),
             Selection::Decay(s) => format!("{:.2}", self.params.shapes[s].decay.get()),
-            Selection::Randomize(_) => "press knob2".into(),
-            Selection::Retrigger(_) => "press knob2".into(),
+            Selection::Randomize(_) => "hold SELECT".into(),
+            Selection::Retrigger(_) => "hold SELECT".into(),
             Selection::RandomStart(s) => {
                 if self.params.shapes[s].random_start.load(Ordering::Relaxed) { "on".into() } else { "off".into() }
             }
@@ -2358,9 +2358,9 @@ impl App for BloomApp {
         Text::new(&format!("Shape {} -- {}", shape + 1, status), Point::new(420, 300), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: speed/rotate   D-pad: pattern   F2: pads   F3: run shape   R1: menu".to_string(),
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: speed/rotate   U/D: pattern   F2: pads   F3: run shape   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();

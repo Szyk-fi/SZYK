@@ -952,7 +952,7 @@ impl App for WarpsApp {
         } else if let Some(col) = self.play_column() {
             let pal = kit::draw::Palette { bg: WARPS_BG, ink: WARPS_TITLE, accent: WARPS_ACCENT, dim: WARPS_DIM, faint: WARPS_FAINT };
             kit::draw::column(fb, &col, 16, 44, 380, 280, pal);
-            Text::new("knobs: timbre/algorithm   D-pad: algorithm   F2: pads   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
+            Text::new("L/R: timbre/algorithm   U/D: algorithm   F2: pads   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
         }
     }
 

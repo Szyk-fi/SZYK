@@ -1191,7 +1191,10 @@ impl App for AtlasApp {
             self.list.selected = self.list.selected.min(rows.len().saturating_sub(1));
             let row = rows[self.list.selected];
             self.edit_row(row, input.knob2);
-            if input.knob2_press {
+            // SELECT runs an action row; holding SELECT (reset) also
+            // puts a value row back where the preset had it.
+            let action = matches!(row, Row::Store(_) | Row::Mutate | Row::Revert | Row::Save);
+            if input.knob2_press || (input.knob1_press && action) {
                 self.press_row(row);
             }
         }
@@ -1245,7 +1248,7 @@ impl App for AtlasApp {
             Rectangle::new(Point::new(x + b as i32 * 6, base - h as i32), Size::new(4, h.max(1))).into_styled(PrimitiveStyle::with_fill(INK)).draw(f).ok();
         }
         Text::new(&format!("{} / {}  ·  cpu {:.0}%", self.s.active_voices.load(Ordering::Relaxed), self.value(C_VOICES), self.s.load.get() * 100.0), Point::new(x, 318), small).draw(f).ok();
-        let foot = if self.status.is_empty() { "pads: play   knobs: macros   D-pad: preset   R1: menu" } else { self.status.as_str() };
+        let foot = if self.status.is_empty() { "pads: play   L/R: macros   U/D: preset   R1: menu" } else { self.status.as_str() };
         Text::new(foot, Point::new(16, 340), small).draw(f).ok();
     }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {

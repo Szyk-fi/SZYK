@@ -404,7 +404,7 @@ impl App for MixerApp {
         }
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset to 100%", self.leaf_name(*sel)),
             None => String::new(),
         };

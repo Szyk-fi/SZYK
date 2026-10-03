@@ -985,7 +985,7 @@ impl SampleDrumApp {
         match sel {
             Selection::Channel => format!("{}", ch + 1),
             Selection::Preset => format!("{}", self.params.preset_slot.load(Ordering::Relaxed) + 1),
-            Selection::SavePreset | Selection::LoadPreset => "press knob2".into(),
+            Selection::SavePreset | Selection::LoadPreset => "hold SELECT".into(),
             Selection::Sample => self.sample_name(ch),
             Selection::Mode => PLAY_MODE_NAMES[c.mode.load(Ordering::Relaxed) as usize % 4].to_string(),
             Selection::Tune => format!("{:+}", c.tune.load(Ordering::Relaxed)),
@@ -995,7 +995,7 @@ impl SampleDrumApp {
             Selection::NumSlices => format!("{}", c.num_slices.load(Ordering::Relaxed)),
             Selection::SliceMode => SLICE_MODE_NAMES[c.slice_mode.load(Ordering::Relaxed) as usize % 2].to_string(),
             Selection::SliceStep => SLICE_STEP_NAMES[c.slice_step.load(Ordering::Relaxed) as usize % SLICE_STEP_NAMES.len()].to_string(),
-            Selection::ResetSlice => "press knob2".into(),
+            Selection::ResetSlice => "hold SELECT".into(),
             Selection::AutoClock => if c.auto_clock.load(Ordering::Relaxed) { "ON".into() } else { "off".into() },
             Selection::AutoRate => format!("{:.0} BPM", c.auto_rate_bpm.get()),
             Selection::EnvAttack => format!("{:.0}%", c.env_attack.get() * 100.0),
@@ -1593,9 +1593,9 @@ impl App for SampleDrumApp {
         self.draw_slice_view(fb);
 
         let hint = match rows.get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: slice/env/FX   D-pad: sample   F2: pads   F3: auto clock   R1: menu".to_string(),
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: slice/env/FX   U/D: sample   F2: pads   F3: auto clock   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();

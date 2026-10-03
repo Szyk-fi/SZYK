@@ -846,7 +846,7 @@ impl App for LedgerApp {
         }
         let fxhelp = match self.cur_field {
             2 | 3 => format!("FX {}: {}", FX[self.cell_at_cursor().fx as usize % FX.len()].0, FX[self.cell_at_cursor().fx as usize % FX.len()].1),
-            _ => "pads: notes  knob1: rows (press: field)  knob2: value (press: clear)".into(),
+            _ => "pads: notes  up/down: rows (SELECT: field)  left/right: value (hold SELECT: clear)".into(),
         };
         Text::new(&fxhelp, Point::new(16, 340), dim).draw(f).ok();
     }
@@ -878,7 +878,8 @@ impl App for LedgerApp {
             cells.push(String::new());
         }
         let len = self.p.len(pat);
-        let window = 21;
+        // rows that fit the panel above its footer (see GridPanel)
+        let window = 14;
         let focus_row = if self.kit.menu { self.cur_row } else { playing };
         let top = focus_row.saturating_sub(window / 2).min(len.saturating_sub(window));
         let mut highlight = -1;

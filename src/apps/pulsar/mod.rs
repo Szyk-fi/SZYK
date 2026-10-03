@@ -1102,7 +1102,7 @@ impl PulsarApp {
             Rolls => Self::pct(self.gen.rolls),
             Length => format!("{} bars", self.gen.length / 16),
             KitFollows => (if self.kit_follows { "on" } else { "off" }).into(),
-            Generate => "press knob2".into(),
+            Generate => "hold SELECT".into(),
             NewKit | MakeFill | ClearLane | RandSound | StepToggle | CopySlot | ClearSlot | RandSounds | RandGroove | RandAll | Mutate | SaveBeat | ExportMidi | ExportWav | ExportStems => "press".into(),
             RegenLane => LANE_NAMES[self.lane].into(),
             Tempo => format!("{:.0} bpm", s.bpm.get()),
@@ -2030,11 +2030,11 @@ impl App for PulsarApp {
         }
 
         let hint = match self.visible_rows().get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: filter/swing..   D-pad: slot   F2: pads   F3: play/stop   R1: menu",
-            Some(Row::Group(_)) => "knob1: browse   press knob1: open/close   F3: play/stop",
+            _ if !self.kit.menu => "L/R: filter/swing..   U/D: slot   F2: pads   F3: play/stop   R1: menu",
+            Some(Row::Group(_)) => "up/down: browse   SELECT: open/close   F3: play/stop",
             Some(Row::Leaf(Sel::Lane)) => "knob2: pick lane   press knob1: lock lane",
-            Some(Row::Leaf(s)) if self.leaf_name(*s).starts_with(">>") => "press knob2 to run",
-            _ => "knob2: change   press knob2: reset",
+            Some(Row::Leaf(s)) if self.leaf_name(*s).starts_with(">>") => "hold SELECT to run",
+            _ => "left/right: change   hold SELECT: reset",
         };
         Text::new(hint, Point::new(16, 337), dim).draw(fb).ok();
     }

@@ -946,7 +946,7 @@ impl App for StarlabApp {
         } else if let Some(col) = self.play_column() {
             let pal = kit::draw::Palette { bg: STARLAB_BG, ink: STARLAB_TITLE, accent: STARLAB_ACCENT, dim: STARLAB_DIM, faint: STARLAB_FAINT };
             kit::draw::column(fb, &col, 16, 44, 350, 290, pal);
-            Text::new("knobs: dials   D-pad: texture   F2: pads   R1: menu", Point::new(16, 348), dim).draw(fb).ok();
+            Text::new("L/R: dial (SELECT: next)   U/D: texture   F2: pads   R1: menu", Point::new(16, 348), dim).draw(fb).ok();
         }
     }
 

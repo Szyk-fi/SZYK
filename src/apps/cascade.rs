@@ -1071,14 +1071,14 @@ impl App for CascadeApp {
         }
 
         let hint = match rows.get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: dials   D-pad: preset   F2: pads   F3: arp   R1: menu".to_string(),
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
+            _ if !self.kit.menu => "L/R: dial (SELECT: next)   U/D: preset   F2: pads   F3: arp   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
             Some(Row::Leaf(Selection::Bank)) => format!("knob2: browse banks ({}/{})", self.bank_browse + 1, self.banks.len().max(1)),
             Some(Row::Leaf(Selection::Preset)) => {
                 let count = self.banks.get(self.bank_browse).map(|b| b.preset_indices.len()).unwrap_or(0).max(1);
                 format!("knob2: browse presets ({}/{count})   press knob2: load", self.preset_browse + 1)
             }
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();

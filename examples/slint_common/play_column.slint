@@ -30,16 +30,18 @@ component MiniDial inherits Rectangle {
             Path {
                 width: 34px; height: 34px;
                 viewbox-width: 34; viewbox-height: 34;
-                stroke: root.knob > 0 ? root.accent : root.ink.with-alpha(0.45);
+                stroke: root.knob == 2 ? root.accent : root.knob == 1 ? root.accent.with-alpha(0.55) : root.ink.with-alpha(0.45);
                 stroke-width: 4px;
                 MoveTo { x: 17 + 13 * Math.cos(135deg); y: 17 + 13 * Math.sin(135deg); }
                 ArcTo { radius-x: 13; radius-y: 13; x: 17 + 13 * Math.cos(root.a1); y: 17 + 13 * Math.sin(root.a1); large-arc: root.n > 0.6667; sweep: true; }
             }
-            if root.knob > 0 : Rectangle {
-                x: 10px; y: 10px; width: 14px; height: 14px; border-radius: 7px;
+            // The focused dial (the D-pad's left/right turns it) wears the
+            // ◂▸ badge; SELECT moves the focus, holding SELECT resets it.
+            if root.knob == 2 : Rectangle {
+                x: 7px; y: 10px; width: 20px; height: 14px; border-radius: 7px;
                 background: root.accent;
                 Text {
-                    text: root.knob;
+                    text: "◂▸";
                     color: root.paper;
                     font-family: "JetBrains Mono"; font-weight: 700; font-size: 9px;
                     horizontal-alignment: center; vertical-alignment: center;
@@ -127,7 +129,7 @@ export component PlayColumn inherits Rectangle {
         }
         if root.knob2-extra != "" : Text {
             height: 12px;
-            text: "② " + root.knob2-extra;
+            text: "◂▸ " + root.knob2-extra;
             color: root.accent;
             font-family: "JetBrains Mono"; font-size: 9px; font-weight: 700;
             overflow: elide;

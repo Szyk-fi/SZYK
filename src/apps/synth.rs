@@ -347,7 +347,7 @@ impl App for SynthApp {
         let hint = if self.kit.menu {
             "Grid: hold to play. Knob1 press: reset cutoff."
         } else {
-            "knobs: cutoff/volume  D-pad: wave  F2: pads  R1: knobs direct"
+            "L/R: cutoff/volume  U/D: wave  F2: pads  R1: knobs direct"
         };
         Text::new(hint, Point::new(20, 340), dim).draw(fb).ok();
     }

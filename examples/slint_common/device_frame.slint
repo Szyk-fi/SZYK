@@ -326,8 +326,11 @@ export component DeviceFrame inherits Window {
                     // float up right under the last row instead of
                     // staying pinned to the screen's real bottom edge.
                     // Caught by rendering and looking, not a test.
+                    // Clipped: an app's panel or list can never draw over
+                    // the F-button bar below, whatever its content.
                     Rectangle {
                         height: root.hide-chrome ? 360px : 284px;
+                        clip: true;
                         @children
                     }
 
@@ -395,7 +398,18 @@ export component DeviceFrame inherits Window {
                 x: 53px; y: 53px; width: 38px; height: 38px;
                 border-radius: 19px; background: center-touch.pressed ? #3b4045 : #1b1e21;
                 Rectangle { x: 15px; y: 15px; width: 8px; height: 8px; border-radius: 4px; background: #44494e; }
-                center-touch := TouchArea { clicked => { root.navigation-pressed(4); } }
+                // SELECT: tap = select (expand, run, next dial); hold
+                // half a second = reset (the gamepad's Reset button).
+                center-touch := TouchArea {
+                    property <bool> held-fired: false;
+                    pointer-event(event) => { if event.kind == PointerEventKind.down { self.held-fired = false; } }
+                    clicked => { if !self.held-fired { root.navigation-pressed(4); } }
+                }
+                Timer {
+                    interval: 500ms;
+                    running: center-touch.pressed && !center-touch.held-fired;
+                    triggered => { center-touch.held-fired = true; root.knob2-pressed(); }
+                }
             }
         }
         // Spring-return stick. Normalized axes remain available to the host.

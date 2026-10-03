@@ -75,7 +75,7 @@ impl App for MorphApp {
  fn draw(&mut self,fb:&mut FrameBuffer){
   if self.kit.menu{let rows=self.rows().into_iter().map(|(a,b,_)|(a,b)).collect::<Vec<_>>();self.list.draw(fb,16,44,24,rows.len(),&rows);return}
   if let Some(col)=self.play_column(){kit::draw::column(fb,&col,16,40,350,280,kit::draw::Palette{bg:MORPH_BG,ink:MORPH_INK,accent:MORPH_ACCENT,dim:MORPH_DIM,faint:MORPH_FAINT});}
-  Text::new("knobs: blend/smooth   D-pad: A phase   F2: pads   R1: menu (sources)",Point::new(16,345),MonoTextStyle::new(&SPLEEN_6X12,MORPH_DIM)).draw(fb).ok();
+  Text::new("L/R: blend/smooth   U/D: A phase   F2: pads   R1: menu (sources)",Point::new(16,345),MonoTextStyle::new(&SPLEEN_6X12,MORPH_DIM)).draw(fb).ok();
  }
  fn slint_rows(&self)->Vec<(String,String,bool)>{self.rows()}
  fn slint_selected(&self)->usize{self.list.selected}

@@ -823,7 +823,7 @@ impl App for NautilusApp {
             // Kept left of the delay-line LEDs at x = 420.
             let pal = kit::draw::Palette { bg: NAUTILUS_BG, ink: NAUTILUS_TITLE, accent: NAUTILUS_ACCENT, dim: NAUTILUS_DIM, faint: NAUTILUS_FAINT };
             kit::draw::column(fb, &col, 16, 44, 390, 280, pal);
-            Text::new("knobs: feedback/mix   D-pad: resolution   F2: pads   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
+            Text::new("L/R: feedback/mix   U/D: resolution   F2: pads   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
         }
 
         // 8 delay-line ping LEDs, in the manual's own 1L..4R order.

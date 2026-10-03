@@ -214,7 +214,8 @@ impl MosaicApp {
             p: Arc::new(Shared {
                 source: AtomicUsize::new(NO_SOURCE),
                 bpm: AtomicF32::new(120.0),
-                running: AtomicBool::new(true),
+                // stopped until F3: opening an app never starts it
+                running: AtomicBool::new(false),
                 focus: AtomicUsize::new(0),
                 slots,
                 mix_level,
@@ -665,7 +666,7 @@ impl App for MosaicApp {
                 Text::new("always on", Point::new(392, y + 40), small).draw(f).ok();
             }
         }
-        Text::new("pads: steps (hold+knob2 = lock)  D-pad: slot  F2: pads  R1: menu", Point::new(16, 340), small).draw(f).ok();
+        Text::new("pads: steps (hold + L/R = lock)  U/D: slot  F2: pads  R1: menu", Point::new(16, 340), small).draw(f).ok();
     }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.rows()
@@ -711,7 +712,7 @@ impl App for MosaicApp {
             cells,
             col_x,
             highlight: (self.focus() * 2) as i32,
-            footer: "■ step  ◆ locked  ▶ playing  * engaged\nHold a step + knob 2 to lock its Amount.".into(),
+            footer: "■ step  ◆ locked  ▶ playing  * engaged\nHold a step + left/right to lock its Amount.".into(),
             meter: -1.0,
         })
     }
@@ -1087,6 +1088,7 @@ mod tests {
         let src = bus.register("Synth");
         let mut a = MosaicApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::new(ModBus::new()), bus, Arc::new(MixerBus::new()));
         a.p.source.store(0, Ordering::Relaxed);
+        a.p.running.store(true, Ordering::Relaxed); // F3: patterns run
         (a, src)
     }
 

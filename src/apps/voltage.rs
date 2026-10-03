@@ -1121,10 +1121,10 @@ impl App for VoltageApp {
         self.draw_lfo_panel(fb, panels[3].0, panels[3].1, panel_w, panel_h, accent, dim);
 
         let hint = match rows.get(self.list.selected) {
-            _ if !self.kit.menu => "knobs: dials   D-pad: octave   F2: pads   F3: arp   R1: menu".to_string(),
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(Selection::UserPreset(_))) => "knob2: turn one way to save, the other to load   press knob2: clear".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: dial (SELECT: next)   U/D: octave   F2: pads   F3: arp   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(Selection::UserPreset(_))) => "left/right: save one way, load the other   hold SELECT: clear".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
