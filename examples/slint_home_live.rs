@@ -1133,9 +1133,9 @@ slint::slint! {
                     Rectangle { vertical-stretch: 1; }
                     Text {
                         text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : "Pads play notes. Knobs: cutoff and volume; D-pad: waveform.";
-                        color: root.live-ink.with-alpha(0.6); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap;
+                        color: root.live-ink.with-alpha(0.72); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap;
                     }
-                    InstrumentLabel { text: root.active-app-name == "Synth" ? "F2 PAD LAYER  ·  R1 MENU" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 9px; }
+                    InstrumentLabel { text: root.active-app-name == "Synth" ? "F2 PAD LAYER  ·  R1 MENU" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 12px; }
                 }
             }
 
@@ -1164,7 +1164,7 @@ slint::slint! {
                             vertical-alignment: center;
                             font-family: "JetBrains Mono";
                             font-size: 12px;
-                            color: model == root.plaits-engine-led ? root.live-bg : root.live-ink.with-alpha(0.6);
+                            color: model == root.plaits-engine-led ? root.live-bg : root.live-ink.with-alpha(0.72);
                         }
                     }
                 }
@@ -1229,9 +1229,9 @@ slint::slint! {
                             }
                             Text {
                                 text: row.label;
-                                color: root.live-ink.with-alpha(0.65);
+                                color: root.live-ink.with-alpha(0.72);
                                 font-family: "JetBrains Mono";
-                                font-size: 11px;
+                                font-size: 12px;
                             }
                         }
                     }
@@ -1251,9 +1251,9 @@ slint::slint! {
                         Text {
                             horizontal-alignment: center;
                             text: "(autocorrelation)";
-                            color: root.live-ink.with-alpha(0.35);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 11px;
+                            font-size: 12px;
                         }
                     }
                 }
@@ -1319,16 +1319,16 @@ slint::slint! {
                         Text {
                             horizontal-alignment: center;
                             text: "Spectrogram";
-                            color: root.live-ink.with-alpha(0.35);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
                             font-size: 12px;
                         }
                         Text {
                             horizontal-alignment: center;
                             text: "(not rendered live -- see Spectrum)";
-                            color: root.live-ink.with-alpha(0.25);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 11px;
+                            font-size: 12px;
                         }
                     }
 
@@ -1352,9 +1352,9 @@ slint::slint! {
                             }
                             Text {
                                 text: row.label;
-                                color: root.live-ink.with-alpha(0.65);
+                                color: root.live-ink.with-alpha(0.72);
                                 font-family: "JetBrains Mono";
-                                font-size: 11px;
+                                font-size: 12px;
                             }
                         }
                     }
@@ -1374,9 +1374,9 @@ slint::slint! {
                         Text {
                             horizontal-alignment: center;
                             text: "(autocorrelation)";
-                            color: root.live-ink.with-alpha(0.35);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 11px;
+                            font-size: 12px;
                         }
                     }
                 }
@@ -1411,7 +1411,7 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.12);
                         VerticalLayout {
                             padding: 4px;
-                            Text { text: "Oscillators"; color: root.accent; font-family: "JetBrains Mono"; font-size: 10px; }
+                            Text { text: "Oscillators"; color: root.accent; font-family: "JetBrains Mono"; font-size: 12px; }
                             Rectangle {
                                 vertical-stretch: 1;
                                 for i in root.voltage-oscillator-mid-x.length : VectorSegment {
@@ -1430,7 +1430,7 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.12);
                         VerticalLayout {
                             padding: 4px;
-                            Text { text: "Filter"; color: root.accent; font-family: "JetBrains Mono"; font-size: 10px; }
+                            Text { text: "Filter"; color: root.accent; font-family: "JetBrains Mono"; font-size: 12px; }
                             Rectangle {
                                 vertical-stretch: 1;
                                 for i in root.voltage-filter-mid-x.length : VectorSegment {
@@ -1462,7 +1462,7 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.12);
                         VerticalLayout {
                             padding: 4px;
-                            Text { text: "Amp Envelope"; color: root.accent; font-family: "JetBrains Mono"; font-size: 10px; }
+                            Text { text: "Amp Envelope"; color: root.accent; font-family: "JetBrains Mono"; font-size: 12px; }
                             Rectangle {
                                 vertical-stretch: 1;
                                 for i in root.voltage-amp-env-mid-x.length : VectorSegment {
@@ -1481,7 +1481,7 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.12);
                         VerticalLayout {
                             padding: 4px;
-                            Text { text: "LFO"; color: root.accent; font-family: "JetBrains Mono"; font-size: 10px; }
+                            Text { text: "LFO"; color: root.accent; font-family: "JetBrains Mono"; font-size: 12px; }
                             Rectangle {
                                 vertical-stretch: 1;
                                 for i in root.voltage-lfo-mid-x.length : VectorSegment {
@@ -1554,7 +1554,7 @@ slint::slint! {
                             text: "Op" + (op + 1) + (op == root.cascade-feedback-op ? " FB" : "");
                             color: parent.carrier ? root.accent : rgba(140, 190, 230, 0.9);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%; height: 100%;
@@ -1700,7 +1700,7 @@ slint::slint! {
                     border-width: 1px;
                     border-color: root.live-ink.with-alpha(0.12);
                     background: self.kind == 2 ? rgba(180, 30, 30, 0.25) : self.kind == 1 ? root.accent.with-alpha(0.15) : root.live-ink.with-alpha(0.03);
-                    Text { x: 8px; y: 5px; text: "0" + (t + 1); color: root.live-ink.with-alpha(0.6); font-family: "JetBrains Mono"; font-size: 10px; }
+                    Text { x: 8px; y: 5px; text: "0" + (t + 1); color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     if self.kind != 0 : Rectangle {
                         x: root.tape-playhead-frac * (parent.width - 2px);
                         y: 0px; width: 2px; height: 100%;
@@ -1735,8 +1735,8 @@ slint::slint! {
                         background: channel == root.pams-channel-index ? root.accent : root.accent.with-alpha(0.07);
                         Text {
                             text: channel + 1; horizontal-alignment: center;
-                            vertical-alignment: center; font-size: 11px;
-                            color: channel == root.pams-channel-index ? root.live-bg : root.accent.with-alpha(0.65);
+                            vertical-alignment: center; font-size: 12px;
+                            color: channel == root.pams-channel-index ? root.live-bg : root.accent.with-alpha(0.72);
                         }
                     }
                 }
@@ -1767,7 +1767,7 @@ slint::slint! {
                     text: "value: " + Math.round(root.pams-value * 100) / 100;
                     color: rgba(255, 255, 255, 0.4);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                 }
             }
 
@@ -1865,16 +1865,16 @@ slint::slint! {
                 }
                 Text {
                     text: "chroma: " + root.nautilus-chroma-name;
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                 }
                 Rectangle { height: 4px; }
                 Text {
                     text: "DELAY LINES";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -1882,8 +1882,8 @@ slint::slint! {
                     for i in root.nautilus-line-level.length : Rectangle {
                         Text {
                             x: 6px; y: 4px; text: i + 1;
-                            color: root.live-ink.with-alpha(0.65);
-                            font-family: "JetBrains Mono"; font-size: 9px;
+                            color: root.live-ink.with-alpha(0.72);
+                            font-family: "JetBrains Mono"; font-size: 12px;
                         }
 
                         property <bool> active: i < root.nautilus-line-active.length && root.nautilus-line-active[i];
@@ -1902,7 +1902,7 @@ slint::slint! {
                     }
                 }
                 Rectangle { height: 2px; }
-                Text { text: "feedback " + Math.round(root.nautilus-feedback-amount * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                Text { text: "feedback " + Math.round(root.nautilus-feedback-amount * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
 
                 }
             }
@@ -1925,9 +1925,9 @@ slint::slint! {
                         background: p == root.sequencer-current-pattern ? root.accent : root.live-ink.with-alpha(0.12);
                         Text {
                             text: p + 1;
-                            color: p == root.sequencer-current-pattern ? #0a0a0a : root.live-ink.with-alpha(0.5);
+                            color: p == root.sequencer-current-pattern ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 8px;
+                            font-size: 12px;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%; height: 100%;
@@ -1947,9 +1947,9 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.15);
                         Text {
                             text: (pat + 1) + "x" + (i < root.sequencer-song-slot-repeats.length ? root.sequencer-song-slot-repeats[i] : 1);
-                            color: parent.playing ? #0a0a0a : root.live-ink.with-alpha(0.5);
+                            color: parent.playing ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 8px;
+                            font-size: 12px;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%; height: 100%;
@@ -1960,7 +1960,7 @@ slint::slint! {
                     text: root.sequencer-header;
                     color: root.accent;
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     wrap: word-wrap;
                 }
                 if !root.sequencer-pad-perform : Rectangle {
@@ -1981,9 +1981,9 @@ slint::slint! {
                         border-color: self.focused ? #ffffff : (self.playhead ? root.accent : root.live-ink.with-alpha(0.15));
                         Text {
                             text: label;
-                            color: parent.active ? #0a0a0a : root.live-ink.with-alpha(0.5);
+                            color: parent.active ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                             horizontal-alignment: right;
                             vertical-alignment: top;
                             x: 0px; y: 2px;
@@ -2005,9 +2005,9 @@ slint::slint! {
                         border-color: self.focused ? #ffffff : root.live-ink.with-alpha(0.15);
                         Text {
                             text: i + 1;
-                            color: loaded ? #0a0a0a : root.live-ink.with-alpha(0.5);
+                            color: loaded ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                             horizontal-alignment: right;
                             vertical-alignment: top;
                             x: 0px; y: 2px;
@@ -2030,9 +2030,9 @@ slint::slint! {
                 spacing: 6px;
                 Text {
                     text: "MODE";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2057,9 +2057,9 @@ slint::slint! {
                 Rectangle { height: 6px; }
                 Text {
                     text: "OUTPUT";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2148,7 +2148,7 @@ slint::slint! {
                     text: "MULTI EFFECT / CATEGORY";
                     color: rgba(255, 255, 255, 0.4);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2178,7 +2178,7 @@ slint::slint! {
                         text: "CLIP";
                         color: root.black-hole-clip ? #FF4D4D : rgba(255, 255, 255, 0.3);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Text {
@@ -2194,7 +2194,7 @@ slint::slint! {
                     text: "OUTPUT";
                     color: rgba(255, 255, 255, 0.4);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 ScopeSurface {
@@ -2224,7 +2224,7 @@ slint::slint! {
                     text: "PARAMETERS";
                     color: rgba(255, 255, 255, 0.4);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2248,9 +2248,9 @@ slint::slint! {
                 spacing: 6px;
                 Text {
                     text: "MAP";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Text {
@@ -2265,9 +2265,9 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 Text {
                     text: "TRAJECTORY";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2299,9 +2299,9 @@ slint::slint! {
                         background: root.qop-gate ? root.accent : root.live-ink.with-alpha(0.12);
                     }
                     VerticalLayout {
-                        Text { text: root.qop-gate-mode-name; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
-                        Text { text: "CV " + Math.round(root.qop-cv * 100) + "%  smooth " + Math.round(root.qop-smooth-cv * 100) + "%"; color: root.live-ink.with-alpha(0.6); font-family: "JetBrains Mono"; font-size: 10px; }
-                        Text { text: "delta " + Math.round(root.qop-delta * 100) + "%"; color: root.live-ink.with-alpha(0.6); font-family: "JetBrains Mono"; font-size: 10px; }
+                        Text { text: root.qop-gate-mode-name; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
+                        Text { text: "CV " + Math.round(root.qop-cv * 100) + "%  smooth " + Math.round(root.qop-smooth-cv * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
+                        Text { text: "delta " + Math.round(root.qop-delta * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     }
                 }
 
@@ -2319,9 +2319,9 @@ slint::slint! {
                 spacing: 6px;
                 Text {
                     text: "ENVELOPES";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2332,7 +2332,7 @@ slint::slint! {
                         HorizontalLayout {
                             spacing: 6px;
                             height: 16px;
-                            Text { text: "CH1"; color: root.accent; font-family: "JetBrains Mono"; font-weight: 700; font-size: 11px; }
+                            Text { text: "CH1"; color: root.accent; font-family: "JetBrains Mono"; font-weight: 700; font-size: 12px; }
                             Rectangle { horizontal-stretch: 1; }
                             Rectangle {
                                 width: 8px; height: 8px; y: 2px;
@@ -2354,14 +2354,14 @@ slint::slint! {
                         trace: root.accent.with-alpha(0.8); line-width: 2px;
                     }
                         }
-                        Text { text: "open " + Math.round(root.ng-ch1-open * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                        Text { text: "open " + Math.round(root.ng-ch1-open * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     }
                     VerticalLayout {
                         spacing: 4px;
                         HorizontalLayout {
                             spacing: 6px;
                             height: 16px;
-                            Text { text: "CH2"; color: root.accent; font-family: "JetBrains Mono"; font-weight: 700; font-size: 11px; }
+                            Text { text: "CH2"; color: root.accent; font-family: "JetBrains Mono"; font-weight: 700; font-size: 12px; }
                             Rectangle { horizontal-stretch: 1; }
                             Rectangle {
                                 width: 8px; height: 8px; y: 2px;
@@ -2383,7 +2383,7 @@ slint::slint! {
                         trace: root.accent.with-alpha(0.8); line-width: 2px;
                     }
                         }
-                        Text { text: "open " + Math.round(root.ng-ch2-open * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                        Text { text: "open " + Math.round(root.ng-ch2-open * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     }
                 }
 
@@ -2401,9 +2401,9 @@ slint::slint! {
                 spacing: 6px;
                 Text {
                     text: "REGISTER";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2411,8 +2411,8 @@ slint::slint! {
                     for i in root.tm-bits.length : Rectangle {
                         Text {
                             x: 6px; y: 4px; text: i + 1;
-                            color: root.live-ink.with-alpha(0.65);
-                            font-family: "JetBrains Mono"; font-size: 9px;
+                            color: root.live-ink.with-alpha(0.72);
+                            font-family: "JetBrains Mono"; font-size: 12px;
                         }
 
                         property <bool> active: i < root.tm-active-len;
@@ -2439,14 +2439,14 @@ slint::slint! {
                         border-radius: 5px;
                         background: root.tm-pulse ? root.accent : root.live-ink.with-alpha(0.12);
                     }
-                    Text { text: "pulse"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
-                    Text { text: "cv " + Math.round(root.tm-cv * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                    Text { text: "pulse"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
+                    Text { text: "cv " + Math.round(root.tm-cv * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.tm-double-locked ? "dbl lock" : (root.tm-inverted-feedback ? "locking" : "");
-                        color: root.tm-double-locked ? #FFA040 : root.live-ink.with-alpha(0.4);
+                        color: root.tm-double-locked ? #FFA040 : root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Rectangle {
@@ -2462,7 +2462,7 @@ slint::slint! {
                         animate width { duration: 80ms; }
                     }
                 }
-                Text { text: "keep probability " + Math.round(root.tm-keep-probability * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                Text { text: "keep probability " + Math.round(root.tm-keep-probability * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
 
                 }
             }
@@ -2489,9 +2489,9 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 Text {
                     text: "TAP MAP";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2582,7 +2582,7 @@ slint::slint! {
                     }
                 }
                 Rectangle { height: 2px; }
-                Text { text: "TANK ENERGY"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 11px; letter-spacing: 0.5px; }
+                Text { text: "TANK ENERGY"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 0.5px; }
                 Rectangle {
                     height: 8px;
                     border-radius: 4px;
@@ -2622,7 +2622,7 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 if !root.warps-is-vocoder : VerticalLayout {
                     spacing: 3px;
-                    Text { text: "CARRIER / MODULATOR / OUTPUT"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; letter-spacing: 0.5px; }
+                    Text { text: "CARRIER / MODULATOR / OUTPUT"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 0.5px; }
                     Rectangle {
                         vertical-stretch: 1;
                         border-width: 1px;
@@ -2658,7 +2658,7 @@ slint::slint! {
                 }
                 if root.warps-is-vocoder : VerticalLayout {
                     spacing: 3px;
-                    Text { text: "VOCODER BANDS"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; letter-spacing: 0.5px; }
+                    Text { text: "VOCODER BANDS"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 0.5px; }
                     HorizontalLayout {
                         vertical-stretch: 1;
                         spacing: 3px;
@@ -2698,9 +2698,9 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 Text {
                     text: "CHANNELS";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2754,9 +2754,9 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 Text {
                     text: "32 OUTPUTS";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2774,9 +2774,9 @@ slint::slint! {
                         animate background { duration: 60ms; }
                         Text {
                             text: i + 1;
-                            color: parent.lvl > 0.5 ? #0a0a0a : root.live-ink.with-alpha(0.4);
+                            color: parent.lvl > 0.5 ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%; height: 100%;
@@ -2801,17 +2801,17 @@ slint::slint! {
                     height: 16px;
                     Text {
                         text: "HYSTERESIS LOOP";
-                        color: root.live-ink.with-alpha(0.65);
+                        color: root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 11px;
+                        font-size: 12px;
                         letter-spacing: 0.5px;
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.magnito-unlimited ? "UNLIMITED" : "bias " + Math.round(root.magnito-bias * 100) + "%";
-                        color: root.magnito-unlimited ? #FF4D4D : root.live-ink.with-alpha(0.4);
+                        color: root.magnito-unlimited ? #FF4D4D : root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 HorizontalLayout {
@@ -2840,9 +2840,9 @@ slint::slint! {
                 Rectangle { height: 2px; }
                 Text {
                     text: "WOW / FLUTTER";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2889,9 +2889,9 @@ slint::slint! {
                         }
                         Text {
                             text: m.label;
-                            color: root.live-ink.with-alpha(0.65);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                         }
                     }
                     Rectangle {
@@ -2944,9 +2944,9 @@ slint::slint! {
                     }
                     Text {
                         text: root.tonestack-gate-closed ? "GATED" : "open";
-                        color: root.tonestack-gate-closed ? #FF4D4D : root.live-ink.with-alpha(0.4);
+                        color: root.tonestack-gate-closed ? #FF4D4D : root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Rectangle {
@@ -2970,9 +2970,9 @@ slint::slint! {
                 Rectangle { height: 2px; }
                 Text {
                     text: "OUTPUT";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -3012,17 +3012,17 @@ slint::slint! {
                     }
                     Text {
                         text: root.sample-drum-sample-name;
-                        color: root.live-ink.with-alpha(0.6);
+                        color: root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 11px;
+                        font-size: 12px;
                         vertical-alignment: center;
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: "slice " + (root.sample-drum-step-index + 1) + "/" + root.sample-drum-num-slices;
-                        color: root.live-ink.with-alpha(0.65);
+                        color: root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Rectangle {
@@ -3045,9 +3045,9 @@ slint::slint! {
                 }
                 Text {
                     text: "SOURCE / SLICE BOUNDARIES";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                 }
 
                 // The source sample with its slice cut points marked
@@ -3087,9 +3087,9 @@ slint::slint! {
                 }
                 Text {
                     text: "PAD 1 / CH1  ·  PAD 2 / CH2";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                 }
 
                 }
@@ -3122,9 +3122,9 @@ slint::slint! {
                     }
                     Text {
                         text: root.visualizer-monitor-on ? "MON" : "muted";
-                        color: root.visualizer-monitor-on ? root.accent : root.live-ink.with-alpha(0.3);
+                        color: root.visualizer-monitor-on ? root.accent : root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Rectangle {
@@ -3172,9 +3172,9 @@ slint::slint! {
                             spacing: 4px;
                             Text {
                                 text: row.label;
-                                color: root.live-ink.with-alpha(0.65);
+                                color: root.live-ink.with-alpha(0.72);
                                 font-family: "JetBrains Mono";
-                                font-size: 10px;
+                                font-size: 12px;
                             }
                             Rectangle {
                                 height: 16px;
@@ -3207,9 +3207,9 @@ slint::slint! {
                         Text {
                             horizontal-alignment: center;
                             text: "(spectrogram not rendered here)";
-                            color: root.live-ink.with-alpha(0.65);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                         }
                     }
 
@@ -4197,7 +4197,7 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_atlas_morph_label(a.morph_label.into());
                     ui.set_atlas_spectrum_view(a.spectrum_view);
                     ui.set_atlas_spectrum(Rc::new(slint::VecModel::from(a.spectrum)).into());
-                    let (mid_x, mid_y, length, angle_deg) = app::polyline_segments(&a.scope, 290.0, 34.0, true);
+                    let (mid_x, mid_y, length, angle_deg) = app::polyline_segments(&a.scope, 290.0, 40.0, true);
                     ui.set_atlas_scope_mid_x(Rc::new(slint::VecModel::from(mid_x)).into());
                     ui.set_atlas_scope_mid_y(Rc::new(slint::VecModel::from(mid_y)).into());
                     ui.set_atlas_scope_length(Rc::new(slint::VecModel::from(length)).into());

@@ -50,9 +50,9 @@ export component PulsarPanel inherits InstrumentPanel {
             }
             Text {
                 text: round(root.bpm) + " BPM";
-                color: root.ink.with-alpha(0.55);
+                color: root.ink.with-alpha(0.72);
                 font-family: "JetBrains Mono";
-                font-size: 9px;
+                font-size: 12px;
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; }
@@ -61,7 +61,7 @@ export component PulsarPanel inherits InstrumentPanel {
                 color: #FF5A4D;
                 font-family: "JetBrains Mono";
                 font-weight: 700;
-                font-size: 9px;
+                font-size: 12px;
                 vertical-alignment: center;
             }
             if root.in-fill : Rectangle {
@@ -74,7 +74,7 @@ export component PulsarPanel inherits InstrumentPanel {
                     color: root.paper;
                     font-family: "JetBrains Mono";
                     font-weight: 700;
-                    font-size: 8px;
+                    font-size: 12px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -99,7 +99,7 @@ export component PulsarPanel inherits InstrumentPanel {
                     color: parent.playing ? root.paper : filled ? root.ink.with-alpha(0.9) : root.ink.with-alpha(0.35);
                     font-family: "JetBrains Mono";
                     font-weight: 700;
-                    font-size: 8px;
+                    font-size: 12px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -125,10 +125,10 @@ export component PulsarPanel inherits InstrumentPanel {
                     x: 0px;
                     height: 100%;
                     text: name;
-                    color: parent.locked ? root.roll-tint : ln == root.lane ? root.accent : root.ink.with-alpha(0.55);
+                    color: parent.locked ? root.roll-tint : ln == root.lane ? root.accent : root.ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
                     font-weight: ln == root.lane ? 700 : 400;
-                    font-size: 8px;
+                    font-size: 12px;
                     vertical-alignment: center;
                 }
                 Rectangle {
@@ -178,9 +178,9 @@ export component PulsarPanel inherits InstrumentPanel {
             spacing: 8px;
             Text {
                 text: root.pad-mode + "  ·  BAR " + (root.bar + 1) + "/" + root.bars + "  ·  SWING " + round(root.swing) + "%";
-                color: root.ink.with-alpha(0.55);
+                color: root.ink.with-alpha(0.72);
                 font-family: "JetBrains Mono";
-                font-size: 9px;
+                font-size: 12px;
                 horizontal-stretch: 1;
             }
         }
@@ -205,7 +205,7 @@ export component PulsarPanel inherits InstrumentPanel {
                 text: root.status;
                 color: root.accent;
                 font-family: "JetBrains Mono";
-                font-size: 10px;
+                font-size: 12px;
                 wrap: word-wrap;
             }
         }

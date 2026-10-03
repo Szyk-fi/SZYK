@@ -53,6 +53,8 @@ use std::sync::{
 
 const APP_NAME: &str = "Ledger";
 pub const TRACKS: usize = 8;
+/// Tracks the grid panel shows side by side.
+const VISIBLE_TRACKS: usize = 3;
 pub const ROWS: usize = 64;
 pub const PATTERNS: usize = 16;
 
@@ -561,8 +563,9 @@ impl LedgerApp {
             .collect()
     }
 
+    /// The panel shows three tracks at the device's 12px type size.
     fn first_visible_track(&self) -> usize {
-        (self.cur_track / 4) * 4
+        ((self.cur_track / VISIBLE_TRACKS) * VISIBLE_TRACKS).min(TRACKS - VISIBLE_TRACKS)
     }
 
     // --------------------------------------------------------- save
@@ -816,7 +819,7 @@ impl App for LedgerApp {
         let first = self.first_visible_track();
         let title = MonoTextStyle::new(&SPLEEN_8X16, ACCENT);
         Text::new(&format!("{APP_NAME}  P{:02}  oct {}  step {}", self.pattern() + 1, self.edit_octave, self.step_add), Point::new(16, 30), title).draw(f).ok();
-        for t in first..first + 4 {
+        for t in first..(first + 4).min(TRACKS) {
             let x = 52 + (t - first) as i32 * 144;
             let tr = &self.p.tracks[t];
             let style = if t == self.cur_track { small } else { dim };
@@ -868,9 +871,9 @@ impl App for LedgerApp {
         let pat = self.pattern();
         let playing = self.p.row.load(Ordering::Relaxed);
         let running = self.p.running.load(Ordering::Relaxed) && self.p.playing_pattern.load(Ordering::Relaxed) == pat;
-        // columns: row number, then note / vol / fx for four tracks
+        // columns: row number, then note / vol / fx per visible track
         let mut cells: Vec<String> = vec![String::new()];
-        for t in first..first + 4 {
+        for t in first..first + VISIBLE_TRACKS {
             let tr = &self.p.tracks[t];
             let name: String = Self::engine_name(tr.engine.load(Ordering::Relaxed)).chars().take(9).collect();
             cells.push(format!("{}{} {}", t + 1, if tr.muted.load(Ordering::Relaxed) { "m" } else { "" }, name));
@@ -879,14 +882,14 @@ impl App for LedgerApp {
         }
         let len = self.p.len(pat);
         // rows that fit the panel above its footer (see GridPanel)
-        let window = 14;
+        let window = 10;
         let focus_row = if self.kit.menu { self.cur_row } else { playing };
         let top = focus_row.saturating_sub(window / 2).min(len.saturating_sub(window));
         let mut highlight = -1;
         for (i, r) in (top..(top + window).min(len)).enumerate() {
             let mark = if running && r == playing { "▶" } else if r % 4 == 0 { "·" } else { "" };
             cells.push(format!("{r:02}{mark}"));
-            for t in first..first + 4 {
+            for t in first..first + VISIBLE_TRACKS {
                 let c = self.p.cell(pat, r, t);
                 let text = c.text();
                 let mut parts = text.split(' ');
@@ -899,9 +902,9 @@ impl App for LedgerApp {
             }
         }
         let mut col_x = vec![0.0f32];
-        for t in 0..4 {
-            let x = 22.0 + t as f32 * 70.0;
-            col_x.extend([x, x + 22.0, x + 38.0]);
+        for t in 0..VISIBLE_TRACKS {
+            let x = 30.0 + t as f32 * 88.0;
+            col_x.extend([x, x + 28.0, x + 50.0]);
         }
         crate::app::SlintExtra::Grid(crate::app::GridExtra {
             caption: format!("TRACKER / PATTERN {:02} / {:.0} BPM", self.pattern() + 1, self.p.bpm.get()),
@@ -910,7 +913,7 @@ impl App for LedgerApp {
             col_x,
             highlight,
             footer: if self.kit.menu {
-                "knob1 rows (press: next field)  knob2 value (press: clear)\npads enter notes  T M H D R P N effects".into()
+                "U/D rows · SELECT field · L/R value · hold SELECT clear\npads enter notes · T M H D R P N effects".into()
             } else {
                 "pads 1-8 mute  9-16: LOOP4 LOOP2 LOOP1 REV OCT+ OCT- HALF DARK".into()
             },

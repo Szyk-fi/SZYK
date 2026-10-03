@@ -1,6 +1,6 @@
 import { SpectralTerrain, SwarmNetwork } from "dynamic_visuals.slint";
 import { VectorSegment } from "instrument_widgets.slint";
-export component Micro inherits Text { in property <color> ink; color: ink; font-family: "JetBrains Mono"; font-size: 9px; overflow: elide; }
+export component Micro inherits Text { in property <color> ink; color: ink; font-family: "JetBrains Mono"; font-size: 12px; overflow: elide; }
 export component SignalTrace inherits Rectangle {
     in property <[float]> signal; in property <color> ink;
     in property <int> start: 0; in property <int> count: 128;
@@ -67,7 +67,7 @@ export component CollectionScene inherits Rectangle {
                 x: 6px+i*(parent.width - 12px)/12; width: max(2px,(parent.width - 12px)/12 - 2px); height: min(1,self.partial)*(parent.height - 30px); y: parent.height - self.height - 22px;
                 background: root.accent.with-alpha(parent-index==2 ? 1 : 0.5);
             }
-            Micro { x: 5px; y: parent.height - 17px; text: ["HARMONIC A","MUTATED B","OFFSPRING"][parent-index]; ink: root.ink; font-size: 8px; }
+            Micro { x: 5px; y: parent.height - 17px; text: ["HARMONIC A","MUTATED B","OFFSPRING"][parent-index]; ink: root.ink; font-size: 12px; }
         }
         Micro { x: 12px; y: parent.height - 21px; text: "BREED NEW OFFSPRING →"; ink: root.accent; }
         TouchArea { y: parent.height - 28px; height: 28px; clicked => {root.xy(-1,0);} }
@@ -81,7 +81,7 @@ export component CollectionScene inherits Rectangle {
         for i in 4 : Rectangle {
             x: (0.12+i*(0.1+root.controls[1]*0.13))*parent.width; y: 18px; width: 2px; height: parent.height - 40px; background: root.accent.with-alpha(root.pads[i] ? 1 : 0.45);
             Rectangle { x: -12px; width: 26px; height: 20px; border-radius: 3px; background: root.pads[i] ? root.accent : root.paper; border-width: 1px; border-color: root.accent;
-                Text { text: i+1; color: root.pads[i] ? root.paper : root.ink; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: i+1; color: root.pads[i] ? root.paper : root.ink; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
                 PressTarget { held(down) => {root.pad(i,down);} }
             }
         }
@@ -98,7 +98,7 @@ export component CollectionScene inherits Rectangle {
             x: 8px+i*(parent.width - 12px)/4; y: mod(i,2)==0 ? parent.height*0.5 : parent.height*0.15;
             width: (parent.width - 38px)/4; height: parent.height*0.3; border-radius: 6px;
             background: root.step==i ? root.accent : root.paper; border-width: 1px; border-color: root.accent.with-alpha(0.5);
-            Text { text: ["CALM","TENSION","CHAOS","RELEASE"][i]; color: root.step==i ? root.paper : root.ink; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
+            Text { text: ["CALM","TENSION","CHAOS","RELEASE"][i]; color: root.step==i ? root.paper : root.ink; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
             TouchArea { clicked => {root.xy(-70 - i,0);} }
         }
         Micro { x: 12px; y: parent.height - 17px; text: root.instrument + " / TOUCH A STATE"; ink: root.accent; }
@@ -109,7 +109,7 @@ export component CollectionScene inherits Rectangle {
             visible: i<4; x: 9px; y: 9px+i*(parent.height - 20px)/4; width: parent.width*0.36; height: (parent.height - 28px)/4;
             background: source==root.source || source==root.reference ? root.accent.with-alpha(0.2) : root.paper;
             border-width: 1px; border-color: root.accent.with-alpha(0.3); border-radius: 3px;
-            Text { text: source; color: root.ink; font-size: 10px; overflow: elide; horizontal-alignment: center; vertical-alignment: center; }
+            Text { text: source; color: root.ink; font-size: 12px; overflow: elide; horizontal-alignment: center; vertical-alignment: center; }
             TouchArea { clicked => {root.xy(-10 - i,0);} }
         }
         for source[i] in root.source-names : VectorSegment {
@@ -143,7 +143,7 @@ export component CollectionScene inherits Rectangle {
             for segment in 36 : Rectangle { x: segment*parent.width/36; width: parent.width/36 - 2px; height: 100%;
                 background: segment/36.0 < (lane==0 ? root.peak : root.rms) ? (segment>30 ? root.ink : root.accent) : root.ink.with-alpha(0.06);
             }
-            Micro { y: -15px; text: lane==0 ? "INPUT / PEAK" : "MONO / RMS"; ink: root.ink.with-alpha(0.6); font-size: 8px; }
+            Micro { y: -15px; text: lane==0 ? "INPUT / PEAK" : "MONO / RMS"; ink: root.ink.with-alpha(0.6); font-size: 12px; }
         }
         SignalTrace { x: 12px; y: parent.height*0.73; width: parent.width - 24px; height: parent.height*0.17; signal: root.buffer; ink: root.accent.with-alpha(0.7); }
         Micro { x: 12px; y: parent.height - 16px; text: root.recording ? "● CAPTURING / " + round(root.duration*10)/10 + "s" : "PRE-ROLL READY / " + root.source; ink: root.accent; }
@@ -164,7 +164,7 @@ export component CollectionScene inherits Rectangle {
     if root.kind == 13 : Rectangle {
         for i in 8 : Rectangle { x: 6px; y: 5px+i*(parent.height - 10px)/8; width: parent.width - 12px; height: (parent.height - 10px)/8 - 2px;
             background: round(root.controls[0]*7)==i ? root.accent.with-alpha(0.17) : root.ink.with-alpha(0.025);
-            Micro { x: 5px; y: 1px; text: "0"+(i+1); ink: root.accent; font-size: 8px; }
+            Micro { x: 5px; y: 1px; text: "0"+(i+1); ink: root.accent; font-size: 12px; }
             SignalTrace { x: 31px; width: parent.width - 63px; height: 100%; signal: root.tracks; start: i*32; count: 32; ink: root.accent.with-alpha(0.7); }
             Rectangle { x: parent.width - 23px; width: min(1,root.levels[i])*20px; y: 4px; height: 4px; background: root.accent; }
             TouchArea { clicked => {root.xy(-10 - i,0);} }
@@ -201,7 +201,7 @@ export component CollectionScene inherits Rectangle {
                 y:root.kind==2?floor(i/8)*parent.height/2:parent.height*(0.16+i*0.17);
                 width:root.kind==2?parent.width/8:parent.width;height:root.kind==2?parent.height/2:parent.height*0.17;
                 background:root.pads[i]?root.accent.with-alpha(0.12):transparent;
-                Micro {x:root.kind==2?6px:parent.width - 42px;y:parent.height - 13px;ink:root.accent;text:root.kind==2?"SL "+(i+1):"SOLO "+(i+1);font-size:8px;}
+                Micro {x:root.kind==2?6px:parent.width - 42px;y:parent.height - 13px;ink:root.accent;text:root.kind==2?"SL "+(i+1):"SOLO "+(i+1);font-size:12px;}
                 PressTarget {held(down)=>{root.pad(i,down);}}
             }
         }
@@ -209,7 +209,7 @@ export component CollectionScene inherits Rectangle {
             TouchArea {y:24px;height:parent.height - 55px;moved=>{if self.pressed {root.xy(-71,self.mouse-x/self.width);root.xy(-72,1 - self.mouse-y/self.height);}}}
 
             for i in 3 : Rectangle {x:i*parent.width/3;y:parent.height - 30px;width:parent.width/3;height:30px;
-                Micro {text:["ROOT","INVERSION","SPREAD"][i];ink:root.accent;x:5px;y:12px;font-size:8px;}
+                Micro {text:["ROOT","INVERSION","SPREAD"][i];ink:root.accent;x:5px;y:12px;font-size:12px;}
                 TouchArea {moved=>{if self.pressed {root.xy(-70-i,self.mouse-x/self.width);}} clicked=>{root.xy(-70-i,self.mouse-x/self.width);}}
             }
         }
@@ -220,7 +220,7 @@ export component CollectionScene inherits Rectangle {
             x: 8px+i*(parent.width - 16px)/3; y: i==1 ? 10px : 23px; width: (parent.width - 28px)/3; height: parent.height - 40px;
             background: root.accent.with-alpha(i==1 ? 0.85 : 0.45); clip: true;
             for ring in 5 : Rectangle { x: parent.width/2 - self.width/2; y: parent.height*0.46 - self.height/2; width: parent.width*(0.3+ring*0.2); height: self.width; border-radius: self.width/2; border-width: 1px; border-color: root.paper.with-alpha(0.7); }
-            Text { x: 5px; y: parent.height - 29px; width: parent.width - 10px; height: 24px; text: root.files.length>i ? root.files[i] : "EMPTY SLEEVE"; color: root.paper; font-size: 9px; wrap: word-wrap; overflow: elide; }
+            Text { x: 5px; y: parent.height - 29px; width: parent.width - 10px; height: 24px; text: root.files.length>i ? root.files[i] : "EMPTY SLEEVE"; color: root.paper; font-size: 12px; wrap: word-wrap; overflow: elide; }
             TouchArea { clicked => {root.xy(-10 - i,0);} }
         }
         Micro { x: 12px; y: parent.height - 17px; text: "AUDIO COLLECTION / SELECT A SLEEVE"; ink: root.accent; }
@@ -233,7 +233,7 @@ export component CollectionScene inherits Rectangle {
             Micro { x: 4px; y: 4px; text: "A"; ink: root.accent; } Micro { x: parent.width - 12px; y: 4px; text: "B"; ink: root.accent; }
         }
         Rectangle { x: 12px+min(1,root.phase/max(0.001,root.duration))*(parent.width - 24px); y: 30px; width: 1px; height: parent.height - 61px; background: root.ink; }
-        Micro { x: 12px; y: parent.height - 20px; text: "PAD 1: SET A     PAD 2: SET B     3/4: SPEED"; ink: root.ink.with-alpha(0.6); font-size: 8px; }
+        Micro { x: 12px; y: parent.height - 20px; text: "PAD 1: SET A     PAD 2: SET B     3/4: SPEED"; ink: root.ink.with-alpha(0.6); font-size: 12px; }
     }
     // 17: actual station selection and spectral activity, no fictitious frequency.
     if root.kind == 17 : Rectangle {
@@ -246,11 +246,11 @@ export component CollectionScene inherits Rectangle {
     if root.kind == 18 : Rectangle {
         for i in 2 : Rectangle { x: 10px+i*(parent.width - 20px)/2; y: 7px; width: (parent.width - 26px)/2; height: 25px; border-radius: 3px;
             background: round(root.controls[0])==i ? root.accent : root.ink.with-alpha(0.05);
-            Text { text: i==0 ? "A / " + root.source : "B / " + root.reference; color: round(root.controls[0])==i ? root.paper : root.ink; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+            Text { text: i==0 ? "A / " + root.source : "B / " + root.reference; color: round(root.controls[0])==i ? root.paper : root.ink; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
             PressTarget { held(down) => {root.pad(i,down);} }
         }
         for value[i] in root.spectrum : Rectangle { x: 12px+i*(parent.width - 24px)/48; width: (parent.width - 24px)/48 - 2px; height: min(1,value*5)*(parent.height - 62px); y: parent.height - 21px - self.height; background: root.accent.with-alpha(0.65); }
-        Micro { x: 12px; y: parent.height - 16px; text: root.frozen ? "BYPASS / UNPROCESSED" : "LOW             MID             HIGH"; ink: root.ink.with-alpha(0.6); font-size: 8px; }
+        Micro { x: 12px; y: parent.height - 16px; text: root.frozen ? "BYPASS / UNPROCESSED" : "LOW             MID             HIGH"; ink: root.ink.with-alpha(0.6); font-size: 12px; }
     }
     // 19: a journal of real files; empty collections never invent recordings.
     if root.kind == 19 : Rectangle {

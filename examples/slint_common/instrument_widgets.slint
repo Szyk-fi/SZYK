@@ -24,9 +24,9 @@ export component VectorSegment inherits Path {
 // Shared, bounded-cost instrument graphics. All traces come from the live DSP.
 export component InstrumentLabel inherits Text {
     in property <color> ink: #ffffff;
-    color: root.ink.with-alpha(0.65);
+    color: root.ink.with-alpha(0.72);
     font-family: "JetBrains Mono";
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: 1px;
     height: 16px;
 }
@@ -107,7 +107,7 @@ export component ValueTrack inherits Rectangle {
             text: root.label;
             color: root.ink.with-alpha(0.75);
             font-family: "JetBrains Mono";
-            font-size: 10px;
+            font-size: 12px;
             overflow: elide;
         }
         Rectangle {
@@ -138,7 +138,7 @@ export component InstrumentPanel inherits Rectangle {
             height: 14px;
             spacing: 6px;
             Rectangle { width: 3px; height: 10px; background: root.accent; }
-            InstrumentLabel { text: root.caption; ink: root.ink; font-size: 9px; height: 14px; horizontal-stretch: 1; overflow: elide; }
+            InstrumentLabel { text: root.caption; ink: root.ink; font-size: 12px; height: 14px; horizontal-stretch: 1; overflow: elide; }
         }
         Rectangle { height: 1px; background: root.ink.with-alpha(0.12); }
         @children

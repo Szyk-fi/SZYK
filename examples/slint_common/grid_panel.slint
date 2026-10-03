@@ -37,26 +37,26 @@ export component GridPanel inherits InstrumentPanel {
             vertical-stretch: 1;
             clip: true;
             for r in root.rows : Rectangle {
-                y: r * 11px;
-                height: 11px;
+                y: r * 15px;
+                height: 15px;
                 background: r == root.highlight ? root.accent.with-alpha(0.22) : transparent;
             }
             for cell[i] in root.cells : Text {
                 x: (mod(i, root.cols) < root.col-x.length ? root.col-x[mod(i, root.cols)] : 0) * 1px + 2px;
-                y: floor(i / root.cols) * 11px;
-                height: 11px;
+                y: floor(i / root.cols) * 15px;
+                height: 15px;
                 text: cell;
                 color: floor(i / root.cols) == root.highlight ? root.ink : root.ink.with-alpha(0.72);
                 font-family: "JetBrains Mono";
-                font-size: 8px;
+                font-size: 12px;
                 vertical-alignment: center;
             }
         }
         Text {
             text: root.footer;
-            color: root.ink.with-alpha(0.55);
+            color: root.ink.with-alpha(0.72);
             font-family: "JetBrains Mono";
-            font-size: 8px;
+            font-size: 12px;
             wrap: word-wrap;
         }
     }

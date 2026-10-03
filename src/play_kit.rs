@@ -342,7 +342,7 @@ impl PlayKit {
                 self.hero_page = (self.hero_page + 1) % self.cfg.hero.len();
             }
             if let Some(c) = self.focus_control() {
-                self.flash(format!("◂▸ {}", host.kit_label(c)));
+                self.flash(format!("Dial: {}", host.kit_label(c)));
             }
         }
         if input.knob2_press {
@@ -386,7 +386,7 @@ impl PlayKit {
             match layer {
                 Layer::Controls if down && !was && rank < n => {
                     self.focused = rank;
-                    self.flash(format!("◂▸ {}", host.kit_label(rank)));
+                    self.flash(format!("Dial: {}", host.kit_label(rank)));
                 }
                 Layer::Moments => {
                     if down && !was {

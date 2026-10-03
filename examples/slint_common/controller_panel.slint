@@ -23,8 +23,8 @@ component StickView inherits Rectangle {
     Text {
         x: 3px; y: 2px;
         text: root.label;
-        color: root.ink.with-alpha(0.5);
-        font-family: "JetBrains Mono"; font-size: 7px;
+        color: root.ink.with-alpha(0.72);
+        font-family: "JetBrains Mono"; font-size: 12px;
     }
 }
 
@@ -46,7 +46,7 @@ export component ControllerPanel inherits InstrumentPanel {
         Text {
             height: 20px;
             text: root.pad-name;
-            color: root.connected ? root.accent : root.ink.with-alpha(0.5);
+            color: root.connected ? root.accent : root.ink.with-alpha(0.72);
             font-family: "Space Grotesk"; font-weight: 700; font-size: 16px;
             overflow: elide;
         }
@@ -57,7 +57,7 @@ export component ControllerPanel inherits InstrumentPanel {
             Text {
                 text: "LEARN " + root.learning + ": press a button or move a stick";
                 color: root.paper;
-                font-family: "JetBrains Mono"; font-weight: 700; font-size: 9px;
+                font-family: "JetBrains Mono"; font-weight: 700; font-size: 12px;
                 horizontal-alignment: center; vertical-alignment: center;
                 wrap: word-wrap;
             }
@@ -75,8 +75,8 @@ export component ControllerPanel inherits InstrumentPanel {
                     background: self.on ? root.accent : root.ink.with-alpha(0.05);
                     Text {
                         text: parent.i < root.names.length ? root.names[parent.i] : "";
-                        color: parent.on ? root.paper : root.ink.with-alpha(0.7);
-                        font-family: "JetBrains Mono"; font-size: 7px;
+                        color: parent.on ? root.paper : root.ink.with-alpha(0.72);
+                        font-family: "JetBrains Mono"; font-size: 12px;
                         horizontal-alignment: center; vertical-alignment: center;
                     }
                 }
@@ -107,8 +107,8 @@ export component ControllerPanel inherits InstrumentPanel {
                 }
                 Text {
                     text: i == 0 ? "L2" : "R2";
-                    color: root.ink.with-alpha(0.6);
-                    font-family: "JetBrains Mono"; font-size: 8px;
+                    color: root.ink.with-alpha(0.72);
+                    font-family: "JetBrains Mono"; font-size: 12px;
                     horizontal-alignment: center;
                 }
             }
@@ -116,7 +116,7 @@ export component ControllerPanel inherits InstrumentPanel {
         Text {
             text: root.status != "" ? root.status : "Knob 2 press: learn  ·  turn left: clear";
             color: root.ink.with-alpha(0.75);
-            font-family: "JetBrains Mono"; font-size: 9px;
+            font-family: "JetBrains Mono"; font-size: 12px;
             wrap: word-wrap;
         }
         Rectangle { vertical-stretch: 1; }

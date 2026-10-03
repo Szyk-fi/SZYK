@@ -49,8 +49,8 @@ export component ParamListColumn inherits Rectangle {
             height: root.big-text ? (root.more-above ? 18px : 0px) : 22px;
             Text {
                 text: root.big-text ? "" : "↑↓ SELECT · ◀▶ EDIT · R1 OPEN";
-                color: root.ink.with-alpha(0.55);
-                font-family: "JetBrains Mono"; font-size: 9px; letter-spacing: 1px;
+                color: root.ink.with-alpha(0.72);
+                font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 1px;
                 vertical-alignment: center;
             }
             Text {
@@ -82,7 +82,7 @@ export component ParamListColumn inherits Rectangle {
                 }
                 Text {
                     text: i < root.row-values.length ? root.row-values[i] : "";
-                    color: row.selected ? root.paper : root.ink.with-alpha(0.65);
+                    color: row.selected ? root.paper : root.ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
                     font-size: root.big-text ? 18px : 10px;
                     vertical-alignment: center;
@@ -103,7 +103,7 @@ export component ParamListColumn inherits Rectangle {
             height: root.big-text ? 18px : 24px;
             text: root.big-text ? (root.more-below ? "↓ MORE APPS" : "R1 OPEN") :
                 (root.selected-row < root.row-values.length && root.row-values[root.selected-row] != "" ? root.row-values[root.selected-row] : "R1 SELECT  ·  ◀ ▶ ADJUST") + (root.more-below ? "  ↓" : "");
-            color: root.ink.with-alpha(0.6);
+            color: root.ink.with-alpha(0.72);
             font-family: "JetBrains Mono";
             font-size: root.big-text ? 10px : 9px;
             wrap: word-wrap; overflow: elide;
@@ -216,7 +216,7 @@ export component DeviceFrame inherits Window {
         Text {
             x: 0px; y: 0px; width: 100%; height: 12px;
             text: side == 0 ? "L1" : "R1";
-            color: #c5c7ca; font-size: 9px; font-weight: 700;
+            color: #c5c7ca; font-size: 12px; font-weight: 700;
             horizontal-alignment: center; vertical-alignment: center;
             letter-spacing: 1px;
         }
@@ -240,7 +240,7 @@ export component DeviceFrame inherits Window {
         Text {
             x: 188px; y: 12px; width: 280px; height: 20px;
             text: "P O R T A M A X"; color: #898c90;
-            font-family: "JetBrains Mono"; font-size: 11px; font-weight: 700;
+            font-family: "JetBrains Mono"; font-size: 12px; font-weight: 700;
         }
         Rectangle {
             x: 818px; y: 19px; width: 5px; height: 5px;
@@ -265,7 +265,7 @@ export component DeviceFrame inherits Window {
             }
             Text {
                 x: 24px; y: 19px; text: side == 0 ? "HAND L" : "HAND R";
-                color: #6c7075; font-family: "JetBrains Mono"; font-size: 7px;
+                color: #6c7075; font-family: "JetBrains Mono"; font-size: 12px;
             }
             TouchArea {
                 pointer-event(event) => {
@@ -310,7 +310,7 @@ export component DeviceFrame inherits Window {
                             font-family: "JetBrains Mono";
                             font-size: 12px;
                             letter-spacing: 0.6px;
-                            color: root.screen-ink.with-alpha(0.55);
+                            color: root.screen-ink.with-alpha(0.72);
                             vertical-alignment: bottom;
                         }
                     }
@@ -356,7 +356,7 @@ export component DeviceFrame inherits Window {
                                 font-size: 14px;
                                 letter-spacing: 0.4px;
                                 font-weight: seg.active ? 700 : 400;
-                                color: seg.active ? root.accent : root.accent.with-alpha(0.55);
+                                color: seg.active ? root.accent : root.accent.with-alpha(0.72);
                                 vertical-alignment: center;
                                 horizontal-alignment: left;
                             }
@@ -490,7 +490,7 @@ export component DeviceFrame inherits Window {
                         x: 7px; y: parent.height - 19px; width: parent.width - 14px; height: 12px;
                         text: i + 1; color: pad-touch.pressed || parent.lit ? #101113 : #92998c;
                         horizontal-alignment: right;
-                        font-family: "JetBrains Mono"; font-size: 9px;
+                        font-family: "JetBrains Mono"; font-size: 12px;
                     }
                     pad-touch := TouchArea {
                         pointer-event(event) => {

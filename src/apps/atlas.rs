@@ -1263,7 +1263,7 @@ impl App for AtlasApp {
             category: self.patch.category.to_uppercase(),
             description: self.patch.description.clone(),
             index: format!("{}/{}", self.preset + 1, self.library.len()),
-            macro_names: MACRO_NAMES.iter().map(|s| s.to_string()).collect(),
+            macro_names: MACRO_NAMES.iter().map(|s| title_case(s)).collect(),
             macro_values: (0..N_MACROS).map(|k| self.s.macros[k].get()).collect(),
             macro_used: (0..N_MACROS).map(|k| self.macro_used(k)).collect(),
             morph: self.s.morph(),

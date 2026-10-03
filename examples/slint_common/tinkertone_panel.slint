@@ -17,9 +17,9 @@ component Lamp inherits HorizontalLayout {
     }
     Text {
         text: root.label;
-        color: root.on ? root.ink : root.ink.with-alpha(0.45);
+        color: root.on ? root.ink : root.ink.with-alpha(0.72);
         font-family: "JetBrains Mono";
-        font-size: 8px;
+        font-size: 12px;
         vertical-alignment: center;
     }
 }
@@ -131,10 +131,10 @@ export component TinkertonePanel inherits InstrumentPanel {
             Text {
                 text: "BASS";
                 width: 26px;
-                color: root.bass-layer ? root.accent : root.ink.with-alpha(0.55);
+                color: root.bass-layer ? root.accent : root.ink.with-alpha(0.72);
                 font-family: "JetBrains Mono";
                 font-weight: 700;
-                font-size: 8px;
+                font-size: 12px;
                 vertical-alignment: center;
             }
             for k in 15 : Rectangle {
@@ -154,15 +154,15 @@ export component TinkertonePanel inherits InstrumentPanel {
                     padding-left: 4px; padding-right: 4px; padding-top: 2px;
                     Text {
                         text: "TONE " + (i + 1);
-                        color: i == root.preset ? root.paper : root.ink.with-alpha(0.5);
+                        color: i == root.preset ? root.paper : root.ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 7px;
+                        font-size: 12px;
                     }
                     Text {
                         text: name;
                         color: i == root.preset ? root.paper : root.ink;
                         font-family: "JetBrains Mono";
-                        font-size: 8px;
+                        font-size: 12px;
                         overflow: elide;
                     }
                 }
@@ -178,7 +178,7 @@ export component TinkertonePanel inherits InstrumentPanel {
                 color: root.ink;
                 font-family: "JetBrains Mono";
                 font-weight: 700;
-                font-size: 9px;
+                font-size: 12px;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
             }
@@ -216,9 +216,9 @@ export component TinkertonePanel inherits InstrumentPanel {
                 }
                 Text {
                     text: d;
-                    color: root.ink.with-alpha(0.55);
+                    color: root.ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 8px;
+                    font-size: 12px;
                     vertical-alignment: center;
                 }
             }
@@ -230,7 +230,7 @@ export component TinkertonePanel inherits InstrumentPanel {
                 color: root.line-rec && root.bass-mode == "My Line" ? #e0493a
                     : root.bass-mode != "Manual" ? root.accent : root.ink.with-alpha(0.55);
                 font-family: "JetBrains Mono";
-                font-size: 8px;
+                font-size: 12px;
                 vertical-alignment: center;
             }
         }
@@ -257,9 +257,9 @@ export component TinkertonePanel inherits InstrumentPanel {
                 spacing: 4px;
                 Text {
                     text: ["VOL", "ACC", "OUT"][i];
-                    color: root.ink.with-alpha(0.55);
+                    color: root.ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 7px;
+                    font-size: 12px;
                     vertical-alignment: center;
                 }
                 Rectangle {

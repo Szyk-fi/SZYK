@@ -4,21 +4,21 @@ export component ScalePanel inherits Rectangle {
     in property <[bool]> keys;
     background: root.paper;
     VerticalLayout { padding: 12px; spacing: 12px;
-        Text { text: "MAIN SCALE"; color: root.accent; font-size: 10px; height: 17px; }
+        Text { text: "MAIN SCALE"; color: root.accent; font-size: 12px; height: 17px; }
         Text { text: root.root-note + " " + root.scale-name; color: root.ink; font-family: "Space Grotesk"; font-size: 24px; wrap: word-wrap; height: 57px; }
-        Text { text: "NOTES"; color: root.accent; font-size: 10px; height: 14px; }
+        Text { text: "NOTES"; color: root.accent; font-size: 12px; height: 14px; }
         Text { text: root.notes; color: root.ink; font-size: 14px; wrap: word-wrap; height: 46px; }
         Rectangle { vertical-stretch: 1;
             for pitch[i] in [0,2,4,5,7,9,11] : Rectangle {
                 x: i * parent.width/7; width: parent.width/7 - 2px; height: parent.height; border-radius: 3px;
                 background: root.keys[pitch] ? root.accent : root.ink.with-alpha(0.13);
-                Text { y: parent.height - 20px; height: 18px; text: ["C","D","E","F","G","A","B"][i]; color: root.keys[pitch] ? root.paper : root.ink; font-size: 10px; horizontal-alignment: center; }
+                Text { y: parent.height - 20px; height: 18px; text: ["C","D","E","F","G","A","B"][i]; color: root.keys[pitch] ? root.paper : root.ink; font-size: 12px; horizontal-alignment: center; }
             }
             for pitch[i] in [1,3,6,8,10] : Rectangle {
                 x: ([1,2,4,5,6][i] - 0.3)*parent.width/7; width: parent.width/7*0.6; height: parent.height*0.6; border-radius: 2px;
                 background: root.keys[pitch] ? root.accent.darker(0.25) : root.paper.darker(0.6); border-width: 1px; border-color: root.paper;
             }
         }
-        Text { text: "Highlighted keys belong to this scale"; color: root.ink.with-alpha(0.55); font-size: 10px; height: 14px; }
+        Text { text: "Highlighted keys belong to this scale"; color: root.ink.with-alpha(0.72); font-size: 12px; height: 14px; }
     }
 }

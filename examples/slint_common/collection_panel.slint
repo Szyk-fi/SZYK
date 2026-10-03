@@ -1,6 +1,6 @@
 import { ParamListColumn } from "device_frame.slint";
 import { CollectionScene } from "collection_scenes.slint";
-component Label inherits Text { in property <color> ink; color: ink; font-family: "JetBrains Mono"; font-size: 9px; overflow: elide; }
+component Label inherits Text { in property <color> ink; color: ink; font-family: "JetBrains Mono"; font-size: 12px; overflow: elide; }
 export component CollectionPanel inherits Rectangle {
     in property <[float]> terrain;
     in property <[float]> visual-lines;
@@ -74,8 +74,8 @@ export component CollectionPanel inherits Rectangle {
                 Rectangle { y: 4px; height: 4px; horizontal-stretch: 1; background: root.ink.with-alpha(0.1); Rectangle { width: min(1,root.rms)*parent.width; height: parent.height; background: root.accent; } }
                 Label { text: root.kind == 1 || root.kind == 4 || root.kind == 5 || root.kind == 6 || root.kind == 8 ? "STEP " + (root.step + 1) : root.duration > 0 ? round(root.phase*10)/10 + " / " + round(root.duration*10)/10 + "s" : "LIVE"; ink: root.ink.with-alpha(0.6); width: 92px; horizontal-alignment: right; }
             }
-            Text { text: root.status; color: root.ink; font-family: "Space Grotesk"; font-size: 11px; wrap: word-wrap; height: root.kind==2 || root.kind==3 || root.kind==6 || root.kind==4 || root.kind==14 ? 20px : 29px; }
-            Text { text: root.hint; color: root.ink.with-alpha(0.55); font-family: "Space Grotesk"; font-size: 10px; wrap: word-wrap; height: root.kind==2 || root.kind==3 || root.kind==6 || root.kind==4 || root.kind==14 ? 17px : 25px; }
+            Text { text: root.status; color: root.ink; font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap; height: root.kind==2 || root.kind==3 || root.kind==6 || root.kind==4 || root.kind==14 ? 20px : 29px; }
+            Text { text: root.hint; color: root.ink.with-alpha(0.72); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap; height: root.kind==2 || root.kind==3 || root.kind==6 || root.kind==4 || root.kind==14 ? 17px : 25px; }
         }
     }
 }

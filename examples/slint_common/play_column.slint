@@ -35,17 +35,11 @@ component MiniDial inherits Rectangle {
                 MoveTo { x: 17 + 13 * Math.cos(135deg); y: 17 + 13 * Math.sin(135deg); }
                 ArcTo { radius-x: 13; radius-y: 13; x: 17 + 13 * Math.cos(root.a1); y: 17 + 13 * Math.sin(root.a1); large-arc: root.n > 0.6667; sweep: true; }
             }
-            // The focused dial (the D-pad's left/right turns it) wears the
-            // ◂▸ badge; SELECT moves the focus, holding SELECT resets it.
+            // The focused dial (the D-pad's left/right turns it) wears a
+            // dot; SELECT moves the focus, holding SELECT resets it.
             if root.knob == 2 : Rectangle {
-                x: 7px; y: 10px; width: 20px; height: 14px; border-radius: 7px;
+                x: 11px; y: 11px; width: 12px; height: 12px; border-radius: 6px;
                 background: root.accent;
-                Text {
-                    text: "◂▸";
-                    color: root.paper;
-                    font-family: "JetBrains Mono"; font-weight: 700; font-size: 9px;
-                    horizontal-alignment: center; vertical-alignment: center;
-                }
             }
         }
         VerticalLayout {
@@ -53,13 +47,13 @@ component MiniDial inherits Rectangle {
             Text {
                 text: root.label;
                 color: root.ink;
-                font-family: "JetBrains Mono"; font-size: 9px; font-weight: 700;
+                font-family: "JetBrains Mono"; font-size: 12px; font-weight: 700;
                 overflow: elide;
             }
             Text {
                 text: root.value;
-                color: root.ink.with-alpha(0.6);
-                font-family: "JetBrains Mono"; font-size: 9px;
+                color: root.ink.with-alpha(0.72);
+                font-family: "JetBrains Mono"; font-size: 12px;
                 overflow: elide;
             }
         }
@@ -101,14 +95,14 @@ export component PlayColumn inherits Rectangle {
                 Text {
                     text: "PADS · " + root.layer;
                     color: root.paper;
-                    font-family: "JetBrains Mono"; font-weight: 700; font-size: 9px;
+                    font-family: "JetBrains Mono"; font-weight: 700; font-size: 12px;
                     horizontal-alignment: center; vertical-alignment: center;
                 }
             }
             Text {
                 text: "F2 LAYER · R1 MENU";
-                color: root.ink.with-alpha(0.5);
-                font-family: "JetBrains Mono"; font-size: 8px;
+                color: root.ink.with-alpha(0.72);
+                font-family: "JetBrains Mono"; font-size: 12px;
                 horizontal-alignment: right; vertical-alignment: center;
             }
         }
@@ -129,9 +123,9 @@ export component PlayColumn inherits Rectangle {
         }
         if root.knob2-extra != "" : Text {
             height: 12px;
-            text: "◂▸ " + root.knob2-extra;
+            text: "→ " + root.knob2-extra;
             color: root.accent;
-            font-family: "JetBrains Mono"; font-size: 9px; font-weight: 700;
+            font-family: "JetBrains Mono"; font-size: 12px; font-weight: 700;
             overflow: elide;
         }
 
@@ -155,7 +149,7 @@ export component PlayColumn inherits Rectangle {
                         x: 4px; width: parent.width - 8px;
                         text: parent.i < root.pad-labels.length ? root.pad-labels[parent.i] : "";
                         color: parent.st >= 3 ? root.paper : root.ink;
-                        font-family: "JetBrains Mono"; font-size: 8px;
+                        font-family: "JetBrains Mono"; font-size: 12px;
                         vertical-alignment: center;
                         overflow: elide;
                     }
@@ -186,14 +180,14 @@ export component PlayColumn inherits Rectangle {
                 spacing: 2px;
                 Text {
                     text: "STICK " + root.stick-label;
-                    color: root.ink.with-alpha(0.6);
-                    font-family: "JetBrains Mono"; font-size: 8px;
+                    color: root.ink.with-alpha(0.72);
+                    font-family: "JetBrains Mono"; font-size: 12px;
                     overflow: elide;
                 }
                 Text {
                     text: root.status != "" ? root.status : root.line;
                     color: root.status != "" ? root.ink : root.accent;
-                    font-family: "JetBrains Mono"; font-size: 11px; font-weight: 700;
+                    font-family: "JetBrains Mono"; font-size: 12px; font-weight: 700;
                     overflow: elide;
                 }
             }
@@ -213,7 +207,7 @@ export component PlayColumn inherits Rectangle {
                 Text {
                     text: (i == 0 ? "L " : "R ") + (i == 0 ? root.hand-l-label : root.hand-r-label);
                     color: root.ink;
-                    font-family: "JetBrains Mono"; font-size: 7px;
+                    font-family: "JetBrains Mono"; font-size: 12px;
                     horizontal-alignment: center; overflow: elide;
                 }
             }
