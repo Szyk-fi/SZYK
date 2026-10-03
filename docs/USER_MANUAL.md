@@ -364,28 +364,59 @@ Save states aren't supported for Neo Geo yet.
 **Norns** runs scripts written for monome's norns, the Lua sound computer.
 Copy a script folder to the SD card as `saves/norns/dust/code/<name>/`
 (the same layout as norns' `dust/code`), open Norns, pick it from the
-SELECT list and press a knob. **tidepool** is built in as a demo.
+SELECT list and press SELECT. Twenty-one scripts are built in (see below).
 
 | norns | Portamax |
 |---|---|
-| E2 / E3 | knob 1 / knob 2 |
-| E1 | hold pad 16 and turn a knob (or pads 9 / 10) |
-| K2 / K3 | knob 1 press / knob 2 press, or pads 14 / 15 |
+| E2 | D-pad up / down |
+| E3 | D-pad left / right |
+| E1 | hold pad 16 and use the D-pad (or pads 9 / 10) |
+| K2 / K3 | SELECT / hold SELECT, or pads 14 / 15 |
 | K1 (hold) | pad 13 |
-| PARAMS menu | pad 11 or F2 (knob 1 picks, knob 2 changes, knob 1 press returns) |
+| PARAMS menu | pad 11 or F2 (up/down picks, left/right changes) |
 | back to SELECT | pad 12 or F3 |
 | MIDI notes in | pads 1–8 (C major from middle C, MIDI device 1) |
 
 What works: the screen, encoders and keys, params (number, option,
 control, taper, binary, trigger, groups), clock (`run`, `sync`, `sleep`,
-tempo), metro, MIDI input, `musicutil`/`util`/`controlspec`, the
-**PolyPerc** engine and **softcut** (6 voices, 2 × 60 s buffers, loops,
-overdub, filters). Scripts keep running when you leave the app.
+tempo), metro, MIDI input, MIDI out (its notes go on the note bus, so a
+script can play any instrument app), `musicutil`/`util`/`controlspec`,
+the **PolyPerc** engine and **softcut** (6 voices, 2 × 60 s buffers,
+loops, overdub, filters). Scripts keep running when you leave the app.
 
 Not yet: other engines (a script that asks for one still runs, but its
 engine commands are silent, and the status line says so), grid and arc
-(scripts see them as unplugged), crow, audio input into softcut, MIDI out,
-and saving params sets. awake runs unmodified.
+(scripts see them as unplugged), crow, audio input into softcut, and
+saving params sets. awake runs unmodified.
+
+**The built-in scripts.** All are original Portamax scripts written
+against the documented norns API. Each one's controls are listed at the
+top of its file (`assets/norns/code/<name>/<name>.lua`) and they make
+good starting points for your own.
+
+| Script | What it does |
+|---|---|
+| tidepool | Two tides; notes fall where they meet, into an echo |
+| orbits | Four moons ring as they cross the top of their orbit |
+| rainfall | Rain on tuned roof panels; wind pans it, K3 is thunder |
+| cellular | A 1-D cellular automaton; each row plays its living cells |
+| pendulums | A pendulum wave that drifts apart and realigns |
+| rings | Three euclidean rhythms on three rings |
+| markov | Learns which note follows which from the pads, then improvises |
+| lsystem | A growing L-system grammar read as a melody |
+| bounce | Balls in a box; where they hit sets the note |
+| drone | A drifting chord drone layered into softcut loops |
+| looper | Play the pads into a four-bar softcut loop and overdub |
+| chordwalk | An arpeggiator over chord progressions; pads set the key |
+| flock | A flock of birds; the highest ones sing |
+| lorenz | The Lorenz attractor as pitch, pan and brightness |
+| steps | A plain eight-step sequencer |
+| chimes | Wind chimes in just intonation |
+| warble | A melody into a wobbly tape echo |
+| stacks | Falling blocks ring their column; a full row plays a chord |
+| life | Conway's Game of Life, scanned column by column |
+| spiral | Sunflower seeds placed by the golden angle |
+| polymeter | A five-step bass against a seven-step melody |
 
 ## 9. Game controllers (PS5 and any other)
 

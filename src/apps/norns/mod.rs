@@ -15,9 +15,10 @@
 //! unattached ports), crow, audio input into softcut, saving psets.
 //!
 //! Controls -- norns has three encoders and three keys:
-//! - knob 1 = E2, knob 2 = E3; pad 16 held turns either knob into E1
+//! - D-pad up/down (or knob 1) = E2, D-pad left/right (or knob 2) = E3;
+//!   pad 16 held turns either into E1
 //!   (pads 9/10 also nudge E1 down/up)
-//! - knob 1 press = K2, knob 2 press = K3; pads 13/14/15 = K1/K2/K3, held
+//! - SELECT = K2, hold SELECT = K3; pads 13/14/15 = K1/K2/K3, held
 //! - pad 11 = Params page (knob 1 picks, knob 2 changes), pad 12 = back
 //!   to the script list
 //! - pads 1-8 play a C major scale into the script as MIDI notes
@@ -393,8 +394,11 @@ impl App for NornsApp {
             }
             Mode::Play => {
                 let shift = input.grid[PAD_E1_SHIFT];
-                if input.knob1 != 0 {
-                    self.send(Event::Enc(if shift { 1 } else { 2 }, input.knob1));
+                // No encoders on the device: D-pad up/down is E2 (up turns
+                // it clockwise) and left/right arrives in knob2 as E3.
+                let e2 = input.knob1 - input.navigation_steps;
+                if e2 != 0 {
+                    self.send(Event::Enc(if shift { 1 } else { 2 }, e2));
                 }
                 if input.knob2 != 0 {
                     self.send(Event::Enc(if shift { 1 } else { 3 }, input.knob2));
@@ -410,7 +414,8 @@ impl App for NornsApp {
             Mode::Params => {
                 let n = self.out.lock().unwrap().params.len();
                 if n > 0 {
-                    self.param_sel = (self.param_sel as i32 + input.knob1.signum()).clamp(0, n as i32 - 1) as usize;
+                    let d = input.knob1.signum() + input.navigation_steps.signum();
+                    self.param_sel = (self.param_sel as i32 + d).clamp(0, n as i32 - 1) as usize;
                 }
                 if input.knob2 != 0 {
                     let idx = self.out.lock().unwrap().params.get(self.param_sel).map(|r| r.3);
@@ -457,7 +462,7 @@ impl App for NornsApp {
         }
         let small = MonoTextStyle::new(&crate::spleen_fonts::SPLEEN_6X12, DIM);
         Text::new(&self.status(), Point::new(16, 316), small).draw(fb).ok();
-        Text::new("K1-3 pads 13-15  E1 pad16+knob  PARAMS pad11  SELECT pad12", Point::new(16, 334), small).draw(fb).ok();
+        Text::new("U/D E2  L/R E3  SELECT K2  pads 13-15 K1-3  pad 11 PARAMS  pad 12 list", Point::new(16, 334), small).draw(fb).ok();
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
@@ -675,6 +680,58 @@ end
         assert!(a.shown.iter().any(|&l| l == 15), "error text drawn");
         a.stop();
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Every bundled script must start, draw, take encoders, keys and
+    /// pad notes without a Lua error, and make sound.
+    #[test]
+    fn every_bundled_script_runs_and_plays() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/norns/code");
+        let names: Vec<String> = discover(&[(root.clone(), true)]).into_iter().map(|s| s.name).collect();
+        assert!(names.len() >= 21, "tidepool plus the twenty others: {names:?}");
+        let mut silent = Vec::new();
+        for name in &names {
+            let mut a = app_with(&root);
+            a.selected = a.scripts.iter().position(|s| &s.name == name).unwrap();
+            a.tick(&Input { knob1_press: true, ..Input::default() });
+            let mut p = a.audio_processor().unwrap();
+            assert!(wait_until(|| a.out.lock().unwrap().frames > 2), "{name}: no frames: {:?}", a.out.lock().unwrap().log);
+            let pad = |i: usize| Input { grid: std::array::from_fn(|g| g == i), ..Input::default() };
+            for input in [
+                Input { knob1: 1, ..Input::default() },
+                Input { knob2: -1, ..Input::default() },
+                pad(PAD_K[2]),
+                Input::default(),
+                pad(PAD_K[2]),
+                Input::default(),
+                pad(PAD_K[1]),
+                Input::default(),
+                pad(0),
+                Input::default(),
+                pad(4),
+                Input::default(),
+            ] {
+                a.tick(&input);
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            let mut energy = 0.0;
+            let mut buf = vec![0.0f32; 1024];
+            for _ in 0..150 {
+                buf.fill(0.0);
+                p.process(&mut buf, 2, 48_000.0);
+                assert!(buf.iter().all(|x| x.is_finite()), "{name}: non-finite audio");
+                energy += buf.iter().map(|x| x * x).sum::<f32>();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let o = a.out.lock().unwrap();
+            assert!(o.error.is_none(), "{name}: {:?}\n{:?}", o.error, o.log);
+            drop(o);
+            if energy < 0.01 {
+                silent.push(name.clone());
+            }
+            a.stop();
+        }
+        assert!(silent.is_empty(), "these scripts made no sound: {silent:?}");
     }
 
     /// The real test of compatibility: awake, if a copy is present (it is
