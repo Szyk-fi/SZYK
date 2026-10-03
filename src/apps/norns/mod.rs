@@ -687,8 +687,15 @@ end
     #[test]
     fn every_bundled_script_runs_and_plays() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/norns/code");
-        let names: Vec<String> = discover(&[(root.clone(), true)]).into_iter().map(|s| s.name).collect();
-        assert!(names.len() >= 21, "tidepool plus the twenty others: {names:?}");
+        let mut names: Vec<String> = discover(&[(root.clone(), true)]).into_iter().map(|s| s.name).collect();
+        assert!(names.len() >= 121, "tidepool plus the 120 others: {names:?}");
+        // PORTAMAX_NORNS_ONLY=a,b,c checks just those scripts (for writing
+        // new ones without waiting on all of them).
+        if let Ok(only) = std::env::var("PORTAMAX_NORNS_ONLY") {
+            let want: Vec<&str> = only.split(',').map(str::trim).collect();
+            names.retain(|n| want.contains(&n.as_str()));
+            assert_eq!(names.len(), want.len(), "unknown script in PORTAMAX_NORNS_ONLY: {want:?} vs {names:?}");
+        }
         let mut silent = Vec::new();
         for name in &names {
             let mut a = app_with(&root);
