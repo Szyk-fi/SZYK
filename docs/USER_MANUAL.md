@@ -99,7 +99,7 @@ way.
 | App | What it does |
 |---|---|
 | **Plaits** | The real Mutable Instruments Plaits voice (ported DSP, not an approximation) — all 24 engines of the Eurorack module's 1.2 firmware, with a play view built around the whole device (see §3.1). |
-| **Voltage** | Classic 2-oscillator subtractive synth (Saw/Square/Triangle/Sine), filter, envelope. |
+| **Voltage** | Classic 2-oscillator subtractive synth (Saw/Square/Triangle/Sine), filter, envelopes, mono/glide, chorus, delay and reverb. 100 preset slots, 20 synthwave factory presets. |
 | **Cascade** | 6-operator FM synth in the spirit of the DX7 — real FM synthesis, not a clone of Yamaha's ROM. Loads real `.syx` presets. |
 | **Synth** | The simplest instrument: 4x4 grid as a 16-note held keyboard, two knobs for cutoff/volume. |
 | **Madness** | Independent per-position phase drift warping a polygon into a generative voice (started life as "Bloom", renamed once the mechanic diverged). |
@@ -185,6 +185,48 @@ R1 opens the menu. Its **Depth** row sets how much you see:
 
 The format and engine are documented in `docs/SYNTH_PLATFORM.md`. The same
 engine runs Oracle.
+
+### 3.4 Voltage presets
+
+Voltage has **100 preset slots**. Slots 1–20 hold the factory presets,
+twenty original synthwave patches; slots 21–100 start empty. A preset
+holds the whole sound: oscillators, filter, envelopes, LFO, mono/glide,
+the effects and the arp (so the arp presets start arpeggiating as soon as
+you hold a chord).
+
+| Where | What to do |
+|---|---|
+| Play view | The Controls layer's last pad is **Preset**: left/right steps through the slots. The status line shows the loaded preset when no note is held. |
+| Menu → Presets → **Preset** | Left/right browses and loads. A `*` after the name means you've changed the sound since loading it. Hold SELECT to undo your edits. |
+| Menu → Presets → **Save to** | Left/right picks the slot (it starts on the first empty one), SELECT saves. Saving over a preset keeps its name; an empty slot gets "User NN". Hold SELECT to clear the slot; a factory slot gets its factory preset back. |
+
+Saved presets are written to the SD card at `saves/voltage/presets.json`
+and come back after a restart. The factory set lives in
+`assets/voltage/factory.json`; any field a preset leaves out takes the
+init patch's value, so the file is easy to read and edit.
+
+The factory presets:
+
+| # | Name | # | Name |
+|---|---|---|---|
+| 1 | Neon Arp (arp) | 11 | Polaroid Sky |
+| 2 | Night Drive Bass (mono) | 12 | Starfield Sweep |
+| 3 | Outrun Lead (mono) | 13 | Coastline Lead (mono) |
+| 4 | Sunset Pad | 14 | Tape Choir |
+| 5 | Chrome Brass | 15 | Arcade Bass |
+| 6 | Midnight Keys | 16 | Crystal Bells |
+| 7 | Gated Pluck | 17 | Turbo Saw Stack |
+| 8 | VHS Strings | 18 | After Hours Sub (mono) |
+| 9 | Black Ice Bass (mono) | 19 | Rain Arp (arp) |
+| 10 | Hyperdrive Arp (arp) | 20 | Final Lap Poly |
+
+They are written for Voltage "in the style of" synthwave artists (each
+preset's note in the file says which), not copies of anyone's patches.
+
+**Mono** (Oscillators group) plays one voice at the newest held pad's
+pitch; letting go of it returns to the pad still held. **Glide** slides
+between notes played legato, up to 1 s. The **Effects** group runs
+chorus → ping-pong delay → reverb, in stereo.
 
 ## 4. Effects
 

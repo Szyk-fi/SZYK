@@ -336,6 +336,7 @@ slint::slint! {
         in-out property <[float]> voltage-lfo-mid-y: [];
         in-out property <[float]> voltage-lfo-length: [];
         in-out property <[float]> voltage-lfo-angle: [];
+        in-out property <string> voltage-preset;
 
         // --- Cascade-specific state (active-kind == 4): the real FM
         // operator-routing graph. ---
@@ -1390,7 +1391,7 @@ slint::slint! {
             // current knobs (see `VoltageApp::voltage_panels`). ---
             if !root.on-home && root.active-kind == 2 : InstrumentPanel {
                 width: 306px;
-                caption: "SUBTRACTIVE / VOICE";
+                caption: root.voltage-preset != "" ? root.voltage-preset : "SUBTRACTIVE / VOICE";
                 ink: root.live-ink; accent: root.accent;
                 VerticalLayout {
                 spacing: 10px;
@@ -3678,6 +3679,7 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                 }
                 app::SlintExtra::Voltage(v) => {
                     ui.set_active_kind(2);
+                    ui.set_voltage_preset(v.preset.into());
                     ui.set_voltage_oscillator_mid_x(Rc::new(slint::VecModel::from(v.oscillator.mid_x)).into());
                     ui.set_voltage_oscillator_mid_y(Rc::new(slint::VecModel::from(v.oscillator.mid_y)).into());
                     ui.set_voltage_oscillator_length(Rc::new(slint::VecModel::from(v.oscillator.length)).into());

@@ -1043,6 +1043,8 @@ pub struct CurveSegments {
 /// `polyline_segments`) rather than raw samples, so the live screen
 /// draws genuine connected curves instead of a bar chart.
 pub struct VoltageExtra {
+    /// The loaded preset, "07 Neon Arp", with " *" once edited.
+    pub preset: String,
     pub oscillator: CurveSegments,
     pub filter: CurveSegments,
     pub filter_cutoff_frac: f32,
