@@ -1133,7 +1133,7 @@ slint::slint! {
                     }
                     Rectangle { vertical-stretch: 1; }
                     Text {
-                        text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : "Pads play notes. Knobs: cutoff and volume; D-pad: waveform.";
+                        text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : root.active-app-name == "Synth" ? "Pads play notes. Knobs: cutoff and volume; D-pad: waveform." : "Up/down picks a row; left/right changes it.";
                         color: root.live-ink.with-alpha(0.72); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap;
                     }
                     InstrumentLabel { text: root.active-app-name == "Synth" ? "F2 PAD LAYER  ·  R1 MENU" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 12px; }

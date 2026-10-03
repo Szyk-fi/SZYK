@@ -110,6 +110,8 @@ way.
 | **Trio** | Three layered Plaits engines that split what you play: Full, Bass, Top or Arp per layer; pads play the scale or diatonic chords. |
 | **Tinkertone** | An early-80s home keyboard with the MT-40's feature set (37 keys, 22 tones, 15-key bass, 6 rhythms) in an original look. Analog-modelled bass and drums, and you can record your own looping bass line (see §3.2). |
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
+| **Rings** | The real Mutable Instruments Rings resonator: modal bodies, sympathetic and inharmonic strings, FM voice, and the hidden "Disastrous Peace" string synth (see §3.5). |
+| **Elements** | The real Mutable Instruments Elements: a bowed, blown and struck physical-modelling voice with its own reverb (see §3.5). |
 
 ### 3.1 Playing Plaits
 
@@ -228,6 +230,28 @@ pitch; letting go of it returns to the pad still held. **Glide** slides
 between notes played legato, up to 1 s. The **Effects** group runs
 chorus → ping-pong delay → reverb, in stereo.
 
+### 3.5 Mutable Instruments: Rings, Elements, Marbles, Tides
+
+These four run the modules' own C++ code (from Mutable Instruments'
+open-source eurorack repository, MIT-licensed), as Plaits and Clouds do.
+Each opens on a play view with the module's panel on the dials; R1 shows
+every control, plus the module's routing rows.
+
+| App | Play it | Routing rows |
+|---|---|---|
+| **Rings** | Pads (chromatic from C3) or any keyboard strum it. Each note goes to the next of up to four voices. U/D picks the model. | **Exciter**: another app's audio excites the resonator instead of the internal exciter, like patching into the module's IN. |
+| **Elements** | Pads play it; hold a note to keep bowing or blowing. A hand in the depth sensors bows (left) or blows (right). SPACE above 7/8 freezes the reverb. | **Input**: another app's audio strikes the resonator. |
+| **Marbles** | F3 starts it (it opens stopped). X1, X2 and X3 play notes on T1, T2 and T3. | **Plays**: the instrument the notes go to. **T1–T3, X1–X3, Y App / Input**: patch any output to any app's mod input. |
+| **Tides** | F3 starts it. Pads are its TRIG and V/OCT: they fire the AD/AR envelopes and transpose from C3, so in the Audio range they play it. | **Out 1–4 App / Input**: patch each output to a mod input. Looping slopes swing both ways around the knob; envelopes push one way. |
+
+Why these four: they fill the gaps the other modules leave. Rings and
+Elements are physical-modelling voices (Plaits has only a simple modal
+engine); Marbles is a generative source for every instrument on the note
+bus; Tides is the modulation source the mod bus didn't have. Grids, the
+other obvious candidate, isn't here because its code is GPL-licensed and
+Portamax is MIT. Braids is Plaits' predecessor, Warps is already here, and
+Stages overlaps Tides and Pam's.
+
 ## 4. Effects
 
 All effects tap another app's live audio via the shared bus (the **Source**
@@ -258,6 +282,8 @@ row) rather than generating their own signal.
 | **Bloom** | Generative circular sequencer built from two groups of the same element ("dots"). |
 | **Pam's** | Clone of the core of Pamela's Pro Workout — multi-channel clock/gate generator with logic combinators between channels. |
 | **Turing Machine** | Music Thing Modular Turing Machine clone: clocked 16-bit shift register, "Locks" sets random-vs-repeat. |
+| **Marbles** | The real Mutable Instruments Marbles: random rhythms and melodies with deja vu, played on any instrument (see §3.5). |
+| **Tides** | The real Mutable Instruments Tides (2018): four linked envelopes, LFOs or oscillators (see §3.5). |
 | **Sequencer** | Multi-track step sequencer in the spirit of Sugar Bytes DrumComputer. |
 | **Ledger** | A tracker: 8 tracks × up to 64 rows × 16 patterns, each track a Plaits voice. Play view = performance (pads 1–8 mute, 9–16 loop / reverse / octave / half speed / dark); R1 = the editor (knob 1 rows, press for next field; knob 2 value, press to clear; pads enter notes). Effects: T M H D (sound locks), R retrigger, P chance, N nudge. |
 | **CV Out** | 32 independent CV outputs sent as MIDI CC to an external MIDI-to-CV box. |

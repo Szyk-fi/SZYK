@@ -1,6 +1,7 @@
-// Compiles Mutable Instruments' Plaits and Clouds DSP (vendor/eurorack,
-// MIT-licensed) plus our small FFI bridges (vendor/bridge) into two
-// static libs linked into the Rust binary. Both file lists and the
+// Compiles Mutable Instruments' DSP (vendor/eurorack, MIT-licensed)
+// plus our small FFI bridges (vendor/bridge) into static libs linked
+// into the Rust binary: Plaits and Clouds from the lists below, every
+// other module from its `vendor/bridge/<name>.sources` list. Both file lists and the
 // `-DTEST` flag come straight from each project's own
 // vendor/eurorack/<module>/test/makefile -- that's the eurorack
 // project's own standalone/desktop build of this code, not a guess on
@@ -79,6 +80,33 @@ fn main() {
     let mut files: Vec<String> = clouds_sources.iter().map(|s| format!("{eurorack}/{s}")).collect();
     files.push(format!("{bridge}/clouds_bridge.cc"));
     compile_cached("clouds_bridge", eurorack, &files);
+
+    compile_listed_bridges(eurorack, bridge);
+}
+
+/// Every other bridge is self-describing: `vendor/bridge/<name>.sources`
+/// lists its eurorack sources (one per line, `#` comments allowed) and
+/// `vendor/bridge/<name>_bridge.cc` is its C ABI, compiled together into
+/// `lib<name>_bridge.a`. Adding a Mutable Instruments module is dropping
+/// those two files in -- nothing here to edit.
+fn compile_listed_bridges(eurorack: &str, bridge: &str) {
+    println!("cargo:rerun-if-changed={bridge}");
+    let Ok(entries) = std::fs::read_dir(bridge) else { return };
+    let mut lists: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "sources")).collect();
+    lists.sort();
+    for list in lists {
+        println!("cargo:rerun-if-changed={}", list.display());
+        let name = list.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
+        let text = std::fs::read_to_string(&list).unwrap_or_default();
+        let mut files: Vec<String> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(|l| format!("{eurorack}/{l}"))
+            .collect();
+        files.push(format!("{bridge}/{name}_bridge.cc"));
+        compile_cached(&format!("{name}_bridge"), eurorack, &files);
+    }
 }
 
 /// Compiles one C++ static lib with the eurorack test-build flags, but only

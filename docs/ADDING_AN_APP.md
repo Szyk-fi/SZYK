@@ -119,3 +119,25 @@ Atlas (`src/apps/atlas.rs`) is the smallest complete front end to it, and its
 engine handover (pending/retired slots plus a crossfade) is the pattern to
 copy. Often a new "synth" is just a new preset in
 `assets/atlas/presets/` rather than a new app.
+
+## Wrapping a Mutable Instruments module (or other C++ DSP)
+
+The eurorack repository is vendored in `vendor/eurorack`. To run another
+of its modules:
+
+1. Write `vendor/bridge/<name>_bridge.cc`: a small `extern "C"` wrapper
+   that sets the module's patch and performance structs the way its
+   firmware does (read `<module>/<module>.cc` and its `cv_scaler`/
+   `cv_reader`) and calls its `Process`. No DSP of your own.
+2. Write `vendor/bridge/<name>.sources`: the `.cc` files it needs, one
+   per line, relative to `vendor/eurorack`. The module's own
+   `test/makefile` lists them. `build.rs` compiles every `.sources` list
+   it finds into `lib<name>_bridge.a`, so there's nothing to register.
+3. Write the app in `src/apps/<name>.rs` with `src/apps/mi_kit.rs`:
+   describe the panel as `Spec`s, implement `Module`, and wrap it in
+   `MiApp`. That gives you the play view, the menu, pads as keys, note-bus
+   input, mod inputs for every knob, and `RateBridge` for running a
+   fixed-rate engine at the device's rate. `rings.rs` is the smallest
+   voice, `marbles.rs` a note source, `tides.rs` a modulation source.
+4. Check the license: the STM32 modules are MIT; the AVR ones (Grids,
+   Shruthi...) are GPL and can't be linked into Portamax.

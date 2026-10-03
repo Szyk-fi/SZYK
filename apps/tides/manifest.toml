@@ -1,0 +1,15 @@
+id = "tides"
+name = "Tides"
+category = "sequencer"
+description = "The real Mutable Instruments Tides: four linked envelopes, LFOs or oscillators."
+audio_outputs = ["Tides"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Tides Level",
+    "Tides: Frequency",
+    "Tides: Shape",
+    "Tides: Slope",
+    "Tides: Smoothness",
+    "Tides: Shift",
+]

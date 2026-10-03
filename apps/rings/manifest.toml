@@ -1,0 +1,15 @@
+id = "rings"
+name = "Rings"
+category = "instrument"
+description = "The real Mutable Instruments Rings resonator: modal, strings, FM."
+audio_outputs = ["Rings"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Rings Level",
+    "Rings: Structure",
+    "Rings: Brightness",
+    "Rings: Damping",
+    "Rings: Position",
+    "Rings: FM",
+]

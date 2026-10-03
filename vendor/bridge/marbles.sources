@@ -1,0 +1,12 @@
+# Sources for marbles_bridge.cc, relative to vendor/eurorack -- the same
+# list as marbles/test/makefile's CC_FILES, minus its test harness.
+marbles/random/lag_processor.cc
+marbles/random/output_channel.cc
+marbles/random/quantizer.cc
+marbles/random/discrete_distribution_quantizer.cc
+marbles/ramp/ramp_extractor.cc
+marbles/random/t_generator.cc
+marbles/random/x_y_generator.cc
+marbles/resources.cc
+stmlib/utils/random.cc
+stmlib/dsp/units.cc
