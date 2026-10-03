@@ -1,6 +1,6 @@
 # Portamax User Manual
 
-Portamax is a self-contained groovebox/instrument simulator: 56 installed
+Portamax is a self-contained groovebox/instrument simulator: 66 installed
 apps sharing one audio engine, one modulation bus, and one 4x4 pad grid +
 D-pad + four knobs/encoders + F1-F4 control surface. This manual covers
 what's actually implemented today, not a roadmap.
@@ -32,7 +32,7 @@ cargo run --example slint_home_live
   track select, mute/solo...) — each app's own section below says what.
 
 The launcher groups installed apps into **Instruments, Effects, Sequencing,
-Library,** and **Utilities**. Up/down selects an app, left/right changes
+Library, Utilities** and **Kids**. Up/down selects an app, left/right changes
 category, R1 opens it. F2 cycles categories, F3 opens Recent (last 12 apps
 opened this session, not persisted across restarts), F4 opens Mixer. A green
 dot marks an app with an active transport.
@@ -462,6 +462,42 @@ Plug the Push in or power-cycle it at any time: Portamax notices the MIDI
 port change within a few seconds and sends every light again. It also
 refreshes all of them every few seconds, so a dropped message never
 leaves a pad wrong for long.
+
+### 8.3 Kids
+
+Ten apps in the launcher's **Kids** section, five for ages 6-9 and five
+for ages 10-12. Each draws its whole screen itself, with big pictures and
+a line of help along the bottom; F1 always goes home. They share one small
+sound engine (`src/apps/kids_kit.rs`): a glockenspiel and marimba built
+from their bars' real overtones, a Karplus-Strong harp, organ, flute,
+chiptune and bass voices, a synthesized drum kit (the hi-hats and cowbell
+use the TR-808's circuits), a room reverb and a sample-accurate clock.
+Each app has its own Mixer channel and audio output, so Studio can record
+it.
+
+**Ages 6-9** (little reading needed):
+
+| App | What it does | Pads | Other controls |
+|---|---|---|---|
+| Rainbow Bells | A rainbow glockenspiel in the major pentatonic, so every note fits | 16 bars, lowest bottom-left | left/right sound (bells, marimba, harp, flute); up/down octave; SELECT records a loop, again to play it, again to add more; hold SELECT erases; F3 plays/stops the loop |
+| Critter Choir | Animals that sing: a farm choir (cow, dog, duck, cat) and a pond choir (frog, owl, bee, bird) | each column is a critter, bottom pad lowest | left/right other choir; F3 the choir sings a song you can join |
+| Copy Cat | A memory game: the cat plays a tune on four coloured mats, you copy it | the four corners are the mats | SELECT starts; three misses end a game |
+| Bug Beats | A first drum machine: put a bug on a beat and it plays | rows are sounds, columns are the four beats | left/right band (Drums, Jungle, Party); up/down speed; SELECT play/stop; hold SELECT clears |
+| Monster Mic | A voice changer: Me, Robot, Chipmunk, Monster, Alien, Cave, Ghost, Underwater | top two rows pick a voice; pad 9 held records five seconds; pads 10-16 play it back at seven pitches | up/down live mic level (bottom = off); left/right input |
+
+Monster Mic listens to the hardware input once one is chosen in
+Settings → Input. With the internal speaker the mic can feed back:
+headphones, or the live mic turned down, stop that.
+
+**Ages 10-12** (each one explains what it's doing):
+
+| App | What it teaches | Pads | Other controls |
+|---|---|---|---|
+| Beat Lab | Rhythm and genre: 4 tracks × 16 steps, swing, seven styles (rock, boom bap, house, reggaeton, drum & bass, funk, bossa nova), each with a line on what defines it | the 16 steps of the selected track; tap cycles on, loud, soft, off | up/down menu (tracks, tempo, swing, style); left/right changes; SELECT play; hold SELECT clears the track |
+| Chord Garden | Harmony: a four-chord progression in Roman numerals, coloured by function (home, away, pull home) | row 1 pick a chord slot; rows 2-3 the key's seven chords and a 7th; row 4 melody notes that always fit | up/down Key / Style / Tempo; styles Pads, Guitar, Arpeggio, Piano; hold SELECT loads a well-known progression |
+| Sound Detective | Synthesis: match a mystery sound's wave, octave, filter brightness, attack and length; a level hides one more control each time | 1 hear the mystery, 2 hear yours, 3 check, 4 new case; the rest play your sound | up/down pick a control, left/right turn it; SELECT checks |
+| Ear Quest | Ear training in five quests that unlock in turn: higher or lower, major or minor, same or different, intervals, which solfa note | the answers (halves for two, corners for four) | SELECT hear again; up/down quest; hold SELECT skip |
+| Music Code | Programming: a tune as blocks (PLAY, REST, CHORD, DRUM, UP, DOWN, LEAP, DICE, HOME, REPEAT, IF HIGH) run one step at a time | top three rows insert blocks at the cursor; bottom row cursor left/right, delete, run | left/right cursor; up/down instrument; hold SELECT clears |
 
 ## 9. Game controllers (PS5 and any other)
 

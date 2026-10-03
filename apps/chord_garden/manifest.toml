@@ -1,0 +1,9 @@
+id = "chord_garden"
+name = "Chord Garden"
+category = "kids"
+description = "Ages 10-12. Plant a four-chord progression, hear it four ways, and play a melody that always fits."
+audio_outputs = ["Chord Garden"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Chord Garden Level",
+]

@@ -459,6 +459,17 @@ pub enum SlintExtra {
     Norns(NornsExtra),
     Grid(GridExtra),
     Atlas(AtlasExtra),
+    Screen(ScreenExtra),
+}
+
+/// An app that draws its whole screen itself (the Kids apps): the GUI
+/// shows this picture full screen, with no menu column or chrome.
+#[allow(dead_code)] // Slint GUI only
+pub struct ScreenExtra {
+    /// `width * height` RGBA pixels.
+    pub frame_rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// A text grid panel -- see `GridPanel` in the Slint GUI. Used by

@@ -141,3 +141,25 @@ of its modules:
    voice, `marbles.rs` a note source, `tides.rs` a modulation source.
 4. Check the license: the STM32 modules are MIT; the AVR ones (Grids,
    Shruthi...) are GPL and can't be linked into Portamax.
+
+## A full-screen app (the Kids apps)
+
+An app that draws its whole screen itself returns `true` from
+`wants_fullscreen` and hands the same picture to the Slint GUI from
+`slint_extra`:
+
+```rust
+fn slint_extra(&mut self) -> SlintExtra {
+    let mut fb = FrameBuffer::new();
+    self.draw(&mut fb);
+    kids_kit::screen_extra(&fb)
+}
+```
+
+The GUI then shows it edge to edge, with no menu column and no chrome,
+so the device and the GUI show one design. `src/apps/kids_kit.rs` also has
+a small sound engine (`Sound`: tuned percussion, harp, organ, drums, a
+step clock that calls your `Song` on the audio thread, and an `Extra`
+hook for your own DSP) and drawing helpers (big text, stars, rounded
+boxes). `rainbow_bells.rs` is the smallest app built on it. Give the
+manifest `category = "kids"` to file it under the launcher's Kids section.

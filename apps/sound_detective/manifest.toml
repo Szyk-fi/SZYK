@@ -1,0 +1,9 @@
+id = "sound_detective"
+name = "Sound Detective"
+category = "kids"
+description = "Ages 10-12. Match a mystery sound by turning a real synthesizer's wave, filter and envelope."
+audio_outputs = ["Sound Detective"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Sound Detective Level",
+]

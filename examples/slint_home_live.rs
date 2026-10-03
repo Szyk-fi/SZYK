@@ -199,7 +199,7 @@ slint::slint! {
         screen-ink: root.live-ink;
         // Retro's full-screen game view -- see `DeviceFrame.hide-chrome`'s
         // own doc comment.
-        hide-chrome: !root.on-home && root.active-kind == 30 && !root.retro-menu-visible;
+        hide-chrome: !root.on-home && ((root.active-kind == 30 && !root.retro-menu-visible) || root.active-kind == 43);
         in-out property <color> live-accent: #5CF07A;
         in-out property <color> live-bg: #0B100C;
         // The active app's own text-ink color (white by default,
@@ -904,6 +904,8 @@ slint::slint! {
         in-out property <bool> retro-menu-visible: true;
         in-out property <string> retro-status: "";
         in-out property <image> retro-frame;
+        // A Kids app's own full screen (active-kind 43).
+        in-out property <image> screen-frame;
         in property <string> retro-loaded-name;
         in property <int> retro-rom-count;
         in property <bool> retro-has-frame;
@@ -963,7 +965,7 @@ slint::slint! {
             // Retro's full-screen game view needs the video edge to
             // edge, not just chrome-free -- see `hide-chrome`'s doc
             // comment for the rest of this same fullscreen path.
-            property <bool> retro-fullscreen: !root.on-home && root.active-kind == 30 && !root.retro-menu-visible;
+            property <bool> retro-fullscreen: !root.on-home && ((root.active-kind == 30 && !root.retro-menu-visible) || root.active-kind == 43);
             padding-left: self.retro-fullscreen ? 0px : 18px;
             padding-right: self.retro-fullscreen ? 0px : 18px;
             padding-top: self.retro-fullscreen ? 0px : 4px;
@@ -977,7 +979,7 @@ slint::slint! {
             }
             // Bloom keeps its dedicated orbital layout; all other apps use
             // the shared parameter rail with their own ink, paper, and accent.
-            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && !root.pc-active : ParamListColumn {
+            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 43 && !root.pc-active : ParamListColumn {
                 width: 278px;
                 row-names: root.row-names;
                 row-values: root.row-values;
@@ -992,7 +994,7 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
-            if !root.on-home && root.pc-active && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 : PlayColumn {
+            if !root.on-home && root.pc-active && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 43 : PlayColumn {
                 width: 278px;
                 ink: root.live-ink; accent: root.accent; paper: root.live-bg;
                 layer: root.pc-layer;
@@ -3409,6 +3411,16 @@ slint::slint! {
                 }
             }
 
+            // A Kids app: its own picture, the whole screen.
+            if !root.on-home && root.active-kind == 43 : Rectangle {
+                background: black;
+                Image {
+                    source: root.screen-frame;
+                    image-fit: contain;
+                    width: 100%; height: 100%;
+                }
+            }
+
             if !root.on-home && root.active-kind == 29 : BloomPanel {
                 play: root.pc-active;
                 row-names: root.row-names;
@@ -4340,6 +4352,12 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_tt_peak(t.peak);
                 }
                 app::SlintExtra::None => ui.set_active_kind(0),
+                app::SlintExtra::Screen(sc) => {
+                    ui.set_active_kind(43);
+                    if let Some(image) = rgba_frame_to_slint_image(&sc.frame_rgba, sc.width, sc.height) {
+                        ui.set_screen_frame(image);
+                    }
+                }
             }
 }
 
@@ -4500,7 +4518,7 @@ fn main() {
     let active_for_f = Rc::clone(&active);
     let midi_target_for_f = Rc::clone(&midi_target);
     let launcher_for_category=launcher.clone();let list_for_category=home_list.clone();
-    ui.on_home_category_picked(move |i|{launcher_for_category.borrow_mut().category=(i as usize).min(6);list_for_category.borrow_mut().selected=0;});
+    ui.on_home_category_picked(move |i|{launcher_for_category.borrow_mut().category=(i as usize).min(launcher::RECENT);list_for_category.borrow_mut().selected=0;});
     let apps_for_open=apps.clone();let active_for_open=active.clone();let launcher_for_open=launcher.clone();
     ui.on_home_open(move |i|{if active_for_open.borrow().is_none() && i>=0 && (i as usize)<apps_for_open.borrow().len() {let i=i as usize;apps_for_open.borrow_mut()[i].1.on_enter();*active_for_open.borrow_mut()=Some(i);launcher_for_open.borrow_mut().visit(i);}});
     let launcher_for_f=launcher.clone();let list_for_f=home_list.clone();
@@ -4534,7 +4552,7 @@ fn main() {
         2 => {
             if let Some(idx) = *active_for_f.borrow() {
                 apps_for_f.borrow_mut()[idx].1.toggle_running();
-            } else {launcher_for_f.borrow_mut().category=6;list_for_f.borrow_mut().selected=0;}
+            } else {launcher_for_f.borrow_mut().category=launcher::RECENT;list_for_f.borrow_mut().selected=0;}
         }
         3 => {
             let mixer_idx = apps_for_f.borrow().iter().position(|(_, app)| app.system_role() == Some(app::SystemRole::Mixer));

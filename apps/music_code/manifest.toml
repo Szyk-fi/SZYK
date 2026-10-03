@@ -1,0 +1,9 @@
+id = "music_code"
+name = "Music Code"
+category = "kids"
+description = "Ages 10-12. Write a tune as a program of blocks: play, step up, repeat, if high..."
+audio_outputs = ["Music Code"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Music Code Level",
+]

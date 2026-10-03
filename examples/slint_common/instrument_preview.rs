@@ -174,7 +174,8 @@ pub fn render(directory: &str) {
         app.tick(&Input { navigation_steps: -1, ..Default::default() });
         println!("{name}: short D-pad taps move one row; MIDI encoder sensitivity preserved");
         }
-        if name != "Synth" && app.slint_rows().len() > 1 {
+        // A full-screen app (the Kids apps) has no menu column to tap.
+        if name != "Synth" && app.slint_rows().len() > 1 && !matches!(app.slint_extra(), app::SlintExtra::Screen(_)) {
             let before = app.slint_selected();
             for (y, delta) in [(249.0, 1), (167.0, -1)] {
                 let position = slint::LogicalPosition::new(113.0, y);
@@ -378,8 +379,9 @@ pub fn render(directory: &str) {
     ui.set_transport_action("".into());
     ui.set_live_bg(slint::Color::from_rgb_u8(18,27,27));ui.set_live_ink(slint::Color::from_rgb_u8(241,240,230));ui.set_live_accent(slint::Color::from_rgb_u8(183,214,197));
     let names:Vec<String>=manifests.iter().map(|m|m.name.clone()).collect();
+    launcher::install_catalog(manifests.iter().map(|m|(m.name.clone(),m.category.clone(),m.description.clone())));
     let mut browser=launcher::Launcher::default();
-    for (category,slug) in [(0,"home"),(1,"home-instruments"),(6,"home-recent-empty")] {
+    for (category,slug) in [(0,"home"),(1,"home-instruments"),(6,"home-kids"),(launcher::RECENT,"home-recent-empty")] {
         browser.category=category;
         let ids=browser.indices(&names);let visible:Vec<_>=ids.iter().copied().take(6).collect();
         ui.set_home_names(Rc::new(slint::VecModel::from(visible.iter().map(|i|slint::SharedString::from(names[*i].as_str())).collect::<Vec<_>>())).into());
