@@ -17,7 +17,7 @@ use crate::apps::{
     queen_of_pentacles::QueenOfPentaclesApp, rainmaker::RainmakerApp, sample_drum::SampleDrumApp, sequencer::SequencerApp, settings::SettingsApp, singularity::SingularityApp,
     starlab::StarlabApp, synth::SynthApp, tape::TapeApp, tonestack::TonestackApp, turing_machine::TuringMachineApp, visualizer::VisualizerApp, voltage::VoltageApp,
     warps::WarpsApp,
-    oracle::OracleApp, pulsar::PulsarApp, tinkertone::TinkertoneApp, norns::NornsApp, ledger::LedgerApp, trio::TrioApp, mosaic::MosaicApp, squeeze::SqueezeApp, controller_setup::ControllerSetupApp,
+    oracle::OracleApp, pulsar::PulsarApp, tinkertone::TinkertoneApp, norns::NornsApp, ledger::LedgerApp, trio::TrioApp, atlas::AtlasApp, mosaic::MosaicApp, squeeze::SqueezeApp, controller_setup::ControllerSetupApp,
 };
 use crate::audio_bus::AudioBus;
 use crate::audio_devices::AudioDeviceState;
@@ -571,6 +571,22 @@ impl Registry {
                 )) as Box<dyn App>
             })
         });
+        constructors.insert("atlas".into(), {
+            let sensitivity = Arc::clone(&sensitivity);
+            let nav_speed = Arc::clone(&nav_speed);
+            let modbus = Arc::clone(&modbus);
+            let audio_bus = Arc::clone(&audio_bus);
+            let mixer_bus = Arc::clone(&mixer_bus);
+            Rc::new(move || {
+                Box::new(AtlasApp::new(
+                    Arc::clone(&sensitivity),
+                    Arc::clone(&nav_speed),
+                    Arc::clone(&modbus),
+                    Arc::clone(&audio_bus),
+                    Arc::clone(&mixer_bus),
+                )) as Box<dyn App>
+            })
+        });
         constructors.insert("trio".into(), {
             let sensitivity = Arc::clone(&sensitivity);
             let nav_speed = Arc::clone(&nav_speed);
@@ -705,7 +721,7 @@ fn audio_outputs(id:&str)->Vec<String>{
     if id=="portal" {return std::iter::once("Portal".into()).chain((1..=4).map(|i|format!("Portal Aux {i}"))).collect();}
     if let Some((_,_,name))=crate::apps::collection::APPS.iter().find(|(_,app,_)|*app==id){return vec![(*name).into()];}
     let name=match id {
-        "forge"=>"Forge","synth"=>"Synth","analyzer"=>"Analyzer","visualizer"=>"Visualizer","plaits"=>"Plaits","beads"=>"Beads","black_hole"=>"Black Hole","bloom"=>"Bloom","cascade"=>"Cascade","clouds"=>"Clouds","madness"=>"Madness","magnito"=>"Magnito","morph"=>"Morph","nautilus"=>"Nautilus","nebula"=>"Nebula","prism"=>"Prism","rainmaker"=>"Rainmaker","sample_drum"=>"Sample Drum","sequencer"=>"Sequencer","singularity"=>"Singularity","starlab"=>"Starlab","tape"=>"Tape","tonestack"=>"Tonestack","voltage"=>"Voltage","retro"=>"Retro","vector_filter"=>"Vector Filter","oracle"=>"Oracle","pulsar"=>"Pulsar","tinkertone"=>"Tinkertone","norns"=>"Norns","squeeze"=>"Squeeze","mosaic"=>"Mosaic","trio"=>"Trio","ledger"=>"Ledger",_=>return Vec::new(),
+        "forge"=>"Forge","synth"=>"Synth","analyzer"=>"Analyzer","visualizer"=>"Visualizer","plaits"=>"Plaits","beads"=>"Beads","black_hole"=>"Black Hole","bloom"=>"Bloom","cascade"=>"Cascade","clouds"=>"Clouds","madness"=>"Madness","magnito"=>"Magnito","morph"=>"Morph","nautilus"=>"Nautilus","nebula"=>"Nebula","prism"=>"Prism","rainmaker"=>"Rainmaker","sample_drum"=>"Sample Drum","sequencer"=>"Sequencer","singularity"=>"Singularity","starlab"=>"Starlab","tape"=>"Tape","tonestack"=>"Tonestack","voltage"=>"Voltage","retro"=>"Retro","vector_filter"=>"Vector Filter","oracle"=>"Oracle","pulsar"=>"Pulsar","tinkertone"=>"Tinkertone","norns"=>"Norns","squeeze"=>"Squeeze","mosaic"=>"Mosaic","trio"=>"Trio","ledger"=>"Ledger","atlas"=>"Atlas",_=>return Vec::new(),
     };vec![name.into()]
 }
 

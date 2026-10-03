@@ -1,0 +1,51 @@
+{
+  "version": 2,
+  "name": "Modal Garden",
+  "category": "Pluck",
+  "tags": ["physical", "resonator", "pluck"],
+  "author": "Portamax",
+  "description": "A noise burst strikes an eight-mode resonator: strings at one end of SHAPE, wooden bars in the middle, bells at the other.",
+  "kind": "instrument",
+  "voices": 8,
+  "amp_env": false,
+  "visual": "spectrum",
+  "page_names": ["Strike", "Body", "Motion", "Space"],
+  "params": [
+    {"id": "hard", "name": "Mallet", "min": 0.001, "max": 0.04, "default": 0.006, "curve": "exp", "unit": "s", "page": 1},
+    {"id": "tone", "name": "Strike Tone", "min": 200, "max": 12000, "default": 3000, "curve": "exp", "unit": "Hz", "page": 1},
+    {"id": "structure", "name": "Body", "min": 0, "max": 1, "default": 0.45, "page": 2},
+    {"id": "damp", "name": "Damping", "min": 0, "max": 1, "default": 0.45, "page": 2},
+    {"id": "bright", "name": "Brightness", "min": 0, "max": 1, "default": 0.7, "page": 2},
+    {"id": "level", "name": "Level", "min": 0.2, "max": 2, "default": 1, "page": 2},
+    {"id": "drift", "name": "Drift", "min": 0, "max": 0.4, "default": 0.05, "page": 3},
+    {"id": "delay", "name": "Echo", "min": 0, "max": 1, "default": 0.3, "page": 4},
+    {"id": "verb", "name": "Reverb", "min": 0, "max": 1, "default": 0.3, "page": 4}
+  ],
+  "macros": [
+    {"name": "CHARACTER", "targets": [{"param": "structure", "amount": 0.5}]},
+    {"name": "COLOR", "targets": [{"param": "tone", "amount": 0.4}, {"param": "bright", "amount": 0.3}]},
+    {"name": "MOTION", "targets": [{"param": "drift", "amount": 0.8}]},
+    {"name": "TEXTURE", "targets": [{"param": "hard", "amount": 0.6}]},
+    {"name": "SPACE", "targets": [{"param": "verb", "amount": 0.6}, {"param": "delay", "amount": 0.4}]},
+    {"name": "SHAPE", "targets": [{"param": "damp", "amount": -0.45}]},
+    {"name": "ENERGY", "targets": [{"param": "level", "amount": 0.4}, {"param": "tone", "amount": 0.2}]}
+  ],
+  "voice": [
+    {"id": "hit", "type": "ad", "in": {"a": 0.0005, "d": "hard"}},
+    {"id": "n", "type": "noise"},
+    {"id": "click", "type": "filter", "mode": "lp", "in": {"in": "n * hit * (0.4 + vel)", "cutoff": "tone", "res": 0.1}},
+    {"id": "wander", "type": "lfo", "shape": "smooth", "in": {"rate": 0.3}},
+    {"id": "body", "type": "modal", "in": {"in": "click * 4", "freq": "pitch", "structure": "clamp(structure + wander * drift, 0, 1)", "damp": "damp", "bright": "bright"}}
+  ],
+  "voice_out": "body * level * 3",
+  "global": [
+    {"id": "echo", "type": "delay", "max": 1, "in": {"in": "voices", "time": 0.36, "fb": 0.4, "damp": 0.5}},
+    {"id": "room", "type": "reverb", "in": {"in": "voices + echo * 0.3", "size": 0.8, "damp": 0.45, "mod": 0.2}}
+  ],
+  "out": {"left": "voices + echo * delay + room * verb", "right": "voices + echo * delay * 0.8 + room * verb"},
+  "settings": {"root": 60, "scale": 9},
+  "states": [
+    {"params": {}},
+    {"params": {"structure": 0.95, "damp": 0.15, "bright": 0.9, "tone": 8000, "hard": 0.002}}
+  ]
+}

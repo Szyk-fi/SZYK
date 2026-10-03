@@ -1,0 +1,14 @@
+id = "atlas"
+name = "Atlas"
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Atlas Level",
+    "Atlas: Character",
+    "Atlas: Color",
+    "Atlas: Motion",
+    "Atlas: Space",
+    "Atlas: Shape",
+    "Atlas: Energy",
+    "Atlas: Texture",
+    "Atlas: Morph",
+]

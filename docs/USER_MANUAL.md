@@ -106,6 +106,7 @@ way.
 | **Nebula** | A small real 2D gravity simulation — particles drift and get captured into orbits, each capture fires a note. |
 | **Queen of Pentacles** | CV/gate generator driven by real 1D chaotic maps (logistic map and two relatives), not a disguised sequencer. |
 | **StarLab** | Strymon StarLab-inspired: a Karplus-Strong string voice sharing a comb/allpass reverb tank with the effect side. |
+| **Atlas** | The meta-synth: a library of designed sounds (wavetable, granular, modal, Plaits, supersaw, ladder...) all played with the same eight controls — CHARACTER, COLOR, MOTION, SPACE, SHAPE, ENERGY, TEXTURE and MORPH (see §3.3). |
 | **Trio** | Three layered Plaits engines that split what you play: Full, Bass, Top or Arp per layer; pads play the scale or diatonic chords. |
 | **Tinkertone** | An early-80s home keyboard with the MT-40's feature set (37 keys, 22 tones, 15-key bass, 6 rhythms) in an original look. Analog-modelled bass and drums, and you can record your own looping bass line (see §3.2). |
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
@@ -154,6 +155,36 @@ comes back next time.
 
 The power-on tempo is 84 BPM, in the 80–110 range where the original's
 Rock rhythm found its second life in dancehall.
+
+### 3.3 Atlas, the meta-synth
+
+Every Atlas preset is a full synth patch (generators, filters, shapers and
+effects wired into each other), but you always play it the same way:
+
+| Surface | What it does |
+|---|---|
+| Knobs | CHARACTER / COLOR → MOTION / TEXTURE → SPACE / SHAPE → ENERGY / MORPH (knob 1 press: next pair). A macro the preset doesn't use shows "—". |
+| D-pad ▲▼ | Next / previous preset. |
+| MORPH | Glides every parameter through the preset's stored states, A → B (→ C → D). |
+| Joystick | X pushes MORPH, Y pushes COLOR. Depth sensors: left = MOTION, right = SPACE. |
+| Pads | Play the scale the preset sets (bottom-left is the root, blue pads are roots). |
+| F2 | Pads → Controls → Moments (a Moment stores the whole sound: preset, states, macros, MORPH). |
+
+R1 opens the menu. Its **Depth** row sets how much you see:
+
+- **Play**: the controls above, plus level, voices, root, scale and transpose.
+- **Edit**: adds every parameter by page and the envelope. It also adds
+  **Store → A–D** (capture where MORPH is now as a state, adding one if
+  needed), **Mutate**, **Revert** and **Save**, which writes a copy to
+  `saves/atlas/presets/`.
+
+  An edit changes the state MORPH is nearest to.
+- **Deep**: adds the compiled graph (each block with its live activity), the
+  patch's estimated cost, and the **CPU Budget**. Polyphony is capped to what
+  fits in the budget, and **Voices** shows "fits N" when it bites.
+
+The format and engine are documented in `docs/SYNTH_PLATFORM.md`. The same
+engine runs Oracle.
 
 ## 4. Effects
 

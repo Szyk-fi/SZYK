@@ -103,3 +103,19 @@ comes back.
 
 Playable apps open on the shared play view. See [PLAY_KIT.md](PLAY_KIT.md) for
 the structure and the steps to give a new app one.
+
+## Building a synth on the shared engine
+
+If your app makes sounds from oscillators, filters and effects, consider
+not writing the DSP yourself. The synthesis platform (`src/synthesis/`, see
+[SYNTH_PLATFORM.md](SYNTH_PLATFORM.md)) compiles a JSON patch into a
+real-time engine with:
+
+- voices, macros, morph states and parameter smoothing;
+- a CPU budget;
+- telemetry.
+
+Atlas (`src/apps/atlas.rs`) is the smallest complete front end to it, and its
+engine handover (pending/retired slots plus a crossfade) is the pattern to
+copy. Often a new "synth" is just a new preset in
+`assets/atlas/presets/` rather than a new app.

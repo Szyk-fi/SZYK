@@ -1,0 +1,59 @@
+{
+  "version": 2,
+  "name": "Init",
+  "category": "Keys",
+  "tags": ["init", "subtractive"],
+  "author": "Portamax",
+  "description": "The starting point: two oscillators, a filter with its own envelope, an LFO, chorus, delay and reverb. Every macro does one clear thing.",
+  "kind": "instrument",
+  "voices": 8,
+  "amp_env": true,
+  "visual": "scope",
+  "page_names": ["Oscillators", "Filter", "Motion", "Effects"],
+  "params": [
+    {"id": "wave", "name": "Wave", "min": 0, "max": 1, "default": 0.5, "page": 1},
+    {"id": "detune", "name": "Detune", "min": 0, "max": 0.3, "default": 0.08, "unit": "st", "page": 1},
+    {"id": "sub", "name": "Sub", "min": 0, "max": 1, "default": 0.3, "page": 1},
+    {"id": "cutoff", "name": "Cutoff", "min": 60, "max": 14000, "default": 1800, "curve": "exp", "unit": "Hz", "page": 2},
+    {"id": "res", "name": "Resonance", "min": 0, "max": 0.95, "default": 0.25, "page": 2},
+    {"id": "envamt", "name": "Filter Env", "min": 0, "max": 4, "default": 1.0, "page": 2},
+    {"id": "fdecay", "name": "Filter Decay", "min": 0.02, "max": 3, "default": 0.4, "curve": "exp", "unit": "s", "page": 2},
+    {"id": "rate", "name": "LFO Rate", "min": 0.05, "max": 12, "default": 0.8, "curve": "exp", "unit": "Hz", "page": 3},
+    {"id": "vib", "name": "Vibrato", "min": 0, "max": 0.5, "default": 0, "unit": "st", "page": 3},
+    {"id": "wah", "name": "Filter LFO", "min": 0, "max": 1, "default": 0, "page": 3},
+    {"id": "drive", "name": "Drive", "min": 1, "max": 12, "default": 1.5, "page": 4},
+    {"id": "chorus", "name": "Chorus", "min": 0, "max": 1, "default": 0.3, "page": 4},
+    {"id": "delay", "name": "Delay", "min": 0, "max": 1, "default": 0.15, "page": 4},
+    {"id": "verb", "name": "Reverb", "min": 0, "max": 1, "default": 0.2, "page": 4}
+  ],
+  "macros": [
+    {"name": "CHARACTER", "targets": [{"param": "wave", "amount": 0.5}, {"param": "detune", "amount": 0.5}]},
+    {"name": "COLOR", "targets": [{"param": "cutoff", "amount": 0.5}, {"param": "res", "amount": 0.3}]},
+    {"name": "MOTION", "targets": [{"param": "wah", "amount": 0.7}, {"param": "vib", "amount": 0.3}]},
+    {"name": "TEXTURE", "targets": [{"param": "detune", "amount": 0.4}, {"param": "sub", "amount": 0.5}]},
+    {"name": "SPACE", "targets": [{"param": "verb", "amount": 0.6}, {"param": "delay", "amount": 0.5}]},
+    {"name": "SHAPE", "targets": [{"param": "fdecay", "amount": 0.6}, {"param": "envamt", "amount": 0.4}]},
+    {"name": "ENERGY", "targets": [{"param": "drive", "amount": 0.6}, {"param": "envamt", "amount": 0.2}]}
+  ],
+  "voice": [
+    {"id": "lfo", "type": "lfo", "in": {"rate": "rate"}},
+    {"id": "a", "type": "osc", "wave": "saw", "in": {"freq": "pitch * pow(2, (detune + lfo * vib) / 12)"}},
+    {"id": "b", "type": "osc", "wave": "square", "in": {"freq": "pitch * pow(2, (-detune + lfo * vib) / 12)"}},
+    {"id": "s", "type": "osc", "wave": "sine", "in": {"freq": "pitch / 2"}},
+    {"id": "fenv", "type": "adsr", "in": {"a": 0.005, "d": "fdecay", "s": 0.2, "r": 0.4}},
+    {"id": "filt", "type": "filter", "mode": "lp", "in": {"in": "mix(a, b, wave) * 0.6 + s * sub * 0.5", "cutoff": "clamp(cutoff * (1 + fenv * envamt) * (1 + lfo * wah * 0.6), 30, 16000)", "res": "res"}},
+    {"id": "amp", "type": "drive", "mode": "soft", "in": {"in": "filt", "gain": "drive", "tone": 0.8}}
+  ],
+  "voice_out": "amp * 0.7",
+  "global": [
+    {"id": "wide", "type": "chorus", "in": {"in": "voices", "rate": 0.5, "depth": 0.5, "mix": "chorus"}},
+    {"id": "echo", "type": "delay", "max": 1, "in": {"in": "wide", "time": 0.3, "fb": 0.35, "damp": 0.3}},
+    {"id": "room", "type": "reverb", "in": {"in": "wide + echo * 0.4", "size": 0.75, "damp": 0.4, "mod": 0.3}}
+  ],
+  "out": {"left": "wide + echo * delay + room * verb", "right": "wide + echo * delay * 0.85 + room * verb"},
+  "settings": {"attack": 0.005, "decay": 0.3, "sustain": 0.8, "release": 0.4, "root": 48, "scale": 1},
+  "states": [
+    {"params": {}},
+    {"params": {"wave": 0.0, "detune": 0.2, "cutoff": 600, "res": 0.6, "envamt": 3, "fdecay": 0.15, "drive": 5}}
+  ]
+}

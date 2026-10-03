@@ -124,6 +124,8 @@ pub mod norns;
 pub mod ledger;
 #[path = "../src/apps/trio.rs"]
 pub mod trio;
+#[path = "../src/apps/atlas.rs"]
+pub mod atlas;
 #[path = "../src/apps/mosaic.rs"]
 pub mod mosaic;
 #[path = "../src/apps/squeeze.rs"]
@@ -194,7 +196,7 @@ mod apps {
     pub use super::{
         analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, forge, natural_gate, nautilus,
         nebula, pams, plaits, plaits_layout, controller_setup, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
-        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar, tinkertone, norns, ledger, trio, mosaic, squeeze,
+        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar, tinkertone, norns, ledger, trio, atlas, mosaic, squeeze,
     };
 }
 
@@ -243,6 +245,7 @@ slint::slint! {
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
     import { RetroPanel } from "slint_common/retro_panel.slint";
     import { NornsPanel } from "slint_common/norns_panel.slint";
+    import { AtlasPanel } from "slint_common/atlas_panel.slint";
     import { GridPanel } from "slint_common/grid_panel.slint";
     import { PortalPanel } from "slint_common/portal_panel.slint";
     import { ScalePanel } from "slint_common/scale_panel.slint";
@@ -954,6 +957,27 @@ slint::slint! {
         // --- Retro-specific state (active-kind == 30): the NES's own
         // real rendered frame, straight from `tetanes_core` -- see
         // `RetroExtra`. ---
+        // --- Atlas (active-kind == 42): see `AtlasExtra`. ---
+        in property <string> atlas-name;
+        in property <string> atlas-category;
+        in property <string> atlas-description;
+        in property <string> atlas-index;
+        in property <[string]> atlas-macro-names;
+        in property <[float]> atlas-macro-values;
+        in property <[bool]> atlas-macro-used;
+        in property <float> atlas-morph;
+        in property <int> atlas-states: 1;
+        in property <string> atlas-morph-label;
+        in property <bool> atlas-spectrum-view: true;
+        in property <[float]> atlas-spectrum;
+        in property <[float]> atlas-scope-mid-x;
+        in property <[float]> atlas-scope-mid-y;
+        in property <[float]> atlas-scope-length;
+        in property <[float]> atlas-scope-angle;
+        in property <string> atlas-voices;
+        in property <float> atlas-load;
+        in property <string> atlas-depth;
+        in property <string> atlas-status;
         // --- Grid (active-kind == 41): a monospace text panel ---
         in property <string> grid-caption;
         in property <string> grid-title;
@@ -1080,6 +1104,17 @@ slint::slint! {
                 ink: root.live-ink; accent: root.accent; paper: root.live-bg;
                 pad-name: root.ctl-name; connected: root.ctl-connected; map: root.ctl-map; learning: root.ctl-learning;
                 buttons: root.ctl-buttons; axes: root.ctl-axes; status: root.ctl-status;
+            }
+            if !root.on-home && root.active-kind == 42 : AtlasPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent;
+                caption: "ATLAS / META-SYNTH";
+                name: root.atlas-name; category: root.atlas-category; description: root.atlas-description; index: root.atlas-index;
+                macro-names: root.atlas-macro-names; macro-values: root.atlas-macro-values; macro-used: root.atlas-macro-used;
+                morph: root.atlas-morph; states: root.atlas-states; morph-label: root.atlas-morph-label;
+                spectrum-view: root.atlas-spectrum-view; spectrum: root.atlas-spectrum;
+                scope-mid-x: root.atlas-scope-mid-x; scope-mid-y: root.atlas-scope-mid-y; scope-length: root.atlas-scope-length; scope-angle: root.atlas-scope-angle;
+                voices: root.atlas-voices; load: root.atlas-load; depth: root.atlas-depth; status: root.atlas-status;
             }
             if !root.on-home && root.active-kind == 41 : GridPanel {
                 width: 306px;
@@ -4245,6 +4280,30 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_portal_targets(Rc::new(slint::VecModel::from(p.targets.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
                     ui.set_portal_amounts(Rc::new(slint::VecModel::from(p.amounts)).into());ui.set_portal_levels(Rc::new(slint::VecModel::from(p.levels)).into());ui.set_portal_enabled(Rc::new(slint::VecModel::from(p.enabled)).into());
                     ui.set_portal_cable(p.selected);ui.set_portal_active(p.active);ui.set_portal_status(p.status.into());
+                }
+                app::SlintExtra::Atlas(a) => {
+                    ui.set_active_kind(42);
+                    ui.set_atlas_name(a.name.into());
+                    ui.set_atlas_category(a.category.into());
+                    ui.set_atlas_description(a.description.into());
+                    ui.set_atlas_index(a.index.into());
+                    ui.set_atlas_macro_names(Rc::new(slint::VecModel::from(a.macro_names.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_atlas_macro_values(Rc::new(slint::VecModel::from(a.macro_values)).into());
+                    ui.set_atlas_macro_used(Rc::new(slint::VecModel::from(a.macro_used)).into());
+                    ui.set_atlas_morph(a.morph);
+                    ui.set_atlas_states(a.states as i32);
+                    ui.set_atlas_morph_label(a.morph_label.into());
+                    ui.set_atlas_spectrum_view(a.spectrum_view);
+                    ui.set_atlas_spectrum(Rc::new(slint::VecModel::from(a.spectrum)).into());
+                    let (mid_x, mid_y, length, angle_deg) = app::polyline_segments(&a.scope, 290.0, 46.0, true);
+                    ui.set_atlas_scope_mid_x(Rc::new(slint::VecModel::from(mid_x)).into());
+                    ui.set_atlas_scope_mid_y(Rc::new(slint::VecModel::from(mid_y)).into());
+                    ui.set_atlas_scope_length(Rc::new(slint::VecModel::from(length)).into());
+                    ui.set_atlas_scope_angle(Rc::new(slint::VecModel::from(angle_deg)).into());
+                    ui.set_atlas_voices(a.voices.into());
+                    ui.set_atlas_load(a.load);
+                    ui.set_atlas_depth(a.depth.into());
+                    ui.set_atlas_status(a.status.into());
                 }
                 app::SlintExtra::Grid(g) => {
                     ui.set_active_kind(41);

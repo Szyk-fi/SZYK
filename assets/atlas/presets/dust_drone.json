@@ -1,0 +1,52 @@
+{
+  "version": 2,
+  "name": "Dust Drone",
+  "category": "Drone",
+  "tags": ["supersaw", "granular", "chaos"],
+  "author": "Portamax",
+  "description": "Hold a pad and it breathes forever: supersaw and noise, a chaos map moving the filter, grains drifting through a long tail.",
+  "kind": "instrument",
+  "voices": 4,
+  "amp_env": true,
+  "visual": "spectrum",
+  "page_names": ["Source", "Filter", "Motion", "Space"],
+  "params": [
+    {"id": "detune", "name": "Detune", "min": 0, "max": 1, "default": 0.35, "page": 1},
+    {"id": "dust", "name": "Dust", "min": 0, "max": 1, "default": 0.2, "page": 1},
+    {"id": "fold", "name": "Fold", "min": 1, "max": 5, "default": 1.2, "page": 1},
+    {"id": "cutoff", "name": "Cutoff", "min": 80, "max": 8000, "default": 900, "curve": "exp", "unit": "Hz", "page": 2},
+    {"id": "res", "name": "Resonance", "min": 0, "max": 0.95, "default": 0.4, "page": 2},
+    {"id": "chaos", "name": "Chaos Rate", "min": 0.1, "max": 20, "default": 0.8, "curve": "exp", "unit": "Hz", "page": 3},
+    {"id": "depth", "name": "Chaos Depth", "min": 0, "max": 1, "default": 0.35, "page": 3},
+    {"id": "density", "name": "Grain Density", "min": 0, "max": 60, "default": 18, "page": 4},
+    {"id": "grains", "name": "Grain Level", "min": 0, "max": 1, "default": 0.4, "page": 4},
+    {"id": "verb", "name": "Tail", "min": 0, "max": 1, "default": 0.6, "page": 4}
+  ],
+  "macros": [
+    {"name": "CHARACTER", "targets": [{"param": "fold", "amount": 0.6}, {"param": "detune", "amount": 0.3}]},
+    {"name": "COLOR", "targets": [{"param": "cutoff", "amount": 0.45}]},
+    {"name": "MOTION", "targets": [{"param": "depth", "amount": 0.6}, {"param": "chaos", "amount": 0.3}]},
+    {"name": "TEXTURE", "targets": [{"param": "dust", "amount": 0.5}, {"param": "density", "amount": 0.4}]},
+    {"name": "SPACE", "targets": [{"param": "verb", "amount": 0.4}, {"param": "grains", "amount": 0.4}]},
+    {"name": "SHAPE", "targets": [{"param": "res", "amount": 0.5}]},
+    {"name": "ENERGY", "targets": [{"param": "fold", "amount": 0.3}, {"param": "cutoff", "amount": 0.2}]}
+  ],
+  "voice": [
+    {"id": "saws", "type": "supersaw", "in": {"freq": "pitch", "detune": "detune", "mix": 0.7}},
+    {"id": "d", "type": "noise", "color": "pink"},
+    {"id": "f1", "type": "fold", "in": {"in": "saws * 0.5 + d * dust * 0.5", "amount": "fold"}},
+    {"id": "map", "type": "chaos", "map": "lorenz", "in": {"rate": "chaos", "r": 0.6}},
+    {"id": "f", "type": "filter", "mode": "lp", "in": {"in": "f1", "cutoff": "clamp(cutoff * (1 + map * depth * 2), 40, 14000)", "res": "res"}}
+  ],
+  "voice_out": "f * 0.7",
+  "global": [
+    {"id": "cloud", "type": "grain", "in": {"in": "voices", "pos": 0.4, "size": 0.25, "density": "density", "pitch": 0, "spread": 0.6}},
+    {"id": "tail", "type": "reverb", "in": {"in": "voices + cloud * grains", "size": 0.95, "damp": 0.55, "mod": 0.6}}
+  ],
+  "out": {"left": "voices + cloud * grains + tail * verb", "right": "voices * 0.95 + cloud * grains + tail * verb"},
+  "settings": {"attack": 1.2, "decay": 1, "sustain": 1, "release": 4, "root": 38, "scale": 2},
+  "states": [
+    {"params": {}},
+    {"params": {"fold": 4, "dust": 0.6, "cutoff": 3000, "res": 0.7, "depth": 0.8, "density": 50}}
+  ]
+}

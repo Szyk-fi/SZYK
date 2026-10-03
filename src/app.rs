@@ -445,6 +445,7 @@ pub enum SlintExtra {
     Tinkertone(TinkertoneExtra),
     Norns(NornsExtra),
     Grid(GridExtra),
+    Atlas(crate::apps::atlas::AtlasExtra),
 }
 
 /// A text grid panel -- see `GridPanel` in the Slint GUI. Used by

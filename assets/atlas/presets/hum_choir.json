@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "name": "Hum Choir",
+  "category": "Pad",
+  "tags": ["wavetable", "vocal", "chorus"],
+  "author": "Portamax",
+  "description": "A vowel wavetable choir: MOTION walks the vowels, CHARACTER moves from ooh to aah, SPACE opens a hall.",
+  "kind": "instrument",
+  "voices": 8,
+  "amp_env": true,
+  "visual": "spectrum",
+  "page_names": ["Voices", "Tone", "Motion", "Space"],
+  "params": [
+    {"id": "vowel", "name": "Vowel", "min": 0, "max": 1, "default": 0.75, "page": 1},
+    {"id": "spread", "name": "Ensemble", "min": 0, "max": 0.3, "default": 0.12, "unit": "st", "page": 1},
+    {"id": "breath", "name": "Breath", "min": 0, "max": 0.6, "default": 0.12, "page": 1},
+    {"id": "tone", "name": "Tone", "min": 300, "max": 10000, "default": 3200, "curve": "exp", "unit": "Hz", "page": 2},
+    {"id": "warp", "name": "Edge", "min": 0, "max": 1, "default": 0.1, "page": 2},
+    {"id": "rate", "name": "Vowel Rate", "min": 0.02, "max": 3, "default": 0.12, "curve": "exp", "unit": "Hz", "page": 3},
+    {"id": "walk", "name": "Vowel Walk", "min": 0, "max": 0.5, "default": 0.1, "page": 3},
+    {"id": "vib", "name": "Vibrato", "min": 0, "max": 0.3, "default": 0.06, "unit": "st", "page": 3},
+    {"id": "chorus", "name": "Chorus", "min": 0, "max": 1, "default": 0.6, "page": 4},
+    {"id": "verb", "name": "Hall", "min": 0, "max": 1, "default": 0.45, "page": 4},
+    {"id": "size", "name": "Size", "min": 0.4, "max": 0.98, "default": 0.88, "page": 4}
+  ],
+  "macros": [
+    {"name": "CHARACTER", "targets": [{"param": "vowel", "amount": -0.75}]},
+    {"name": "COLOR", "targets": [{"param": "tone", "amount": 0.35}, {"param": "warp", "amount": 0.4}]},
+    {"name": "MOTION", "targets": [{"param": "walk", "amount": 0.7}, {"param": "rate", "amount": 0.3}]},
+    {"name": "TEXTURE", "targets": [{"param": "breath", "amount": 0.6}, {"param": "spread", "amount": 0.4}]},
+    {"name": "SPACE", "targets": [{"param": "verb", "amount": 0.5}, {"param": "size", "amount": 0.1}]},
+    {"name": "SHAPE", "targets": [{"param": "vib", "amount": 0.6}]},
+    {"name": "ENERGY", "targets": [{"param": "warp", "amount": 0.5}, {"param": "tone", "amount": 0.2}]}
+  ],
+  "voice": [
+    {"id": "walker", "type": "lfo", "shape": "smooth", "in": {"rate": "rate", "phase": "vindex * 0.17"}},
+    {"id": "trem", "type": "lfo", "in": {"rate": "5 + vindex * 0.3"}},
+    {"id": "v1", "type": "wavetable", "table": "vocal", "in": {"freq": "pitch * pow(2, (spread + trem * vib) / 12)", "pos": "clamp(vowel + walker * walk, 0, 1)", "warp": "warp"}},
+    {"id": "v2", "type": "wavetable", "table": "vocal", "in": {"freq": "pitch * pow(2, (-spread + trem * vib * 0.8) / 12)", "pos": "clamp(vowel - walker * walk, 0, 1)", "warp": "warp"}},
+    {"id": "air", "type": "noise", "color": "pink"},
+    {"id": "f", "type": "filter", "mode": "lp", "in": {"in": "(v1 + v2) * 0.5 + air * breath * 0.4", "cutoff": "tone", "res": 0.1}}
+  ],
+  "voice_out": "f * 1.5",
+  "global": [
+    {"id": "ens", "type": "chorus", "in": {"in": "voices", "rate": 0.35, "depth": 0.7, "mix": "chorus"}},
+    {"id": "hall", "type": "reverb", "in": {"in": "ens", "size": "size", "damp": 0.5, "mod": 0.5}}
+  ],
+  "out": {"left": "ens + hall * verb", "right": "ens * 0.95 + hall * verb * 1.05"},
+  "settings": {"attack": 0.25, "decay": 0.5, "sustain": 0.9, "release": 1.8, "root": 48, "scale": 1},
+  "states": [
+    {"params": {}},
+    {"params": {"vowel": 0.0, "tone": 7000, "warp": 0.5, "walk": 0.35, "breath": 0.35}}
+  ]
+}

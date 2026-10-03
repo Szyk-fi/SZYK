@@ -49,5 +49,6 @@ pub mod tinkertone;
 pub mod norns;
 pub mod ledger;
 pub mod trio;
+pub mod atlas;
 pub mod mosaic;
 pub mod squeeze;

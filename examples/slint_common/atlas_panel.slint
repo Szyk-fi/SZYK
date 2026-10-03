@@ -1,0 +1,143 @@
+// Atlas's right-hand panel: the preset's name, category and description,
+// the seven performance macros as bars (unused slots dimmed), the MORPH
+// track with its stored states A..D, and the live output -- spectrum or
+// scope, whichever the preset asks for -- with the voice count and CPU
+// load. See `AtlasExtra`.
+import { InstrumentPanel, InstrumentLabel, ScopeSurface, SignalTrace } from "instrument_widgets.slint";
+
+export component AtlasPanel inherits InstrumentPanel {
+    in property <string> name;
+    in property <string> category;
+    in property <string> description;
+    in property <string> index;
+    in property <[string]> macro-names;
+    in property <[float]> macro-values;
+    in property <[bool]> macro-used;
+    in property <float> morph;
+    in property <int> states: 1;
+    in property <string> morph-label;
+    in property <bool> spectrum-view: true;
+    in property <[float]> spectrum;
+    in property <[float]> scope-mid-x;
+    in property <[float]> scope-mid-y;
+    in property <[float]> scope-length;
+    in property <[float]> scope-angle;
+    in property <string> voices;
+    in property <float> load;
+    in property <string> depth;
+    in property <string> status;
+
+    VerticalLayout {
+        spacing: 6px;
+        HorizontalLayout {
+            height: 20px;
+            Text {
+                text: root.name;
+                color: root.ink;
+                font-family: "Space Grotesk";
+                font-size: 16px;
+                font-weight: 600;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            InstrumentLabel { text: root.index; ink: root.ink.with-alpha(0.5); font-size: 9px; width: 34px; horizontal-alignment: right; }
+        }
+        InstrumentLabel { text: root.category + "  ·  " + root.depth; ink: root.accent; font-size: 9px; height: 12px; }
+        Text {
+            text: root.description;
+            color: root.ink.with-alpha(0.62);
+            font-size: 9px;
+            wrap: word-wrap;
+            height: 34px;
+            overflow: elide;
+        }
+
+        // the seven macros
+        VerticalLayout {
+        spacing: 1px;
+        for m[i] in root.macro-names : HorizontalLayout {
+            height: 10px;
+            spacing: 6px;
+            InstrumentLabel {
+                text: m;
+                ink: root.macro-used[i] ? root.ink : root.ink.with-alpha(0.25);
+                font-size: 8px;
+                width: 64px;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                Rectangle { y: (parent.height - 5px) / 2; height: 5px; background: root.ink.with-alpha(0.08); border-radius: 2px; }
+                if root.macro-used[i] : Rectangle {
+                    x: 0; y: (parent.height - 5px) / 2;
+                    height: 5px;
+                    width: parent.width * max(0, min(1, root.macro-values[i]));
+                    background: root.accent;
+                    border-radius: 2px;
+                }
+            }
+        }
+        }
+
+        // MORPH: the states sit evenly along the track
+        HorizontalLayout {
+            height: 12px;
+            InstrumentLabel { text: "MORPH"; ink: root.ink; font-size: 8px; width: 64px; }
+            InstrumentLabel { text: root.morph-label; ink: root.accent; font-size: 8px; horizontal-stretch: 1; horizontal-alignment: right; }
+        }
+        Rectangle {
+            height: 16px;
+            Rectangle { y: 7px; height: 2px; background: root.ink.with-alpha(0.15); }
+            for s in root.states : Rectangle {
+                x: root.states <= 1 ? 0 : (parent.width - 14px) * s / (root.states - 1);
+                width: 14px; height: 14px; y: 1px;
+                border-radius: 7px;
+                background: root.ink.with-alpha(0.1);
+                border-width: 1px;
+                border-color: root.ink.with-alpha(0.4);
+                Text { text: ["A", "B", "C", "D"][s]; color: root.ink; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            Rectangle {
+                x: (parent.width - 6px) * max(0, min(1, root.morph));
+                width: 6px; height: 16px;
+                border-radius: 3px;
+                background: root.accent;
+            }
+        }
+
+        // live output
+        ScopeSurface {
+            height: 46px;
+            ink: root.ink; accent: root.accent;
+            if root.spectrum-view : Rectangle {
+                for v[i] in root.spectrum : Rectangle {
+                    x: parent.width * i / root.spectrum.length + 1px;
+                    width: parent.width / root.spectrum.length - 2px;
+                    y: parent.height * (1 - max(0, min(1, v)));
+                    height: parent.height * max(0.01, min(1, v));
+                    background: root.accent.with-alpha(0.8);
+                }
+            }
+            if !root.spectrum-view : SignalTrace {
+                width: 100%; height: 100%;
+                mid-x: root.scope-mid-x; mid-y: root.scope-mid-y;
+                lengths: root.scope-length; angles: root.scope-angle;
+                source-width: 290; source-height: 46;
+                trace: root.accent;
+                stroke-width: 1.4px;
+            }
+        }
+        HorizontalLayout {
+            height: 12px;
+            InstrumentLabel { text: root.voices; ink: root.ink.with-alpha(0.7); font-size: 8px; horizontal-stretch: 1; }
+            InstrumentLabel { text: "cpu " + Math.round(root.load * 100) + "%"; ink: root.ink.with-alpha(0.7); font-size: 8px; horizontal-alignment: right; }
+        }
+        Rectangle { vertical-stretch: 1; }
+        Text {
+            text: root.status;
+            color: root.ink.with-alpha(0.55);
+            font-size: 8px;
+            wrap: word-wrap;
+        }
+    }
+}

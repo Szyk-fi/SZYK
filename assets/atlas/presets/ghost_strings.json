@@ -1,0 +1,49 @@
+{
+  "version": 2,
+  "name": "Ghost Strings",
+  "category": "Acoustic",
+  "tags": ["plaits", "string", "granular"],
+  "author": "Portamax",
+  "description": "Plaits' string engine, plucked, with a frozen-able granular shadow an octave up. TEXTURE thickens the shadow; MORPH blooms it into a drone.",
+  "kind": "instrument",
+  "voices": 4,
+  "amp_env": false,
+  "visual": "scope",
+  "page_names": ["String", "Shadow", "Motion", "Space"],
+  "params": [
+    {"id": "harm", "name": "Inharmonicity", "min": 0, "max": 1, "default": 0.3, "page": 1},
+    {"id": "timbre", "name": "Excitation", "min": 0, "max": 1, "default": 0.55, "page": 1},
+    {"id": "morph", "name": "Decay", "min": 0, "max": 1, "default": 0.6, "page": 1},
+    {"id": "level", "name": "Level", "min": 0.2, "max": 2, "default": 1, "page": 1},
+    {"id": "density", "name": "Shadow Density", "min": 0, "max": 50, "default": 8, "page": 2},
+    {"id": "shadow", "name": "Shadow Level", "min": 0, "max": 1, "default": 0.25, "page": 2},
+    {"id": "gpitch", "name": "Shadow Pitch", "min": -12, "max": 12, "default": 12, "curve": "int", "unit": "st", "page": 2},
+    {"id": "spread", "name": "Shadow Spread", "min": 0, "max": 1, "default": 0.3, "page": 2},
+    {"id": "drift", "name": "Drift", "min": 0, "max": 0.5, "default": 0.15, "page": 3},
+    {"id": "verb", "name": "Reverb", "min": 0, "max": 1, "default": 0.35, "page": 4}
+  ],
+  "macros": [
+    {"name": "CHARACTER", "targets": [{"param": "harm", "amount": 0.5}]},
+    {"name": "COLOR", "targets": [{"param": "timbre", "amount": 0.4}]},
+    {"name": "MOTION", "targets": [{"param": "drift", "amount": 0.6}]},
+    {"name": "TEXTURE", "targets": [{"param": "density", "amount": 0.6}, {"param": "shadow", "amount": 0.5}]},
+    {"name": "SPACE", "targets": [{"param": "verb", "amount": 0.6}]},
+    {"name": "SHAPE", "targets": [{"param": "morph", "amount": 0.4}, {"param": "spread", "amount": 0.4}]},
+    {"name": "ENERGY", "targets": [{"param": "level", "amount": 0.4}, {"param": "timbre", "amount": 0.2}]}
+  ],
+  "voice": [
+    {"id": "str", "type": "plaits", "engine": "string", "in": {"freq": "pitch", "harm": "harm", "timbre": "timbre", "morph": "morph", "decay": 0.7, "gate": "gate"}}
+  ],
+  "voice_out": "str * level * 3",
+  "global": [
+    {"id": "wander", "type": "lfo", "shape": "smooth", "in": {"rate": 0.11}},
+    {"id": "shade", "type": "grain", "in": {"in": "voices", "pos": "clamp(0.15 + wander * drift, 0, 1)", "size": 0.2, "density": "density", "pitch": "gpitch", "spread": "spread"}},
+    {"id": "room", "type": "reverb", "in": {"in": "voices + shade * shadow", "size": 0.85, "damp": 0.5, "mod": 0.4}}
+  ],
+  "out": {"left": "voices + shade * shadow + room * verb", "right": "voices + shade * shadow * 0.9 + room * verb * 1.05"},
+  "settings": {"root": 52, "scale": 3},
+  "states": [
+    {"params": {}},
+    {"params": {"density": 45, "shadow": 0.8, "spread": 0.8, "morph": 0.9, "verb": 0.7, "gpitch": 7}}
+  ]
+}
