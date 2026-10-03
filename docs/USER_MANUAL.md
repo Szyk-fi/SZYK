@@ -226,7 +226,6 @@ row) rather than generating their own signal.
 
 | App | What it does |
 |---|---|
-| **Tape** | 4-track looper/recorder — records any other app's live output. |
 | **Sample Drum** | Erica Synths Sample Drum clone: dual-channel sample player/slicer. |
 | **Reference / Field / Sample Hunter / Studio / Vinyl / Practice / Radio / Memories** | Collection-engine recording & library apps — see §7. |
 

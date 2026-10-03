@@ -427,7 +427,6 @@ pub enum SlintExtra {
     Shape(ShapeVisual),
     Bloom(BloomVisual),
     Nebula(NebulaExtra),
-    Tape(TapeExtra),
     Pams(PamsExtra),
     Orbit(OrbitExtra),
     Prism(PrismExtra),
@@ -1101,13 +1100,6 @@ pub struct NebulaExtra {
     /// `(x, y)` in -1..1, `brightness` 0..1 (scaled from real speed)
     /// -- one entry per live particle.
     pub particles: Vec<(f32, f32, f32)>,
-}
-
-/// Tape's real 4-track lane view -- see `TapeApp::track_lanes`.
-pub struct TapeExtra {
-    /// `(status_text, fill_kind, playhead_frac)` per track --
-    /// `fill_kind`: 0 = empty, 1 = has content, 2 = recording.
-    pub tracks: Vec<(String, u8, f32)>,
 }
 
 /// Pam's real CV monitor scope for the currently-browsed channel --

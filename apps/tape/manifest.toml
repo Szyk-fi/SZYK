@@ -1,9 +1,0 @@
-id = "tape"
-name = "Tape"
-category = "library"
-description = "A four-track looper."
-audio_outputs = ["Tape"]
-# Modulation inputs this app registers (checked by registry.rs's tests).
-mod_inputs = [
-    "Mixer: Tape Level",
-]

@@ -52,7 +52,15 @@ const VOICE_NAMES: [&str; 8] = [
 ];
 const RATE: f32 = 48000.0;
 const CAP: usize = 48000 * 8;
-const MEDIA_LIMIT: usize = 48000 * 120;
+/// Studio's tracks: a minute each (Tape's old looper length; Studio
+/// replaced Tape). Reserved up front so recording never allocates on the
+/// audio thread; on the device this is PSRAM, streamed to the SD card.
+const STUDIO_CAP: usize = 48000 * 60;
+/// Longest file the players load: half an hour at 48 kHz (whole albums'
+/// worth of FLAC tracks fit; a DJ mix may not). Held as 16-bit (`Pcm`,
+/// 4 bytes a frame, ~350 MB at the limit) -- the sim decodes whole files;
+/// the device will stream from the SD card instead.
+const MEDIA_LIMIT: usize = 48000 * 60 * 30;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Orbit,
@@ -514,8 +522,64 @@ impl Kind {
     }
 }
 #[derive(Clone, Debug)]
+/// Decoded stereo audio at 16 bits: half the memory of f32, so long files
+/// fit, and 96 dB is more than playback needs.
+#[derive(Default)]
+pub(crate) struct Pcm(Vec<[i16; 2]>);
+
+#[allow(dead_code)]
+impl Pcm {
+    pub(crate) fn with_capacity(n: usize) -> Self {
+        Self(Vec::with_capacity(n))
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub(crate) fn push(&mut self, f: [f32; 2]) {
+        self.0.push(f.map(|x| (x.clamp(-1.0, 1.0) * 32767.0).round() as i16));
+    }
+    /// Frame `i` as floats (panics past the end, like indexing).
+    pub(crate) fn at(&self, i: usize) -> [f32; 2] {
+        self.0[i].map(|x| x as f32 / 32767.0)
+    }
+    pub(crate) fn get(&self, i: usize) -> Option<[f32; 2]> {
+        self.0.get(i).map(|f| f.map(|x| x as f32 / 32767.0))
+    }
+    /// The first `max` frames as floats (tools that analyse a clip).
+    pub(crate) fn frames(&self, max: usize) -> Vec<[f32; 2]> {
+        self.0.iter().take(max).map(|f| f.map(|x| x as f32 / 32767.0)).collect()
+    }
+    /// Peak per bucket, for thumbnails (see `take_overview`).
+    pub(crate) fn overview(&self, count: usize) -> Vec<f32> {
+        let n = self.0.len();
+        (0..count)
+            .map(|i| {
+                let start = i * n / count;
+                let end = ((i + 1) * n / count).max(start + 1).min(n);
+                if start >= end {
+                    return 0.0;
+                }
+                self.0[start..end].iter().step_by(((end - start) / 16).max(1)).map(|f| f[0].unsigned_abs().max(f[1].unsigned_abs()) as f32 / 32767.0).fold(0f32, f32::max)
+            })
+            .collect()
+    }
+}
+
+impl From<Vec<[f32; 2]>> for Pcm {
+    fn from(v: Vec<[f32; 2]>) -> Self {
+        let mut p = Pcm::with_capacity(v.len());
+        for f in v {
+            p.push(f);
+        }
+        p
+    }
+}
+
 pub(crate) struct Clip {
-    pub(crate) samples: Arc<Vec<[f32; 2]>>,
+    pub(crate) samples: Arc<Pcm>,
     pub(crate) rate: f32,
     pub(crate) name: String,
     pub(crate) peak: f32,
@@ -2785,7 +2849,7 @@ fn load_wav(path: &Path) -> Result<Clip, String> {
         return Err("Use mono or stereo PCM/float WAV".into());
     }
     if r.duration() as usize > MEDIA_LIMIT {
-        return Err("Clip too long: limit 5.76M frames (120s at 48k)".into());
+        return Err("Clip too long: the limit is 30 minutes".into());
     }
     let raw: Result<Vec<f32>, _> = if s.sample_format == hound::SampleFormat::Float {
         r.samples::<f32>().collect()
@@ -2810,7 +2874,7 @@ fn load_wav(path: &Path) -> Result<Clip, String> {
         .collect::<Vec<_>>();
     let peak = samples.iter().flatten().fold(0f32, |a, v| a.max(v.abs()));
     Ok(Clip {
-        samples: Arc::new(samples),
+        samples: Arc::new(Pcm::from(samples)),
         rate: s.sample_rate as f32,
         name: path
             .file_stem()
@@ -2929,6 +2993,10 @@ struct Processor {
     notes: crate::note_bus::NoteOut,
 }
 impl Processor {
+    /// How long one take may be (frames).
+    fn take_cap(&self) -> usize {
+        if self.kind == Kind::Studio { STUDIO_CAP } else { CAP }
+    }
     fn new(
         kind: Kind,
         p: Arc<Shared>,
@@ -2967,7 +3035,7 @@ impl Processor {
             clip: None,
             recordings: if kind.capture() {
                 (0..if kind == Kind::Studio { 8 } else { 1 })
-                    .map(|_| Vec::with_capacity(CAP))
+                    .map(|_| Vec::with_capacity(if kind == Kind::Studio { STUDIO_CAP } else { CAP }))
                     .collect()
             } else {
                 vec![]
@@ -2987,7 +3055,7 @@ impl Processor {
             marker: 0,
             stretch_clock: 0,
             export: if kind.capture() {
-                Vec::with_capacity(CAP)
+                Vec::with_capacity(if kind == Kind::Studio { STUDIO_CAP } else { CAP })
             } else {
                 vec![]
             },
@@ -3062,7 +3130,7 @@ impl Processor {
                 Command::Save => {
                     if !self.p.record.load(Ordering::Relaxed)
                         && !self.pending_save
-                        && self.export.capacity() >= CAP
+                        && self.export.capacity() >= self.take_cap()
                     {
                         self.pending_save = true;
                         self.p.export_busy.store(true, Ordering::Relaxed);
@@ -3238,6 +3306,7 @@ impl Processor {
                     let index = self.sample_position[i] as usize;
                     if let Some(frame) = clip.samples.get(index) {
                         let next = clip.samples.get(index + 1).unwrap_or(frame);
+                        let (frame, next) = (&frame, &next);
                         let f = self.sample_position[i].fract() as f32;
                         osc =
                             (frame[0] + frame[1]) * (1. - f) * 0.5 + (next[0] + next[1]) * f * 0.5;
@@ -3366,10 +3435,8 @@ impl Processor {
             let i = pos as usize;
             let j = if i + 1 < b { i + 1 } else { a };
             let f = (pos - i as f64) as f32;
-            [
-                c.samples[i][0] * (1. - f) + c.samples[j][0] * f,
-                c.samples[i][1] * (1. - f) + c.samples[j][1] * f,
-            ]
+            let (si, sj) = (c.samples.at(i), c.samples.at(j));
+            [si[0] * (1. - f) + sj[0] * f, si[1] * (1. - f) + sj[1] * f]
         };
         // Two overlapped 40ms grains decouple practice speed from pitch. This
         // lightweight granular stretch is deliberately not a phase-vocoder claim.
@@ -3462,7 +3529,7 @@ impl Processor {
         }
         if record {
             self.recorded_peak = self.recorded_peak.max(input.abs());
-            if self.record_pos < CAP {
+            if self.record_pos < self.take_cap() {
                 let t = &mut self.recordings[track];
                 if self.record_pos < t.len() {
                     t[self.record_pos] = [input, input];
@@ -3881,7 +3948,7 @@ impl AudioProcessor for Processor {
             let buffer: Vec<f32> = if self.kind==Kind::Fracture {
                 (0..128).map(|i|self.delay(v[0]*rate*((i/8+1) as f32-(i%8) as f32/8.))).collect()
             } else if let Some(clip) = &self.clip {
-                take_overview(&clip.samples, 128)
+                clip.samples.overview(128)
             } else if self.kind.capture() {
                 let track = if self.kind == Kind::Studio {
                     (v[0] as usize - 1).min(7)
@@ -4049,14 +4116,14 @@ mod tests {
         app.p.motion_rate.set(4.);
         if sample {
             app.send(Command::Load(Clip {
-                samples: Arc::new(
+                samples: Arc::new(Pcm::from(
                     (0..48000)
                         .map(|i| {
                             let v = (TAU * i as f32 / 87.).sin() * 0.7;
                             [v, v]
                         })
-                        .collect(),
-                ),
+                        .collect::<Vec<_>>(),
+                )),
                 rate: RATE,
                 name: "test instrument".into(),
                 peak: 0.7,
@@ -4387,14 +4454,14 @@ mod tests {
             Kind::Memories,
         ] {
             let (mut app, mut dsp, _) = fixture(kind);
-            let samples = (0..4800)
+            let samples: Vec<[f32; 2]> = (0..4800)
                 .map(|i| {
                     let s = (TAU * i as f32 / 32.).sin() * 0.2;
                     [s, s]
                 })
                 .collect();
             app.send(Command::Load(Clip {
-                samples: Arc::new(samples),
+                samples: Arc::new(Pcm::from(samples)),
                 rate: RATE,
                 name: "fixture".into(),
                 peak: 0.2,
@@ -4446,7 +4513,7 @@ mod tests {
         let clip = load_wav(&path).unwrap();
         assert_eq!(clip.rate, 44100.);
         assert_eq!(clip.samples.len(), 128);
-        assert!((clip.samples[0][1] + 0.5).abs() < 1e-6);
+        assert!((clip.samples.at(0)[1] + 0.5).abs() < 1e-4);
         std::fs::remove_file(path).unwrap();
     }
 }

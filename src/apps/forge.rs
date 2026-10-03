@@ -47,7 +47,7 @@ fn load(path:&Path,sensitivity:f32)->Result<(Instrument,Option<Settings>),String
  let saved=path.to_string_lossy().ends_with(".forge.toml");
  let metadata:Option<Saved>=if saved{let raw=std::fs::read_to_string(path).map_err(|e|e.to_string())?;if raw.len()>65536{return Err("Instrument metadata is too large".into());}Some(toml::from_str(&raw).map_err(|e|format!("Instrument metadata: {e}"))?)}else{None};
  let audio=if saved{path.parent().unwrap_or(Path::new(MEDIA)).join("audio.wav")}else{path.to_path_buf()};let clip=super::collection::decode::load(&audio)?;
- let trimmed=clip.samples.len() as f32/clip.rate>8.;let samples=analysis::resample(&clip.samples,clip.rate);
+ let trimmed=clip.samples.len() as f32/clip.rate>8.;let samples=analysis::resample(&clip.samples.frames((clip.rate*8.) as usize+1),clip.rate);
  if let Some(meta)=metadata{if meta.version!=1||meta.settings.mode>3||meta.settings.playback>2||meta.settings.root>127||!meta.settings.transpose.is_finite()||!(-24.0..=24.0).contains(&meta.settings.transpose)||!meta.settings.attack.is_finite()||!(0.001..=2.).contains(&meta.settings.attack)||!meta.settings.release.is_finite()||!(0.01..=3.).contains(&meta.settings.release)||!meta.settings.sensitivity.is_finite()||!(0.0..=1.0).contains(&meta.settings.sensitivity){return Err("Unsupported or invalid Forge settings".into());}let instrument=Instrument{samples:Arc::new(samples),chunks:meta.chunks,name:meta.name,trimmed};analysis::validate(&instrument)?;Ok((instrument,Some(meta.settings)))}else{Ok((analysis::analyze(samples,clip.name,sensitivity,trimmed)?,None))}
 }
 fn save(i:&Instrument,settings:Settings)->Result<PathBuf,String>{

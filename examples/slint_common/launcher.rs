@@ -11,7 +11,7 @@ fn fallback_category(name:&str)->usize {match name {
     "Forge"|"Orbit"|"Swarm"|"Mutant"|"Constellation"|"Dream"|"Plaits"|"Synth"|"Cascade"|"Sample Drum"|"Queen of Pentacles"|"Tinkertone"|"Oracle"=>1,
     "Fracture"|"Ghosts"|"Tape Machine"|"Beads"|"Black Hole"|"Clouds"|"Magnito"|"Natural Gate"|"Nautilus"|"Prism"|"Rainmaker"|"Singularity"|"Starlab"|"Tonestack"|"Warps"|"Morph"|"Master"|"Vector Filter"=>2,
     "Bloom"|"Madness"|"Nebula"|"Sequencer"|"Turing Machine"|"Pam's Workout"|"Pams Workout"|"Voltage"|"Pulsar"=>3,
-    "Reference"|"Vinyl"|"Practice"|"Radio"|"Memories"|"Tape"|"Field"|"Sample Hunter"|"Studio"=>4,
+    "Reference"|"Vinyl"|"Practice"|"Radio"|"Memories"|"Field"|"Sample Hunter"|"Studio"=>4,
     _=>5,
 }}
 pub fn description(name:&str)->String {if let Some((_,d))=catalog().lock().unwrap().get(name){if !d.is_empty(){return d.clone();}}fallback_description(name).into()}

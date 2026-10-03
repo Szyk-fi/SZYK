@@ -11,7 +11,7 @@ code, presets, sample content or names.
 | **Synth** | 3 engine layers, chord modes and "chord followers", arpeggiators | **Trio** (new): 3 Plaits-engine layers; pads play scale degrees or diatonic chords; each layer takes a role (Full / Bass / Top / Arp). |
 | **Tracker / Tracker+ / Mini** | Hardware tracker: rows x tracks with note/instrument/volume/FX columns, performance mode | **Ledger** (new): 8 tracks x 64 rows x 16 patterns, note/volume/FX (T M H D R P N), a Plaits voice per track, performance pads (mutes, loops, reverse, octave, half speed, dark). |
 | **Press** | Stereo compressor pedal | **Squeeze** (new): soft-knee feed-forward compressor with an external sidechain for ducking. |
-| **Loop** | 4 loop tracks + 4 drum tracks, reverse/ping-pong, varispeed | Already covered by **Tape** (4-track looper) and the drum apps. |
+| **Loop** | 4 loop tracks + 4 drum tracks, reverse/ping-pong, varispeed | Already covered by **Studio** (8 looping tracks of a minute each) and the drum apps. |
 | **Step / Drums / Play / Play+** | Sample drum machines and grooveboxes with chance, play modes, performance FX | Largely covered by **Sequencer**, **Sample Drum**, **Pulsar**; Ledger's performance pads bring the punch-in idea. |
 | **Seq** | Standalone MIDI step sequencer | Covered by **Sequencer** and **CV Out**. |
 | **Endless** | One user-programmable effect (C++ SDK, text-prompted effects) | Closest today: **Oracle** (AI-designed patches) and **Norns** (scriptable). A scripted-effect slot would be the next step. |

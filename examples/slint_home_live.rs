@@ -3845,15 +3845,6 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_nebula_particle_y(Rc::new(slint::VecModel::from(py)).into());
                     ui.set_nebula_particle_brightness(Rc::new(slint::VecModel::from(pb)).into());
                 }
-                app::SlintExtra::Tape(t) => {
-                    ui.set_active_kind(7);
-                    let status: Vec<slint::SharedString> = t.tracks.iter().map(|(s, _, _)| s.as_str().into()).collect();
-                    let kind: Vec<i32> = t.tracks.iter().map(|(_, k, _)| *k as i32).collect();
-                    let playhead = t.tracks.first().map(|(_, _, p)| *p).unwrap_or(0.0);
-                    ui.set_tape_track_status(Rc::new(slint::VecModel::from(status)).into());
-                    ui.set_tape_track_kind(Rc::new(slint::VecModel::from(kind)).into());
-                    ui.set_tape_playhead_frac(playhead);
-                }
                 app::SlintExtra::Pams(p) => {
                     ui.set_active_kind(8);
                     ui.set_pams_channel_index(p.channel_index as i32);

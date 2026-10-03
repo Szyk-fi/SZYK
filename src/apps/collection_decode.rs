@@ -1,5 +1,5 @@
 //! File decoding runs on a loader worker, never in an audio callback.
-use super::{Clip,MEDIA_LIMIT};
+use super::{Clip,Pcm,MEDIA_LIMIT};
 use std::{path::Path,sync::Arc};
 use symphonia::core::{audio::SampleBuffer,codecs::DecoderOptions,errors::Error,formats::FormatOptions,io::MediaSourceStream,meta::MetadataOptions,probe::Hint};
 pub const EXTENSIONS:&[&str]=&["wav","wave","flac","mp3","ogg","oga","m4a","mp4","aac","aif","aiff","aifc"];
@@ -9,9 +9,9 @@ pub fn load(path:&Path)->Result<Clip,String>{
     let mut hint=Hint::new();if let Some(ext)=path.extension().and_then(|s|s.to_str()){hint.with_extension(&ext.to_ascii_lowercase());}
     let probed=symphonia::default::get_probe().format(&hint,MediaSourceStream::new(Box::new(file),Default::default()),&FormatOptions{enable_gapless:true,..Default::default()},&MetadataOptions::default()).map_err(|e|format!("Unsupported or damaged audio: {e}"))?;
     let mut format=probed.format;let track=format.default_track().ok_or("No audio track")?;
-    if track.codec_params.n_frames.is_some_and(|n|n>MEDIA_LIMIT as u64){return Err("Audio exceeds 5.76M decoded frames (120s at 48k); use a shorter excerpt".into());}
+    if track.codec_params.n_frames.is_some_and(|n|n>MEDIA_LIMIT as u64){return Err("Audio is longer than 30 minutes; use a shorter file".into());}
     let id=track.id;let mut decoder=symphonia::default::get_codecs().make(&track.codec_params,&DecoderOptions::default()).map_err(|e|format!("Unsupported codec: {e}"))?;
-    let mut samples=Vec::new();let mut rate=0u32;let mut peak=0f32;
+    let mut samples=Pcm::with_capacity(track.codec_params.n_frames.unwrap_or(0).min(MEDIA_LIMIT as u64) as usize);let mut rate=0u32;let mut peak=0f32;
     loop {
         let packet=match format.next_packet(){Ok(p)=>p,Err(Error::IoError(e)) if e.kind()==std::io::ErrorKind::UnexpectedEof=>break,Err(e)=>return Err(format!("Read audio: {e}"))};
         if packet.track_id()!=id{continue;}
@@ -32,11 +32,11 @@ pub fn load(path:&Path)->Result<Clip,String>{
         for name in ["stereo.flac","stereo.aiff"] {
             let clip=load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio").join(name)).unwrap_or_else(|e|panic!("{name}: {e}"));
             assert_eq!(clip.rate,44100.);assert_eq!(clip.samples.len(),4410);assert!(clip.peak>0.3);
-            assert!((clip.samples[100][0]-clip.samples[100][1]).abs()>0.01);
+            assert!((clip.samples.at(100)[0]-clip.samples.at(100)[1]).abs()>0.01);
         }
     }
     #[test] fn shared_decoder_preserves_stereo_pcm(){
         let path=std::env::temp_dir().join(format!("portamax-decoder-{}.wav",std::process::id()));let mut w=hound::WavWriter::create(&path,hound::WavSpec{channels:2,sample_rate:44100,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();
-        for i in 0..512i16{w.write_sample(i*16).unwrap();w.write_sample(-i*8).unwrap();}w.finalize().unwrap();let clip=load(&path).unwrap();assert_eq!(clip.rate,44100.);assert_eq!(clip.samples.len(),512);assert!(clip.samples[100][0]>0.&&clip.samples[100][1]<0.);std::fs::remove_file(path).unwrap();
+        for i in 0..512i16{w.write_sample(i*16).unwrap();w.write_sample(-i*8).unwrap();}w.finalize().unwrap();let clip=load(&path).unwrap();assert_eq!(clip.rate,44100.);assert_eq!(clip.samples.len(),512);assert!(clip.samples.at(100)[0]>0.&&clip.samples.at(100)[1]<0.);std::fs::remove_file(path).unwrap();
     }
 }
