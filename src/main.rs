@@ -40,7 +40,7 @@ mod plaits_ffi;
 mod registry;
 mod spleen_fonts;
 mod startup_logo;
-mod synth;
+mod synthesis;
 mod theme;
 mod util;
 

@@ -43,7 +43,7 @@ pub fn scan() -> Vec<Entry> {
         .iter()
         .enumerate()
         .filter_map(|(i, (_, json))| {
-            let p: Patch = serde_json::from_str(json).ok()?;
+            let p = Patch::from_json(json).ok()?;
             Some(Entry { name: p.name, kind: p.kind.label(), source: Source::Starter(i) })
         })
         .collect();
@@ -54,7 +54,7 @@ pub fn scan() -> Vec<Entry> {
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
         .filter_map(|e| {
             let text = std::fs::read_to_string(e.path()).ok()?;
-            let p: Patch = serde_json::from_str(&text).ok()?;
+            let p = Patch::from_json(&text).ok()?;
             Some(Entry { name: p.name, kind: p.kind.label(), source: Source::File(e.path()) })
         })
         .collect();
@@ -68,7 +68,7 @@ pub fn load(entry: &Entry) -> Result<Patch, String> {
         Source::Starter(i) => STARTERS.get(*i).map(|s| s.1.to_string()).ok_or("missing starter")?,
         Source::File(p) => std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?,
     };
-    serde_json::from_str(&text).map_err(|e| format!("bad patch file: {e}"))
+    Patch::from_json(&text).map_err(|e| format!("bad patch file: {e}"))
 }
 
 pub fn slug(name: &str) -> String {

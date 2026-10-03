@@ -11,6 +11,12 @@ pub const MAX_MACROS: usize = 8;
 pub const MAX_NODES: usize = 32;
 pub const MAX_VOICES: usize = 16;
 pub const PAGES: usize = 4;
+/// Morph states a patch can carry (A, B, C, D).
+pub const MAX_STATES: usize = 4;
+
+/// The patch format version this build writes. Version 1 is everything
+/// written before versioning (no `version` field); see `migrate`.
+pub const CURRENT_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -76,6 +82,10 @@ pub struct ParamSpec {
     /// Names for `choice` params (value = index).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
+    /// Smoothing time in seconds for changes to this param (knob moves,
+    /// macros, morphing). None = the engine's default (about 10 ms).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smooth: Option<f32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -115,6 +125,9 @@ pub struct State {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Patch {
+    /// Format version (see `CURRENT_VERSION`, `migrate`).
+    #[serde(default = "legacy_version")]
+    pub version: u32,
     pub name: String,
     #[serde(default)]
     pub kind: Kind,
@@ -137,8 +150,33 @@ pub struct Patch {
     pub out: OutSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<State>,
+    /// Bass, Lead, Pad, Pluck, Keys, Texture, Percussion, FX, Drone,
+    /// Acoustic, Experimental, Generative -- free text, for browsing.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub category: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
+    /// Names for the (up to 4) param pages, e.g. Sources, Shape, Motion, FX.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub page_names: Vec<String>,
+    /// Morph states A..D: whole-patch control positions to interpolate
+    /// between (A<->B on a slider, A-D on an XY pad).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<State>,
+    /// What the player's visualizer shows: scope, spectrum, graph.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub visual: String,
+    /// Player settings the patch wants: attack, decay, sustain, release,
+    /// glide, root, scale, voices, level, velocity, bpm (any subset).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub settings: BTreeMap<String, f32>,
 }
 
+fn legacy_version() -> u32 {
+    1
+}
 fn one() -> f32 {
     1.0
 }
@@ -163,11 +201,22 @@ impl Patch {
     /// and chatter around it, which language models add).
     pub fn from_llm_text(text: &str) -> Result<Patch, String> {
         let json = extract_json(text).ok_or("no JSON object found in the reply")?;
-        serde_json::from_str::<Patch>(json).map_err(|e| format!("JSON does not match the patch format: {e}"))
+        Patch::from_json(json)
     }
 
+    /// Reads a saved patch of any version, upgrading it to this one.
+    pub fn from_json(text: &str) -> Result<Patch, String> {
+        let v: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
+        migrate(v)
+    }
+
+    /// Always written at the current version.
     pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".into())
+        let mut v = serde_json::to_value(self).unwrap_or(Value::Null);
+        if let Some(o) = v.as_object_mut() {
+            o.insert("version".into(), Value::from(CURRENT_VERSION));
+        }
+        serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into())
     }
 
     /// Params in page order, pages auto-assigned (16 per page) when unset.
@@ -177,6 +226,35 @@ impl Patch {
             _ => (idx / 16).min(PAGES - 1),
         }
     }
+}
+
+/// Upgrades a patch document from whatever version wrote it. Each step
+/// edits the JSON (never relying on Rust struct layout), so old presets
+/// keep loading after the engine changes. A newer-than-us patch is
+/// refused rather than misread.
+pub fn migrate(mut v: Value) -> Result<Patch, String> {
+    let mut version = v.get("version").and_then(|x| x.as_u64()).unwrap_or(1) as u32;
+    if version > CURRENT_VERSION {
+        return Err(format!("made by a newer Portamax (patch version {version}; this one reads up to {CURRENT_VERSION})"));
+    }
+    let obj = v.as_object_mut().ok_or("a patch must be a JSON object")?;
+    while version < CURRENT_VERSION {
+        match version {
+            // 1 -> 2: versioning, metadata and morph states arrive. A v1
+            // "state" (one saved position) becomes morph state A.
+            1 => {
+                if !obj.contains_key("states") {
+                    if let Some(s) = obj.get("state").cloned() {
+                        obj.insert("states".into(), Value::Array(vec![s]));
+                    }
+                }
+            }
+            _ => {}
+        }
+        version += 1;
+    }
+    obj.insert("version".into(), Value::from(CURRENT_VERSION));
+    serde_json::from_value::<Patch>(v).map_err(|e| format!("JSON does not match the patch format: {e}"))
 }
 
 /// Find the outermost `{...}` in text, skipping strings.
@@ -370,11 +448,31 @@ mod tests {
             unit: String::new(),
             page: 0,
             options: vec!["a".into(), "b".into(), "c".into()],
+            smooth: None,
         };
         for (curve, min, max, val) in [("lin", -1.0, 1.0, 0.25), ("exp", 20.0, 20000.0, 440.0), ("int", 0.0, 7.0, 3.0), ("choice", 0.0, 2.0, 2.0)] {
             let m = ParamMap::from_spec(&spec(curve, min, max));
             let back = m.value(m.norm(val));
             assert!((back - val).abs() < val.abs() * 1e-3 + 1e-3, "{curve}: {val} -> {back}");
         }
+    }
+
+    #[test]
+    fn an_unversioned_patch_migrates_and_keeps_its_state_as_morph_a() {
+        let old = r#"{"name":"Old","out":"voices","voice_out":"0","state":{"params":{"x":0.5}}}"#;
+        let p = Patch::from_json(old).unwrap();
+        assert_eq!(p.version, CURRENT_VERSION);
+        assert_eq!(p.states.len(), 1);
+        assert_eq!(p.states[0].params["x"], 0.5);
+        // and it round-trips at the current version
+        let again = Patch::from_json(&p.to_json()).unwrap();
+        assert!(p.to_json().contains("\"version\": 2"));
+        assert_eq!(again, p);
+    }
+
+    #[test]
+    fn a_patch_from_the_future_is_refused() {
+        let e = Patch::from_json(r#"{"version":99,"name":"F","out":"0"}"#).unwrap_err();
+        assert!(e.contains("newer"), "{e}");
     }
 }

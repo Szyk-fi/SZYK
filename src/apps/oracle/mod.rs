@@ -38,9 +38,9 @@
 //! try-locked slot; the old one crossfades out and is handed back to be
 //! freed on the UI thread.
 
-// The engine is the shared synth platform (src/synth); Oracle is its
+// The engine is the shared synth platform (src/synthesis); Oracle is its
 // AI-driven front end.
-pub use crate::synth::{blocks, engine, evolve, expr, patch};
+pub use crate::synthesis::{blocks, engine, evolve, patch};
 pub mod library;
 pub mod llm;
 pub mod voice;
@@ -611,7 +611,7 @@ impl OracleApp {
         let shared = Arc::new(Shared::new(&modbus, &audio_bus, &mixer_bus));
         let provider = Provider::from_env();
         let worker = Worker::spawn(provider, Arc::clone(&shared.sample_rate));
-        let first: Patch = serde_json::from_str(library::STARTERS[0].1).expect("starter 0 is valid (tested)");
+        let first = Patch::from_json(library::STARTERS[0].1).expect("starter 0 is valid (tested)");
         let mut app = Self {
             shared,
             audio_bus,
@@ -948,7 +948,7 @@ impl OracleApp {
             buf.push('\n');
             if let Some(json) = patch::extract_json(buf).map(str::to_string) {
                 self.paste = None;
-                match serde_json::from_str::<Patch>(&json) {
+                match Patch::from_json(&json) {
                     Ok(p) => {
                         self.install(p, None, Carry::KeepMatching, "Pasted");
                     }

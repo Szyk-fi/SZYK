@@ -210,8 +210,14 @@ pub struct Engine {
     out_l: Expr,
     out_r: Option<Expr>,
     maps: Vec<ParamMap>,
+    /// Per-param smoothing time, seconds.
+    smooth_s: Vec<f32>,
     macro_targets: Vec<Vec<(usize, f32)>>,
     smoothed: Vec<f32>,
+    /// Estimated cost, in units of one oscillator voice-sample: per voice,
+    /// and for the global graph (see `blocks::cost`).
+    pub cost_voice: f32,
+    pub cost_global: f32,
     first_block: bool,
     held_prev: [bool; 16],
     padtrig: bool,
@@ -365,6 +371,16 @@ pub fn compile(patch: &Patch, sr: f32) -> Result<Engine, Vec<String>> {
                 let s = opt_string(v);
                 if !o.choices.contains(&s.as_str()) {
                     errs.push(format!("node \"{}\": option {k}=\"{s}\" must be one of {}", n.id, o.choices.join(", ")));
+                }
+            }
+        }
+    }
+    for n in patch.voice.iter().chain(patch.global.iter()).filter(|n| n.kind == "sampler") {
+        match n.opts.get("file").map(opt_string) {
+            None => errs.push(format!("node \"{}\" (sampler): needs a \"file\" (a WAV in samples/)", n.id)),
+            Some(f) => {
+                if let Err(e) = blocks::load_sample(&f) {
+                    errs.push(format!("node \"{}\": {e}", n.id));
                 }
             }
         }
@@ -616,6 +632,9 @@ pub fn compile(patch: &Patch, sr: f32) -> Result<Engine, Vec<String>> {
         out_l: out_l.unwrap_or_else(|| Expr::constant(0.0)),
         out_r: out_r.flatten(),
         smoothed: vec![0.0; maps.len()],
+        smooth_s: patch.params.iter().map(|p| p.smooth.unwrap_or(DEFAULT_SMOOTH_S).clamp(0.0, 10.0)).collect(),
+        cost_voice: patch.voice.iter().map(node_cost).sum::<f32>() + expr_cost(patch.voice_out.as_ref()),
+        cost_global: patch.global.iter().map(node_cost).sum(),
         maps,
         macro_targets,
         first_block: true,
@@ -634,6 +653,44 @@ pub fn compile(patch: &Patch, sr: f32) -> Result<Engine, Vec<String>> {
     })
 }
 
+/// Default smoothing for param changes (knobs, macros, morph), seconds.
+pub const DEFAULT_SMOOTH_S: f32 = 0.01;
+
+/// A node's estimated cost: its block plus expression evaluation for
+/// each input that isn't a constant.
+fn node_cost(n: &NodeSpec) -> f32 {
+    blocks::cost(&n.kind) + n.inputs.values().map(|e| expr_cost(Some(e))).sum::<f32>()
+}
+
+fn expr_cost(e: Option<&ExprSrc>) -> f32 {
+    match e {
+        Some(ExprSrc::Text(s)) => 0.05 + 0.02 * s.len().min(200) as f32 / 8.0,
+        _ => 0.0,
+    }
+}
+
+impl Engine {
+    /// Total estimated cost with `voices` voices sounding.
+    #[allow(dead_code)] // API for tools and future apps; Atlas reads the parts
+    pub fn cost(&self, voices: usize) -> f32 {
+        self.cost_global + self.cost_voice * voices as f32
+    }
+
+    /// The most voices that fit in `budget` (at least 1), so an expensive
+    /// patch plays fewer notes rather than dropping out.
+    pub fn voices_within(&self, budget: f32) -> usize {
+        if self.poly == 0 {
+            return 0;
+        }
+        let per = self.cost_voice.max(1e-3);
+        (((budget - self.cost_global) / per).floor().max(1.0) as usize).min(self.poly)
+    }
+
+    pub fn polyphony(&self) -> usize {
+        self.poly
+    }
+}
+
 fn opt_string(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
@@ -649,6 +706,8 @@ fn delay_seconds(n: &NodeSpec) -> f32 {
         "shift" => 0.45,
         "comb" => 0.05,
         "allpass" => 0.1,
+        "grain" => 2.0,
+        "chorus" => 0.05,
         _ => 0.0,
     }
 }
@@ -771,7 +830,8 @@ impl Engine {
         let inv_sr = 1.0 / sr;
         self.unstable = false;
 
-        // ---- parameters (once per block, lightly smoothed)
+        // ---- parameters (once per block, smoothed per param)
+        let block_s = frames as f32 * inv_sr;
         self.g[G_SR as usize] = sr;
         self.g[G_BPM as usize] = ctl.bpm;
         self.g[G_PLAYING as usize] = if ctl.playing { 1.0 } else { 0.0 };
@@ -792,7 +852,9 @@ impl Engine {
             if self.first_block || discrete {
                 self.smoothed[i] = target;
             } else {
-                self.smoothed[i] += (target - self.smoothed[i]) * 0.5;
+                let s = self.smooth_s[i];
+                let coef = if s <= 0.0 { 1.0 } else { 1.0 - (-block_s / s).exp() };
+                self.smoothed[i] += (target - self.smoothed[i]) * coef;
             }
             self.g[G_PARAM0 as usize + i] = self.smoothed[i];
         }
