@@ -1,5 +1,9 @@
 id = "reference"
 name = "Reference"
+module = "collection"
+category = "library"
+description = "Listen, browse and compare your audio collection."
+audio_outputs = ["Reference"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Reference Level",

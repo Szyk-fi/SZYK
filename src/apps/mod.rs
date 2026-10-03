@@ -1,54 +1,6 @@
-pub mod analyzer;
-pub mod beads;
-pub mod black_hole;
-pub mod bloom;
-pub mod cascade;
-pub mod clouds;
-pub mod cv_out;
-pub mod madness;
-pub mod magnito;
-pub mod midi_learn;
-pub mod mixer;
-pub mod natural_gate;
-pub mod nautilus;
-pub mod nebula;
-pub mod neogeo_core;
-pub mod pams;
-pub mod plaits;
-pub mod plaits_layout;
-pub mod plaits_play;
-pub mod controller_setup;
-pub mod prism;
-pub mod queen_of_pentacles;
-pub mod rainmaker;
-pub mod retro;
-pub mod sample_drum;
-pub mod sequencer;
-pub mod settings;
-pub mod singularity;
-pub mod starlab;
-pub mod synth;
-pub mod tape;
-pub mod template;
-pub mod tonestack;
-pub mod turing_machine;
-pub mod visualizer;
-pub mod warps;
-pub mod voltage;
+//! The app modules. There is no list to maintain here: build.rs finds every
+//! app file (or folder) in src/apps and generates the module declarations
+//! and the factory table (`FACTORIES`) that registry.rs builds apps from.
+//! See docs/ADDING_AN_APP.md.
 
-pub mod morph;
-
-pub mod collection;
-
-pub mod vector_filter;
-
-pub mod forge;
-pub mod oracle;
-pub mod pulsar;
-pub mod tinkertone;
-pub mod norns;
-pub mod ledger;
-pub mod trio;
-pub mod atlas;
-pub mod mosaic;
-pub mod squeeze;
+include!(concat!(env!("OUT_DIR"), "/apps_gen.rs"));

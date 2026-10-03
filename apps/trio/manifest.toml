@@ -1,5 +1,9 @@
 id = "trio"
 name = "Trio"
+category = "instrument"
+description = "Three Plaits layers that split what you play."
+audio_outputs = ["Trio"]
+notes_in = true
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Trio Level",

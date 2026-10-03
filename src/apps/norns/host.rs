@@ -106,9 +106,21 @@ pub fn setup(lua: &Lua, script: &Path, code_dir: &Path, queue: Arc<Queue>, out: 
             Ok(())
         })?)?;
     }
-    // MIDI out goes nowhere yet (Portamax's MIDI out belongs to CV Out);
-    // accepted so scripts that send MIDI keep running.
-    px.set("midi_out", lua.create_function(|_, _: Variadic<Value>| Ok(()))?)?;
+    // MIDI out: notes go on the note bus, to whichever app Norns is
+    // routed to (Portal's Notes page); everything else is accepted and
+    // ignored so scripts that send it keep running.
+    {
+        let q = Arc::clone(&queue);
+        px.set("midi_out", lua.create_function(move |_, (_port, data): (Value, Value)| {
+            if let Value::Table(t) = data {
+                let bytes: Vec<u8> = t.sequence_values::<f64>().flatten().map(|v| v.clamp(0.0, 255.0) as u8).collect();
+                if bytes.first().is_some_and(|s| matches!(s & 0xF0, 0x80 | 0x90)) {
+                    q.push(Cmd::Midi(bytes));
+                }
+            }
+            Ok(())
+        })?)?;
+    }
     let dirs = lua.create_table()?;
     let script_dir = script.parent().unwrap_or(Path::new(".")).to_path_buf();
     for (i, d) in [script_dir.clone(), code_dir.to_path_buf(), code_dir.parent().unwrap_or(code_dir).to_path_buf()].iter().enumerate() {

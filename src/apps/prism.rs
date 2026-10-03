@@ -3246,3 +3246,10 @@ mod transport_contract_tests {
         assert_eq!(app.transport_action(), Some("HOLD"));
     }
 }
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(PrismApp::new_with_cc(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get(), &ctx.get()))
+}

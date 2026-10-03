@@ -1,5 +1,8 @@
 id = "cv_out"
 name = "CV Out"
+category = "utility"
+description = "32 CV outputs sent as MIDI CC to an external MIDI-to-CV box."
+audio_outputs = []
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "CV Out: 1",

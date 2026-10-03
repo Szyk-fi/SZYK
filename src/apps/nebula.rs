@@ -41,6 +41,7 @@ use crate::audio_bus::AudioBus;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
+use crate::note_bus::{NoteBus, NoteOut, NoteRoute};
 use crate::paramlist::ParamList;
 use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
@@ -177,6 +178,8 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
+    /// Where captures play: Nebula's own voices, another app, or nothing.
+    Plays,
     Running,
     ParticleCount,
     Gravity,
@@ -294,6 +297,8 @@ pub struct NebulaApp {
     rng: u32,
     /// The shared play view (play_kit.rs).
     kit: PlayKit,
+    note_route: NoteRoute,
+    note_out: Option<NoteOut>,
 }
 
 /// The play view's controls, most important first: the three physics
@@ -372,7 +377,17 @@ impl NebulaApp {
             expanded: [false; NUM_GROUPS],
             rng: seed | 1,
             kit: PlayKit::new(kit_config(), !cfg!(test)),
+            note_route: NoteRoute::new(None, "Nebula", "nebula", true).0,
+            note_out: None,
         }
+    }
+
+    /// Lets Nebula play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
+        let (route, out) = NoteRoute::new(bus, "Nebula", "nebula", true);
+        self.note_route = route;
+        self.note_out = Some(out);
+        self
     }
 
     fn next_rand01(&mut self) -> f32 {
@@ -405,7 +420,7 @@ impl NebulaApp {
                 }
                 v
             }
-            1 => vec![Selection::Scale, Selection::Root, Selection::OctaveRange, Selection::VelMin, Selection::VelMax],
+            1 => vec![Selection::Plays, Selection::Scale, Selection::Root, Selection::OctaveRange, Selection::VelMin, Selection::VelMax],
             _ => vec![Selection::Engine, Selection::Harmonics, Selection::Timbre, Selection::Decay, Selection::Randomize],
         }
     }
@@ -447,6 +462,7 @@ impl NebulaApp {
 
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
+            Selection::Plays => "Plays".into(),
             Selection::Running => "Running".into(),
             Selection::ParticleCount => "Particles".into(),
             Selection::Gravity => "Gravity".into(),
@@ -468,6 +484,7 @@ impl NebulaApp {
 
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
+            Selection::Plays => self.note_route.label(),
             Selection::Running => {
                 if self.params.running.load(Ordering::Relaxed) { "running".into() } else { "stopped".into() }
             }
@@ -501,6 +518,7 @@ impl NebulaApp {
         let sensitivity = self.sensitivity.get();
         let step = delta.signum();
         match sel {
+            Selection::Plays => self.note_route.step(step),
             Selection::Running => self.params.running.store(delta > 0, Ordering::Relaxed),
             Selection::ParticleCount => {
                 let cur = self.params.particle_count.load(Ordering::Relaxed) as i32;
@@ -542,6 +560,7 @@ impl NebulaApp {
 
     fn reset(&mut self, sel: Selection) {
         match sel {
+            Selection::Plays => self.note_route.reset(),
             Selection::Running => self.params.running.store(false, Ordering::Relaxed),
             Selection::ParticleCount => self.params.particle_count.store(DEFAULT_PARTICLES, Ordering::Relaxed),
             Selection::Gravity => self.params.gravity.set(DEFAULT_GRAVITY),
@@ -767,6 +786,8 @@ impl App for NebulaApp {
             vy: [0.0; MAX_PARTICLES],
             cooldown: [0.0; MAX_PARTICLES],
             mono_buf: Vec::new(),
+            notes: self.note_out.take().unwrap_or_else(NoteOut::detached),
+            sample_rate: 48_000.0,
         }))
     }
 
@@ -891,9 +912,22 @@ struct NebulaProcessor {
     /// well's capture radius would fire every single sample.
     cooldown: [f32; MAX_PARTICLES],
     mono_buf: Vec<f32>,
+    notes: NoteOut,
+    sample_rate: f32,
 }
 
 impl NebulaProcessor {
+    /// A capture's note: on Nebula's own voices, or sent to another app
+    /// (held for the Decay time), or nowhere.
+    fn play(&mut self, note: f32, velocity: f32) {
+        if self.notes.internal() {
+            self.trigger_note(note, velocity);
+        } else if self.notes.external() {
+            let gate = (0.05 + self.params.decay.get() * 0.95) * self.sample_rate;
+            self.notes.trigger(note.clamp(0.0, 127.0) as u8, (velocity * 127.0).clamp(1.0, 127.0) as u8, gate as u32);
+        }
+    }
+
     fn trigger_note(&mut self, note: f32, velocity: f32) {
         self.voice_gen += 1;
         let idx = self.voices.iter().enumerate().min_by_key(|(_, v)| v.last_used).map(|(i, _)| i).unwrap_or(0);
@@ -911,6 +945,8 @@ impl AudioProcessor for NebulaProcessor {
         self.mono_buf.clear();
         self.mono_buf.resize(frames, 0.0);
         let dt = 1.0 / sample_rate;
+        self.sample_rate = sample_rate;
+        self.notes.advance(frames as u32);
 
         if self.params.running.load(Ordering::Relaxed) {
             let n = self.params.particle_count.load(Ordering::Relaxed).clamp(MIN_PARTICLES, MAX_PARTICLES);
@@ -975,7 +1011,7 @@ impl AudioProcessor for NebulaProcessor {
                         let degree_pos = ((w as f32 / NUM_WELLS as f32) * total_positions as f32) as usize % total_positions;
                         let note = note_for_position(degree_pos, scale_idx, root) as f32 + (norm_speed * 4.0).round();
                         let velocity = vmin + norm_speed * (vmax - vmin);
-                        self.trigger_note(note, velocity);
+                        self.play(note, velocity);
                         self.params.last_fired_well.store(w, Ordering::Relaxed);
                     } else {
                         vx += ax * dt;
@@ -1099,6 +1135,8 @@ mod tests {
             vy: [0.0; MAX_PARTICLES],
             cooldown: [0.0; MAX_PARTICLES],
             mono_buf: Vec::new(),
+            notes: NoteOut::detached(),
+            sample_rate: 48_000.0,
         }
     }
 
@@ -1280,4 +1318,11 @@ mod tests {
         app.tick(&Input::default());
         assert!((app.params.gravity.get() - gravity).abs() < 1e-5, "released, Gravity springs back");
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(NebulaApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }

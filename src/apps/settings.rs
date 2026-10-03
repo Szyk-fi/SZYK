@@ -407,3 +407,10 @@ mod redesign_tests {
         app.editing_background=true;let accent=app.accent.hsv();app.slint_pointer_pick(0.,70.);assert_ne!(app.background.hsv(),background);assert_eq!(app.accent.hsv(),accent);
     }
 }
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(SettingsApp::new(ctx.get(), ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.named("show_cpu"), ctx.named("accent"), ctx.named("background")))
+}

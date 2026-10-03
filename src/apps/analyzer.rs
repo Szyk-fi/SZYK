@@ -595,3 +595,10 @@ impl AudioProcessor for AnalyzerProcessor {
 }
 
 #[cfg(test)] mod monitoring_lifecycle_tests {use super::*;#[test]fn only_explicit_monitoring_keeps_analyzer_awake(){let app=AnalyzerApp::with_audio_bus(Arc::new(AudioBus::new()));assert!(!app.needs_background_audio());app.set_monitor(true);assert!(app.needs_background_audio());app.set_monitor(false);assert!(!app.needs_background_audio());}}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(AnalyzerApp::with_audio_bus(ctx.get()))
+}

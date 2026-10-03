@@ -1,5 +1,9 @@
 id = "bloom"
 name = "Bloom"
+category = "sequencer"
+description = "Evolving melodies from intersecting orbits. Plays its own voices, any instrument, or just sends signals."
+audio_outputs = ["Bloom"]
+note_outputs = ["Bloom"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Bloom Level",

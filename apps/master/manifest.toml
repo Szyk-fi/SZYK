@@ -1,5 +1,9 @@
 id = "master"
 name = "Master"
+module = "collection"
+category = "effect"
+description = "Compare two mixes (A/B) and finish the master bus."
+audio_outputs = ["Master"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Master Level",

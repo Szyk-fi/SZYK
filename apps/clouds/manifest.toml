@@ -1,5 +1,8 @@
 id = "clouds"
 name = "Clouds"
+category = "effect"
+description = "The real Mutable Instruments Clouds granular processor."
+audio_outputs = ["Clouds"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Clouds Level",

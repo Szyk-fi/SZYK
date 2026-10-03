@@ -69,6 +69,8 @@ use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::modbus::ModBus;
+use crate::note_bus::{NoteBus, NoteOut, NoteRoute};
+use crate::app::music_scales::SCALE_TYPES;
 use crate::paramlist::ParamList;
 use crate::util::{accelerate, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12, SPLEEN_8X16};
@@ -100,6 +102,10 @@ const GATE_BIT_B_OFF: u32 = REGISTER_BITS;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
+    /// Where the register's notes go (another app, or nowhere): each step
+    /// whose Pulse bit is set plays the CV quantized to Scale.
+    Plays,
+    NoteScale,
     Rate,
     Locks,
     Length,
@@ -188,6 +194,8 @@ struct OutputParams {
 }
 
 struct Params {
+    /// Quantizer scale for the note output (index into SCALE_TYPES).
+    note_scale: AtomicUsize,
     rate_hz: AtomicF32,
     /// 0..1: knob position, CCW (0.0) to CW (1.0). 0.5 = noon = pure
     /// random; see module doc comment for what each direction does.
@@ -222,6 +230,7 @@ struct Params {
 impl Params {
     fn new(modbus: &ModBus) -> Self {
         Self {
+            note_scale: AtomicUsize::new(1),
             rate_hz: AtomicF32::new(4.0),
             locks: AtomicF32::new(0.5),
             ext_locks: modbus.register("Turing Machine: Locks CV"),
@@ -251,6 +260,8 @@ pub struct TuringMachineApp {
     /// The shared play view (play_kit.rs). The module never used the
     /// pads, so they start on the kit's layers.
     kit: PlayKit,
+    note_route: NoteRoute,
+    note_out: Option<NoteOut>,
 }
 
 /// The play view's controls, most important first -- the real module's
@@ -335,7 +346,17 @@ impl TuringMachineApp {
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
             kit: PlayKit::new(kit_config(), !cfg!(test)),
+            note_route: NoteRoute::new(None, "Turing Machine", "turing_machine", false).0,
+            note_out: None,
         }
+    }
+
+    /// Lets the register play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
+        let (route, out) = NoteRoute::new(bus, "Turing Machine", "turing_machine", false);
+        self.note_route = route;
+        self.note_out = Some(out);
+        self
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
@@ -343,7 +364,7 @@ impl TuringMachineApp {
             CORE_GROUP => vec![Selection::Rate, Selection::Locks, Selection::Length, Selection::Write],
             GATE_GROUP => vec![Selection::GateBitA, Selection::GateBitB, Selection::GateMode],
             CV_GROUP => (0..NUM_VOLTS_WEIGHTS).map(Selection::VoltsWeight).collect(),
-            _ => (0..NUM_OUTPUTS).flat_map(|c| [Selection::OutputTarget(c), Selection::OutputInput(c), Selection::OutputLevel(c)]).collect(),
+            _ => [Selection::Plays, Selection::NoteScale].into_iter().chain((0..NUM_OUTPUTS).flat_map(|c| [Selection::OutputTarget(c), Selection::OutputInput(c), Selection::OutputLevel(c)])).collect(),
         }
     }
 
@@ -405,6 +426,8 @@ impl TuringMachineApp {
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::Rate => "Rate".into(),
+            Selection::Plays => "Plays".into(),
+            Selection::NoteScale => "Note scale".into(),
             Selection::Locks => "Locks".into(),
             Selection::Length => "Length".into(),
             Selection::Write => "Write".into(),
@@ -437,6 +460,8 @@ impl TuringMachineApp {
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
             Selection::Rate => format!("{:.1} Hz", self.params.rate_hz.get()),
+            Selection::Plays => self.note_route.label(),
+            Selection::NoteScale => SCALE_TYPES[self.params.note_scale.load(Ordering::Relaxed) % SCALE_TYPES.len()].0.into(),
             Selection::Locks => {
                 let t = self.params.locks.get().clamp(0.0, 1.0);
                 format!("{:.0}% ({})", t * 100.0, self.locks_label(t))
@@ -464,6 +489,8 @@ impl TuringMachineApp {
         let step = delta.signum();
         match sel {
             Selection::Rate => bump(&self.params.rate_hz, delta, sensitivity, MIN_RATE_HZ, MAX_RATE_HZ),
+            Selection::Plays => self.note_route.step(delta.signum()),
+            Selection::NoteScale => self.params.note_scale.store((self.params.note_scale.load(Ordering::Relaxed) as i32 + delta.signum()).rem_euclid(SCALE_TYPES.len() as i32) as usize, Ordering::Relaxed),
             Selection::Locks => bump(&self.params.locks, delta, sensitivity, 0.0, 1.0),
             Selection::Length => {
                 let n = LENGTH_STEPS.len() as i32;
@@ -499,6 +526,8 @@ impl TuringMachineApp {
     fn reset(&mut self, sel: Selection) {
         match sel {
             Selection::Rate => self.params.rate_hz.set(4.0),
+            Selection::Plays => self.note_route.reset(),
+            Selection::NoteScale => self.params.note_scale.store(1, Ordering::Relaxed),
             Selection::Locks => self.params.locks.set(0.5),
             Selection::Length => self.params.length_idx.store(DEFAULT_LENGTH_IDX, Ordering::Relaxed),
             Selection::Write => self.params.write_mode.store(0, Ordering::Relaxed),
@@ -705,7 +734,7 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 }
 
 impl App for TuringMachineApp {
-    fn needs_background_audio(&self) -> bool { self.params.outputs.iter().any(|o| o.target.load(Ordering::Relaxed) > 0) }
+    fn needs_background_audio(&self) -> bool { self.note_route.external() || self.params.outputs.iter().any(|o| o.target.load(Ordering::Relaxed) > 0) }
     fn play_surface(&self) -> bool { true }
     fn play_column(&self) -> Option<crate::app::PlayColumn> {
         (!self.kit.menu).then(|| self.kit.column(self))
@@ -765,6 +794,7 @@ impl App for TuringMachineApp {
             modbus: Arc::clone(&self.modbus),
             phase: 0.0,
             rng: 0xDEAD_BEEF ^ (Arc::as_ptr(&self.params) as u32).wrapping_mul(0x9E3779B9) | 1,
+            notes: self.note_out.take().unwrap_or_else(NoteOut::detached),
         }))
     }
 
@@ -848,6 +878,7 @@ struct TuringMachineProcessor {
     /// Real-time-thread-local clock phase.
     phase: f32,
     rng: u32,
+    notes: NoteOut,
 }
 
 impl TuringMachineProcessor {
@@ -885,6 +916,7 @@ impl AudioProcessor for TuringMachineProcessor {
         let prev_phase = self.phase;
         self.phase = (self.phase + rate_hz * dt).fract();
         let stepped = self.phase < prev_phase;
+        self.notes.advance(frames as u32);
 
         if stepped {
             let length_idx = self.params.length_idx.load(Ordering::Relaxed).min(LENGTH_STEPS.len() - 1);
@@ -926,6 +958,16 @@ impl AudioProcessor for TuringMachineProcessor {
             self.params.pulse.store(pulse, Ordering::Relaxed);
             let cv = shifted as f32 / mask.max(1) as f32;
             self.params.cv.set(cv);
+
+            // A pulse plays the CV through a quantizer: two octaves of
+            // the chosen scale up from C3, held for half a step.
+            if pulse && self.notes.external() {
+                let scale = self.params.note_scale.load(Ordering::Relaxed) % SCALE_TYPES.len();
+                let degrees = SCALE_TYPES[scale].1.len().max(1) * 2;
+                let d = ((cv * degrees as f32) as usize).min(degrees - 1);
+                let note = (48 + crate::app::music_scales::degree(scale, d)).clamp(0, 127) as u8;
+                self.notes.trigger(note, 100, (0.5 / rate_hz * sample_rate) as u32);
+            }
 
             // Exp Gate: Pulses-expander-style -- watch one bit, or
             // OR/AND two of them together.
@@ -1399,4 +1441,11 @@ mod tests {
         app.tick(&Input::default());
         assert!((app.params.locks.get() - 0.5).abs() < 1e-5, "Locks springs back to the knob");
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(TuringMachineApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get()).with_notes(ctx.try_get()))
 }

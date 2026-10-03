@@ -34,6 +34,8 @@ mod manifest;
 mod midi_map;
 mod mixer_bus;
 mod modbus;
+mod note_bus;
+mod midi_devices;
 mod os;
 mod paramlist;
 mod plaits_ffi;
@@ -231,9 +233,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Menu: arrows to navigate, Enter to select. Esc: home.");
     println!("In an app: 1234/qwer/asdf/zxcv = grid, F1-F4 = top buttons, [ ] , . = knobs.");
 
-    let manifests = manifest::discover(Path::new(APPS_DIR));
+    let sd_apps = manifest::sd_apps_dir();
+    let manifests = manifest::discover_all(&[Path::new(APPS_DIR), sd_apps.as_path()]);
     println!("Found {} app manifest(s) in {APPS_DIR}", manifests.len());
-    let registry = Registry::new(
+    let note_bus = Arc::new(note_bus::NoteBus::new());
+    // MIDI output ports become instruments any app can play.
+    midi_devices::spawn(Arc::clone(&note_bus));
+    let registry = Registry::new(registry::standard_context(
         Arc::clone(&cutoff),
         Arc::clone(&device_state),
         Arc::clone(&sensitivity),
@@ -247,7 +253,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&midi_map),
         Arc::clone(&accent),
         Arc::clone(&background),
-    );
+        Arc::clone(&note_bus),
+    ));
     let mut apps = registry.build(&manifests);
 
     // Register every app's processor into the mix bus exactly once,

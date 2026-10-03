@@ -29,7 +29,7 @@
 //! hand-editable (the format is docs/SYNTH_PLATFORM.md).
 
 use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes};
-use crate::app::{App, Input};
+use crate::app::{App, AtlasExtra, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
 use crate::display::FrameBuffer;
@@ -282,16 +282,16 @@ struct Shared {
 }
 
 impl Shared {
-    fn new(modbus: &ModBus, audio_bus: &AudioBus, mixer_bus: &MixerBus) -> Self {
-        let (mix_level, ext_mix_level) = mixer_bus.register(APP_NAME, modbus);
+    fn new(name: &str, modbus: &ModBus, audio_bus: &AudioBus, mixer_bus: &MixerBus) -> Self {
+        let (mix_level, ext_mix_level) = mixer_bus.register(name, modbus);
         let all = all_b();
         Self {
             states: std::array::from_fn(|_| std::array::from_fn(|_| AtomicF32::new(0.0))),
             n_states: AtomicUsize::new(1),
             macros: std::array::from_fn(|_| AtomicF32::new(0.0)),
             morph: AtomicF32::new(0.0),
-            ext_macros: std::array::from_fn(|k| modbus.register(format!("{APP_NAME}: {}", title_case(MACRO_NAMES[k])))),
-            ext_morph: modbus.register(format!("{APP_NAME}: Morph")),
+            ext_macros: std::array::from_fn(|k| modbus.register(format!("{name}: {}", title_case(MACRO_NAMES[k])))),
+            ext_morph: modbus.register(format!("{name}: Morph")),
             builtins: std::array::from_fn(|i| AtomicF32::new(bspec(all[i]).default)),
             held: std::array::from_fn(|_| AtomicBool::new(false)),
             pending: Mutex::new(None),
@@ -304,7 +304,7 @@ impl Shared {
             active_voices: AtomicUsize::new(0),
             voice_fit: AtomicUsize::new(0),
             unstable: AtomicBool::new(false),
-            bus_out: audio_bus.register(APP_NAME),
+            bus_out: audio_bus.register(name),
             mix_level,
             ext_mix_level,
         }
@@ -526,14 +526,31 @@ pub struct AtlasApp {
 
 impl AtlasApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
-        let s = Arc::new(Shared::new(&modbus, &audio_bus, &mixer_bus));
+        Self::build(APP_NAME, "atlas", scan(), sensitivity, nav, modbus, audio_bus, mixer_bus)
+    }
+
+    /// A cartridge: one patch file as its own app, under its own name
+    /// (its own mixer channel, modulation inputs and moments) -- an
+    /// instrument added by dropping a folder in apps/, no code. See
+    /// `create`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cartridge(name: &str, id: &str, patch: std::path::PathBuf, sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
+        let entry = Entry { name: name.into(), category: String::new(), source: Source::File(patch) };
+        Self::build(name, id, vec![entry], sensitivity, nav, modbus, audio_bus, mixer_bus)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(name: &str, id: &str, library: Vec<Entry>, sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
+        let s = Arc::new(Shared::new(name, &modbus, &audio_bus, &mixer_bus));
+        let mut cfg = kit_config();
+        cfg.app_id = if id == "atlas" { "atlas" } else { Box::leak(id.to_string().into_boxed_str()) };
         let mut app = Self {
             s,
             sensitivity,
             nav,
-            kit: PlayKit::new(kit_config(), !cfg!(test)),
+            kit: PlayKit::new(cfg, !cfg!(test)),
             list: ParamList::new(),
-            library: scan(),
+            library,
             preset: 0,
             patch: Patch::from_json(FACTORY[0].1).expect("factory preset parses"),
             maps: Vec::new(),
@@ -713,7 +730,9 @@ impl AtlasApp {
         });
         match res {
             Ok(path) => {
-                self.library = scan();
+                if self.kit.cfg.app_id == "atlas" {
+                    self.library = scan();
+                }
                 if let Some(i) = self.library.iter().position(|e| matches!(&e.source, Source::File(f) if *f == path)) {
                     self.preset = i;
                 }
@@ -1141,29 +1160,6 @@ impl PlayHost for AtlasApp {
     }
 }
 
-/// Atlas's panel in the Slint GUI -- see `AtlasPanel`.
-#[allow(dead_code)] // Slint GUI only
-pub struct AtlasExtra {
-    pub name: String,
-    pub category: String,
-    pub description: String,
-    pub index: String,
-    pub macro_names: Vec<String>,
-    pub macro_values: Vec<f32>,
-    pub macro_used: Vec<bool>,
-    pub morph: f32,
-    pub states: usize,
-    pub morph_label: String,
-    /// 1 = spectrum bars, 0 = scope trace.
-    pub spectrum_view: bool,
-    pub spectrum: Vec<f32>,
-    pub scope: Vec<f32>,
-    pub voices: String,
-    pub load: f32,
-    pub depth: String,
-    pub status: String,
-}
-
 impl App for AtlasApp {
     fn play_surface(&self) -> bool {
         true
@@ -1460,4 +1456,17 @@ mod tests {
             a.tick(&Input::default());
         }
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, id: &str) -> Box<dyn crate::app::App> {
+    // A manifest with a `data` patch is a cartridge: that sound, as its own app.
+    if let Some(m) = ctx.try_named::<crate::manifest::AppManifest>("manifest") {
+        if let Some(path) = m.data_path() {
+            return Box::new(AtlasApp::cartridge(&m.name, id, path, ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()));
+        }
+    }
+    Box::new(AtlasApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

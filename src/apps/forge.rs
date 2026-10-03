@@ -189,3 +189,10 @@ impl AudioProcessor for Processor{
  /// The menu still edits through knob 2 (the shared edit path the play view now uses too).
  #[test]fn the_menu_still_edits_rows(){let mut a=app();a.kit.menu=true;for _ in 0..12{a.tick(&Input{navigation_steps:1,..Default::default()});}assert_eq!(a.list.selected,12,"D-pad still walks the menu");let release=a.p.release.get();a.tick(&Input{knob2:1,..Default::default()});assert!((a.p.release.get()-release-0.025).abs()<1e-5,"knob 2 edits Release in the menu");}
 }
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(crate::apps::forge::ForgeApp::new(ctx.get(),ctx.get(),ctx.get(),ctx.named("nav_speed")))
+}

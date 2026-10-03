@@ -1,5 +1,8 @@
 id = "morph"
 name = "Morph"
+category = "effect"
+description = "Morph between two sources."
+audio_outputs = ["Morph"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Morph Level",

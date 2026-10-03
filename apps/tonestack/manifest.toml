@@ -1,5 +1,8 @@
 id = "tonestack"
 name = "Tonestack"
+category = "effect"
+description = "Amp simulation and a guitar effects chain."
+audio_outputs = ["Tonestack"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Tonestack Level",

@@ -87,118 +87,14 @@ mod util;
 #[path = "slint_common/live_midi.rs"]
 mod live_midi;
 
-// Every real app, flat at this example's own crate root (no real
-// `examples/apps/` directory exists -- see slint_mixer_live.rs's doc
-// comment for the fuller "why `#[path]`, why flat" explanation).
-// `registry.rs` (and several apps themselves, e.g. Bloom/Madness/
-// Nebula/Pam's pulling in Plaits' engine tables) refer to these by
-// the real crate's `crate::apps::X` path, so `pub mod apps` below
-// re-exports the same flat modules under that path too.
-#[path = "../src/apps/analyzer.rs"]
-pub mod analyzer;
-#[path = "../src/apps/beads.rs"]
-pub mod beads;
-#[path = "../src/apps/black_hole.rs"]
-pub mod black_hole;
-#[path = "../src/apps/bloom.rs"]
-pub mod bloom;
-#[path = "../src/apps/cascade.rs"]
-pub mod cascade;
-#[path = "../src/apps/clouds.rs"]
-pub mod clouds;
-#[path = "../src/apps/cv_out.rs"]
-pub mod cv_out;
-#[path = "../src/apps/collection.rs"]
-pub mod collection;
-#[path = "../src/apps/forge.rs"]
-pub mod forge;
-#[path = "../src/apps/oracle/mod.rs"]
-pub mod oracle;
-#[path = "../src/apps/pulsar/mod.rs"]
-pub mod pulsar;
-#[path = "../src/apps/tinkertone.rs"]
-pub mod tinkertone;
-#[path = "../src/apps/norns/mod.rs"]
-pub mod norns;
-#[path = "../src/apps/ledger.rs"]
-pub mod ledger;
-#[path = "../src/apps/trio.rs"]
-pub mod trio;
-#[path = "../src/apps/atlas.rs"]
-pub mod atlas;
-#[path = "../src/apps/mosaic.rs"]
-pub mod mosaic;
-#[path = "../src/apps/squeeze.rs"]
-pub mod squeeze;
-#[path = "../src/apps/controller_setup.rs"]
-pub mod controller_setup;
-#[path = "../src/apps/vector_filter.rs"]
-pub mod vector_filter;
-#[path = "../src/apps/morph.rs"]
-pub mod morph;
-#[path = "../src/apps/madness.rs"]
-pub mod madness;
-#[path = "../src/apps/magnito.rs"]
-pub mod magnito;
-#[path = "../src/apps/midi_learn.rs"]
-pub mod midi_learn;
-#[path = "../src/apps/mixer.rs"]
-pub mod mixer;
-#[path = "../src/apps/natural_gate.rs"]
-pub mod natural_gate;
-#[path = "../src/apps/nautilus.rs"]
-pub mod nautilus;
-#[path = "../src/apps/nebula.rs"]
-pub mod nebula;
-#[path = "../src/apps/pams.rs"]
-pub mod pams;
-#[path = "../src/apps/plaits.rs"]
-pub mod plaits;
-#[path = "../src/apps/plaits_layout.rs"]
-pub mod plaits_layout;
-#[path = "../src/apps/plaits_play.rs"]
-pub mod plaits_play;
-#[path = "../src/apps/prism.rs"]
-pub mod prism;
-#[path = "../src/apps/queen_of_pentacles.rs"]
-pub mod queen_of_pentacles;
-#[path = "../src/apps/rainmaker.rs"]
-pub mod rainmaker;
-#[path = "../src/apps/neogeo_core.rs"]
-pub mod neogeo_core;
-#[path = "../src/apps/retro.rs"]
-pub mod retro;
-#[path = "../src/apps/sample_drum.rs"]
-pub mod sample_drum;
-#[path = "../src/apps/sequencer.rs"]
-pub mod sequencer;
-#[path = "../src/apps/settings.rs"]
-pub mod settings;
-#[path = "../src/apps/singularity.rs"]
-pub mod singularity;
-#[path = "../src/apps/starlab.rs"]
-pub mod starlab;
-#[path = "../src/apps/warps.rs"]
-pub mod warps;
-#[path = "../src/apps/synth.rs"]
-pub mod synth;
-#[path = "../src/apps/tape.rs"]
-pub mod tape;
-#[path = "../src/apps/tonestack.rs"]
-pub mod tonestack;
-#[path = "../src/apps/turing_machine.rs"]
-pub mod turing_machine;
-#[path = "../src/apps/voltage.rs"]
-pub mod voltage;
-#[path = "../src/apps/visualizer.rs"]
-pub mod visualizer;
-mod apps {
-    pub use super::{
-        analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, forge, natural_gate, nautilus,
-        nebula, pams, plaits, plaits_layout, controller_setup, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
-        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps, oracle, pulsar, tinkertone, norns, ledger, trio, atlas, mosaic, squeeze,
-    };
-}
+// Every app, found by build.rs exactly as the device binary finds them
+// (see src/apps/mod.rs) -- adding an app needs no edit here.
+#[path = "../src/apps/mod.rs"]
+mod apps;
+#[path = "../src/note_bus.rs"]
+mod note_bus;
+#[path = "../src/midi_devices.rs"]
+mod midi_devices;
 
 /// Stand-in for the eventual STM32Cube.AI inference call -- same no-op
 /// `main.rs` defines at its own crate root.
@@ -4475,9 +4371,13 @@ fn main() {
     let device_state = Arc::new(device_state);
 
 
-    let manifests = manifest::discover(std::path::Path::new(APPS_DIR));
+    let sd_apps = manifest::sd_apps_dir();
+    let manifests = manifest::discover_all(&[std::path::Path::new(APPS_DIR), sd_apps.as_path()]);
     println!("Found {} app manifest(s) in {APPS_DIR}", manifests.len());
-    let registry = Registry::new(
+    let note_bus = Arc::new(note_bus::NoteBus::new());
+    // MIDI output ports become instruments any app can play.
+    midi_devices::spawn(Arc::clone(&note_bus));
+    let registry = Registry::new(registry::standard_context(
         Arc::clone(&cutoff),
         Arc::clone(&device_state),
         Arc::clone(&sensitivity),
@@ -4491,7 +4391,9 @@ fn main() {
         Arc::clone(&midi_map),
         Arc::clone(&accent),
         Arc::clone(&background),
-    );
+        Arc::clone(&note_bus),
+    ));
+    launcher::install_catalog(manifests.iter().filter(|m| registry.implements(m)).map(|m| (m.name.clone(), m.category.clone(), m.description.clone())));
     let mut apps = registry.build(&manifests);
 
     // Every app's processor goes into the one shared engine exactly
@@ -4830,7 +4732,7 @@ fn main() {
             ui.set_home_running(Rc::new(slint::VecModel::from(indices[start..end].iter().map(|i|apps_ref[*i].1.running()==Some(true)).collect::<Vec<_>>())).into());
             ui.set_home_category(browser.category as i32);ui.set_home_total(names_all.len() as i32);ui.set_home_count(indices.len() as i32);
             let name=indices.get(list.selected).map(|i|names_all[*i].as_str()).unwrap_or("");
-            ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list."}else{launcher::description(name)}.into());ui.set_home_family(if name.is_empty(){"WELCOME"}else{launcher::CATEGORIES[launcher::category(name)]}.into());
+            ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list.".to_string()}else{launcher::description(name)}.into());ui.set_home_family(if name.is_empty(){"WELCOME"}else{launcher::CATEGORIES[launcher::category(name)]}.into());
         } else {
             let idx = active_for_timer.borrow().unwrap();
             if previous_visit!=Some(idx){launcher_for_timer.borrow_mut().visit(idx);previous_visit=Some(idx);}

@@ -1,2 +1,5 @@
 id = "visualizer"
 name = "Visualizer"
+category = "utility"
+description = "Visuals that move with your sound."
+audio_outputs = ["Visualizer"]

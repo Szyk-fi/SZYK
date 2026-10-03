@@ -1,5 +1,8 @@
 id = "rainmaker"
 name = "Rainmaker"
+category = "effect"
+description = "A 16-tap pitched rhythmic delay."
+audio_outputs = ["Rainmaker"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Rainmaker Level",

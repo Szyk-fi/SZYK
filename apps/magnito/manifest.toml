@@ -1,5 +1,8 @@
 id = "magnito"
 name = "Magnito"
+category = "effect"
+description = "Magnetic-tape saturation and hysteresis."
+audio_outputs = ["Magnito"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Magnito Level",

@@ -1,6 +1,7 @@
 //! Offline visual verification with real module state and processors.
 //! Run the live example with --render-instruments OUTPUT_DIRECTORY.
 use super::*;
+use crate::apps::{collection, cv_out, prism};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::platform::{Platform, PlatformError, WindowAdapter};
 use slint::{PhysicalSize, Rgb8Pixel, SharedPixelBuffer};
@@ -30,7 +31,7 @@ pub fn render(directory: &str) {
     let mut manifests = manifest::discover(std::path::Path::new(APPS_DIR));
     for (id, name) in [("analyzer", "Analyzer"), ("synth", "Synth")] {
         if !manifests.iter().any(|m| m.id == id) {
-            manifests.push(manifest::AppManifest { id: id.into(), name: name.into(), mod_inputs: Vec::new() });
+            manifests.push(manifest::AppManifest { id: id.into(), name: name.into(), audio_outputs: vec![name.into()], ..Default::default() });
         }
     }
     let _catalog=registry.build(&manifests);
@@ -386,7 +387,7 @@ pub fn render(directory: &str) {
         ui.set_home_running(Rc::new(slint::VecModel::from(vec![false;visible.len()])).into());
         ui.set_home_category(category as i32);ui.set_home_count(ids.len() as i32);ui.set_home_total(names.len() as i32);
         let name=visible.first().map(|i|names[*i].as_str()).unwrap_or("");
-        ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list."}else{launcher::description(name)}.into());
+        ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list.".to_string()}else{launcher::description(name)}.into());
         ui.set_home_family(if name.is_empty(){"WELCOME"}else{launcher::CATEGORIES[launcher::category(name)]}.into());
         ui.set_home_selected(0); ui.set_home_more_above(false); ui.set_home_more_below(ids.len()>6);
         save_extra_frame(&window,directory,slug);
@@ -519,7 +520,7 @@ fn registry_with_audio(audio_bus:Arc<AudioBus>) -> (Registry, Arc<ModBus>) {
     let sensitivity = Arc::new(AtomicF32::new(0.1));
     let nav = Arc::new(AtomicF32::new(3.0));
     let preview_modbus = Arc::new(ModBus::new());
-    let registry = Registry::new(
+    let registry = Registry::new(registry::standard_context(
         Arc::new(AtomicF32::new(1000.0)),
         Arc::new(audio_devices::AudioDeviceState::new("Offline preview".into())),
         sensitivity, nav, Arc::clone(&preview_modbus), audio_bus,
@@ -528,6 +529,7 @@ fn registry_with_audio(audio_bus:Arc<AudioBus>) -> (Registry, Arc<ModBus>) {
         Arc::new(std::sync::atomic::AtomicBool::new(false)), Arc::new(midi_map::MidiMap::new()),
         Arc::new(theme::ThemeColor::new(theme::ACCENT_DEFAULT_HUE, theme::ACCENT_DEFAULT_SAT, theme::ACCENT_DEFAULT_VAL)),
         Arc::new(theme::ThemeColor::new(theme::BG_DEFAULT_HUE, theme::BG_DEFAULT_SAT, theme::BG_DEFAULT_VAL)),
-    );
+        Arc::new(note_bus::NoteBus::new()),
+    ));
     (registry, preview_modbus)
 }

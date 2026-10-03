@@ -656,6 +656,11 @@ pub struct CollectionApp {
     /// A library step that arrived while a load was still in flight,
     /// with whether playback should start when it lands.
     pending_load: Option<bool>,
+    /// Synth kinds: where the generated notes go (own voices, another
+    /// app, or nowhere) -- see note_bus.rs. The sending end goes to the
+    /// audio thread with the processor.
+    note_route: crate::note_bus::NoteRoute,
+    note_out: Option<crate::note_bus::NoteOut>,
 }
 
 /// One play-view control. `Param(j)` is one of the kind's six engine
@@ -926,7 +931,19 @@ impl CollectionApp {
             kit_alt: false,
             gates: 0,
             pending_load: None,
+            note_route: crate::note_bus::NoteRoute::new(None, kind.name(), kind.id(), true).0,
+            note_out: None,
         }
+    }
+
+    /// Lets a synth kind's generator play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<crate::note_bus::NoteBus>>) -> Self {
+        if self.kind.synth() {
+            let (route, out) = crate::note_bus::NoteRoute::new(bus, self.kind.name(), self.kind.id(), true);
+            self.note_route = route;
+            self.note_out = Some(out);
+        }
+        self
     }
     fn send(&mut self, c: Command) {
         if self.tx.try_send(c).is_err() {
@@ -1076,6 +1093,9 @@ impl CollectionApp {
             r.push(("Root note".into(), ROOT_NAMES[self.root_note() as usize % 12].into(),false));
             r.push(("Pattern".into(),PATTERNS[self.p.pattern.load(Ordering::Relaxed)%6].into(),false));
             r.push(("Rhythm".into(),RHYTHMS[self.p.rhythm.load(Ordering::Relaxed)%5].into(),false));
+            // Last, so it never shifts the rows above: where the
+            // generator's notes go.
+            r.push(("Plays".into(), self.note_route.label(), false));
         } else if matches!(self.kind, Kind::Fracture | Kind::Ghosts | Kind::TapeMachine) {
             r.push((
                 "Freeze input buffer".into(),
@@ -1786,8 +1806,16 @@ impl CollectionApp {
             }
         }
     }
+    /// The synth kinds' "Plays" row (always last).
+    fn plays_row(&self) -> Option<usize> {
+        self.kind.synth().then(|| self.rows().len() - 1)
+    }
     fn action(&mut self) {
         let row = self.list.selected;
+        if Some(row) == self.plays_row() {
+            self.note_route.reset();
+            return;
+        }
         let base = self.performance_base();
         if row == base {
             self.recall_scene(self.p.variation.load(Ordering::Relaxed));
@@ -1872,6 +1900,9 @@ impl App for CollectionApp {
         self.list.navigate_input(input, rows, self.nav.get() as i32);
         let d = input.knob2;
         let off = self.offset();
+        if d != 0 && Some(self.list.selected) == self.plays_row() {
+            self.note_route.step(d);
+        }
         if d != 0 {
             let i = self.list.selected;
             if i < off {
@@ -2397,13 +2428,11 @@ impl App for CollectionApp {
         })
     }
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
-        Some(Box::new(Processor::new(
-            self.kind,
-            self.p.clone(),
-            self.bus.clone(),
-            self.rx.take()?,
-            self.take_tx.take()?,
-        )))
+        let mut processor = Processor::new(self.kind, self.p.clone(), self.bus.clone(), self.rx.take()?, self.take_tx.take()?);
+        if let Some(out) = self.note_out.take() {
+            processor.notes = out;
+        }
+        Some(Box::new(processor))
     }
 }
 impl PlayHost for CollectionApp {
@@ -2896,6 +2925,8 @@ struct Processor {
     motion_clock: f32,
     perf: [f32; 8],
     audition: Option<i32>,
+    /// Where generated notes go (synth kinds; see note_bus.rs).
+    notes: crate::note_bus::NoteOut,
 }
 impl Processor {
     fn new(
@@ -2978,6 +3009,7 @@ impl Processor {
             motion_clock: 0.,
             perf: [0.; 8],
             audition: None,
+            notes: crate::note_bus::NoteOut::detached(),
         }
     }
     fn random(&mut self) -> f32 {
@@ -3151,7 +3183,9 @@ impl Processor {
                     _ => generated & (1<<i)!=0,
                 }
             };
-            if fire || manual_edge {
+            // Generated notes sound here, go to another app, or (route
+            // None) nowhere; the pads always play here.
+            if manual_edge || (fire && self.notes.internal()) {
                 self.env[i] = 1.;
                 self.sample_position[i] = 0.;
             }
@@ -3168,6 +3202,9 @@ impl Processor {
             let octave = if self.kind==Kind::Constellation {(i/4) as f32*v[1]*12.}else{0.};
             let note=root + music_scales::degree(scale,degree) as f32 + octave + perf[5]*12.;
             self.note_values[i] = note;
+            if fire && self.notes.external() {
+                self.notes.trigger(note.round().clamp(0., 127.) as u8, 100, (beat_len * 1.5) as u32);
+            }
             if self.env[i] < 0.00001 && self.voice_amplitude[i] < 0.00001 {
                 self.voice_amplitude[i] = 0.;
                 continue;
@@ -3659,6 +3696,12 @@ impl AudioProcessor for Processor {
         let play = self.p.play.load(Ordering::Relaxed);
         let record = self.p.record.load(Ordering::Relaxed);
         let mix = (self.p.mix.get() + self.p.ext.get()).clamp(0., 2.);
+        // notes sent to another app end on time (or all at once on stop)
+        if play {
+            self.notes.advance((out.len() / channels) as u32);
+        } else {
+            self.notes.all_off();
+        }
         self.mono.clear();
         let radio = self.p.radio.try_lock().ok().and_then(|s| s.clone());
         let mut radio_ended = false;
@@ -4639,4 +4682,16 @@ impl Drop for CollectionApp {
 #[cfg(test)] mod visual_interaction_tests {
  use super::*;
  #[test] fn scope_cycles_all_ten_modes_and_freezes_all_geometry(){let bus=Arc::new(AudioBus::new());let input=bus.register("Signal");*input.lock().unwrap()=(0..512).map(|i|(i as f32*0.2).sin()*0.3).collect();let mut app=CollectionApp::new(Kind::Scope,bus,Arc::new(ModBus::new()),Arc::new(MixerBus::new()),Arc::new(AtomicF32::new(1.)));app.p.source.store(0,Ordering::Relaxed);let mut dsp=app.audio_processor().unwrap();let mut out=[0.;1024];for mode in 0..10 {app.p.values[4].set(mode as f32);app.p.values[5].set(0.);for _ in 0..4{dsp.process(&mut out,2,48000.);}let SlintExtra::Collection(before)=app.slint_extra()else{panic!()};app.p.values[5].set(1.);for _ in 0..4{dsp.process(&mut out,2,48000.);}let SlintExtra::Collection(after)=app.slint_extra()else{panic!()};assert_eq!(before.visual_lines,after.visual_lines);assert_eq!(before.terrain,after.terrain);assert!(out.iter().all(|s|*s==0.));}app.p.values[4].set(9.);let mut input=Input::default();input.grid[1]=true;app.tick(&input);assert_eq!(app.p.values[4].get(),0.);}
+}
+
+/// Builds one of the Collection apps (or Portal) for the registry: the
+/// manifest's id picks the kind, so every Collection app shares this
+/// one entry point (`module = "collection"` in its manifest).
+pub fn create(ctx: &crate::app::AppContext, id: &str) -> Box<dyn crate::app::App> {
+    let kind = APPS.iter().find(|(_, app, _)| *app == id).map(|(k, _, _)| *k).unwrap_or(Kind::Orbit);
+    if kind == Kind::Portal {
+        Box::new(portal::PortalApp::new(ctx.get(), ctx.get(), ctx.get(), ctx.named("nav_speed")).with_notes(ctx.try_get()))
+    } else {
+        Box::new(CollectionApp::new(kind, ctx.get(), ctx.get(), ctx.get(), ctx.named("nav_speed")).with_notes(ctx.try_get()))
+    }
 }

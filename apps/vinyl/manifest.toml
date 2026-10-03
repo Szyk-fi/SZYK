@@ -1,5 +1,9 @@
 id = "vinyl"
 name = "Vinyl"
+module = "collection"
+category = "library"
+description = "Play your records with the feel of a turntable."
+audio_outputs = ["Vinyl"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Vinyl Level",

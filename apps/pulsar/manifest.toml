@@ -1,5 +1,9 @@
 id = "pulsar"
 name = "Pulsar"
+category = "sequencer"
+description = "A genre-aware drum machine with its own sample kits."
+audio_outputs = ["Pulsar", "Pulsar Kick"]
+notes_in = true
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Pulsar Level",

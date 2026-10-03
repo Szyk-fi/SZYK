@@ -134,6 +134,8 @@ pub struct NornsApp {
     ext_mix_level: Arc<AtomicF32>,
     peak: Arc<AtomicF32>,
     roots: Vec<(PathBuf, bool)>,
+    /// Where the script's MIDI notes go (set from Portal's Notes page).
+    note_out: Option<crate::note_bus::NoteOut>,
 }
 
 impl NornsApp {
@@ -155,6 +157,7 @@ impl NornsApp {
             ext_mix_level,
             peak: Arc::new(AtomicF32::new(0.0)),
             roots,
+            note_out: None,
         };
         // Boot straight into a script (like norns resuming its last one).
         if !cfg!(test) {
@@ -171,6 +174,14 @@ impl NornsApp {
             }
         }
         app
+    }
+
+    /// Lets a script's MIDI notes play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<crate::note_bus::NoteBus>>) -> Self {
+        if let Some(bus) = bus {
+            self.note_out = Some(bus.register_source_routed("Norns", crate::note_bus::NONE));
+        }
+        self
     }
 
     #[cfg(test)]
@@ -450,7 +461,11 @@ impl App for NornsApp {
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
-        Some(Box::new(engine::Processor::new(Arc::clone(&self.queue), Arc::clone(&self.mix_level), Arc::clone(&self.ext_mix_level), Arc::clone(&self.peak))))
+        let mut p = engine::Processor::new(Arc::clone(&self.queue), Arc::clone(&self.mix_level), Arc::clone(&self.ext_mix_level), Arc::clone(&self.peak));
+        if let Some(out) = self.note_out.take() {
+            p.notes = out;
+        }
+        Some(Box::new(p))
     }
 
     /// A script makes sound off screen too (it's a running program).
@@ -693,4 +708,11 @@ end
         drop(o);
         a.stop();
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(NornsApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }

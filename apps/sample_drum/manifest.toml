@@ -1,5 +1,9 @@
 id = "sample_drum"
 name = "Sample Drum"
+category = "instrument"
+description = "A dual-channel sample player and slicer."
+audio_outputs = ["Sample Drum"]
+notes_in = true
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Sample Drum Level",

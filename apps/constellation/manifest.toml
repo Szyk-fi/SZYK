@@ -1,5 +1,11 @@
 id = "constellation"
 name = "Constellation"
+module = "collection"
+category = "instrument"
+description = "Explore scales, chord voicings and harmonic motion."
+audio_outputs = ["Constellation"]
+notes_in = true
+note_outputs = ["Constellation"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Constellation Level",

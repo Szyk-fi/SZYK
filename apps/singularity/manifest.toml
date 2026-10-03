@@ -1,5 +1,8 @@
 id = "singularity"
 name = "Singularity"
+category = "effect"
+description = "Four deliberately alien processes."
+audio_outputs = ["Singularity"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Singularity Level",

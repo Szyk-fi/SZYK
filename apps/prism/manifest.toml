@@ -1,5 +1,8 @@
 id = "prism"
 name = "Prism"
+category = "effect"
+description = "A multi-effect of delays, loops and shimmer."
+audio_outputs = ["Prism"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Prism Level",

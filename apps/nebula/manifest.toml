@@ -1,5 +1,9 @@
 id = "nebula"
 name = "Nebula"
+category = "sequencer"
+description = "A small gravity simulation: each captured particle plays a note."
+audio_outputs = ["Nebula"]
+note_outputs = ["Nebula"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Nebula Level",

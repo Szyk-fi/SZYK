@@ -1,2 +1,5 @@
 id = "settings"
 name = "Settings"
+category = "system"
+description = "Audio, controllers and system preferences."
+audio_outputs = []

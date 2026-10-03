@@ -232,6 +232,11 @@ pub struct LedgerApp {
     saved: u32,
     seen: u32,
     quiet: u32,
+    /// Per track: where its notes go (its own Plaits voice by default, or
+    /// another app -- set from Portal's Notes page); the sending ends go to
+    /// the audio thread with the processor.
+    track_routes: Vec<crate::note_bus::NoteRoute>,
+    track_outs: Vec<crate::note_bus::NoteOut>,
 }
 
 impl LedgerApp {
@@ -274,12 +279,22 @@ impl LedgerApp {
             saved: 0,
             seen: 0,
             quiet: 0,
+            track_routes: Vec::new(),
+            track_outs: Vec::new(),
         };
         if !app.load() {
             app.demo();
         }
         app.saved = app.p.dirty.load(Ordering::Relaxed);
         app
+    }
+
+    /// Lets each track play another app (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<crate::note_bus::NoteBus>>) -> Self {
+        let (routes, outs): (Vec<_>, Vec<_>) = (0..TRACKS).map(|t| crate::note_bus::NoteRoute::new(bus.clone(), &format!("Ledger T{}", t + 1), "ledger", true)).unzip();
+        self.track_routes = routes;
+        self.track_outs = outs;
+        self
     }
 
     /// A first pattern, so it plays something the first time (original).
@@ -326,8 +341,8 @@ impl LedgerApp {
             C_HARM => pct(&t.harmonics),
             C_DECAY => pct(&t.decay),
             C_LEVEL => pct(&t.level),
-            C_TRACK => format!("{} · {}", self.cur_track + 1, Self::engine_name(t.engine.load(Ordering::Relaxed))),
-            C_ENGINE => Self::engine_name(t.engine.load(Ordering::Relaxed)).into(),
+            C_TRACK => format!("{} · {}", self.cur_track + 1, self.track_sound(self.cur_track)),
+            C_ENGINE => self.track_sound(self.cur_track),
             C_TEMPO => format!("{:.0} BPM", self.p.bpm.get()),
             C_SWING => format!("{:.0}%", self.p.swing.get() * 100.0),
             C_PATTERN => format!("{:02}", self.pattern() + 1),
@@ -337,6 +352,14 @@ impl LedgerApp {
             C_RUN => (if self.p.running.load(Ordering::Relaxed) { "playing" } else { "stopped" }).into(),
             C_NEXT => format!("{:02}", self.p.queued.load(Ordering::Relaxed) % PATTERNS + 1),
             _ => "press to clear".into(),
+        }
+    }
+
+    /// What a track plays: its Plaits engine, or "→ App" when routed.
+    fn track_sound(&self, track: usize) -> String {
+        match self.track_routes.get(track) {
+            Some(r) if r.route() != crate::note_bus::INTERNAL => format!("→ {}", r.label()),
+            _ => Self::engine_name(self.p.tracks[track % TRACKS].engine.load(Ordering::Relaxed)).into(),
         }
     }
 
@@ -904,7 +927,9 @@ impl App for LedgerApp {
         self.p.running.load(Ordering::Relaxed)
     }
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
-        Some(Box::new(Processor::new(Arc::clone(&self.p))))
+        let mut p = Processor::new(Arc::clone(&self.p));
+        p.notes = std::mem::take(&mut self.track_outs);
+        Some(Box::new(p))
     }
 }
 
@@ -929,11 +954,13 @@ struct TrackDsp {
     pending: [(i64, Option<Ev>); 12],
     /// Seconds since the note ended (render stops after the tail).
     idle: f32,
+    /// The note held on another app, when the track is routed there.
+    ext_note: Option<u8>,
 }
 
 impl TrackDsp {
     fn new() -> Self {
-        Self { voice: PlaitsVoice::new(), note: 60, gate: false, vol: 1.0, locks: [f32::NAN; 4], pending: [(0, None); 12], idle: 10.0 }
+        Self { voice: PlaitsVoice::new(), note: 60, gate: false, vol: 1.0, locks: [f32::NAN; 4], pending: [(0, None); 12], idle: 10.0, ext_note: None }
     }
     fn schedule(&mut self, at: i64, e: Ev) {
         if let Some(slot) = self.pending.iter_mut().find(|p| p.1.is_none()) {
@@ -959,11 +986,13 @@ struct Processor {
     buf: Vec<f32>,
     mix: Vec<f32>,
     loop_anchor: Option<usize>,
+    /// Per track note outputs (see `LedgerApp::with_notes`).
+    notes: Vec<crate::note_bus::NoteOut>,
 }
 
 impl Processor {
     fn new(p: Arc<Shared>) -> Self {
-        Self { p, tracks: (0..TRACKS).map(|_| TrackDsp::new()).collect(), until_row: 0.0, next_row: 0, ticks: 0, was_running: false, rng: 0x1234_abcd, buf: vec![0.0; 4096], mix: vec![0.0; 4096], loop_anchor: None }
+        Self { p, tracks: (0..TRACKS).map(|_| TrackDsp::new()).collect(), until_row: 0.0, next_row: 0, ticks: 0, was_running: false, rng: 0x1234_abcd, buf: vec![0.0; 4096], mix: vec![0.0; 4096], loop_anchor: None, notes: Vec::new() }
     }
 
     fn rand100(&mut self) -> u32 {
@@ -1074,6 +1103,13 @@ impl AudioProcessor for Processor {
         let dark = self.p.moves[7].load(Ordering::Relaxed);
         let level = (self.p.mix_level.get() + self.p.ext_mix_level.get()).clamp(0.0, 2.0);
         self.mix[..frames].fill(0.0);
+        if !running {
+            for (o, tr) in self.notes.iter_mut().zip(self.tracks.iter_mut()) {
+                if let Some(n) = tr.ext_note.take() {
+                    o.note_off(n);
+                }
+            }
+        }
 
         let mut done = 0usize;
         while done < frames {
@@ -1110,12 +1146,28 @@ impl AudioProcessor for Processor {
             }
             let chunk = chunk.max(1);
             // apply events due now
-            for tr in self.tracks.iter_mut() {
+            for (ti, tr) in self.tracks.iter_mut().enumerate() {
+                let out = self.notes.get_mut(ti);
+                let external = out.as_ref().is_some_and(|o| !o.internal());
+                let mut out = out;
                 for slot in tr.pending.iter_mut() {
                     if let (at, Some(e)) = *slot {
                         if at <= 0 {
+                            // a note ending on another app
+                            if matches!(e, Ev::GateOff | Ev::Off | Ev::On { .. }) {
+                                if let (Some(n), Some(o)) = (tr.ext_note.take(), out.as_deref_mut()) {
+                                    o.note_off(n);
+                                }
+                            }
                             match e {
                                 Ev::GateOff => tr.gate = false,
+                                Ev::On { note } if external => {
+                                    if let Some(o) = out.as_deref_mut() {
+                                        o.note_on(note, (tr.vol * 110.0).clamp(1.0, 127.0) as u8);
+                                        tr.ext_note = Some(note);
+                                    }
+                                    tr.gate = false;
+                                }
                                 Ev::On { note } => {
                                     tr.note = note;
                                     tr.gate = true;
@@ -1295,4 +1347,11 @@ mod tests {
         a.tick(&Input { knob2_press: true, ..Default::default() });
         assert_eq!(a.p.cell(0, 0, 1).note, NOTE_OFF, "clearing an empty note writes OFF");
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(LedgerApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }

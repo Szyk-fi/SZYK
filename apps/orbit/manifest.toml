@@ -1,5 +1,11 @@
 id = "orbit"
 name = "Orbit"
+module = "collection"
+category = "instrument"
+description = "Patterns that orbit the pads: a generative instrument."
+audio_outputs = ["Orbit"]
+notes_in = true
+note_outputs = ["Orbit"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Orbit Level",

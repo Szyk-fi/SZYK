@@ -1,5 +1,9 @@
 id = "norns"
 name = "Norns"
+category = "game"
+description = "Run norns scripts: Lua instruments, sequencers and toys."
+audio_outputs = ["Norns"]
+note_outputs = ["Norns"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Norns Level",

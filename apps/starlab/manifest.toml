@@ -1,5 +1,9 @@
 id = "starlab"
 name = "Starlab"
+category = "instrument"
+description = "A plucked-string voice sharing a shimmering reverb tank."
+audio_outputs = ["Starlab"]
+notes_in = true
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Starlab Level",

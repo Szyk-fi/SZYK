@@ -1,5 +1,8 @@
 id = "mosaic"
 name = "Mosaic"
+category = "effect"
+description = "Four effects in series, each switched by its own 16-step pattern."
+audio_outputs = ["Mosaic"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Mosaic Level",

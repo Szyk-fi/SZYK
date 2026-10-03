@@ -1,5 +1,8 @@
 id = "natural_gate"
 name = "Natural Gate"
+category = "effect"
+description = "A dual low-pass gate with zero bleed."
+audio_outputs = ["Natural Gate: Ch1", "Natural Gate: Ch2"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Natural Gate Ch1 Level",

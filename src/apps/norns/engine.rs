@@ -29,6 +29,9 @@ pub enum Cmd {
     Engine(String, Vec<f32>),
     Softcut(String, Vec<f32>),
     Audio(String, Vec<f32>),
+    /// A MIDI message from the script (`midi.connect():note_on(...)`):
+    /// notes go out on the note bus to whatever Norns is routed to.
+    Midi(Vec<u8>),
     /// Script stopped: silence everything and reset to power-on state.
     Reset,
 }
@@ -509,13 +512,15 @@ pub struct Processor {
     pub mix_level: Arc<crate::util::AtomicF32>,
     pub ext_mix_level: Arc<crate::util::AtomicF32>,
     pub peak: Arc<crate::util::AtomicF32>,
+    /// The script's MIDI notes, sent to another app (see note_bus.rs).
+    pub notes: crate::note_bus::NoteOut,
 }
 
 impl Processor {
     pub fn new(queue: Arc<Queue>, mix_level: Arc<crate::util::AtomicF32>, ext_mix_level: Arc<crate::util::AtomicF32>, peak: Arc<crate::util::AtomicF32>) -> Self {
         let mut cut = Softcut::new();
         cut.allocate(48_000.0);
-        Self { queue, poly: PolyPerc::new(), cut, levels: Levels::default(), pending: Vec::with_capacity(4096), mix_level, ext_mix_level, peak }
+        Self { queue, poly: PolyPerc::new(), cut, levels: Levels::default(), pending: Vec::with_capacity(4096), mix_level, ext_mix_level, peak, notes: crate::note_bus::NoteOut::detached() }
     }
 
     fn apply(&mut self, c: Cmd) {
@@ -531,7 +536,13 @@ impl Processor {
                     _ => {}
                 }
             }
+            Cmd::Midi(m) => match (m.first().map(|s| s & 0xF0), m.get(1), m.get(2)) {
+                (Some(0x90), Some(&n), Some(&v)) if v > 0 => self.notes.note_on(n.min(127), v.min(127)),
+                (Some(0x90 | 0x80), Some(&n), _) => self.notes.note_off(n.min(127)),
+                _ => {}
+            },
             Cmd::Reset => {
+                self.notes.all_off();
                 self.poly = PolyPerc::new();
                 self.poly.set_rate(self.cut.sr);
                 self.cut.command("reset", &[]);

@@ -445,7 +445,7 @@ pub enum SlintExtra {
     Tinkertone(TinkertoneExtra),
     Norns(NornsExtra),
     Grid(GridExtra),
-    Atlas(crate::apps::atlas::AtlasExtra),
+    Atlas(AtlasExtra),
 }
 
 /// A text grid panel -- see `GridPanel` in the Slint GUI. Used by
@@ -1188,3 +1188,81 @@ pub struct PortalExtra {pub sources:Vec<String>,pub targets:Vec<String>,pub amou
 pub struct VectorFilterExtra {pub xyz:Vec<f32>,pub wave:Vec<f32>,pub source:String,pub mode:String,pub enabled:bool}
 
 pub struct ForgeExtra{pub wave:Vec<f32>,pub starts:Vec<f32>,pub ends:Vec<f32>,pub labels:Vec<String>,pub levels:Vec<f32>,pub name:String,pub status:String,pub mode:String,pub source:String,pub selected:i32,pub busy:bool,pub recording:bool,pub duration:f32}
+
+/// Atlas's panel in the Slint GUI -- see `AtlasPanel`.
+#[allow(dead_code)] // Slint GUI only
+pub struct AtlasExtra {
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub index: String,
+    pub macro_names: Vec<String>,
+    pub macro_values: Vec<f32>,
+    pub macro_used: Vec<bool>,
+    pub morph: f32,
+    pub states: usize,
+    pub morph_label: String,
+    /// 1 = spectrum bars, 0 = scope trace.
+    pub spectrum_view: bool,
+    pub spectrum: Vec<f32>,
+    pub scope: Vec<f32>,
+    pub voices: String,
+    pub load: f32,
+    pub depth: String,
+    pub status: String,
+}
+
+/// The shared services an app is built from: buses, settings, devices.
+///
+/// Type-erased on purpose, so a new service (a new bus, a new device
+/// manager) can be added without touching any app's constructor and an
+/// app asks only for what it uses -- `ctx.get::<ModBus>()` for a service
+/// there is one of, `ctx.named::<AtomicF32>("sensitivity")` for shared
+/// values that share a type. See `registry::Registry` for what the OS
+/// provides, and each app's `create` for what it takes.
+#[derive(Default, Clone)]
+pub struct AppContext {
+    typed: std::collections::HashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    named: std::collections::HashMap<String, std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+#[allow(dead_code)] // the preview binaries use a subset
+impl AppContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Provide the one instance of a service type.
+    pub fn provide<T: std::any::Any + Send + Sync>(&mut self, service: std::sync::Arc<T>) -> &mut Self {
+        self.typed.insert(std::any::TypeId::of::<T>(), service);
+        self
+    }
+
+    /// Provide a value by name (for shared values whose type isn't unique).
+    pub fn provide_named<T: std::any::Any + Send + Sync>(&mut self, name: &str, value: std::sync::Arc<T>) -> &mut Self {
+        self.named.insert(name.to_string(), value);
+        self
+    }
+
+    pub fn try_get<T: std::any::Any + Send + Sync>(&self) -> Option<std::sync::Arc<T>> {
+        self.typed.get(&std::any::TypeId::of::<T>()).and_then(|s| std::sync::Arc::clone(s).downcast::<T>().ok())
+    }
+
+    /// A service the OS provides. Missing services are a wiring bug in the
+    /// host, never in an app, so this names exactly what's missing.
+    pub fn get<T: std::any::Any + Send + Sync>(&self) -> std::sync::Arc<T> {
+        self.try_get().unwrap_or_else(|| panic!("AppContext: no {} provided", std::any::type_name::<T>()))
+    }
+
+    pub fn try_named<T: std::any::Any + Send + Sync>(&self, name: &str) -> Option<std::sync::Arc<T>> {
+        self.named.get(name).and_then(|s| std::sync::Arc::clone(s).downcast::<T>().ok())
+    }
+
+    pub fn named<T: std::any::Any + Send + Sync>(&self, name: &str) -> std::sync::Arc<T> {
+        self.try_named(name).unwrap_or_else(|| panic!("AppContext: no {} named {name:?} provided", std::any::type_name::<T>()))
+    }
+}
+
+/// How the registry builds an app: the shared services, and the manifest
+/// id (one module can implement several apps, e.g. the Collection).
+pub type AppFactory = fn(&AppContext, &str) -> Box<dyn App>;

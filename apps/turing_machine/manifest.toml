@@ -1,5 +1,9 @@
 id = "turing_machine"
 name = "Turing Machine"
+category = "sequencer"
+description = "A shift-register sequencer: CV, gates and notes."
+audio_outputs = []
+note_outputs = ["Turing Machine"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Turing Machine: Locks CV",

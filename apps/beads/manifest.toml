@@ -1,5 +1,8 @@
 id = "beads"
 name = "Beads"
+category = "effect"
+description = "A granular texture processor on a live capture buffer."
+audio_outputs = ["Beads"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Beads Level",

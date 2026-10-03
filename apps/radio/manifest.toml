@@ -1,5 +1,9 @@
 id = "radio"
 name = "Radio"
+module = "collection"
+category = "library"
+description = "Internet radio and live streams."
+audio_outputs = ["Radio"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Radio Level",

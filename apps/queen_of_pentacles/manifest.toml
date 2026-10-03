@@ -1,2 +1,5 @@
 id = "queen_of_pentacles"
 name = "Queen of Pentacles"
+category = "sequencer"
+description = "Chaotic CV and gates from real 1D chaos maps."
+audio_outputs = []

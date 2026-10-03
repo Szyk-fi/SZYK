@@ -37,6 +37,7 @@ use crate::audio_bus::AudioBus;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
+use crate::note_bus::{NoteBus, NoteOut, NoteRoute};
 use crate::paramlist::ParamList;
 use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
@@ -135,6 +136,8 @@ fn crosses(prev_raw: f32, new_raw: f32, target: f32) -> bool {
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
     MasterBpm,
+    /// Where the notes go: Madness's own voices, another app, or nothing.
+    Plays,
     Notes(usize),
     Scale(usize),
     Root(usize),
@@ -255,6 +258,8 @@ pub struct MadnessApp {
     rng: u32,
     /// The shared play view (play_kit.rs).
     kit: PlayKit,
+    note_route: NoteRoute,
+    note_out: Option<NoteOut>,
 }
 
 /// Play-view control indexes (see `MadnessApp::kit_sel`). Every one
@@ -330,7 +335,17 @@ impl MadnessApp {
             last_shape: 0,
             rng: seed | 1,
             kit: PlayKit::new(kit_config(), !cfg!(test)),
+            note_route: NoteRoute::new(None, "Madness", "madness", true).0,
+            note_out: None,
         }
+    }
+
+    /// Lets Madness play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
+        let (route, out) = NoteRoute::new(bus, "Madness", "madness", true);
+        self.note_route = route;
+        self.note_out = Some(out);
+        self
     }
 
     /// The shape the screen, F3 and the play view act on -- whatever the
@@ -359,7 +374,7 @@ impl MadnessApp {
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         if g == 0 {
-            return vec![Selection::MasterBpm];
+            return vec![Selection::Plays, Selection::MasterBpm];
         }
         let s = g - 1;
         // Running comes first -- the master on/off for this shape,
@@ -409,7 +424,7 @@ impl MadnessApp {
 
     fn selection_shape(sel: Selection) -> Option<usize> {
         match sel {
-            Selection::MasterBpm => None,
+            Selection::MasterBpm | Selection::Plays => None,
             Selection::Notes(s)
             | Selection::Scale(s)
             | Selection::Root(s)
@@ -442,6 +457,7 @@ impl MadnessApp {
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::MasterBpm => "BPM".into(),
+            Selection::Plays => "Plays".into(),
             Selection::Notes(_) => "Notes".into(),
             Selection::Scale(_) => "Main scale".into(),
             Selection::Root(_) => "Root note".into(),
@@ -466,6 +482,7 @@ impl MadnessApp {
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
             Selection::MasterBpm => format!("{:.0}", self.params.master_bpm.get()),
+            Selection::Plays => self.note_route.label(),
             Selection::Notes(s) => format!("{}", self.params.shapes[s].notes.load(Ordering::Relaxed)),
             Selection::Scale(s) => {
                 let idx = self.params.shapes[s].scale.load(Ordering::Relaxed) as usize % SCALE_TYPES.len();
@@ -517,6 +534,7 @@ impl MadnessApp {
         let sensitivity = self.sensitivity.get();
         let step = delta.signum();
         match sel {
+            Selection::Plays => self.note_route.step(step),
             Selection::MasterBpm => {
                 let next = (self.params.master_bpm.get() + accelerate(delta) * sensitivity * 2.0).clamp(MIN_BPM, MAX_BPM);
                 self.params.master_bpm.set(next);
@@ -571,6 +589,7 @@ impl MadnessApp {
     fn reset(&mut self, sel: Selection) {
         match sel {
             Selection::MasterBpm => self.params.master_bpm.set(DEFAULT_BPM),
+            Selection::Plays => self.note_route.reset(),
             Selection::Notes(s) => self.params.shapes[s].notes.store(DEFAULT_NOTES, Ordering::Relaxed),
             Selection::Speed(s) => self.params.shapes[s].speed_hz.set(DEFAULT_SPEED_HZ),
             Selection::ClockMod(s) => self.params.shapes[s].clock_mod.store(3, Ordering::Relaxed),
@@ -903,6 +922,7 @@ impl App for MadnessApp {
             params: Arc::clone(&self.params),
             shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)),
             mono_buf: Vec::new(),
+            notes: self.note_out.take().unwrap_or_else(NoteOut::detached),
         }))
     }
 
@@ -1032,6 +1052,7 @@ struct MadnessProcessor {
     params: Arc<Params>,
     shapes: [ShapeRuntime; NUM_SHAPES],
     mono_buf: Vec<f32>,
+    notes: NoteOut,
 }
 
 impl AudioProcessor for MadnessProcessor {
@@ -1041,6 +1062,7 @@ impl AudioProcessor for MadnessProcessor {
         self.mono_buf.resize(frames, 0.0);
         let dt = frames as f32 / sample_rate;
         let master_bpm = self.params.master_bpm.get().max(1.0);
+        self.notes.advance(frames as u32);
 
         for s in 0..NUM_SHAPES {
             let sp = &self.params.shapes[s];
@@ -1082,7 +1104,13 @@ impl AudioProcessor for MadnessProcessor {
                                 let vmin = sp.vel_min.get().min(sp.vel_max.get());
                                 let vmax = sp.vel_min.get().max(sp.vel_max.get());
                                 rt.velocity = vmin + rt.next_rand01() * (vmax - vmin);
-                                rt.trigger = true;
+                                // own voice, another app, or nothing
+                                if self.notes.internal() {
+                                    rt.trigger = true;
+                                } else if self.notes.external() {
+                                    let gate = (0.05 + sp.decay.get() * 0.95) * sample_rate;
+                                    self.notes.trigger(rt.current_note.clamp(0.0, 127.0) as u8, (rt.velocity * 127.0).clamp(1.0, 127.0) as u8, gate as u32);
+                                }
                                 sp.last_fired.store(i, Ordering::Relaxed);
                             }
                     }
@@ -1185,4 +1213,11 @@ mod tests {
         a.tick(&Input::default());
         assert!((a.params.shapes[0].speed_hz.get() - speed).abs() < 1e-4, "released, Speed springs back");
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(MadnessApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }

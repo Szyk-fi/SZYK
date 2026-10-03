@@ -1,5 +1,9 @@
 id = "field"
 name = "Field"
+module = "collection"
+category = "library"
+description = "Record the world around you into your library."
+audio_outputs = ["Field"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Field Level",

@@ -54,6 +54,7 @@ use crate::audio_bus::AudioBus;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
+use crate::note_bus::{NoteBus, NoteOut, NoteRoute};
 use crate::paramlist::ParamList;
 use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
@@ -123,7 +124,10 @@ const MAX_STEP_DELAY_FRAC: f32 = 0.4;
 const MAX_HUMANIZE_TIME_FRAC: f32 = 0.15;
 const MAX_HUMANIZE_VELOCITY_FRAC: f32 = 0.2;
 
-const INSTRUMENT_NAMES: [&str; 3] = ["Drum", "Plaits", "Sample"];
+/// A track's sound. "Other app" plays any instrument on the note bus
+/// (see note_bus.rs), chosen by the track's Plays row.
+const INSTRUMENT_NAMES: [&str; 4] = ["Drum", "Plaits", "Sample", "Other app"];
+const INSTRUMENT_EXTERNAL: u32 = 3;
 const DRUM_KIND_NAMES: [&str; 4] = ["Kick", "Snare", "Hat", "Clap"];
 const SAMPLES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/samples");
 
@@ -371,6 +375,8 @@ enum Selection {
     /// pushed -- same "last touched pad" convention as StepPitch.
     StepDelay(usize),
     Decay(usize),
+    /// An "Other app" track's instrument.
+    Plays(usize),
     Volume(usize),
     Probability(usize),
     Mute(usize),
@@ -475,6 +481,7 @@ impl Selection {
             | Selection::StepRolls(t)
             | Selection::StepDelay(t)
             | Selection::Decay(t)
+            | Selection::Plays(t)
             | Selection::Volume(t)
             | Selection::Probability(t)
             | Selection::Mute(t)
@@ -849,6 +856,10 @@ pub struct SequencerApp {
     /// this app's own Step and Pad Perform grid modes, kept in step with
     /// `pad_perform` (see `sync_pad_layer`).
     kit: PlayKit,
+    /// Per track: where an "Other app" track's notes go; the sending ends
+    /// go to the audio thread with the processor.
+    track_routes: Vec<NoteRoute>,
+    track_outs: Vec<NoteOut>,
 }
 
 /// The Sequencer's own pad layers: the step grid, and the Pad Perform
@@ -938,7 +949,18 @@ impl SequencerApp {
             pad_perform: false,
             last_touched_pad: 0,
             kit: PlayKit::new(kit_config(), !cfg!(test)),
+            track_routes: Vec::new(),
+            track_outs: Vec::new(),
         }
+        .with_notes(None)
+    }
+
+    /// Lets "Other app" tracks play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
+        let (routes, outs): (Vec<_>, Vec<_>) = (0..NUM_TRACKS).map(|t| NoteRoute::new(bus.clone(), &format!("Sequencer T{}", t + 1), "sequencer", false)).unzip();
+        self.track_routes = routes;
+        self.track_outs = outs;
+        self
     }
 
     fn next_rand01(&mut self) -> f32 {
@@ -1020,6 +1042,14 @@ impl SequencerApp {
                 leaves.push(Selection::StepRolls(t));
                 leaves.push(Selection::StepDelay(t));
             }
+            3 => {
+                leaves.push(Selection::Plays(t));
+                leaves.push(Selection::Pitch(t));
+                leaves.push(Selection::StepPitch(t));
+                leaves.push(Selection::StepRolls(t));
+                leaves.push(Selection::StepDelay(t));
+                leaves.push(Selection::Decay(t));
+            }
             _ => {
                 leaves.push(Selection::DrumKind(t));
                 leaves.push(Selection::Pitch(t));
@@ -1087,7 +1117,8 @@ impl SequencerApp {
             Selection::StepPitch(t) => format!("Step {} Pitch", self.last_touched_step[t] + 1),
             Selection::StepRolls(t) => format!("Step {} Rolls", self.last_touched_step[t] + 1),
             Selection::StepDelay(t) => format!("Step {} Delay", self.last_touched_step[t] + 1),
-            Selection::Decay(_) => "Decay".into(),
+            Selection::Decay(t) => if self.params.tracks[t].instrument.load(Ordering::Relaxed) == INSTRUMENT_EXTERNAL { "Gate".into() } else { "Decay".into() },
+            Selection::Plays(_) => "Plays".into(),
             Selection::Volume(_) => "Volume".into(),
             Selection::Probability(_) => "Probability".into(),
             Selection::Mute(_) => "Mute".into(),
@@ -1180,6 +1211,7 @@ impl SequencerApp {
                 format!("{:.0}%", self.params.tracks[t].step_delay[self.last_touched_step[t]].get() * 100.0)
             }
             Selection::Decay(t) => format!("{:.2}", self.params.tracks[t].decay.get()),
+            Selection::Plays(t) => self.track_routes[t].label(),
             Selection::Volume(t) => format!("{:.2}", self.params.tracks[t].volume.get()),
             Selection::Probability(t) => format!("{:.0}%", self.params.tracks[t].probability.get() * 100.0),
             Selection::Mute(t) => {
@@ -1241,6 +1273,7 @@ impl SequencerApp {
         let t = g - 4;
         let inst_idx = self.params.tracks[t].instrument.load(Ordering::Relaxed) as usize % INSTRUMENT_NAMES.len();
         let detail = match inst_idx {
+            3 => self.track_routes[t].label(),
             1 => self.leaf_value(Selection::PlaitsEngine(t)),
             2 => self.leaf_value(Selection::SampleFile(t)),
             _ => self.leaf_value(Selection::DrumKind(t)),
@@ -1422,6 +1455,7 @@ impl SequencerApp {
                 self.params.tracks[t].step_delay[s].set(next);
             }
             Selection::Decay(t) => bump(&self.params.tracks[t].decay, delta, sensitivity),
+            Selection::Plays(t) => self.track_routes[t].step(step),
             Selection::Volume(t) => bump(&self.params.tracks[t].volume, delta, sensitivity),
             Selection::Probability(t) => bump(&self.params.tracks[t].probability, delta, sensitivity),
             Selection::Mute(t) => self.params.tracks[t].mute.store(delta > 0, Ordering::Relaxed),
@@ -1606,6 +1640,7 @@ impl SequencerApp {
             Selection::StepRolls(t) => self.params.tracks[t].step_rolls[self.last_touched_step[t]].store(DEFAULT_ROLLS, Ordering::Relaxed),
             Selection::StepDelay(t) => self.params.tracks[t].step_delay[self.last_touched_step[t]].set(0.0),
             Selection::Decay(t) => self.params.tracks[t].decay.set(0.5),
+            Selection::Plays(t) => self.track_routes[t].reset(),
             Selection::Volume(t) => self.params.tracks[t].volume.set(0.8),
             Selection::Probability(t) => self.params.tracks[t].probability.set(1.0),
             Selection::Mute(t) => self.params.tracks[t].mute.store(false, Ordering::Relaxed),
@@ -1939,6 +1974,7 @@ impl SequencerApp {
     /// sample name).
     fn instrument_detail(&self, t: usize) -> String {
         match self.params.tracks[t].instrument.load(Ordering::Relaxed) as usize % INSTRUMENT_NAMES.len() {
+            3 => self.track_routes[t].label(),
             1 => self.leaf_value(Selection::PlaitsEngine(t)),
             2 => self.leaf_value(Selection::SampleFile(t)),
             _ => self.leaf_value(Selection::DrumKind(t)),
@@ -2147,6 +2183,7 @@ impl App for SequencerApp {
             song_active: false,
             song_pos: 0,
             song_reps_done: 0,
+            notes: std::mem::take(&mut self.track_outs),
         }))
     }
 
@@ -2546,6 +2583,8 @@ struct SequencerProcessor {
     /// played so far -- compared against that slot's own Repeats to
     /// decide when to advance.
     song_reps_done: usize,
+    /// "Other app" tracks' note outputs.
+    notes: Vec<NoteOut>,
 }
 
 impl AudioProcessor for SequencerProcessor {
@@ -2721,6 +2760,14 @@ impl AudioProcessor for SequencerProcessor {
                 if self.pending_fires[t][i].0 <= 0.0 {
                     self.voices[t].current_gain = self.pending_fires[t][i].1;
                     match self.params.tracks[t].instrument.load(Ordering::Relaxed) {
+                        INSTRUMENT_EXTERNAL => {
+                            if let Some(out) = self.notes.get_mut(t) {
+                                let note = (60 + self.voices[t].current_pitch).clamp(0, 127) as u8;
+                                let vel = (self.voices[t].current_gain * 100.0).clamp(1.0, 127.0) as u8;
+                                let gate = (0.03 + self.params.tracks[t].decay.get() * 0.97) * sample_rate;
+                                out.trigger(note, vel, gate as u32);
+                            }
+                        }
                         1 => plaits_trigger[t] = true,
                         2 => self.voices[t].sample.trigger(),
                         _ => self.voices[t].drum.trigger(),
@@ -2730,6 +2777,10 @@ impl AudioProcessor for SequencerProcessor {
                     i += 1;
                 }
             }
+        }
+
+        for out in self.notes.iter_mut() {
+            out.advance(frames as u32);
         }
 
         // If any track is soloed, only soloed tracks reach the
@@ -2988,6 +3039,7 @@ mod tests {
             song_active: false,
             song_pos: 0,
             song_reps_done: 0,
+            notes: Vec::new(),
         };
         (params, proc)
     }
@@ -3860,4 +3912,11 @@ mod tests {
         assert!(!app.params.tracks[0].steps[5].load(Ordering::Relaxed));
         assert!(!app.params.pad_pending[5].load(Ordering::Relaxed));
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(SequencerApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }

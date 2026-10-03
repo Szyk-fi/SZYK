@@ -464,3 +464,10 @@ mod tests {
         assert!(lit > 500, "expected the fader bank (including the scrolled-to selected channel) to draw something substantial, got {lit} lit pixels");
     }
 }
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(MixerApp::new(ctx.named("master_volume"), ctx.get(), ctx.named("nav_speed"), ctx.get()))
+}

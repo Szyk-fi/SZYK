@@ -1,2 +1,5 @@
 id = "mixer"
 name = "Mixer"
+category = "system"
+description = "Balance every active instrument and effect."
+audio_outputs = []

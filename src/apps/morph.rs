@@ -128,3 +128,10 @@ mod tests{
   a.tick(&Input{knob2:5,..Default::default()});assert_ne!(a.params.a.load(Ordering::Relaxed),NO_SOURCE,"the menu's knob 2 edits row 0, Source A, again");}
  #[test]fn missing_sources_are_silent_and_real_source_reaches_output(){let bus=Arc::new(AudioBus::new());let source=bus.register("Fixture");let mut app=MorphApp::new(bus.clone(),Arc::new(ModBus::new()),Arc::new(MixerBus::new()),Arc::new(AtomicF32::new(3.0)));let mut dsp=app.audio_processor().unwrap();let mut out=[0.0;1024];dsp.process(&mut out,2,48000.0);assert!(out.iter().all(|v|*v==0.0));app.params.a.store(0,Ordering::Relaxed);app.params.b.store(0,Ordering::Relaxed);*source.lock().unwrap()=(0..512).map(|i|(i as f32*std::f32::consts::TAU/32.0).sin()*0.2).collect();for _ in 0..8{dsp.process(&mut out,2,48000.0);}let rms=(out.iter().map(|v|v*v).sum::<f32>()/out.len()as f32).sqrt();assert!((rms-0.2*0.8/2.0f32.sqrt()).abs()<0.005,"OLA gain: {rms}");assert!(out.iter().all(|v|v.is_finite()));}
 }
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(crate::apps::morph::MorphApp::new(ctx.get(),ctx.get(),ctx.get(),ctx.named("nav_speed")))
+}
