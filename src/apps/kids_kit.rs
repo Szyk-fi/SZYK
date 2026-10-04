@@ -1409,6 +1409,14 @@ pub fn kids_title(fb: &mut FrameBuffer, s: &str, x: i32, y: i32, c: Rgb565, alig
     Text::with_text_style(s, Point::new(x.div_euclid(2), y.div_euclid(2)), style, ts).draw(&mut big).ok();
 }
 
+/// Clean native-size lettering for notes and primary control labels.
+pub fn kids_label(fb: &mut FrameBuffer, s: &str, x: i32, y: i32, c: Rgb565, align: i8) {
+    let alignment = match align { 0 => Alignment::Center, 1 => Alignment::Right, _ => Alignment::Left };
+    let style = MonoTextStyle::new(&embedded_graphics::mono_font::ascii::FONT_10X20, c);
+    let ts = TextStyleBuilder::new().baseline(Baseline::Top).alignment(alignment).build();
+    Text::with_text_style(s, Point::new(x, y), style, ts).draw(fb).ok();
+}
+
 /// Original cloud-like friend: small eyes and a relaxed curved smile,
 /// with musical energy expressed through a bounce and a little open mouth.
 pub fn buddy(fb: &mut FrameBuffer, x: i32, y: i32, r: i32, c: Rgb565, energy: f32) {

@@ -312,7 +312,9 @@ impl App for RainbowBells {
             kit::circle(fb, x + w / 2, 133 + bounce, 3, kit::blend(c, kit::BLACK, 0.5));
             kit::circle(fb, x + w / 2, 267 + bounce, 3, kit::blend(c, kit::BLACK, 0.5));
             let name = kit::note_name(bar_note(i, self.octave));
-            kit::text(fb, name, x + w / 2, y + h / 2 - 6 + bounce, Size2::Medium, kit::blend(c, kit::BLACK, 0.65), 0);
+            let label_y = y + h / 2 - 14 + bounce;
+            kit::round_rect(fb, x + w / 2 - 13, label_y, 26, 30, 10, kit::blend(c, kit::WHITE, 0.83));
+            kit::kids_label(fb, name, x + w / 2, label_y + 5, kit::INK, 0);
         }
         for &(x, y, i, age) in &self.sparks {
             let c = kit::blend(bar_color(i), kit::WHITE, (age / 70.0).min(1.0) * 0.8);

@@ -19,7 +19,7 @@
 
 use crate::app::{App, Input, SlintExtra};
 use crate::audio::AudioProcessor;
-use crate::display::{FrameBuffer, WIDTH};
+use crate::display::FrameBuffer;
 use crate::led_output::PadColor;
 use crate::apps::kids_kit::{self as kit, Drum, Ev, Size2, Song, Sound};
 use std::sync::{Arc, Mutex};
@@ -328,89 +328,68 @@ impl App for BeatLab {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = kit::PAPER;
-        let panel = kit::rgb(222, 235, 225);
-        let ink = kit::INK;
-        let dim = kit::MUTED;
-        let track_colors = [kit::rgb(240, 90, 80), kit::rgb(250, 190, 60), kit::rgb(80, 210, 200), kit::rgb(170, 120, 240)];
+        let panel = kit::rgb(232, 240, 232);
+        let colors = [kit::rgb(239, 116, 106), kit::rgb(239, 190, 80), kit::rgb(85, 190, 184), kit::rgb(166, 135, 218)];
         kit::kids_scene(fb, kit::PlayWorld::Sky);
         kit::kids_header(fb, NAME, "AGES 10-12");
         let k = self.kit.lock().unwrap().clone();
 
-        // The menu.
-        for (i, r) in ROWS.iter().enumerate() {
-            let y = 40 + i as i32 * 34;
-            let sel = i == self.row;
-            kit::card(fb, 8, y, 150, 30, 8, if sel { kit::blend(panel, kit::TEAL, 0.18) } else { panel });
-            let (label, value, c) = match r {
-                Row::Track(t) => (TRACK_NAMES[*t].to_string(), TRACK_SOUNDS[*t][k.sounds[*t] % TRACK_SOUNDS[*t].len()].name().to_string(), track_colors[*t]),
-                Row::Tempo => ("Tempo".into(), format!("{:.0} bpm", self.sound.tempo()), ink),
-                Row::Swing => ("Swing".into(), format!("{:.0}%", self.sound.swing() * 100.0), ink),
-                Row::Style => ("Style".into(), STYLES[self.style].name.to_string(), ink),
+        // The list stays in its existing navigation order. Only the selected
+        // instrument's 16 pads are expanded, matching the physical 4x4 grid.
+        for (i, row) in ROWS.iter().enumerate() {
+            let y = 42 + i as i32 * 41;
+            let selected = i == self.row;
+            let (label, value) = match row {
+                Row::Track(t) => (TRACK_NAMES[*t].to_string(), TRACK_SOUNDS[*t][k.sounds[*t] % TRACK_SOUNDS[*t].len()].name().to_string()),
+                Row::Tempo => ("Tempo".into(), format!("{:.0} bpm", self.sound.tempo())),
+                Row::Swing => ("Swing".into(), format!("{:.0}%", self.sound.swing() * 100.0)),
+                Row::Style => ("Style".into(), STYLES[self.style].name.to_string()),
             };
-            if let Row::Track(t) = r {
-                kit::card(fb, 12, y + 6, 6, 18, 3, kit::blend(c, kit::INK, self.flash[*t]));
-            }
-            kit::text(fb, &label, 24, y + 3, Size2::Small, if sel { kit::INK } else { dim }, -1);
-            kit::text(fb, &value, 24, y + 15, Size2::Small, ink, -1);
-            if sel {
-                kit::outline(fb, 8, y, 150, 30, 8, 2, kit::TEAL);
-                kit::text(fb, "< >", 150, y + 9, Size2::Small, kit::INK, 1);
-            }
-        }
-
-        // The pattern: four lanes of 16, beats grouped in fours.
-        let (gx, gy) = (172, 44);
-        let (cw, chh) = (28, 46);
-        let now = self.sound.step().map(|s| (s % 16) as usize);
-        for t in 0..TRACKS {
-            let y = gy + t as i32 * (chh + 6);
-            let sel = t == self.track;
-            if sel {
-                kit::card(fb, gx - 6, y - 4, 16 * cw + 12 + 6, chh + 8, 8, kit::blend(panel, track_colors[t], 0.25));
-            }
-            for s in 0..16 {
-                let x = gx + s as i32 * cw + (s as i32 / 4) * 4;
-                let base = if s % 4 == 0 { kit::rgb(194, 216, 206) } else { panel };
-                let l = k.pattern[t][s];
-                let c = match l {
-                    0 => base,
-                    1 => kit::blend(track_colors[t], bg, 0.6),
-                    2 => track_colors[t],
-                    _ => kit::blend(track_colors[t], kit::INK, 0.45),
-                };
-                let h = match l {
-                    1 => chh / 2,
-                    _ => chh,
-                };
-                kit::card(fb, x, y + chh - h, cw - 4, h, 5, c);
-                if now == Some(s) {
-                    kit::outline(fb, x - 2, y - 2, cw, chh + 4, 6, 2, kit::INK);
+            kit::card(fb, 10, y, 226, 36, 12, if selected { kit::rgb(202, 230, 220) } else { panel });
+            if let Row::Track(t) = row {
+                kit::round_rect(fb, 16, y + 7, 5, 22, 3, colors[*t]);
+                // Small activity marks keep the other instruments visible.
+                for step in 0..16 {
+                    if k.pattern[*t][step] > 0 { kit::circle(fb, 120 + step as i32 * 6, y + 28, 2, colors[*t]); }
                 }
             }
+            kit::kids_label(fb, &label, 27, y + 2, kit::INK, -1);
+            kit::text(fb, &value, 28, y + 23, Size2::Small, kit::INK, -1);
+            if selected {
+                kit::outline(fb, 10, y, 226, 36, 12, 2, kit::TEAL);
+                kit::text(fb, "< >", 224, y + 9, Size2::Medium, kit::INK, 1);
+            }
         }
-        // Step numbers, counted the way musicians do: 1 e & a.
-        for s in 0..16 {
-            let x = gx + s as i32 * cw + (s as i32 / 4) * 4 + (cw - 4) / 2;
-            let label = match s % 4 {
-                0 => (s / 4 + 1).to_string(),
-                1 => "e".into(),
-                2 => "&".into(),
-                _ => "a".into(),
-            };
-            kit::text(fb, &label, x, gy + 4 * (chh + 6), Size2::Small, if s % 4 == 0 { ink } else { dim }, 0);
+        kit::card(fb, 250, 40, 380, 228, 18, kit::PAPER);
+        kit::kids_title(fb, TRACK_NAMES[self.track], 264, 46, kit::INK, -1);
+        kit::round_rect(fb, 526, 46, 90, 26, 13, kit::TEAL);
+        kit::text(fb, if self.sound.playing() { "PLAYING" } else { "READY" }, 571, 52, Size2::Medium, kit::WHITE, 0);
+        kit::text(fb, "Tap: on > loud > soft > off", 264, 79, Size2::Medium, kit::INK, -1);
+        let now = self.sound.step().map(|s| (s % 16) as usize);
+        for step in 0..16 {
+            let x = 264 + (step as i32 % 4) * 88;
+            let y = 102 + (step as i32 / 4) * 41;
+            let level = k.pattern[self.track][step];
+            let c = if level == 0 { panel } else { kit::blend(colors[self.track], kit::WHITE, 0.35) };
+            kit::card(fb, x, y, 80, 35, 12, c);
+            kit::kids_label(fb, &(step + 1).to_string(), x + 10, y + 7, kit::INK, -1);
+            if level == 0 {
+                kit::ring(fb, x + 59, y + 18, 6, 2, kit::MUTED);
+            } else {
+                // One/two/three bars mean soft/on/loud without relying on color.
+                for bar in 0..level {
+                    let h = 6 + bar as i32 * 4;
+                    kit::round_rect(fb, x + 47 + bar as i32 * 8, y + 25 - h, 5, h, 2, kit::INK);
+                }
+            }
+            if now == Some(step) {
+                kit::outline(fb, x - 2, y - 2, 84, 39, 12, 3, kit::INK);
+            }
         }
-
-        // What the selected row means.
-        let ty = 268;
-        kit::card(fb, 172, ty, WIDTH as i32 - 180, 64, 10, panel);
-        kit::paragraph(fb, &self.tip(), 182, ty + 8, WIDTH as i32 - 200, Size2::Small, kit::INK);
-        if self.style_loaded.is_none() && ROWS[self.row] == Row::Style {
-            kit::text(fb, "(your own beat now: left/right loads a style)", 182, ty + 46, Size2::Small, dim, -1);
-        }
-        kit::buddy(fb, 78, 307, 18, track_colors[self.track], self.flash[self.track]);
+        kit::card(fb, 250, 274, 380, 60, 14, kit::PAPER);
+        kit::paragraph(fb, &self.tip(), 260, 279, 360, Size2::Medium, kit::INK);
         let play = if self.sound.playing() { "SELECT: stop" } else { "SELECT: play" };
-        kit::kids_footer(fb, &format!("{} pads: on/loud/soft/off   up/down: menu   {play}   hold SELECT: clear", TRACK_NAMES[self.track]));
+        kit::kids_footer(fb, &format!("Pads: steps 1-16   up/down: menu   left/right: change   {play}   hold SELECT: clear"));
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
