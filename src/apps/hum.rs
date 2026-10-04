@@ -34,19 +34,19 @@ use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 const NAME: &str = "Hum";
-static MODEL: &[u8] = include_bytes!("../../assets/npu/hum.pmxn");
-const FRAME: usize = 1024;
-const N_FFT: usize = 2048;
-const HOP: u64 = 160;
-const BINS: usize = 216;
+pub static MODEL: &[u8] = include_bytes!("../../assets/npu/hum.pmxn");
+pub const FRAME: usize = 1024;
+pub const N_FFT: usize = 2048;
+pub const HOP: u64 = 160;
+pub const BINS: usize = 216;
 const FLOOR: f32 = -9.0;
 const LO: f32 = 36.0;
 const N_PITCH: usize = 145;
-const UNVOICED: usize = 145;
+pub const UNVOICED: usize = 145;
 /// Frames of history drawn on screen (4 s).
 const TRACE: usize = 400;
 
-const SCALES: [(&str, &[i32]); 6] = [("chromatic", &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), ("major", &[0, 2, 4, 5, 7, 9, 11]), ("minor", &[0, 2, 3, 5, 7, 8, 10]), ("pentatonic", &[0, 2, 4, 7, 9]), ("minor pent.", &[0, 3, 5, 7, 10]), ("blues", &[0, 3, 5, 6, 7, 10])];
+pub const SCALES: [(&str, &[i32]); 6] = [("chromatic", &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), ("major", &[0, 2, 4, 5, 7, 9, 11]), ("minor", &[0, 2, 3, 5, 7, 8, 10]), ("pentatonic", &[0, 2, 4, 7, 9]), ("minor pent.", &[0, 3, 5, 7, 10]), ("blues", &[0, 3, 5, 6, 7, 10])];
 const TONES: [Tone; 6] = [Tone::Flute, Tone::Soft, Tone::Organ, Tone::Chip, Tone::Bass, Tone::Marimba];
 
 /// The log-frequency spectrum the model reads: 216 bins, three per

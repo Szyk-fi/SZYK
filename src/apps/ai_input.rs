@@ -140,6 +140,11 @@ pub struct Tap {
 }
 
 impl Tap {
+    /// This block's input at the full rate (after `process`).
+    pub fn input(&self) -> &[f32] {
+        &self.block
+    }
+
     pub fn process(&mut self, frames: usize, sr: f32) {
         self.block.clear();
         if let Ok(src) = self.buf.try_lock() {

@@ -1,0 +1,10 @@
+id = "choir"
+name = "Choir"
+category = "ai"
+description = "A vocal tuner and harmoniser: a neural pitch tracker pulls your voice into key and two formant-keeping harmony voices sing with you."
+audio_outputs = ["Choir"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Choir Level",
+]
