@@ -101,9 +101,8 @@ One model, three speeds, in every app:
 **Quick set.** With a value focused, the 16 pads become a slider: pad 1
 (bottom-left) is the bottom of the range and pad 16 the top, evenly spaced.
 Tap one and the value is set exactly there; the screen shows the bar and the
-lit pad. Pressure is a free extra: the harder the tap, the more the value
-sticks to that pad's position (a light tap lands near it). Ways in: in a List
-app, SELECT on a value row; on a play app's Controls layer, tap the
+lit pad. (Using pressure to blend between neighbouring pads is a possible
+later extension, not proposed now.) Ways in: in a List app, SELECT on a value row; on a play app's Controls layer, tap the
 already-grabbed control's pad a second time. Any of F2, R1 or SELECT leaves it.
 Pads keep playing notes everywhere except inside Quick set.
 
@@ -171,7 +170,7 @@ These are the rules that make it *readable*; they are checked, not hoped for.
    available on demand (hold F1).
 6. **Same visual language for state**: focused = lit centre or highlight bar;
    held or playing = filled; gliding = yellow; unavailable = dim. The same
-   five colours for pad states in every app (they already exist).
+   pad colours (Off, Blue, Yellow, Green, Red) in every app; they already exist.
 
 ## 6. Every app must be able to answer these
 

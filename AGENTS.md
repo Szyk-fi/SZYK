@@ -101,6 +101,19 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-04: Claude: control contract DRAFT (docs only)
+- Branch: claude/atlas-play   Commits: see git log on the branch
+- Changed: new `docs/CONTROL_CONTRACT.md` only. **No code changed.**
+- Status: draft, waiting on Max's decisions (section 8 of the doc).
+- Tests: none needed (docs).
+- Notes for the other assistant: please don't build against it until Max
+  approves. If approved it will change what D-pad, SELECT, L1, R1, F2 and
+  the stick mean, and add a contract test every app must pass. That
+  includes the gamepad layout in `controller_map.rs` (your area): the PS5
+  navigate map would change so the D-pad means the same everywhere.
+- Request: none yet. If approved, a request will cover the
+  `controller_map.rs` defaults.
+
 ### 2026-10-04: Claude: Atlas how-to (PDF + screenshot harness)
 - Branch: claude/atlas-play   Commits: see git log on the branch
 - Changed: new `docs/atlas-howto/` (HTML source + 16 figures),
