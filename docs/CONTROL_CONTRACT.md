@@ -1,8 +1,10 @@
-# The Portamax control contract (DRAFT for approval)
+# The Portamax control contract
 
-**Status: a proposal. No code has changed.** It needs Max's decisions (section 8)
-before anyone builds on it. Owner of the contract once approved: Max; changes to
-it go through the Work log in `AGENTS.md`.
+**Status: decided by Max on 2026-10-04, partly built.** Section 8 records each
+decision. Built so far: the PS5 profile (section 11) and the L1 + joystick
+set-a-dial gesture in play apps. Everything else is still to build (section 9).
+Owner of the contract: Max; changes to it go through the Work log in
+`AGENTS.md`.
 
 ## 1. Why this exists
 
@@ -81,7 +83,7 @@ per context are listed.
 | **SELECT, tap** | Go into / choose / next | Home and List: open or run the row, or expand a group. Play: next dial. Menu: run an action row |
 | **SELECT, hold ½ s** | Reset the focused value. A ring fills while held, so it is never a surprise | Everywhere there is a focused value |
 | **R1** | Go one level deeper, or back: the Enter/Back toggle between two levels | Home and List: open. Play: open the Menu. Menu: back to Play |
-| **L1** | Look, don't commit | Play and Menu: hold to peek at the Controls layer. Elsewhere: peek at what the focused row will do (value, range, what it affects) |
+| **L1** | Look, and set | **Peek** means seeing every control laid out as pads (the Controls layer) for as long as L1 is held, without leaving what you are playing. In Play and Menu, hold L1 and move the joystick to set the selected dial (4.2). Elsewhere (to build): peek at what the focused row will do (value, range, what it affects) |
 | **F1** | Home | From Home itself: Settings |
 | **F4** | Mixer | Everywhere. Must never be unbound on any input device |
 
@@ -96,15 +98,17 @@ One model, three speeds, in every app:
 |---|---|---|
 | **Nudge** | D-pad ◄ ► tap | One detent. The detent is defined per parameter and defaults to 1% of its range, on its natural scale (linear, logarithmic, or dB). A choice moves one item. This replaces every app's private multiplier; the Settings "sensitivity" scales all of them together |
 | **Sweep** | D-pad ◄ ► hold | After 250 ms, repeats every 100 ms. At 0.75 s each repeat moves 5 detents; at 1.75 s, 20. A full-range sweep takes about 2 seconds. Letting go or reversing returns to one detent |
-| **Quick set** | Pads as a 16-point slider (see below) | Jump straight to a position, then nudge |
+| **Set** (play mode) | Hold **L1** and move the joystick | Jump straight to a value. Built |
 
-**Quick set.** With a value focused, the 16 pads become a slider: pad 1
-(bottom-left) is the bottom of the range and pad 16 the top, evenly spaced.
-Tap one and the value is set exactly there; the screen shows the bar and the
-lit pad. (Using pressure to blend between neighbouring pads is a possible
-later extension, not proposed now.) Ways in: in a List app, SELECT on a value row; on a play app's Controls layer, tap the
-already-grabbed control's pad a second time. Any of F2, R1 or SELECT leaves it.
-Pads keep playing notes everywhere except inside Quick set.
+**Set by joystick (play mode).** With a dial selected, hold **L1** and move the
+joystick: pushed fully left is 0%, fully right is 100%, straight up or down is
+50%. The dial follows the stick while it is pushed beyond a small dead zone; let
+go and the value **stays**, it never snaps back to the middle. While L1 is held
+the stick belongs to this, so it does not also push its routed controls (and
+does not jump them when L1 comes up). The selected dial is the one highlighted
+on the Play view; holding L1 also shows the Controls layer, and tapping a
+control's pad during the hold picks that control instead. A choice (a preset, a
+voice count) refuses, since sweeping it would flood the app; use the D-pad.
 
 **Stick scrubbing (List apps only).** Where the stick is free (it is an
 instrument in play apps), left/right scrubs the focused value at a speed
@@ -115,9 +119,9 @@ The existing `accelerate()` exponent stays only for real encoders on a MIDI
 controller, where several ticks genuinely arrive per frame; the D-pad and
 stick use the schedule above.
 
-**Reset** is hold-SELECT (4.1). **Undo:** the last edit can be undone by
-holding **L1 and pressing SELECT**; it keeps the last 16 edits per app
-session. (Undo is new; see section 8.)
+**Reset** is hold-SELECT (4.1). There is no undo in this contract; if wanted
+later it needs its own gesture, since L1 plus SELECT is better kept for moving
+the selection while L1 is held.
 
 ### 4.3 Playing
 
@@ -160,9 +164,11 @@ These are the rules that make it *readable*; they are checked, not hoped for.
 3. **Nothing the player must read to act is ever truncated.** Values, units,
    the focused row's label and status messages wrap to two lines or scroll;
    only a long unfocused label may end in an ellipsis.
-4. **Minimum text size.** Nothing the player has to read is smaller than the
-   size chosen in section 8 (the smallest text on the 640x360 screen today
-   is about 12 px).
+4. **Density is allowed, clutter is not.** The screen may be as dense as it is
+   today as long as the hierarchy is clear: what you are changing is the
+   largest and brightest thing, supporting values are smaller, and nothing
+   overlaps. There is no minimum point size; the test is that someone new can
+   read each label and value in a screenshot without squinting or guessing.
 5. **One layout skeleton.** Title and layer badge top-left; the thing you are
    changing (dials or rows) on the left; a live monitor on the right; hint line
    above the F bar; the F bar at the bottom. Apps fill the regions; they do
@@ -193,24 +199,25 @@ An app conforms when, using only the hardware above, a new player can:
 
 Anything else that wants an exception writes it here first.
 
-## 8. Decisions needed from Max
+## 8. Decisions
 
-1. **D-pad axes everywhere.** The device standard is ▲ ▼ rows/browse and
-   ◄ ► value. Your PS5 setup swapped that in menus. One rule everywhere
-   (my recommendation: the device standard, and your PS5 *navigate* layout
-   changes to match), or keep a separate PS5-only profile?
-2. **Adjust numbers.** Detent 1%; repeat 100 ms; ×5 at 0.75 s; ×20 at 1.75 s;
-   about 2 s full sweep. Faster, slower, or fine to try and tune by feel?
-3. **Quick set.** Do you like pads as a 16-point slider, and are the two ways in
-   (SELECT in lists; tap the grabbed pad again on Controls) right?
-4. **Confirm by hold.** Is hold-SELECT the right "are you sure" for Revert,
-   overwrite and delete?
-5. **L1.** OK for L1 to mean "peek / look" everywhere instead of Home in
-   list apps? (Undo uses L1 + SELECT.)
-6. **Undo.** Wanted, and is 16 edits per session enough?
-7. **Minimum text size.** I'd like 14 px on the 640x360 screen; that needs the
-   dense screens (Plaits, Atlas Play) re-laid-out. Want me to measure first?
-8. **Hint line.** OK to spend one line above the F bar on it in every app?
+Made by Max on 2026-10-04.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | D-pad axes | ▲ ▼ browse, ◄ ► change a value, **everywhere**, the PS5 included |
+| 2 | Adjust numbers (detent 1%, repeat 100 ms, x5 at 0.75 s, x20 at 1.75 s) | Fine for now |
+| 3 | Pads as a slider | Not wanted for now. SELECT, the D-pad's centre button, is the select |
+| 4 | Confirm destructive actions by holding SELECT | **Still open** |
+| 5 | L1 | Peek is kept ("could be good"), and L1 + joystick sets a dial in play mode (new, 4.2) |
+| 6 | Undo | Dropped (not asked for; see 4.2) |
+| 7 | Minimum text size | None. A denser screen is fine if it is laid out well and readable (5.4) |
+| 8 | One hint line above the F bar in every app | Yes |
+| 9 | PS5 layout | Changed and built (section 11) |
+
+Still to decide: #4; and whether the joystick should also scrub values in
+list apps (4.2, "Stick scrubbing") and set a dial there with L1 held (today L1
+is Home in list apps).
 
 ## 9. How it would be built, and checked
 
@@ -218,7 +225,7 @@ Fix the shared parts once, then walk the apps.
 
 1. **Shared kit and shell** (one pass): the adjust model with time-based
    acceleration and a per-parameter detent (retiring the private multipliers
-   and the `accelerate()` call sites in about 30 files as each app is walked); Quick set; stick scrubbing; hold-ring and
+   and the `accelerate()` call sites in about 30 files as each app is walked); stick scrubbing in lists; hold-ring and
    confirm-by-hold; the generated hint line; text wrap/scroll; the
    L1 and gamepad changes; F4 never unbound. Roughly 36 play-kit apps pick most
    of this up with no per-app work.
@@ -246,4 +253,30 @@ controls and layout.
 
 Per-note pad pressure inside the synthesis engine; a gesture looper;
 touchscreen gestures (the device might have a touchscreen; if it does, taps and
-drags would be added to Quick set and scrubbing, not replace them).
+drags would be added to set-by-joystick and scrubbing, not replace them).
+
+## 11. The PS5 profile (built)
+
+This is set up for the test controller, whose left stick is broken: the left
+stick is unused, the **right stick is the device's joystick**, and **L2 and R2
+are unbound**. The
+layout is the same in every context, so the controller never changes meaning
+between Home, a list and a play app.
+
+| DualSense | Does |
+|---|---|
+| D-pad ▲ ▼ | Browse (rows, apps, sounds) |
+| D-pad ◄ ► | Lower / raise the value |
+| Touchpad click | SELECT: tap to select, hold half a second to reset |
+| PS button | Home |
+| Right stick | The joystick. In a list: Y moves rows (up is down the list, as asked originally), X changes the value |
+| R3 (play apps) | Joystick click: keep the pushed sound |
+| L1 / R1 (play apps) | Peek and set a dial / Play-Menu flip |
+| Options, Create (play apps) | F2, F3 |
+| Square, Circle, Cross, Triangle | Pads 1, 5, 9, 13 (the left column), for quick tests |
+| Outside play apps | L1 Home, R1 F4 (Mixer), R3 F2, L3 F3, and Options/Create plus the D-pad and shoulders still double as Retro's pad |
+
+Retro's A/B/X/Y are no longer on the face buttons (they are the test pads now);
+re-learn them in the Controller app if needed. The map your Controller app had
+saved was moved aside to `saves/controller_map.json.bak-2026-10-04` so these
+defaults apply; to get it back, rename it to `controller_map.json`.

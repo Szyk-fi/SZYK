@@ -127,6 +127,13 @@ pub fn render(directory: &str) {
     run(&mut app, &Input { knob2: 1, nav_x: 1, ..Default::default() }, 40);
     shot(&mut app, "04-focus.png", [0.0, 0.0], [0.0, 0.0]);
 
+    // 04b -- hold L1 and push the joystick: the selected dial is set directly
+    // (right of centre is above 50%). The Controls layer shows while L1 is down.
+    let set = Input { shoulders: [true, false], stick: [0.5, -0.3], ..Default::default() };
+    run(&mut app, &set, 3);
+    shot(&mut app, "04b-set.png", [0.5, -0.3], [0.0, 0.0]);
+    run(&mut app, &none, 5);
+
     // 05 -- F2: STATES, a state pad tapped and MORPH part way there.
     app.toggle_grid_mode();
     run(&mut app, &none, 2);

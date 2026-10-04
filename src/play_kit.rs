@@ -19,6 +19,12 @@
 //! - **Stick, hands, mod wheel, aftertouch, pad pressure** push routed
 //!   controls away from their knob setting without overwriting it (see
 //!   `Expression`). A stick click keeps where you've pushed to.
+//! - **Hold L1 and move the stick to set a dial.** With a dial selected, L1
+//!   plus the joystick sets it directly: pushed fully left is 0%, fully
+//!   right is 100%, straight down or up is 50%. Let go of the stick and the
+//!   value stays; it never snaps back to the middle. Holding L1 also shows
+//!   the Controls layer (a peek), and tapping a control's pad while it's
+//!   held picks that control instead.
 //! - **Binding by wiggling.** There are no dials to assign things with, so
 //!   on the Controls layer the player grabs a control (tap its pad), then
 //!   *moves the source they want on it*: sweep the stick, wave a hand, or
@@ -52,6 +58,9 @@ const STICK_SPAN: f32 = 0.5;
 const HAND_SPAN: f32 = 0.6;
 /// Full pad pressure moves its control by this much.
 const PRESSURE_SPAN: f32 = 0.6;
+/// While L1 is held, the stick must be pushed at least this far from
+/// centre to set the dial; inside it, the last value is simply kept.
+const SET_ENGAGE: f32 = 0.35;
 /// A source must travel this far from where it was when a control was
 /// grabbed to bind (or unbind) it, and come back within `LEARN_REARM`
 /// before it can do so again.
@@ -234,6 +243,12 @@ pub struct PlayKit {
     learn_base: [f32; 4],
     learn_armed: [bool; 4],
     lean_frames: u32,
+    /// A control tapped on the peeked Controls layer this L1 hold; it is
+    /// what the stick sets instead of the Play view's selected dial.
+    peek_grab: Option<usize>,
+    /// The stick is setting a dial this frame, so it isn't also pushing
+    /// its routes.
+    setting: bool,
 }
 
 /// Where each source is bound, for saving.
@@ -345,6 +360,11 @@ impl PlayKit {
     /// The focused dial: what the D-pad's left/right turns and holding
     /// SELECT resets (the grabbed pad on Controls).
     pub fn focus_control(&self) -> Option<usize> {
+        // During an L1 hold the dial, the lit pad, the D-pad and the stick
+        // all mean the same control: the one the stick sets.
+        if self.peek {
+            return self.set_target();
+        }
         if self.layer() == Layer::Controls { Some(self.focused) } else { self.hero_pair().map(|p| p[self.focus_side.min(1)]) }
     }
 
@@ -360,6 +380,10 @@ impl PlayKit {
             self.flash(if self.menu { "Menu  (R1: back to play)" } else { "Play" });
         }
         self.peek = input.shoulders[0];
+        if !self.peek {
+            self.peek_grab = None;
+        }
+        self.setting = false;
         let layer = self.layer();
         let mut out = *input;
         out.shoulder_press = [false; 2];
@@ -399,6 +423,9 @@ impl PlayKit {
 
         self.stick = input.stick;
         self.hands = input.hands;
+        if self.peek && !self.menu {
+            self.set_by_stick(host, input, n);
+        }
         if !self.cfg.own_expression {
             self.expression(host, input, layer, n);
             if !self.peek && layer == Layer::Controls && !self.menu {
@@ -467,6 +494,9 @@ impl PlayKit {
             match layer {
                 Layer::Controls if down && !was && rank < n => {
                     self.focused = rank;
+                    if self.peek {
+                        self.peek_grab = Some(rank);
+                    }
                     self.learn_base = [input.stick[0], input.stick[1], input.hands[0], input.hands[1]];
                     self.learn_armed = [true; 4];
                     self.lean_frames = 0;
@@ -535,7 +565,7 @@ impl PlayKit {
         if input.stick[0].abs() < 0.08 && input.stick[1].abs() < 0.08 {
             self.stick_kept = false;
         }
-        let stick = if self.stick_kept { [0.0; 2] } else { input.stick };
+        let stick = if self.stick_kept || self.setting { [0.0; 2] } else { input.stick };
         let mut want = vec![0.0f32; n];
         let mut fixed: Vec<Option<f32>> = vec![None; n];
         let mut add = |c: Option<usize>, v: f32| {
@@ -599,6 +629,46 @@ impl PlayKit {
             let landed = host.kit_norm(c).unwrap_or(new);
             self.applied[c] = landed - base;
         }
+    }
+
+    /// The dial L1 + stick sets: a control tapped during this hold, else
+    /// the grabbed one if the Controls layer is really showing, else the
+    /// dial selected on the Play view.
+    fn set_target(&self) -> Option<usize> {
+        self.peek_grab.or_else(|| {
+            if matches!(self.cfg.layers.get(self.layer), Some(Layer::Controls)) {
+                Some(self.focused)
+            } else {
+                self.hero_pair().map(|p| p[self.focus_side.min(1)])
+            }
+        })
+    }
+
+    /// Hold L1 and push the stick: the selected dial follows the stick's
+    /// left-right position, 0% at the far left to 100% at the far right.
+    /// Inside the dead zone nothing changes, so the spring-return stick
+    /// leaves the value where it was put instead of snapping to 50%.
+    fn set_by_stick(&mut self, host: &mut dyn PlayHost, input: &Input, n: usize) {
+        // For the whole of an L1 hold the stick belongs to this: it must
+        // not also push its routed controls, nor jump them when L1 is let
+        // go with the stick still over.
+        self.setting = true;
+        let [x, y] = input.stick;
+        if x.hypot(y) > 0.08 {
+            self.stick_kept = true;
+        }
+        let Some(c) = self.set_target().filter(|&c| c < n) else { return };
+        if x.hypot(y) < SET_ENGAGE {
+            return;
+        }
+        if host.kit_stepped(c) {
+            self.flash(format!("{} is a choice: use the D-pad", host.kit_label(c)));
+            return;
+        }
+        // Take expression's offsets off first so what's written is the base.
+        self.clear_offsets(host);
+        host.kit_set_norm(c, ((x + 1.0) / 2.0).clamp(0.0, 1.0));
+        self.flash(format!("{} {}", host.kit_label(c), host.kit_value(c)));
     }
 
     /// Bind-by-wiggling on the Controls layer: whichever source travels
@@ -705,7 +775,9 @@ impl PlayKit {
         match self.layer() {
             Layer::Native(id, _) => host.kit_pad_color(id, pad, held),
             Layer::Controls => {
-                if rank == self.focused { PadColor::Green } else if rank < host.kit_control_count() { PadColor::Blue } else { PadColor::Off }
+                // While L1 is held the lit pad is the dial the joystick will set.
+                let shown = if self.peek { self.set_target().unwrap_or(self.focused) } else { self.focused };
+                if rank == shown { PadColor::Green } else if rank < host.kit_control_count() { PadColor::Blue } else { PadColor::Off }
             }
             Layer::Moments => {
                 if held { PadColor::Red } else if self.moments.get(rank).is_some_and(|m| m.is_some()) { PadColor::Green } else { PadColor::Off }
@@ -1205,6 +1277,97 @@ mod tests {
         }
         assert_eq!(k.pressure_route(), Some(2));
         assert!(k.status().contains("Pressure now pushes C2"), "{}", k.status());
+    }
+
+    /// L1 held with a stick position.
+    fn l1(stick: [f32; 2]) -> Input {
+        Input { shoulders: [true, false], stick, ..Default::default() }
+    }
+
+    #[test]
+    fn l1_and_the_stick_set_the_selected_dial_from_left_0_to_right_100() {
+        let (mut k, mut f) = (kit(), fake());
+        k.tick(&mut f, &l1([-1.0, 0.0]));
+        assert!((f.v[0] - 0.0).abs() < 1e-5, "fully left is 0%: {}", f.v[0]);
+        k.tick(&mut f, &l1([1.0, 0.0]));
+        assert!((f.v[0] - 1.0).abs() < 1e-5, "fully right is 100%: {}", f.v[0]);
+        k.tick(&mut f, &l1([0.0, -1.0]));
+        assert!((f.v[0] - 0.5).abs() < 1e-5, "straight down is the middle: {}", f.v[0]);
+        k.tick(&mut f, &l1([0.5, 0.0]));
+        assert!((f.v[0] - 0.75).abs() < 1e-5, "halfway right is 75%: {}", f.v[0]);
+        assert!(k.status().contains("C0 0.75"), "the new value is shown: {}", k.status());
+    }
+
+    #[test]
+    fn letting_go_of_the_stick_keeps_the_value_instead_of_snapping_to_the_middle() {
+        let (mut k, mut f) = (kit(), fake());
+        k.tick(&mut f, &l1([0.5, 0.0]));
+        let set = f.v[0];
+        assert!((set - 0.75).abs() < 1e-5);
+        k.tick(&mut f, &l1([0.0, 0.0]));
+        k.tick(&mut f, &l1([0.2, 0.1]));
+        assert_eq!(f.v[0], set, "a small push inside the dead zone changes nothing, and pushes no route either");
+        // L1 released while the stick is still over: it doesn't push the sound
+        k.tick(&mut f, &Input { stick: [0.9, 0.0], ..Default::default() });
+        assert_eq!(f.v[0], set, "no jump when L1 comes up");
+        k.tick(&mut f, &Input::default());
+        k.tick(&mut f, &Input { stick: [0.2, 0.0], ..Default::default() });
+        assert!((f.v[0] - (set + 0.1)).abs() < 1e-5, "re-centred, the stick pushes its route again: {}", f.v[0]);
+    }
+
+    #[test]
+    fn the_stick_does_not_also_push_its_routes_while_it_sets_a_dial() {
+        let (mut k, mut f) = (kit(), fake());
+        // SELECT three times: the pair's other dial, the next pair, its other dial = control 3
+        for _ in 0..3 {
+            k.tick(&mut f, &Input { knob1_press: true, ..Default::default() });
+        }
+        k.tick(&mut f, &l1([1.0, 0.0]));
+        assert!((f.v[3] - 1.0).abs() < 1e-5, "the selected dial (3) is set: {}", f.v[3]);
+        assert!((f.v[0] - 0.5).abs() < 1e-5 && (f.v[1] - 0.5).abs() < 1e-5, "stick X/Y normally push controls 0 and 1: {} {}", f.v[0], f.v[1]);
+    }
+
+    #[test]
+    fn tapping_a_pad_while_holding_l1_picks_the_control_the_stick_sets() {
+        let (mut k, mut f) = (kit(), fake());
+        k.tick(&mut f, &Input { shoulders: [true, false], ..pad(4) });
+        k.tick(&mut f, &l1([-1.0, 0.0]));
+        assert!((f.v[4] - 0.0).abs() < 1e-5, "control 4 was tapped, so it is set: {}", f.v[4]);
+        assert!((f.v[0] - 0.5).abs() < 1e-5, "not the Play view's dial: {}", f.v[0]);
+        // a fresh hold goes back to the Play view's dial
+        k.tick(&mut f, &Input::default());
+        k.tick(&mut f, &l1([-1.0, 0.0]));
+        assert!((f.v[0] - 0.0).abs() < 1e-5, "{}", f.v[0]);
+    }
+
+    #[test]
+    fn while_l1_is_held_the_lit_pad_is_the_dial_the_stick_will_set() {
+        let (mut k, mut f) = (kit(), fake());
+        k.tick(&mut f, &Input { knob1_press: true, ..Default::default() }); // select control 1
+        k.tick(&mut f, &Input { shoulders: [true, false], ..Default::default() });
+        assert_eq!(k.pad_color(&f, rank_pad(1)), PadColor::Green, "control 1 is what the stick sets");
+        assert_ne!(k.pad_color(&f, rank_pad(0)), PadColor::Green);
+        k.tick(&mut f, &Input { shoulders: [true, false], ..pad(4) });
+        assert_eq!(k.pad_color(&f, rank_pad(4)), PadColor::Green, "a tapped control takes over");
+    }
+
+    #[test]
+    fn during_an_l1_hold_the_dpad_and_the_stick_turn_the_same_dial() {
+        let (mut k, mut f) = (kit(), fake());
+        k.tick(&mut f, &Input { knob1_press: true, ..Default::default() }); // dial 1 selected
+        k.tick(&mut f, &Input { shoulders: [true, false], nav_x: 10, knob2: 10, ..Default::default() });
+        assert!((f.v[1] - 0.6).abs() < 1e-5, "the D-pad turns the selected dial (1), not some stale pad: {}", f.v[1]);
+        assert!((f.v[0] - 0.5).abs() < 1e-5, "{}", f.v[0]);
+        assert_eq!(k.column(&f).dials.iter().position(|d| d.knob == 2), Some(1), "and the screen marks it");
+    }
+
+    #[test]
+    fn a_choice_refuses_the_stick_and_says_so() {
+        let (mut k, mut f) = (kit(), fake());
+        k.tick(&mut f, &Input { shoulders: [true, false], ..pad(6) });
+        k.tick(&mut f, &l1([1.0, 0.0]));
+        assert_eq!(f.mode, 0, "stepped controls aren't swept by a stick");
+        assert!(k.status().contains("is a choice"), "{}", k.status());
     }
 
     #[test]

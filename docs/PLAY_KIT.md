@@ -8,7 +8,7 @@ things in the same places:
 |---|---|
 | **R1** | Toggle the full menu (nothing from the menu is lost) |
 | **F2** | Cycle pad layers: the app's own layer(s) first, then **Controls**, **Moments**, and for effects **Throws** |
-| **L1 (hold)** | Peek at the Controls layer |
+| **L1 (hold)** | Peek at the Controls layer, and with the joystick set the selected dial directly (left 0%, right 100%; the value stays when you let go) |
 | **Knob 1 / Knob 2** | Turn the current pair of hero controls (badged 1 and 2) |
 | **Knob 1 press** | Next hero pair |
 | **Knob 2 press** | Reset the pair (or the grabbed control on Controls) |
@@ -28,6 +28,7 @@ on the device the same jobs are done like this:
 | Job | On the device |
 |---|---|
 | Turn one control | D-pad left/right turns the focused dial; SELECT moves the focus |
+| Set one control in one move | Hold L1 and move the joystick: left is 0%, right is 100%, up or down 50%. The stick doesn't push its routes while L1 is held, and a choice (preset, voices) refuses |
 | Play a control with your hands | The stick (X/Y), the two depth sensors and **pad pressure** each push one control |
 | Choose *which* control a source pushes | **Bind by wiggling** (below) |
 | Change a whole sound at once | **Moments** (tap to recall), or an app's own state pads |

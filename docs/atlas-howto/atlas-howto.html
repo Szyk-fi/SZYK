@@ -79,13 +79,13 @@
 <h2>2. Your controls</h2>
 <figure><img src="fig-controls.png" alt="The device with numbered controls"><figcaption>The device. Numbers match the list below.</figcaption></figure>
 <ul class="legend">
-  <li><span class="n">1</span><b>L1</b>: hold to peek at the Controls layer.</li>
+  <li><span class="n">1</span><b>L1</b>: hold to peek at the Controls layer; with the joystick it sets the selected dial.</li>
   <li><span class="n">2</span><b>R1</b>: flip between the Play view and the full menu.</li>
   <li><span class="n">3</span><b>Left hand sensor</b>: hold a hand over it; closer is more.</li>
   <li><span class="n">4</span><b>Right hand sensor</b>: same.</li>
   <li><span class="n">5</span><b>D-pad</b>: ▲▼ browse, ◄► change a value.</li>
   <li><span class="n">6</span><b>SELECT</b> (centre of the D-pad): tap or hold.</li>
-  <li><span class="n">7</span><b>Joystick</b>: springs to centre; click it to keep a sound.</li>
+  <li><span class="n">7</span><b>Joystick</b>: springs to centre; click it to keep a sound. With L1 held it sets a dial.</li>
   <li><span class="n">8</span><b>Screen</b>: Play view or menu.</li>
   <li><span class="n">9</span><b>16 pads</b>: pressure sensitive. Their job depends on the pad layer.</li>
   <li><span class="n">10</span><b>F1–F4</b>: Home, pad layer, (transport), Mixer.</li>
@@ -99,13 +99,13 @@
   <tr><td class="k">SELECT, tap</td><td>Move focus to the next dial</td><td>Run an action row (Store, Mutate, Revert, Save)</td></tr>
   <tr><td class="k">SELECT, hold ½ s</td><td>Reset the focused dial</td><td>Reset the highlighted value</td></tr>
   <tr><td class="k">R1</td><td>Open the menu</td><td>Back to the Play view</td></tr>
-  <tr><td class="k">L1 (held)</td><td>Show the Controls layer while held</td><td>&mdash;</td></tr>
+  <tr><td class="k">L1 (held)</td><td>Show the Controls layer while held; with the joystick, set the selected dial (7.2)</td><td>&mdash;</td></tr>
   <tr><td class="k">F1</td><td colspan="2">Home (from Home itself, Settings)</td></tr>
   <tr><td class="k">F2</td><td colspan="2">Next pad layer: PLAY → STATES → CONTROLS → MOMENTS</td></tr>
   <tr><td class="k">F3</td><td colspan="2">Nothing in Atlas (it has no transport; the bar shows a dash)</td></tr>
   <tr><td class="k">F4</td><td colspan="2">Jump to the Mixer</td></tr>
   <tr><td class="k">Pads</td><td colspan="2">Depends on the layer: notes, states, controls or moments (sections 7 and 8)</td></tr>
-  <tr><td class="k">Joystick</td><td>X pushes MORPH, Y pushes COLOR (defaults)</td><td>&mdash;</td></tr>
+  <tr><td class="k">Joystick</td><td>X pushes MORPH, Y pushes COLOR (defaults). With L1 held it sets the selected dial instead</td><td>&mdash;</td></tr>
   <tr><td class="k">Hand sensors</td><td>Left pushes MOTION, right pushes SPACE (defaults)</td><td>&mdash;</td></tr>
   <tr><td class="k">Pad pressure</td><td>Pushes ENERGY (default)</td><td>&mdash;</td></tr>
 </table>
@@ -148,7 +148,7 @@
 <p>You can also pick by name in the menu: the first row is <b>Preset</b>; D-pad ◄ ► steps through the same list.</p>
 
 <h2>7. Shaping a sound with no dials</h2>
-<p>There are four ways to change a sound, from slowest and most precise to fastest and most expressive.</p>
+<p>There are five ways to change a sound, from slowest and most precise to fastest and most expressive.</p>
 
 <h3>7.1 Turn a control (D-pad ◄ ►)</h3>
 <figure class="screen"><img src="screen-04-focus.png" alt="COLOR focused and raised to 40%"><figcaption>SELECT moved the focus to COLOR (its centre is lit); D-pad ► raised it to 40%.</figcaption></figure>
@@ -161,7 +161,12 @@
 </table>
 <p>The screen shows the current pair and its neighbour, so it doesn't jump on every tap.</p>
 
-<h3>7.2 Play it with your hands</h3>
+<h3>7.2 Set a dial directly (hold L1, move the joystick)</h3>
+<figure class="screen"><img src="screen-04b-set.png" alt="L1 held, joystick right of centre: COLOR 75%"><figcaption>L1 held and the joystick pushed right of centre: the Controls layer shows, the lit pad is the dial being set (COLOR), and the status line reads "COLOR 75%".</figcaption></figure>
+<p>Select a dial as in 7.1, then <b>hold L1 and move the joystick</b>. The dial follows the stick left to right: <b>fully left is 0%, fully right is 100%</b>, and straight up or down is 50%. Push past the dead zone (about a third of the way out) and the value jumps to the stick's position; let go and the value <b>stays</b>. It never snaps back to the middle when the stick springs home.</p>
+<p>While L1 is held the joystick belongs to this: it doesn't also push MORPH and COLOR, and nothing jumps when you let go of L1. Holding L1 also shows the Controls layer, so you can <b>tap a control's pad</b> during the hold to set that control instead of the selected dial; the lit pad is always the one the joystick is setting. A choice (Preset, Voices, Depth) can't be set this way and says so; use the D-pad for those. This is the quickest way to make a big move while your other hand is playing.</p>
+
+<h3>7.3 Play it with your hands</h3>
 <figure class="screen"><img src="screen-02-expression.png" alt="Stick, hand and pressure all pushing controls"><figcaption>Joystick pushed up-right, a hand over the left sensor, one pad pressed hard: MORPH is part-way to B, COLOR and MOTION have risen, ENERGY has lifted.</figcaption></figure>
 <table>
   <tr><th>Source</th><th>Pushes (Atlas default)</th><th>Range</th></tr>
@@ -174,12 +179,12 @@
 </table>
 <p>These <b>add to</b> the dial's own setting; they never overwrite it. Let go, and every control returns <i>exactly</i> to where you had set it. If you've pushed somewhere you like, <b>click the joystick</b> to keep it: the pushed values become the new settings. The joystick is ignored after a click until it has returned to centre, so letting go doesn't push the sound back.</p>
 
-<h3>7.3 Glide to a state (pads)</h3>
+<h3>7.4 Glide to a state (pads)</h3>
 <figure class="screen"><img src="screen-05-states.png" alt="STATES layer"><figcaption>The STATES layer: the bottom row of pads is A, B (and C, D when a sound has them).</figcaption></figure>
 <figure class="screen"><img src="screen-06-states-gliding.png" alt="Gliding to state B"><figcaption>One tap on B: MORPH glides there (the pad shows yellow while it travels, green when it arrives).</figcaption></figure>
 <p>Press <b>F2</b> once to reach the <b>STATES</b> layer. The bottom row of pads (13–16) are states A, B, C and D, lit only for the states this sound has. Tap one and MORPH glides there in about a second. Nothing sounds when you tap these pads; they are for choosing, not playing, and any note you were holding is released. Press F2 until the badge says PLAY to play again.</p>
 
-<h3>7.4 Bind a control to your hands (the CONTROLS layer)</h3>
+<h3>7.5 Bind a control to your hands (the CONTROLS layer)</h3>
 <figure class="screen"><img src="screen-07-controls.png" alt="CONTROLS layer with SPACE grabbed"><figcaption>The CONTROLS layer: every control is a pad. SPACE is grabbed (highlighted).</figcaption></figure>
 <figure class="screen"><img src="screen-08-bind.png" alt="Stick X now pushes SPACE"><figcaption>After sweeping the joystick: "Stick X now pushes SPACE".</figcaption></figure>
 <p>The defaults won't suit every sound or every player, so you can rewire them:</p>
@@ -209,7 +214,7 @@
   <tr><td class="k">CONTROLS</td><td>The 12 controls</td><td>Grab a control; bind sources to it</td></tr>
   <tr><td class="k">MOMENTS</td><td>16 memories</td><td>Store and recall whole sounds</td></tr>
 </table>
-<p>Hold <b>L1</b> on any layer to see the CONTROLS layer for as long as you hold it; let go and you're back where you were.</p>
+<p>Hold <b>L1</b> on any layer to see the CONTROLS layer for as long as you hold it; let go and you're back where you were. With L1 held, the joystick sets the selected dial (section 7.2).</p>
 
 <h3>Moments: remember a whole sound</h3>
 <figure class="screen"><img src="screen-09-moments.png" alt="MOMENTS layer, moment 1 stored"><figcaption>MOMENTS: moment 1 (bottom-left pad) stored. The dot marks a pad that holds something.</figcaption></figure>
@@ -254,6 +259,8 @@
 <ol class="steps"><li>Tap SELECT until the dial you want is lit.</li><li>Hold D-pad ► (or tap it) to raise it.</li><li>Hold SELECT for half a second if you overshoot: it resets.</li><li>F2 to MOMENTS, hold a pad: it's stored.</li></ol>
 <h3>Play it without touching the D-pad</h3>
 <ol class="steps"><li>Hold a chord with one hand.</li><li>Sweep the joystick (MORPH and COLOR) with your thumb, and lift a hand over the sensors (MOTION, SPACE).</li><li>If you land somewhere beautiful, click the joystick to keep it.</li></ol>
+<h3>Make a big change in one move</h3>
+<ol class="steps"><li>Tap SELECT until the dial you want is lit.</li><li>Hold L1 and push the joystick to where you want it, left for none, right for full.</li><li>Let go. The value stays.</li></ol>
 <h3>Wire your own hands</h3>
 <ol class="steps"><li>F2 to CONTROLS.</li><li>Tap the pad of the control you want to play.</li><li>Sweep the joystick or wave a hand: they now play it.</li></ol>
 <h3>Build a morph between two sounds you made</h3>
@@ -268,6 +275,7 @@
   <tr><td>I pushed the joystick and the sound jumped back</td><td>That's by design: pushing is temporary. Click the joystick to keep it.</td></tr>
   <tr><td>"…is a choice: nothing can push it"</td><td>You tried to bind Preset, Voices or Depth. Choose a continuous control instead.</td></tr>
   <tr><td>A sound won't load</td><td>The status line names the problem. Atlas keeps the previous sound rather than dropping out.</td></tr>
+  <tr><td>I held L1 and moved the joystick but nothing set</td><td>Push past the dead zone (about a third of the way out). Choices such as Preset, Voices and Depth refuse the joystick and say so; use the D-pad.</td></tr>
   <tr><td>Notes cut off in a busy chord</td><td>CPU Budget is capping voices. Raise it (Deep depth) or play fewer notes.</td></tr>
 </table>
 
@@ -280,34 +288,36 @@
   <tr><td class="k">SELECT, tap / hold</td><td><kbd>\</kbd> / <kbd>/</kbd></td></tr>
   <tr><td class="k">Joystick</td><td>Arrow keys; <kbd>K</kbd> clicks it</td></tr>
   <tr><td class="k">Hand sensors</td><td><kbd>O</kbd> (left), <kbd>P</kbd> (right), each at 70%</td></tr>
-  <tr><td class="k">L1 / R1</td><td>Hold <kbd>9</kbd> / <kbd>0</kbd></td></tr>
+  <tr><td class="k">L1 / R1</td><td>Hold <kbd>9</kbd> / <kbd>0</kbd>. With <kbd>9</kbd> held, the arrow keys set the selected dial: left is 0%, right is 100%, up or down is 50% (the keyboard has no in-between positions)</td></tr>
   <tr><td class="k">D-pad ▲ ▼</td><td>No key is mapped in this simulator while Atlas is open (the arrow keys are the joystick). Use the on-screen D-pad in the Slint simulator (<code>cargo run --example slint_home_live</code>), a gamepad, or the menu.</td></tr>
 </table>
 
-<h2>Appendix B. PS5 DualSense (default layout in play apps like Atlas)</h2>
-<p>These are the shipped defaults; any of them can be changed in the Controller app, and the layout on Home and in apps without a play view is different.</p>
+<h2>Appendix B. PS5 DualSense (default layout)</h2>
+<p>This layout is the same on Home, in lists and in play apps like Atlas, so the controller never changes meaning between screens. It is set up for a controller whose left stick doesn't work: the left stick is unused and the <b>right stick is the device's joystick</b>. L2 and R2 are unbound. Any button can be changed in the Controller app.</p>
 <table>
   <tr><th>DualSense</th><th>Does</th></tr>
   <tr><td class="k">D-pad ▲ ▼</td><td>Browse (next / previous sound; rows in the menu)</td></tr>
-  <tr><td class="k">D-pad ► ◄</td><td>Turn the focused dial up / down</td></tr>
-  <tr><td class="k">L3 (press left stick)</td><td>SELECT</td></tr>
-  <tr><td class="k">✕ ○ □ △</td><td>Play pads 13, 14, 15, 16 (the four lowest notes)</td></tr>
-  <tr><td class="k">L1 / R1</td><td>Peek at Controls / open the menu</td></tr>
-  <tr><td class="k">L2 / R2</td><td>Left / right hand sensor (the harder you pull, the closer the hand)</td></tr>
-  <tr><td class="k">Right stick; R3</td><td>The joystick; its click</td></tr>
+  <tr><td class="k">D-pad ◄ ►</td><td>Turn the focused dial down / up</td></tr>
+  <tr><td class="k">Touchpad click</td><td>SELECT: tap to select, hold half a second to reset</td></tr>
+  <tr><td class="k">Right stick</td><td>The joystick (expression; with L1 held, sets the selected dial)</td></tr>
+  <tr><td class="k">R3 (press right stick)</td><td>The joystick's click: keep the pushed sound</td></tr>
+  <tr><td class="k">L1 / R1</td><td>Peek at Controls and set a dial / open the menu</td></tr>
   <tr><td class="k">Options / Create</td><td>F2 (change pad layer) / F3</td></tr>
-  <tr><td class="k">PS button, touchpad click</td><td>Home</td></tr>
-  <tr><td class="k">Not bound</td><td>Reset (hold SELECT), F1 and F4 (Mixer) have no default button (Home is on the PS button); bind them in the Controller app.</td></tr>
+  <tr><td class="k">PS button</td><td>Home</td></tr>
+  <tr><td class="k">Square, Circle, Cross, Triangle</td><td>Pads 1, 5, 9 and 13 (the left column of pads), for quick tests</td></tr>
+  <tr><td class="k">L2, R2, left stick</td><td>Unused. The hand sensors are therefore not available from this controller</td></tr>
+  <tr><td class="k">Not bound in play apps</td><td>F1 (Home is on the PS button) and F4 (Mixer)</td></tr>
 </table>
 
 <h2>Appendix C. Rough edges in this version</h2>
 <div class="box warn"><b class="t">Known, and next on the list</b>
 <ul style="margin:2pt 0 0 14pt; padding:0">
-  <li>A D-pad press moves a value 1%, and holding repeats ten a second, so sweeping a dial from 0 to 100% takes about ten seconds. Use the joystick, hands, STATES or MOMENTS for big moves.</li>
+  <li>A D-pad press moves a value 1%, and holding repeats ten a second, so sweeping a dial from 0 to 100% takes about ten seconds. For big moves, hold L1 and use the joystick (7.2), or use the hands, STATES or MOMENTS. Faster holding is planned.</li>
   <li>Some labels are cut off on screen (the expression line and status messages), for example "STICK MORPH / COLO…".</li>
   <li>The menu's top hint reads "R1 OPEN", but R1 there returns you to the Play view.</li>
-  <li>On the PS5 pad, the D-pad's meaning differs between Home/menus (◄ ► browse, ▲ ▼ edit) and play apps (▲ ▼ browse, ◄ ► edit).</li>
   <li>Pad pressure drives one control from the firmest pad; it is not yet per note.</li>
+  <li>The PS5 pad has no hand-sensor stand-in now (L2 and R2 are unbound); use the keyboard (<kbd>O</kbd> and <kbd>P</kbd>) to try the hand controls.</li>
+  <li>Outside play apps, holding L1 does nothing special yet (it is still Home there), so setting a value with the joystick works in play apps only.</li>
   <li>Screens in this guide say "OFFLINE / SOFTWARE RENDER" because they are rendered without audio hardware.</li>
 </ul></div>
 

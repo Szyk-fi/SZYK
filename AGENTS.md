@@ -101,18 +101,35 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
-### 2026-10-04: Claude: control contract DRAFT (docs only)
+### 2026-10-04: Claude: control contract decided; PS5 profile and L1+stick built
 - Branch: claude/atlas-play   Commits: see git log on the branch
-- Changed: new `docs/CONTROL_CONTRACT.md` only. **No code changed.**
-- Status: draft, waiting on Max's decisions (section 8 of the doc).
-- Tests: none needed (docs).
-- Notes for the other assistant: please don't build against it until Max
-  approves. If approved it will change what D-pad, SELECT, L1, R1, F2 and
-  the stick mean, and add a contract test every app must pass. That
-  includes the gamepad layout in `controller_map.rs` (your area): the PS5
-  navigate map would change so the D-pad means the same everywhere.
-- Request: none yet. If approved, a request will cover the
-  `controller_map.rs` defaults.
+- Changed: `docs/CONTROL_CONTRACT.md` (Max's decisions recorded, section 8),
+  `src/play_kit.rs` (hold L1 + joystick sets the selected dial: left 0%,
+  right 100%, value kept on release; the lit pad, dial, D-pad and stick all
+  mean one control during a hold), `src/controller_map.rs` (new PS5
+  defaults, and SELECT is tap-to-select / hold-to-reset like the device),
+  the Atlas how-to (new 7.2, new PS5 appendix) and its harness.
+- The PS5 layout was changed at Max's direct request: D-pad up/down browse
+  and left/right change a value in every context; touchpad = SELECT; PS
+  button = Home; right stick = the device joystick; L2/R2 unbound; the four
+  face buttons = pads 1, 5, 9, 13. Max said "Square, circle, X and O"; I read
+  the fourth as Triangle and gave them pads 1, 5, 9, 13 in the order named
+  (Square, Circle, Cross, Triangle). One line each in `defaults()` to change.
+- **Side effects:** Retro's A/B/X/Y are no longer on the face buttons (D-pad,
+  shoulders, Options/Create still feed Retro). The saved map the Controller
+  app had written was moved to `saves/controller_map.json.bak-2026-10-04`,
+  otherwise it would have overridden the new defaults.
+- Ownership note: `controller_map.rs` is not in the table above and git
+  cannot tell which assistant wrote it (both commit as Max). An earlier entry
+  of mine called it ChatGPT's area; that was an assumption, not a fact.
+- Status: partial. Not built: acceleration and per-parameter detents, the
+  generated hint line, confirm-by-hold, text wrap, stick scrubbing in lists,
+  the contract test suite.
+- Tests: kit 20, controller_map 9 and controller_setup 2 pass. Full suite: 882
+  passed, 2 failed, 7 ignored: controller_setup's play-map test (it expected
+  L2 on the hand sensor; fixed, now passes) and the Norns bundled-script test
+  (silent "drone" under load, as logged before; it passes alone in 159 s).
+- Request: none.
 
 ### 2026-10-04: Claude: Atlas how-to (PDF + screenshot harness)
 - Branch: claude/atlas-play   Commits: see git log on the branch

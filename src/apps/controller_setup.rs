@@ -294,7 +294,10 @@ mod tests {
         a.tick(&Input { knob2: 1, ..Default::default() });
         assert_eq!(a.ctx, Context::Play);
         assert!(a.rows().len() > nav, "joystick, hands and shoulders appear");
-        assert!(a.display_rows().iter().any(|r| r.0 == "Left hand sensor" && r.1.contains("L2")));
+        let rows = a.display_rows();
+        assert!(rows.iter().any(|r| r.0 == "Joystick X" && r.1.contains("Right stick")), "the right stick is the joystick");
+        let hand = rows.iter().find(|r| r.0 == "Left hand sensor").expect("the hand sensor is still listed, so it can be learned");
+        assert!(!hand.1.contains("L2"), "but L2 is unbound by default now: {}", hand.1);
     }
 }
 
