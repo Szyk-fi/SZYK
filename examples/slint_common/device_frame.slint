@@ -46,13 +46,9 @@ export component ParamListColumn inherits Rectangle {
         alignment: start;
         spacing: 1px;
         HorizontalLayout {
-            height: root.big-text ? (root.more-above ? 18px : 0px) : 22px;
-            Text {
-                text: root.big-text ? "" : "↑↓ SELECT · ◀▶ EDIT · R1 OPEN";
-                color: root.ink.with-alpha(0.72);
-                font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 1px;
-                vertical-alignment: center;
-            }
+            // The old "SELECT / EDIT / R1 OPEN" line lived here; the shell's
+            // hint line above the F bar says it now (App::hint).
+            height: root.more-above ? 18px : 0px;
             Text {
                 text: root.more-above ? "↑" : "";
                 color: root.accent; font-size: 12px; horizontal-alignment: right;
@@ -174,6 +170,7 @@ export component DeviceFrame inherits Window {
     in property <color> accent: #5CF07A;
     in property <color> screen-bg: #0B100C;
     in property <color> screen-ink: #ffffff;
+    in property <string> hint-line: "";
     in property <[bool]> function-enabled: [true, true, true, true];
     in property <[BarSegment]> bar: [
         { label: "F1  SETTINGS", active: false },
@@ -337,9 +334,24 @@ export component DeviceFrame inherits Window {
                     // Clipped: an app's panel or list can never draw over
                     // the F-button bar below, whatever its content.
                     Rectangle {
-                        height: root.hide-chrome ? 360px : 284px;
+                        height: root.hide-chrome ? 360px : 266px;
                         clip: true;
                         @children
+                    }
+
+                    // The one line every screen spends on what the controls
+                    // do right now (App::hint).
+                    Rectangle {
+                        height: root.hide-chrome ? 0px : 18px;
+                        clip: true;
+                        Text {
+                            x: 18px; width: parent.width - 36px;
+                            text: root.hint-line;
+                            font-size: 11px;
+                            color: root.screen-ink.with-alpha(0.62);
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
                     }
 
                     // On-screen bottom bar -- sized for real

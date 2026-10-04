@@ -233,6 +233,16 @@ pub trait App {
     /// The shared play column (see play_kit.rs) when the app is on its
     /// play view; `None` shows the usual parameter list instead.
     fn play_column(&self) -> Option<PlayColumn> { None }
+    /// The one line every screen spends above the F bar. Derived from what
+    /// the app is showing, so an app can't advertise a control that its
+    /// current view ignores; override only for a screen with its own verbs.
+    fn hint(&self) -> String {
+        match self.play_column() {
+            Some(col) => hints::play(&col.layer).into(),
+            None if self.play_surface() => hints::MENU_OF_PLAY_APP.into(),
+            None => hints::LIST.into(),
+        }
+    }
     /// The action F3 will perform, supplied by the app rather than inferred by name.
     fn transport_action(&self) -> Option<&'static str> {
         self.running().map(|running| if running { "STOP" } else { "PLAY" })
@@ -1016,6 +1026,43 @@ pub struct PlayColumn {
     pub status: String,
 }
 
+
+/// The words on the hint line. One table, so the same control is always
+/// named the same way and the lines can be checked against each other.
+pub mod hints {
+    /// Launcher (and anything that lays apps out in a grid).
+    pub const HOME: &str = "\u{2191}\u{2193}\u{25C0}\u{25B6} BROWSE  \u{B7}  SELECT OPEN  \u{B7}  F2 CATEGORY";
+    /// Any ordinary parameter list.
+    pub const LIST: &str = "\u{2191}\u{2193} ROW  \u{B7}  \u{25C0}\u{25B6} VALUE (HOLD: FASTER)  \u{B7}  SELECT OPEN  \u{B7}  HOLD SELECT RESET";
+    /// A play app's full menu: same as a list, plus the way back.
+    pub const MENU_OF_PLAY_APP: &str = "\u{2191}\u{2193} ROW  \u{B7}  \u{25C0}\u{25B6} VALUE (HOLD: FASTER)  \u{B7}  SELECT OPEN  \u{B7}  R1 PLAY VIEW";
+    const CONTROLS: &str = "PAD PICKS A DIAL  \u{B7}  WIGGLE STICK OR HAND TO BIND  \u{B7}  \u{25C0}\u{25B6} TURN  \u{B7}  R1 MENU";
+    const PLAYING: &str = "L1 + STICK SETS DIAL  \u{B7}  \u{25C0}\u{25B6} TURN  \u{B7}  F2 PAD LAYER  \u{B7}  R1 MENU";
+
+    /// The play view's line, by pad layer label.
+    pub fn play(layer: &str) -> &'static str {
+        if layer.eq_ignore_ascii_case("CONTROLS") { CONTROLS } else { PLAYING }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn every_hint_fits_one_line_of_the_screen() {
+            // 640 px at the shell's 12 px mono face is about 80 characters.
+            for h in [HOME, LIST, MENU_OF_PLAY_APP, CONTROLS, PLAYING] {
+                assert!(h.chars().count() <= 80, "{h:?} is {} characters", h.chars().count());
+            }
+        }
+
+        #[test]
+        fn the_play_view_names_the_way_to_the_menu_and_the_menu_the_way_back() {
+            assert!(PLAYING.contains("R1 MENU") && CONTROLS.contains("R1 MENU"));
+            assert!(MENU_OF_PLAY_APP.contains("R1 PLAY VIEW"));
+        }
+    }
+}
 
 /// The Controller app's live view of the connected game controller.
 #[derive(Default)]

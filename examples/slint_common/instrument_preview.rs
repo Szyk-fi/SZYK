@@ -207,6 +207,7 @@ pub fn render(directory: &str) {
         ui.set_active_app_name(name.into());
         ui.set_grid_mode_label(app.grid_mode_label().unwrap_or("").into());
         ui.set_transport_action(app.transport_action().unwrap_or("").into());
+        ui.set_hint_text(app.hint().into());
         ui.set_pad_lock_available(app.supports_pad_lock());
         let levels = app.slint_levels(10);
         ui.set_row_levels(Rc::new(slint::VecModel::from(levels.into_iter().map(|l| l.unwrap_or(-1.0)).collect::<Vec<_>>())).into());
@@ -380,6 +381,7 @@ pub fn render(directory: &str) {
     ui.set_on_home(true);
     ui.set_pad_lock_available(false);
     ui.set_transport_action("".into());
+    ui.set_hint_text(crate::app::hints::HOME.into());
     ui.set_live_bg(slint::Color::from_rgb_u8(18,27,27));ui.set_live_ink(slint::Color::from_rgb_u8(241,240,230));ui.set_live_accent(slint::Color::from_rgb_u8(183,214,197));
     let names:Vec<String>=manifests.iter().map(|m|m.name.clone()).collect();
     launcher::install_catalog(manifests.iter().map(|m|(m.name.clone(),m.category.clone(),m.description.clone())));

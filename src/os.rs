@@ -52,6 +52,8 @@ use std::time::{Duration, Instant};
 /// should show a blank button, not a label that lies about what
 /// pressing it does.
 const BOTTOM_BAR_HEIGHT: i32 = 17;
+/// The hint line sits directly above the bar (see `App::hint`).
+const HINT_HEIGHT: i32 = 14;
 
 /// How long each startup logo stays up before advancing (SZYK -> MX1
 /// -> launcher) on its own -- any input (any key/knob/button) skips
@@ -476,6 +478,17 @@ impl Os {
 
         let seg_w = display::WIDTH as i32 / labels.len() as i32;
         let bar_y = display::HEIGHT as i32 - BOTTOM_BAR_HEIGHT;
+
+        // One line of hint just above the F bar, on every screen.
+        let hint = match active {
+            Some(a) => a.hint(),
+            None => crate::app::hints::HOME.into(),
+        };
+        Rectangle::new(Point::new(0, bar_y - HINT_HEIGHT), Size::new(display::WIDTH as u32, HINT_HEIGHT as u32))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+            .draw(fb)
+            .ok();
+        Text::new(&hint, Point::new(6, bar_y - 3), MonoTextStyle::new(&SPLEEN_6X12, Rgb565::new(18, 36, 18))).draw(fb).ok();
 
         Line::new(Point::new(0, bar_y), Point::new(display::WIDTH as i32, bar_y))
             .into_styled(PrimitiveStyle::with_stroke(Rgb565::new(8, 12, 8), 1))

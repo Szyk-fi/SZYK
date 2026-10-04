@@ -219,6 +219,8 @@ slint::slint! {
         in-out property <bool> pad-lock-available: false;
         in-out property <bool> has-settings: true;
         in-out property <bool> has-mixer: true;
+        in-out property <string> hint-text: "";
+        hint-line: root.splash-active ? "" : root.hint-text;
         function-enabled: [!root.splash-active && (!root.on-home || root.has-settings), !root.splash-active && (root.grid-mode-label != "" || root.pad-lock-available || root.midi-target-label != ""), !root.splash-active && !root.on-home && root.transport-action != "", !root.splash-active && root.has-mixer];
         // Which app pads/notes currently go to -- "" when nothing's
         // pinned (pads follow the active screen), "PINNED" while
@@ -1145,7 +1147,6 @@ slint::slint! {
                         text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : root.active-app-name == "Synth" ? "Pads play notes. Knobs: cutoff and volume; D-pad: waveform." : "Up/down picks a row; left/right changes it.";
                         color: root.live-ink.with-alpha(0.72); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap;
                     }
-                    InstrumentLabel { text: root.active-app-name == "Synth" ? "F2 PAD LAYER  ·  R1 MENU" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 12px; }
                 }
             }
 
@@ -4734,6 +4735,7 @@ fn main() {
             ui.set_active_kind(0);
             ui.set_grid_mode_label("".into());
             ui.set_transport_action("".into());
+            ui.set_hint_text(app::hints::HOME.into());
             ui.set_transport_label("".into());
             ui.set_pad_lock_available(false);
             if let Some(play_idx) = *midi_target_for_timer.borrow() {
@@ -4842,6 +4844,7 @@ fn main() {
             });
             ui.set_grid_mode_label(app.grid_mode_label().unwrap_or("").into());
             ui.set_transport_action(app.transport_action().unwrap_or("").into());
+            ui.set_hint_text(app.hint().into());
             ui.set_pad_lock_available(app.supports_pad_lock());
 
             // Real pad lighting: an app with its own meaning for the

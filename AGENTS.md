@@ -101,6 +101,22 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-04: Claude: hold-to-sweep and the one-line hint (contract steps 1-2)
+- Branch: claude/atlas-play
+- Changed: `src/controller_map.rs` (held D-pad ◀▶ is worth x1, x5 after 0.75 s,
+  x20 after 1.75 s; ▲▼ never multiplies; `hold_multiplier`), `device_frame.slint`
+  (on-screen D-pad does the same, `dpad-step`), `src/app.rs` (`App::hint()` and
+  the `hints` table, with tests), `src/os.rs` and the Slint shell (a 18 px hint
+  strip above the F bar; app body is now 266 px tall, was 284). Removed the old
+  hard-coded "R1 SELECT / ◀▶ EDIT / R1 OPEN" lines in the list header and the
+  generic panel footer.
+- Not done: per-parameter detents, so apps with tiny private multipliers
+  still sweep slowly even at x20. The home screen's "R1 OPEN APPLICATION" button
+  text is untouched. Hint lines are not yet checked against each app's real
+  behavior beyond the shared-kit tests.
+- Tests: controller_map 10 pass; full suite 886 pass, 1 fail (marbles
+  gate test, passes alone: load flake like Norns).
+
 ### 2026-10-04: Claude: control contract decided; PS5 profile and L1+stick built
 - Branch: claude/atlas-play   Commits: see git log on the branch
 - Changed: `docs/CONTROL_CONTRACT.md` (Max's decisions recorded, section 8),

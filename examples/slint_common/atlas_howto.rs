@@ -65,6 +65,7 @@ pub fn render(directory: &str) {
         ui.set_active_app_name("Atlas".into());
         ui.set_grid_mode_label(app.grid_mode_label().unwrap_or("").into());
         ui.set_transport_action(app.transport_action().unwrap_or("").into());
+        ui.set_hint_text(app.hint().into());
         ui.set_pad_lock_available(app.supports_pad_lock());
         let levels = app.slint_levels(10);
         ui.set_row_levels(Rc::new(slint::VecModel::from(levels.into_iter().map(|l| l.unwrap_or(-1.0)).collect::<Vec<_>>())).into());
