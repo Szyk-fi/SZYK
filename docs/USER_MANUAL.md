@@ -331,7 +331,7 @@ row) rather than generating their own signal.
 | **Marbles** | The real Mutable Instruments Marbles: random rhythms and melodies with deja vu, played on any instrument (see §3.5). |
 | **Tides** | The real Mutable Instruments Tides (2018): four linked envelopes, LFOs or oscillators (see §3.5). |
 | **Sequencer** | Multi-track step sequencer in the spirit of Sugar Bytes DrumComputer. |
-| **Ledger** | A tracker: 8 tracks × up to 64 rows × 16 patterns, each track a Plaits voice. Play view = performance (pads 1–8 mute, 9–16 loop / reverse / octave / half speed / dark); R1 = the editor (knob 1 rows, press for next field; knob 2 value, press to clear; pads enter notes). Effects: T M H D (sound locks), R retrigger, P chance, N nudge. |
+| **Ledger** | A tracker: 8 tracks × up to 64 rows × 16 patterns, each track a Plaits voice or (its Plays row) any instrument app. Follows the device clock (§5.1). Play view = performance (pads 1–8 mute, 9–16 loop / reverse / octave / half speed / dark); R1 = the editor (knob 1 rows, press for next field; knob 2 value, press to clear; pads enter notes). Effects: T M H D (sound locks), R retrigger, P chance, N nudge. |
 | **CV Out** | 32 independent CV outputs sent as MIDI CC to an external MIDI-to-CV box. |
 | **MIDI Learn** | Browse/add/remove CC → modulation-target mappings. |
 | **Portal** | Eight-cable patch matrix: any registered source (LFOs, clocked random, audio buses) to any registered destination (Portal's own sends, or another app's modulation parameter). Direct monitor is off by default. Patches last for the session only — no patch-file persistence yet. |
@@ -339,9 +339,9 @@ row) rather than generating their own signal.
 ### 5.1 The device clock
 
 There's one tempo and one transport for the whole device. Session,
-Skins and the Looper follow it by default (each has a **Clock** setting
-to run on its own tempo instead), so pressing play in any of them starts
-all of them, locked to the same sample. Tempo is its front panel:
+Skins, Ledger and the Looper follow it (Session and Skins have a
+**Clock** setting to run on their own tempo instead), so pressing play
+in any of them starts all of them, locked to the same sample. Tempo is its front panel:
 
 - **Tap**: any pad, in time (four taps or more average out).
 - **Follow**: *internal*, or *MIDI clock in* — another device's clock

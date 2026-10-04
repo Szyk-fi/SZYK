@@ -165,6 +165,11 @@ struct Shared {
     dirty: AtomicU32,
     /// Audition requests from the editor: track << 8 | note, or u32::MAX.
     audition: AtomicU32,
+    /// The device transport, and whether Ledger follows it (on the
+    /// device it does: Session, Skins, the Looper and Ledger share one
+    /// tempo and one play button -- see clock.rs).
+    clock: Arc<crate::clock::Clock>,
+    follow: AtomicBool,
 }
 
 impl Shared {
@@ -180,6 +185,27 @@ impl Shared {
     }
     fn len(&self, p: usize) -> usize {
         self.length[p % PATTERNS].load(Ordering::Relaxed).clamp(1, ROWS)
+    }
+    fn following(&self) -> bool {
+        self.follow.load(Ordering::Relaxed)
+    }
+    fn is_running(&self) -> bool {
+        if self.following() {
+            self.clock.running()
+        } else {
+            self.running.load(Ordering::Relaxed)
+        }
+    }
+    fn set_running(&self, on: bool) {
+        if self.following() {
+            match (on, self.clock.running()) {
+                (true, false) => self.clock.start(),
+                (false, true) => self.clock.stop(),
+                _ => {}
+            }
+        } else {
+            self.running.store(on, Ordering::Relaxed);
+        }
     }
 }
 
@@ -239,6 +265,8 @@ pub struct LedgerApp {
     /// the audio thread with the processor.
     track_routes: Vec<crate::note_bus::NoteRoute>,
     track_outs: Vec<crate::note_bus::NoteOut>,
+    /// The tempo last seen, to tell which side changed it.
+    last_bpm: f32,
 }
 
 impl LedgerApp {
@@ -266,6 +294,8 @@ impl LedgerApp {
             output,
             dirty: AtomicU32::new(0),
             audition: AtomicU32::new(u32::MAX),
+            clock: crate::clock::Clock::shared(),
+            follow: AtomicBool::new(false),
         });
         let mut app = Self {
             p,
@@ -283,6 +313,7 @@ impl LedgerApp {
             quiet: 0,
             track_routes: Vec::new(),
             track_outs: Vec::new(),
+            last_bpm: 118.0,
         };
         if !app.load() {
             app.demo();
@@ -351,7 +382,7 @@ impl LedgerApp {
             C_LENGTH => format!("{} rows", self.p.len(self.pattern())),
             C_OCTAVE => format!("{}", self.edit_octave),
             C_STEP => format!("{}", self.step_add),
-            C_RUN => (if self.p.running.load(Ordering::Relaxed) { "playing" } else { "stopped" }).into(),
+            C_RUN => (if self.p.is_running() { "playing" } else { "stopped" }).into(),
             C_NEXT => format!("{:02}", self.p.queued.load(Ordering::Relaxed) % PATTERNS + 1),
             _ => "press to clear".into(),
         }
@@ -415,7 +446,21 @@ impl LedgerApp {
     }
 
     fn set_running(&self, on: bool) {
-        self.p.running.store(on, Ordering::Relaxed);
+        self.p.set_running(on);
+    }
+
+    /// Follows the device clock (see `Shared::follow`), on `clock`.
+    pub fn following(self, clock: Arc<crate::clock::Clock>) -> Self {
+        // the device has one tempo: take it, don't impose ours
+        self.p.bpm.set(clock.bpm().clamp(40.0, 240.0));
+        let mut s = self;
+        let p = Arc::get_mut(&mut s.p).map(|p| {
+            p.clock = Arc::clone(&clock);
+            p.follow.store(true, Ordering::Relaxed);
+        });
+        assert!(p.is_some(), "set the clock before anything else holds Ledger's state");
+        s.last_bpm = s.p.bpm.get();
+        s
     }
 
     fn clear_pattern(&self) {
@@ -767,6 +812,17 @@ impl App for LedgerApp {
         self.kit.led_overlay(self)
     }
     fn tick(&mut self, input: &Input) {
+        // One device tempo: a change here goes to the clock, a change
+        // anywhere else shows here.
+        if self.p.following() {
+            let mine = self.p.bpm.get();
+            if (mine - self.last_bpm).abs() > 1e-3 {
+                self.p.clock.set_bpm(mine);
+            } else {
+                self.p.bpm.set(self.p.clock.bpm().clamp(40.0, 240.0));
+            }
+            self.last_bpm = self.p.bpm.get();
+        }
         let was_menu = self.kit.menu;
         let mut play = std::mem::take(&mut self.kit);
         let step = play.tick(self, input);
@@ -809,7 +865,7 @@ impl App for LedgerApp {
             let lines = self.pattern_lines(first, 2, 16);
             let playing = self.p.row.load(Ordering::Relaxed);
             for (i, (r, text)) in lines.iter().enumerate() {
-                let style = if *r == playing && self.p.running.load(Ordering::Relaxed) { MonoTextStyle::new(&SPLEEN_6X12, ACCENT) } else { dim };
+                let style = if *r == playing && self.p.is_running() { MonoTextStyle::new(&SPLEEN_6X12, ACCENT) } else { dim };
                 Text::new(&format!("{r:02} {text}"), Point::new(380, 52 + i as i32 * 16), style).draw(f).ok();
             }
             Text::new("pads 1-8 mute, 9-16 moves   F3: play   R1: edit", Point::new(16, 340), dim).draw(f).ok();
@@ -828,7 +884,7 @@ impl App for LedgerApp {
         }
         let lines = self.pattern_lines(first, 4, 17);
         let playing = self.p.row.load(Ordering::Relaxed);
-        let running = self.p.running.load(Ordering::Relaxed) && self.p.playing_pattern.load(Ordering::Relaxed) == self.pattern();
+        let running = self.p.is_running() && self.p.playing_pattern.load(Ordering::Relaxed) == self.pattern();
         for (i, (r, text)) in lines.iter().enumerate() {
             let y = 68 + i as i32 * 15;
             if *r == self.cur_row {
@@ -870,7 +926,7 @@ impl App for LedgerApp {
         let first = self.first_visible_track();
         let pat = self.pattern();
         let playing = self.p.row.load(Ordering::Relaxed);
-        let running = self.p.running.load(Ordering::Relaxed) && self.p.playing_pattern.load(Ordering::Relaxed) == pat;
+        let running = self.p.is_running() && self.p.playing_pattern.load(Ordering::Relaxed) == pat;
         // columns: row number, then note / vol / fx per visible track
         let mut cells: Vec<String> = vec![String::new()];
         for t in first..first + VISIBLE_TRACKS {
@@ -921,14 +977,14 @@ impl App for LedgerApp {
         })
     }
     fn running(&self) -> Option<bool> {
-        Some(self.p.running.load(Ordering::Relaxed))
+        Some(self.p.is_running())
     }
     fn toggle_running(&mut self) {
-        let on = !self.p.running.load(Ordering::Relaxed);
+        let on = !self.p.is_running();
         self.set_running(on);
     }
     fn needs_background_audio(&self) -> bool {
-        self.p.running.load(Ordering::Relaxed)
+        self.p.is_running()
     }
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
         let mut p = Processor::new(Arc::clone(&self.p));
@@ -992,11 +1048,15 @@ struct Processor {
     loop_anchor: Option<usize>,
     /// Per track note outputs (see `LedgerApp::with_notes`).
     notes: Vec<crate::note_bus::NoteOut>,
+    /// Following the clock: the beat the next row falls on, and the
+    /// transport start it belongs to.
+    next_beat: f64,
+    epoch: u64,
 }
 
 impl Processor {
     fn new(p: Arc<Shared>) -> Self {
-        Self { p, tracks: (0..TRACKS).map(|_| TrackDsp::new()).collect(), until_row: 0.0, next_row: 0, ticks: 0, was_running: false, rng: 0x1234_abcd, buf: vec![0.0; 4096], mix: vec![0.0; 4096], loop_anchor: None, notes: Vec::new() }
+        Self { p, tracks: (0..TRACKS).map(|_| TrackDsp::new()).collect(), until_row: 0.0, next_row: 0, ticks: 0, was_running: false, rng: 0x1234_abcd, buf: vec![0.0; 4096], mix: vec![0.0; 4096], loop_anchor: None, notes: Vec::new(), next_beat: 0.0, epoch: u64::MAX }
     }
 
     fn rand100(&mut self) -> u32 {
@@ -1073,7 +1133,15 @@ impl AudioProcessor for Processor {
         if frames > self.mix.len() {
             return;
         }
-        let running = self.p.running.load(Ordering::Relaxed);
+        let follow = self.p.following();
+        let snap = self.p.clock.snap();
+        let half = self.p.moves[6].load(Ordering::Relaxed);
+        let rows_per_beat = if half { 2.0 } else { 4.0 };
+        let running = if follow { snap.running } else { self.p.running.load(Ordering::Relaxed) };
+        if follow && running && snap.epoch != self.epoch {
+            // a (re)start of the device transport counts as a start
+            self.was_running = false;
+        }
         if running && !self.was_running {
             self.next_row = 0;
             self.until_row = 0.0;
@@ -1081,6 +1149,15 @@ impl AudioProcessor for Processor {
             self.loop_anchor = None;
             let q = self.p.pattern.load(Ordering::Relaxed);
             self.p.playing_pattern.store(q, Ordering::Relaxed);
+            if follow {
+                self.epoch = snap.epoch;
+                // the first row on the grid from here: row 0 from the top,
+                // or wherever the song is if Ledger joins it mid-way
+                let k = (snap.beat * rows_per_beat - 1e-9).ceil().max(0.0);
+                self.next_beat = k / rows_per_beat;
+                self.ticks = k as u64;
+                self.next_row = (k as usize) % self.p.len(q);
+            }
         }
         if !running && self.was_running {
             for t in self.tracks.iter_mut() {
@@ -1100,9 +1177,10 @@ impl AudioProcessor for Processor {
             tr.schedule(0, Ev::GateOff);
             tr.schedule(RETRIG_GAP, Ev::On { note: (a & 0x7f) as u8 });
         }
-        let half = self.p.moves[6].load(Ordering::Relaxed);
-        let bpm = self.p.bpm.get().clamp(40.0, 240.0) as f64 * if half { 0.5 } else { 1.0 };
+        let base_bpm = if follow { snap.bpm.clamp(1.0, 1000.0) } else { self.p.bpm.get().clamp(40.0, 240.0) } as f64;
+        let bpm = base_bpm * if half { 0.5 } else { 1.0 };
         let row_samples = rate as f64 * 60.0 / bpm / 4.0;
+        let beats_per_sample = base_bpm / 60.0 / rate as f64;
         let swing = self.p.swing.get().clamp(0.0, 0.75) as f64;
         let dark = self.p.moves[7].load(Ordering::Relaxed);
         let level = (self.p.mix_level.get() + self.p.ext_mix_level.get()).clamp(0.0, 2.0);
@@ -1117,6 +1195,11 @@ impl AudioProcessor for Processor {
 
         let mut done = 0usize;
         while done < frames {
+            if follow && running {
+                // Sample-locked to the device clock: the next row is due
+                // when the clock's beat reaches it.
+                self.until_row = (self.next_beat - snap.beat) / beats_per_sample - done as f64;
+            }
             // fire rows that are due now
             if running && self.until_row <= 0.0 {
                 let mut pat = self.p.playing_pattern.load(Ordering::Relaxed) % PATTERNS;
@@ -1132,6 +1215,11 @@ impl AudioProcessor for Processor {
                 // swing: odd rows late, even rows early by the same amount
                 let this_len = row_samples * if self.ticks % 2 == 0 { 1.0 + swing * 0.5 } else { 1.0 - swing * 0.5 };
                 self.play_row(pat, row, this_len);
+                if follow {
+                    // the same swing, in beats
+                    let sw = if self.ticks % 2 == 0 { 1.0 + swing * 0.5 } else { 1.0 - swing * 0.5 };
+                    self.next_beat += sw / rows_per_beat;
+                }
                 self.ticks += 1;
                 self.until_row += this_len;
                 self.next_row = self.advance(row, len);
@@ -1351,11 +1439,52 @@ mod tests {
         a.tick(&Input { knob2_press: true, ..Default::default() });
         assert_eq!(a.p.cell(0, 0, 1).note, NOTE_OFF, "clearing an empty note writes OFF");
     }
+
+    #[test]
+    fn following_the_device_clock_its_rows_land_on_the_clocks_sixteenths() {
+        let clock = Arc::new(crate::clock::Clock::new());
+        clock.set_bpm(120.0); // a row = 6000 samples
+        let mut a = app().following(Arc::clone(&clock));
+        assert_eq!(a.p.bpm.get(), 120.0, "took the device's tempo");
+        let mut p = a.audio_processor().unwrap();
+        a.toggle_running();
+        assert!(clock.running(), "its play button is the device's");
+        let mut buf = vec![0.0f32; 2 * 200];
+        let mut changes = Vec::new();
+        let mut last = usize::MAX;
+        let mut t = 0usize;
+        for _ in 0..1200 {
+            p.process(&mut buf, 2, 48_000.0);
+            clock.end_block(200, 48_000.0);
+            let r = a.p.row.load(Ordering::Relaxed);
+            if r != last {
+                changes.push((r, t));
+                last = r;
+            }
+            t += 200;
+        }
+        // the clock started after the first block: rows every 6000 samples from 200
+        assert!(changes.len() >= 30, "{changes:?}");
+        for (k, (row, at)) in changes.iter().enumerate().skip(1).take(30) {
+            assert_eq!(*row, k % 16);
+            // seen at the end of the block the row fell in
+            let due = 200 + k * 6000;
+            assert!(*at <= due && due < *at + 200, "row {row} seen at {at}, due {due}");
+        }
+        // a tempo change on the device shows in Ledger
+        clock.set_bpm(90.0);
+        a.tick(&Input::default());
+        assert_eq!(a.p.bpm.get(), 90.0);
+        a.toggle_running();
+        p.process(&mut buf, 2, 48_000.0);
+        clock.end_block(200, 48_000.0);
+        assert!(!clock.snap().running);
+    }
 }
 
 /// Builds the app from the shared services (see `AppContext` and
 /// registry.rs) -- the one entry point the app registry needs, so this
 /// file can be dropped in or removed without editing anything else.
 pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
-    Box::new(LedgerApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
+    Box::new(LedgerApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).following(crate::clock::Clock::shared()).with_notes(ctx.try_get()))
 }
