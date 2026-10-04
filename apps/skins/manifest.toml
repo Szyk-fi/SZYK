@@ -1,0 +1,10 @@
+id = "skins"
+name = "Skins"
+category = "instrument"
+description = "A drum synthesizer: eight analog-style voices, polymetric lanes, accents, ratchets and per-step sound locks."
+audio_outputs = ["Skins"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Skins Level",
+]
