@@ -54,6 +54,16 @@ pub const CLIP: usize = FRAME + HOP * (FRAMES - 1);
 pub const EMBED: usize = 48;
 pub const CLASSES: [&str; 14] = ["kick", "snare", "clap", "closed hat", "open hat", "cymbal", "tom", "rim", "metal", "shaker", "hand perc", "bass", "tonal", "texture"];
 const N_CLASSES: usize = CLASSES.len();
+/// LIST's extra page after the kinds: everything heard as a loop.
+const LOOPS: usize = N_CLASSES;
+
+fn kind_name(c: usize) -> &'static str {
+    if c == LOOPS {
+        "loops"
+    } else {
+        CLASSES[c % N_CLASSES]
+    }
+}
 /// The longest file analysed (and auditioned), seconds.
 const MAX_SECS: f32 = 20.0;
 
@@ -132,6 +142,66 @@ pub struct Analysis {
     /// Unit length.
     pub emb: Vec<f32>,
     pub secs: f32,
+    /// Hits found across the whole file (spectral-flux onsets).
+    #[serde(default)]
+    pub hits: u32,
+    /// Several hits spread over its length: a loop or phrase, named by its
+    /// first hit but kept out of the kit's one-shot pads.
+    #[serde(default)]
+    pub is_loop: bool,
+}
+
+impl Analysis {
+    /// Sure enough of the name to put it on a kit pad.
+    pub fn confident(&self) -> bool {
+        self.probs.get(self.class).copied().unwrap_or(0.0) >= 0.5
+    }
+}
+
+/// Hits in a 16 kHz signal: frames whose rise in log-spectral energy
+/// (half-wave-rectified spectral flux) stands well above the local
+/// average and the noise floor, at least 80 ms apart. Returns the hit
+/// times in seconds.
+pub fn find_hits(x16: &[f32]) -> Vec<f32> {
+    const N: usize = 512;
+    const H: usize = 256;
+    if x16.len() < N * 2 {
+        return if x16.iter().any(|v| v.abs() > 1e-4) { vec![0.0] } else { Vec::new() };
+    }
+    let mut spec = Spectrum::new(N, N);
+    let mut prev: Vec<f32> = vec![0.0; N / 2 + 1];
+    let mut flux = Vec::new();
+    let mut energy = Vec::new();
+    let mut t = 0;
+    while t + N <= x16.len() {
+        let mag = spec.compute(&x16[t..t + N]);
+        let mut f = 0.0f32;
+        let mut e = 0.0f32;
+        for (k, &m) in mag.iter().enumerate() {
+            let l = (1.0 + 100.0 * m).ln();
+            f += (l - prev[k]).max(0.0);
+            prev[k] = l;
+            e += m * m;
+        }
+        flux.push(f);
+        energy.push(e);
+        t += H;
+    }
+    let peak_e = energy.iter().cloned().fold(0.0f32, f32::max).max(1e-12);
+    let mut hits = Vec::new();
+    let mut last: Option<usize> = None;
+    for i in 0..flux.len() {
+        let lo = i.saturating_sub(8);
+        let hi = (i + 9).min(flux.len());
+        let mean = flux[lo..hi].iter().sum::<f32>() / (hi - lo) as f32;
+        let local_max = flux[i.saturating_sub(2)..(i + 3).min(flux.len())].iter().all(|&v| v <= flux[i]);
+        let loud = energy[i.min(energy.len() - 1)..(i + 3).min(energy.len())].iter().cloned().fold(0.0f32, f32::max) > peak_e * 1e-3;
+        if local_max && loud && flux[i] > 1.5 * mean + 1.0 && last.map_or(true, |l| i - l >= 5) {
+            hits.push((i * H) as f32 / SR16);
+            last = Some(i);
+        }
+    }
+    hits
 }
 
 /// The two networks and the front end.
@@ -179,7 +249,15 @@ impl Analyzer {
         neural::softmax(&mut probs);
         self.load.tick(t.elapsed());
         let norm = self.e.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-9);
-        Analysis { class: neural::argmax(&probs), probs, emb: self.e.iter().map(|v| v / norm).collect(), secs: audio.len() as f32 / 48_000.0 }
+        let secs = audio.len() as f32 / 48_000.0;
+        let hits = find_hits(&x16);
+        let span = match (hits.first(), hits.last()) {
+            (Some(a), Some(b)) => b - a,
+            _ => 0.0,
+        };
+        let shown = (x16.len() as f32 / SR16).max(1e-3);
+        let is_loop = shown >= 0.8 && hits.len() >= 4 && span >= 0.5 * shown;
+        Analysis { class: neural::argmax(&probs), probs, emb: self.e.iter().map(|v| v / norm).collect(), secs, hits: hits.len() as u32, is_loop }
     }
 }
 
@@ -261,7 +339,8 @@ pub fn build_kit(entries: &[Entry], seed: Option<&[f32]>, variation: usize) -> [
         let mut cands: Vec<(usize, f32)> = entries
             .iter()
             .enumerate()
-            .filter(|(i, e)| e.a.class == class && !used[*i])
+            // one-shots it's sure about: never a loop on the kick pad
+            .filter(|(i, e)| e.a.class == class && !used[*i] && !e.a.is_loop && e.a.confident())
             .map(|(i, e)| (i, seed.map_or(e.a.probs[class], |s| cosine(s, &e.a.emb))))
             .collect();
         cands.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -548,9 +627,14 @@ impl Sorter {
         }
     }
 
+    /// One kind's one-shots, most typical first; `LOOPS` lists the loops.
     fn class_list(&self, class: usize) -> Vec<usize> {
         let es = self.entries();
-        let mut v: Vec<(usize, f32)> = es.iter().enumerate().filter(|(_, e)| e.a.class == class).map(|(i, e)| (i, e.a.probs[class])).collect();
+        let mut v: Vec<(usize, f32)> = if class == LOOPS {
+            es.iter().enumerate().filter(|(_, e)| e.a.is_loop).map(|(i, e)| (i, e.a.hits as f32)).collect()
+        } else {
+            es.iter().enumerate().filter(|(_, e)| e.a.class == class && !e.a.is_loop).map(|(i, e)| (i, e.a.probs[class])).collect()
+        };
         v.sort_by(|a, b| b.1.total_cmp(&a.1));
         v.into_iter().map(|(i, _)| i).collect()
     }
@@ -709,7 +793,7 @@ impl App for Sorter {
             }
             View::List => {
                 if input.knob2 != 0 {
-                    self.class = (self.class as i32 + input.knob2.signum()).rem_euclid(N_CLASSES as i32) as usize;
+                    self.class = (self.class as i32 + input.knob2.signum()).rem_euclid(N_CLASSES as i32 + 1) as usize;
                     self.list_pos = 0;
                 }
                 let list = self.class_list(self.class);
@@ -794,7 +878,11 @@ impl App for Sorter {
                     let y = y0 + ((1.0 - py) * h as f32) as i32;
                     let near = self.neighbours.contains(&i);
                     let sz = if near { 5 } else { 3 };
-                    kit::round_rect(fb, x - sz / 2, y - sz / 2, sz, sz, 1, class_color(e.a.class));
+                    if e.a.is_loop {
+                        kit::outline(fb, x - 3, y - 3, 7, 7, 1, 1, class_color(e.a.class));
+                    } else {
+                        kit::round_rect(fb, x - sz / 2, y - sz / 2, sz, sz, 1, class_color(e.a.class));
+                    }
                 }
                 if let Some(&(px, py)) = self.points.get(self.cur) {
                     let x = x0 + (px * w as f32) as i32;
@@ -804,15 +892,16 @@ impl App for Sorter {
                 // the legend
                 for c in 0..N_CLASSES {
                     let y = 40 + c as i32 * 19;
-                    let count = es.iter().filter(|e| e.a.class == c).count();
+                    let count = es.iter().filter(|e| e.a.class == c && !e.a.is_loop).count();
                     kit::round_rect(fb, 428, y + 3, 10, 10, 3, class_color(c));
                     kit::text(fb, CLASSES[c], 444, y + 2, Size2::Small, if count > 0 { kit::WHITE } else { dim }, -1);
                     kit::text(fb, &format!("{count}"), 628, y + 2, Size2::Small, dim, 1);
                 }
             }
             View::List => {
-                kit::round_rect(fb, 8, 36, 624, 28, 6, kit::blend(panel, class_color(self.class), 0.3));
-                kit::text(fb, &format!("< {} >", CLASSES[self.class]), 320, 42, Size2::Medium, kit::WHITE, 0);
+                let head_c = if self.class == LOOPS { kit::rgb(200, 200, 210) } else { class_color(self.class) };
+                kit::round_rect(fb, 8, 36, 624, 28, 6, kit::blend(panel, head_c, 0.3));
+                kit::text(fb, &format!("< {} >", kind_name(self.class)), 320, 42, Size2::Medium, kit::WHITE, 0);
                 let list = self.class_list(self.class);
                 let first = self.list_pos.saturating_sub(4);
                 for (row, &i) in list.iter().enumerate().skip(first).take(10) {
@@ -822,7 +911,13 @@ impl App for Sorter {
                     kit::round_rect(fb, 8, y, 624, 22, 5, if sel { kit::blend(panel, kit::WHITE, 0.15) } else { panel });
                     let name: String = e.name().chars().take(46).collect();
                     kit::text(fb, &name, 16, y + 5, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
-                    kit::text(fb, &format!("{:.0}%  {:.2}s", e.a.probs[self.class] * 100.0, e.a.secs), 624, y + 5, Size2::Small, class_color(self.class), 1);
+                    let info = if self.class == LOOPS {
+                        format!("{} hits, starts {}  {:.2}s", e.a.hits, CLASSES[e.a.class], e.a.secs)
+                    } else {
+                        format!("{:.0}%  {:.2}s", e.a.probs[self.class] * 100.0, e.a.secs)
+                    };
+                    let c = if self.class == LOOPS { class_color(e.a.class) } else { class_color(self.class) };
+                    kit::text(fb, &info, 624, y + 5, Size2::Small, c, 1);
                 }
                 if list.is_empty() {
                     kit::text(fb, "none of this kind", 320, 150, Size2::Small, dim, 0);
@@ -857,7 +952,14 @@ impl App for Sorter {
             kit::round_rect(fb, 8, 316, 624, 20, 5, panel);
             kit::round_rect(fb, 14, 321, 10, 10, 3, class_color(e.a.class));
             kit::text(fb, &name, 30, 320, Size2::Small, kit::WHITE, -1);
-            kit::text(fb, &format!("{} {:.0}%   {:.2}s", CLASSES[e.a.class], e.a.probs[e.a.class] * 100.0, e.a.secs), 624, 320, Size2::Small, dim, 1);
+            let what = if e.a.is_loop {
+                format!("loop, {} hits, starts {}", e.a.hits, CLASSES[e.a.class])
+            } else if e.a.confident() {
+                format!("{} {:.0}%", CLASSES[e.a.class], e.a.probs[e.a.class] * 100.0)
+            } else {
+                format!("{}? {:.0}%", CLASSES[e.a.class], e.a.probs[e.a.class] * 100.0)
+            };
+            kit::text(fb, &format!("{what}   {:.2}s", e.a.secs), 624, 320, Size2::Small, dim, 1);
         }
         if self.message.1 > 0 {
             kit::round_rect(fb, 140, 290, 360, 24, 6, kit::rgb(110, 90, 40));
@@ -1039,7 +1141,7 @@ mod tests {
 
     #[test]
     fn the_map_walks_toward_where_you_point() {
-        let mk = |x: f32, y: f32| Entry { path: format!("{x},{y}"), bytes: 0, modified: 0, a: Analysis { class: 0, probs: vec![1.0 / 14.0; 14], emb: vec![0.0; EMBED], secs: 0.1 } };
+        let mk = |x: f32, y: f32| Entry { path: format!("{x},{y}"), bytes: 0, modified: 0, a: Analysis { class: 0, probs: vec![1.0 / 14.0; 14], emb: vec![0.0; EMBED], secs: 0.1, hits: 1, is_loop: false } };
         let mut s = Sorter::new(Sound::detached(), PathBuf::from("/nonexistent"), None);
         *s.s.entries.lock().unwrap() = vec![mk(0.5, 0.5), mk(0.9, 0.5), mk(0.5, 0.9), mk(0.1, 0.5)];
         s.points = vec![(0.5, 0.5), (0.9, 0.5), (0.5, 0.9), (0.1, 0.5)];
@@ -1051,5 +1153,59 @@ mod tests {
         assert_eq!(s.cur, 0);
         s.walk(0.0, 1.0);
         assert_eq!(s.cur, 2);
+    }
+
+    /// What it makes of a real library: `PORTAMAX_SORTER_DIR=path cargo
+    /// test -- --ignored sorter_report --nocapture`. A report, not a pass
+    /// mark -- real samples have no right answers on file.
+    #[test]
+    #[ignore]
+    fn sorter_report() {
+        let Some(dir) = std::env::var_os("PORTAMAX_SORTER_DIR").map(PathBuf::from) else { return };
+        let mut files = Vec::new();
+        scan(&dir, &mut files, 0);
+        let mut an = Analyzer::new();
+        for p in files {
+            let Ok(a) = crate::apps::chop::read_wav(&p) else { continue };
+            let r = an.analyse(&a);
+            let mut top: Vec<(usize, f32)> = r.probs.iter().copied().enumerate().collect();
+            top.sort_by(|a, b| b.1.total_cmp(&a.1));
+            println!("{:60} {:5.2}s {:>3} hits {:4}  {:10} {:3.0}%   then {} {:.0}%", p.strip_prefix(&dir).unwrap_or(&p).display(), r.secs, r.hits, if r.is_loop { "LOOP" } else { "" }, CLASSES[top[0].0], top[0].1 * 100.0, CLASSES[top[1].0], top[1].1 * 100.0);
+        }
+    }
+
+    #[test]
+    fn loops_are_told_from_one_shots() {
+        let mut an = Analyzer::new();
+        // a two-bar beat from the kit: kick, hat, snare, hat ...
+        let snd = Sound::detached();
+        snd.set_reverb(0.0);
+        let mut p = snd.processor(None, None);
+        let mut beat = Vec::new();
+        for step in 0..16 {
+            snd.drum([Drum::Kick, Drum::Hat, Drum::Snare, Drum::Hat][step % 4], 1.0);
+            beat.extend(render(&mut p, 12).chunks(2).map(|c| c[0]));
+        }
+        let a = an.analyse(&beat);
+        assert!(a.is_loop, "{} hits in {:.2}s", a.hits, a.secs);
+        // The kicks and snares are all found; hi-hats are mostly above
+        // 8 kHz, beyond what 16 kHz analysis hears, so some go uncounted.
+        assert!(a.hits >= 8, "{}", a.hits);
+        // one kick with a long tail, and a long held organ chord: not loops
+        let k = an.analyse(&kit_sound(|s| s.drum(Drum::Kick, 1.0)));
+        assert!(!k.is_loop && k.hits <= 3, "kick: {} hits", k.hits);
+        let pad = an.analyse(&kit_sound(|s| {
+            for n in [60.0, 64.0, 67.0] {
+                s.play(Note::new(Tone::Organ, n).len(0.75));
+            }
+        }));
+        assert!(!pad.is_loop, "chord: {} hits", pad.hits);
+        // and a kit never puts a loop on a pad
+        let mk = |a: Analysis| Entry { path: String::new(), bytes: 0, modified: 0, a };
+        let mut loop_kick = a.clone();
+        loop_kick.class = 0;
+        loop_kick.probs[0] = 1.0;
+        let es = vec![mk(loop_kick)];
+        assert_eq!(build_kit(&es, None, 0)[0], None);
     }
 }

@@ -21,6 +21,14 @@ portamax-github-source.zip
 # gitignored now so it can't be re-added by accident.
 samples/Drum Loops/
 samples/Boom Bap Addict WAV/
+# ...and everything else dropped into samples/ (a loose WAV at the top,
+# a "Samples" folder): the same rule for the whole library.
+samples/**/*.wav
+samples/**/*.WAV
+samples/**/*.aif
+samples/**/*.aiff
+samples/**/*.flac
+samples/**/*.mp3
 
 # Media library (Vinyl/Reference/Studio/Memories test content): the
 # user's own copyrighted music files (e.g. commercial FLAC albums),
