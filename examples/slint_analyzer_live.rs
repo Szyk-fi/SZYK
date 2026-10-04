@@ -17,6 +17,9 @@
 mod app;
 #[path = "../src/audio.rs"]
 mod audio;
+#[path = "../src/clock.rs"]
+#[allow(dead_code)]
+mod clock;
 #[path = "../src/audio_bus.rs"]
 mod audio_bus;
 #[path = "../src/audio_devices.rs"]

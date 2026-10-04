@@ -412,11 +412,12 @@ enum SetupRow {
     ClipLength,
     Tempo,
     Swing,
+    Clock,
     Slot,
     Save,
     Load,
 }
-const SETUP: [SetupRow; 13] = [SetupRow::Track, SetupRow::Kind, SetupRow::Plays, SetupRow::Mute, SetupRow::Octave, SetupRow::LockApp, SetupRow::LockInput, SetupRow::ClipLength, SetupRow::Tempo, SetupRow::Swing, SetupRow::Slot, SetupRow::Save, SetupRow::Load];
+const SETUP: [SetupRow; 14] = [SetupRow::Track, SetupRow::Kind, SetupRow::Plays, SetupRow::Mute, SetupRow::Octave, SetupRow::LockApp, SetupRow::LockInput, SetupRow::ClipLength, SetupRow::Tempo, SetupRow::Swing, SetupRow::Clock, SetupRow::Slot, SetupRow::Save, SetupRow::Load];
 
 pub struct Session {
     pub sound: Sound,
@@ -686,6 +687,7 @@ impl Session {
             SetupRow::ClipLength => t.clips[self.scene].as_ref().map_or("(no clip)".into(), |c| format!("{} steps", c.length)),
             SetupRow::Tempo => format!("{:.0} bpm", self.sound.tempo()),
             SetupRow::Swing => format!("{:.0}%", self.sound.swing() * 100.0),
+            SetupRow::Clock => if self.sound.following() { "device".into() } else { "own".into() },
             SetupRow::Slot => format!("{}", self.slot + 1),
             SetupRow::Save => "< > to save".into(),
             SetupRow::Load => "< > to load".into(),
@@ -704,6 +706,7 @@ impl Session {
             SetupRow::ClipLength => "Clip length",
             SetupRow::Tempo => "Tempo",
             SetupRow::Swing => "Swing",
+            SetupRow::Clock => "Clock",
             SetupRow::Slot => "Project slot",
             SetupRow::Save => "Save",
             SetupRow::Load => "Load",
@@ -739,6 +742,10 @@ impl Session {
             SetupRow::ClipLength => self.clip_mut(|c| c.length = ((c.length as i32 + d * 16).clamp(16, MAX_STEPS as i32)) as usize),
             SetupRow::Tempo => self.sound.set_tempo(self.sound.tempo().round() + d as f32),
             SetupRow::Swing => self.sound.set_swing(((self.sound.swing() * 50.0).round() + d as f32) / 50.0),
+            SetupRow::Clock => {
+                self.stop();
+                self.sound.set_follow(!self.sound.following());
+            }
             SetupRow::Slot => self.slot = (self.slot as i32 + d).rem_euclid(8) as usize,
             SetupRow::Save => self.save(),
             SetupRow::Load => self.load(),
@@ -853,6 +860,12 @@ impl App for Session {
 
     fn tick(&mut self, input: &Input) {
         self.frame += 1;
+        // Note lengths are worked out on the audio thread from the
+        // project's tempo; keep it the tempo actually playing (the
+        // device clock's, when following).
+        if let Ok(mut p) = self.s.project.try_lock() {
+            p.tempo = self.sound.tempo();
+        }
         if self.message.1 > 0 {
             self.message.1 -= 1;
         }
@@ -1212,7 +1225,11 @@ pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn App> {
     let mixer: Arc<crate::mixer_bus::MixerBus> = ctx.get();
     let bus: Arc<crate::audio_bus::AudioBus> = ctx.get();
     let dir = (!cfg!(test)).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("saves/session"));
-    Box::new(Session::new(Sound::new(NAME, &modbus, &mixer, &bus), Arc::clone(&modbus), ctx.try_get(), dir))
+    let sound = Sound::new(NAME, &modbus, &mixer, &bus);
+    // On the device Session drives the shared transport, so everything
+    // following it (Skins, the Looper, MIDI clock out) plays in time.
+    sound.set_follow(true);
+    Box::new(Session::new(sound, Arc::clone(&modbus), ctx.try_get(), dir))
 }
 
 #[cfg(test)]
@@ -1306,6 +1323,41 @@ mod tests {
         s.toggle_running();
         render(&mut p, 2);
         assert!((target.get() - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn two_sessions_on_the_device_clock_play_in_lockstep() {
+        let clock = Arc::new(crate::clock::Clock::new());
+        let mk = || {
+            let snd = Sound::detached_with_clock(Arc::clone(&clock));
+            snd.set_follow(true);
+            Session::new(snd, Arc::new(ModBus::new()), None, None)
+        };
+        let mut a = mk();
+        let mut b = mk();
+        let mut pa = a.audio_processor().unwrap();
+        let mut pb = b.audio_processor().unwrap();
+        a.sound.set_tempo(128.0);
+        assert_eq!(b.sound.tempo(), 128.0, "one tempo for the device");
+        // b is started by nobody: it just has a scene waiting
+        b.s.queue_scene(1);
+        a.toggle_running();
+        assert!(b.sound.playing(), "a's play button started the device");
+        let mut buf = vec![0.0f32; 256 * 2];
+        for _ in 0..900 {
+            pa.process(&mut buf, 2, 48_000.0);
+            pb.process(&mut buf, 2, 48_000.0);
+            clock.end_block(256, 48_000.0);
+        }
+        let pos = |s: &Session| s.s.pos[1].load(Ordering::Relaxed);
+        assert!(pos(&a) >= 0 && pos(&b) >= 0, "both playing: {} {}", pos(&a), pos(&b));
+        assert_eq!(a.sound.step(), b.sound.step());
+        // 900 * 256 samples at 128 bpm is 40 sixteenths
+        assert_eq!(a.sound.step(), Some(40));
+        a.toggle_running();
+        pa.process(&mut buf, 2, 48_000.0);
+        clock.end_block(256, 48_000.0);
+        assert!(!b.sound.playing(), "and stopping stops everyone");
     }
 
     #[test]

@@ -72,6 +72,10 @@ fn fallback_grid_pad(note: u8) -> Option<usize> {
 }
 
 fn handle_midi_message(message: &[u8], controller: &Arc<ControllerState>, midi_map: &Arc<crate::midi_map::MidiMap>, modbus: &Arc<crate::modbus::ModBus>) {
+    // Clock, Start/Stop and Song Position go to the shared transport.
+    if crate::clock::Clock::shared().midi_message(message) {
+        return;
+    }
     if message.len() < 2 {
         return;
     }

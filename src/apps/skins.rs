@@ -299,6 +299,52 @@ pub struct Shared {
     /// Steps played since start.
     pub step: AtomicU32,
     pub step_fraction: crate::util::AtomicF32,
+    /// The device transport, and whether the pattern follows it (on the
+    /// device, by default: press play in Session and Skins plays along).
+    pub clock: Arc<crate::clock::Clock>,
+    pub follow: AtomicBool,
+}
+
+impl Shared {
+    pub fn following(&self) -> bool {
+        self.follow.load(Ordering::Relaxed)
+    }
+    pub fn is_playing(&self) -> bool {
+        if self.following() {
+            self.clock.running()
+        } else {
+            self.playing.load(Ordering::Relaxed)
+        }
+    }
+    pub fn set_playing(&self, on: bool) {
+        if self.following() {
+            if on {
+                // joining a transport that's already going doesn't restart it
+                if !self.clock.running() {
+                    self.clock.start();
+                }
+            } else {
+                self.clock.stop();
+            }
+        } else {
+            self.playing.store(on, Ordering::Relaxed);
+        }
+    }
+    pub fn bpm(&self) -> f32 {
+        if self.following() {
+            self.clock.bpm()
+        } else {
+            self.tempo.get()
+        }
+    }
+    pub fn set_bpm(&self, bpm: f32) {
+        let bpm = bpm.clamp(40.0, 240.0);
+        if self.following() {
+            self.clock.set_bpm(bpm)
+        } else {
+            self.tempo.set(bpm)
+        }
+    }
 }
 
 /// The drum machine on the audio thread: sequencer, voices, note input.
@@ -309,6 +355,11 @@ struct Engine {
     until: f64,
     step: u64,
     was_playing: bool,
+    /// This block's transport snapshot, the frame within the block, and
+    /// the step follower, when following the device clock.
+    snap: crate::clock::Snap,
+    fi: usize,
+    follower: crate::clock::StepFollower,
     /// Ratchets still to come: (samples until, voice, velocity, params).
     pending: Vec<(u32, usize, f32, [f32; PARAMS])>,
     inbox: Option<Arc<NoteInboxRef>>,
@@ -338,7 +389,7 @@ impl Engine {
     }
 
     fn step_samples(&self) -> f64 {
-        let base = 60.0 / self.s.tempo.get().max(20.0) as f64 / 4.0 * self.sr as f64;
+        let base = 60.0 / self.s.bpm().max(20.0) as f64 / 4.0 * self.sr as f64;
         let sw = self.s.swing.get().clamp(0.0, 0.4) as f64;
         if self.step % 2 == 0 {
             base * (1.0 + sw)
@@ -384,6 +435,8 @@ impl Engine {
 impl Extra for Engine {
     fn block(&mut self, frames: usize, sr: f32) {
         self.sr = sr;
+        self.snap = self.s.clock.snap();
+        self.fi = 0;
         // Live pads and notes from other apps.
         let live: Vec<(usize, f32)> = self.s.live.try_lock().map(|mut l| std::mem::take(&mut *l)).unwrap_or_default();
         let kit = self.s.kit.try_lock().ok().map(|k| k.voices);
@@ -407,13 +460,26 @@ impl Extra for Engine {
     }
 
     fn frame(&mut self, sr: f32) -> (f32, f32) {
-        let playing = self.s.playing.load(Ordering::Relaxed);
-        if playing && !self.was_playing {
+        let follow = self.s.following();
+        let playing = if follow { self.snap.running } else { self.s.playing.load(Ordering::Relaxed) };
+        if follow {
+            // Sample-locked to the device transport (see clock.rs).
+            let beat = self.snap.beat_at(self.fi, sr);
+            self.fi += 1;
+            if let Some(step) = self.follower.poll(&self.snap, beat, 4, self.s.swing.get()) {
+                self.step = step;
+                self.do_step();
+                self.step += 1;
+            }
+            if playing {
+                self.s.step_fraction.set((beat * 4.0).fract() as f32);
+            }
+        } else if playing && !self.was_playing {
             self.step = 0;
             self.until = 0.0;
         }
         self.was_playing = playing;
-        if playing {
+        if playing && !follow {
             if self.until <= 0.0 {
                 self.do_step();
                 self.until += self.step_samples();
@@ -479,6 +545,8 @@ impl Skins {
         let s = Arc::new(Shared {
             kit: Mutex::new(kits[0].clone()),
             playing: AtomicBool::new(false),
+            clock: Arc::clone(sound.clock()),
+            follow: AtomicBool::new(false),
             tempo: crate::util::AtomicF32::new(120.0),
             swing: crate::util::AtomicF32::new(0.0),
             pos: std::array::from_fn(|_| AtomicI32::new(-1)),
@@ -494,7 +562,7 @@ impl Skins {
 
     fn play_voice(&mut self, v: usize, vel: f32) {
         self.s.live.lock().unwrap().push((v, vel));
-        if self.recording && self.s.playing.load(Ordering::Relaxed) {
+        if self.recording && self.s.is_playing() {
             let step = self.s.step.load(Ordering::Relaxed) as usize;
             let frac = self.s.step_fraction.get();
             let mut k = self.s.kit.lock().unwrap();
@@ -549,7 +617,7 @@ impl Skins {
 
     /// The SOUND rows: six controls, level, pan, then tempo, swing, kit.
     fn sound_rows(&self) -> usize {
-        PARAMS + 5
+        PARAMS + 6
     }
 
     fn sound_row(&self, i: usize) -> (String, String) {
@@ -559,8 +627,9 @@ impl Skins {
             0..=5 => (PARAM_NAMES[self.voice][i].into(), format!("{:.0}", vs.p[i] * 100.0)),
             6 => ("Level".into(), format!("{:.0}", vs.level * 100.0)),
             7 => ("Pan".into(), format!("{:+.0}", vs.pan * 100.0)),
-            8 => ("Tempo".into(), format!("{:.0} bpm", self.s.tempo.get())),
+            8 => ("Tempo".into(), format!("{:.0} bpm", self.s.bpm())),
             9 => ("Swing".into(), format!("{:.0}%", self.s.swing.get() * 100.0)),
+            10 => ("Clock".into(), if self.s.following() { "device".into() } else { "own".into() }),
             _ => ("Kit".into(), format!("{} (< > loads)", self.kits[self.kit_index].name)),
         }
     }
@@ -568,12 +637,17 @@ impl Skins {
     fn sound_edit(&mut self, d: i32) {
         let i = self.row;
         if i == 10 {
+            self.s.set_playing(false);
+            self.s.follow.store(!self.s.following(), Ordering::Relaxed);
+            return;
+        }
+        if i == 11 {
             self.kit_index = (self.kit_index as i32 + d).rem_euclid(self.kits.len() as i32) as usize;
             *self.s.kit.lock().unwrap() = self.kits[self.kit_index].clone();
             return;
         }
         if i == 8 {
-            self.s.tempo.set((self.s.tempo.get().round() + d as f32).clamp(40.0, 240.0));
+            self.s.set_bpm(self.s.bpm().round() + d as f32);
             return;
         }
         if i == 9 {
@@ -598,7 +672,7 @@ impl App for Skins {
         true
     }
     fn needs_background_audio(&self) -> bool {
-        self.s.playing.load(Ordering::Relaxed)
+        self.s.is_playing()
     }
     fn slint_extra(&mut self) -> SlintExtra {
         let mut fb = FrameBuffer::new();
@@ -609,11 +683,11 @@ impl App for Skins {
         vec![("View".into(), format!("{:?}", VIEWS[self.view]), false), ("Voice".into(), VOICE_NAMES[self.voice].into(), false), ("Kit".into(), self.kits[self.kit_index].name.clone(), false)]
     }
     fn running(&self) -> Option<bool> {
-        Some(self.s.playing.load(Ordering::Relaxed))
+        Some(self.s.is_playing())
     }
     fn toggle_running(&mut self) {
-        let p = !self.s.playing.load(Ordering::Relaxed);
-        self.s.playing.store(p, Ordering::Relaxed);
+        let p = !self.s.is_playing();
+        self.s.set_playing(p);
         if !p {
             self.recording = false;
         }
@@ -636,7 +710,7 @@ impl App for Skins {
                 let lane = &k.lanes[self.voice];
                 let pos = self.s.pos[self.voice].load(Ordering::Relaxed);
                 std::array::from_fn(|i| {
-                    if pos == i as i32 && self.s.playing.load(Ordering::Relaxed) {
+                    if pos == i as i32 && self.s.is_playing() {
                         PadColor::Red
                     } else if i >= lane.length {
                         PadColor::Off
@@ -715,7 +789,7 @@ impl App for Skins {
                 }
                 if input.knob1_press {
                     self.recording = !self.recording;
-                    if self.recording && !self.s.playing.load(Ordering::Relaxed) {
+                    if self.recording && !self.s.is_playing() {
                         self.toggle_running();
                     }
                 }
@@ -767,8 +841,8 @@ impl App for Skins {
             kit::text(fb, v, x + 30, 9, Size2::Small, if sel { kit::BLACK } else { dim }, 0);
         }
         let k = self.s.kit.lock().unwrap().clone();
-        let playing = self.s.playing.load(Ordering::Relaxed);
-        kit::text(fb, &format!("{}  {:.0} bpm{}{}", k.name, self.s.tempo.get(), if playing { "  playing" } else { "" }, if self.recording { "  REC" } else { "" }), 630, 9, Size2::Small, if self.recording { kit::rgb(250, 90, 90) } else { dim }, 1);
+        let playing = self.s.is_playing();
+        kit::text(fb, &format!("{}  {:.0} bpm{}{}", k.name, self.s.bpm(), if playing { "  playing" } else { "" }, if self.recording { "  REC" } else { "" }), 630, 9, Size2::Small, if self.recording { kit::rgb(250, 90, 90) } else { dim }, 1);
         // All eight lanes.
         let (gx, gy, cw, ch) = (96, 38, 21, 20);
         for v in 0..VOICES {
@@ -835,7 +909,7 @@ impl App for Skins {
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn crate::audio::AudioProcessor>> {
-        let engine = Engine { s: Arc::clone(&self.s), hits: (0..24).map(|i| Hit::idle(0x1234 + i * 7919)).collect(), next_hit: 0, until: 0.0, step: 0, was_playing: false, pending: Vec::with_capacity(32), inbox: self.inbox.take(), view: NoteView::default(), strikes: [0; 128], rng: kit::Rng::seeded_from_time(), sr: 48_000.0 };
+        let engine = Engine { s: Arc::clone(&self.s), hits: (0..24).map(|i| Hit::idle(0x1234 + i * 7919)).collect(), next_hit: 0, until: 0.0, step: 0, was_playing: false, snap: self.s.clock.snap(), fi: 0, follower: Default::default(), pending: Vec::with_capacity(32), inbox: self.inbox.take(), view: NoteView::default(), strikes: [0; 128], rng: kit::Rng::seeded_from_time(), sr: 48_000.0 };
         Some(self.sound.processor(None, Some(Box::new(engine))))
     }
 }
@@ -844,7 +918,9 @@ pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn App> {
     let modbus: Arc<crate::modbus::ModBus> = ctx.get();
     let mixer: Arc<crate::mixer_bus::MixerBus> = ctx.get();
     let bus: Arc<crate::audio_bus::AudioBus> = ctx.get();
-    Box::new(Skins::new(Sound::new(NAME, &modbus, &mixer, &bus), ctx.try_get()))
+    let skins = Skins::new(Sound::new(NAME, &modbus, &mixer, &bus), ctx.try_get());
+    skins.s.follow.store(true, Ordering::Relaxed);
+    Box::new(skins)
 }
 
 #[cfg(test)]
@@ -965,5 +1041,30 @@ mod tests {
         render(&mut p, 30);
         let tail = energy(&render(&mut p, 10));
         assert!(tail < 1e-7, "the open hat was cut: {tail}");
+    }
+
+    #[test]
+    fn following_the_device_clock_it_plays_when_anyone_presses_play() {
+        let clock = Arc::new(crate::clock::Clock::new());
+        let mut s = Skins::new(Sound::detached_with_clock(Arc::clone(&clock)), None);
+        s.s.follow.store(true, Ordering::Relaxed);
+        let mut p = s.audio_processor().unwrap();
+        clock.set_bpm(120.0);
+        clock.start(); // someone else's play button
+        assert_eq!(s.running(), Some(true));
+        let mut buf = vec![0.0f32; 480 * 2];
+        // two bars at 120 bpm = 4 s = 400 blocks of 480
+        for _ in 0..400 {
+            p.process(&mut buf, 2, 48_000.0);
+            clock.end_block(480, 48_000.0);
+        }
+        let kick_steps = s.s.kit.lock().unwrap().lanes[0].steps.iter().take(16).filter(|st| st.on).count() as u32;
+        let kicks = s.s.hits[0].load(Ordering::Relaxed);
+        assert!(kicks >= kick_steps * 2 && kicks <= kick_steps * 2 + 1, "{kicks} kicks for {kick_steps} a bar");
+        // its own play button stops the device
+        s.toggle_running();
+        p.process(&mut buf, 2, 48_000.0);
+        clock.end_block(480, 48_000.0);
+        assert!(!clock.snap().running);
     }
 }

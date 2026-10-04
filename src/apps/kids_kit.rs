@@ -197,6 +197,11 @@ struct Shared {
     playing: AtomicBool,
     /// The number of steps fired since the last start (0 = none yet).
     steps: AtomicU64,
+    /// The device transport, and whether this app's steps follow it
+    /// (Session, the Looper and Skins all lock together) or run on the
+    /// app's own tempo (the kids' apps, which stand alone).
+    clock: Arc<crate::clock::Clock>,
+    follow: AtomicBool,
     peak: AtomicF32,
     mix: Arc<AtomicF32>,
     ext_mix: Arc<AtomicF32>,
@@ -214,16 +219,22 @@ impl Sound {
     /// (so Studio or an effect can take it), both under `name`.
     pub fn new(name: &str, modbus: &ModBus, mixer: &MixerBus, audio_bus: &AudioBus) -> Sound {
         let (mix, ext_mix) = mixer.register(name, modbus);
-        Sound::build(mix, ext_mix, Some(audio_bus.register(name)))
+        Sound::build(mix, ext_mix, Some(audio_bus.register(name)), crate::clock::Clock::shared())
     }
 
     /// Not connected to anything: for tests.
     #[cfg(test)]
     pub fn detached() -> Sound {
-        Sound::build(Arc::new(AtomicF32::new(1.0)), Arc::new(AtomicF32::new(0.0)), None)
+        Sound::detached_with_clock(Arc::new(crate::clock::Clock::new()))
     }
 
-    fn build(mix: Arc<AtomicF32>, ext_mix: Arc<AtomicF32>, bus: Option<Arc<Mutex<Vec<f32>>>>) -> Sound {
+    /// Not connected, but on a transport the test drives itself.
+    #[cfg(test)]
+    pub fn detached_with_clock(clock: Arc<crate::clock::Clock>) -> Sound {
+        Sound::build(Arc::new(AtomicF32::new(1.0)), Arc::new(AtomicF32::new(0.0)), None, clock)
+    }
+
+    fn build(mix: Arc<AtomicF32>, ext_mix: Arc<AtomicF32>, bus: Option<Arc<Mutex<Vec<f32>>>>, clock: Arc<crate::clock::Clock>) -> Sound {
         Sound {
             s: Arc::new(Shared {
                 queue: Mutex::new(Vec::with_capacity(64)),
@@ -233,6 +244,8 @@ impl Sound {
                 swing: AtomicF32::new(0.0),
                 playing: AtomicBool::new(false),
                 steps: AtomicU64::new(0),
+                clock,
+                follow: AtomicBool::new(false),
                 peak: AtomicF32::new(0.0),
                 mix,
                 ext_mix,
@@ -266,10 +279,39 @@ impl Sound {
     }
 
     pub fn set_tempo(&self, bpm: f32) {
-        self.s.tempo.set(bpm.clamp(40.0, 240.0));
+        if self.following() {
+            self.s.clock.set_bpm(bpm.clamp(40.0, 240.0));
+        } else {
+            self.s.tempo.set(bpm.clamp(40.0, 240.0));
+        }
     }
     pub fn tempo(&self) -> f32 {
-        self.s.tempo.get()
+        if self.following() {
+            self.s.clock.bpm()
+        } else {
+            self.s.tempo.get()
+        }
+    }
+    /// Follow the device transport (true) or run on this app's own tempo.
+    /// The device has one tempo, so following doesn't impose this app's
+    /// on it -- an app opening mustn't change what's already playing.
+    pub fn set_follow(&self, follow: bool) {
+        if follow == self.following() {
+            return;
+        }
+        if !follow && self.playing() {
+            // leaving the device clock running for everyone else
+            self.s.tempo.set(self.s.clock.bpm().clamp(40.0, 240.0));
+        } else if self.playing() {
+            self.stop();
+        }
+        self.s.follow.store(follow, Ordering::Relaxed);
+    }
+    pub fn following(&self) -> bool {
+        self.s.follow.load(Ordering::Relaxed)
+    }
+    pub fn clock(&self) -> &Arc<crate::clock::Clock> {
+        &self.s.clock
     }
     /// 0 = straight, 0.33 = a full triplet shuffle.
     pub fn set_swing(&self, s: f32) {
@@ -278,6 +320,10 @@ impl Sound {
     pub fn swing(&self) -> f32 {
         self.s.swing.get()
     }
+    /// The app's own output level, before its mixer channel (0..1).
+    pub fn set_volume(&self, v: f32) {
+        self.s.volume.set(v.clamp(0.0, 1.0));
+    }
     pub fn set_reverb(&self, r: f32) {
         self.s.reverb.set(r.clamp(0.0, 1.0));
     }
@@ -285,13 +331,25 @@ impl Sound {
     /// Starts the clock from step 0.
     pub fn start(&self) {
         self.s.steps.store(0, Ordering::Relaxed);
-        self.s.playing.store(true, Ordering::Relaxed);
+        if self.following() {
+            self.s.clock.start();
+        } else {
+            self.s.playing.store(true, Ordering::Relaxed);
+        }
     }
     pub fn stop(&self) {
-        self.s.playing.store(false, Ordering::Relaxed);
+        if self.following() {
+            self.s.clock.stop();
+        } else {
+            self.s.playing.store(false, Ordering::Relaxed);
+        }
     }
     pub fn playing(&self) -> bool {
-        self.s.playing.load(Ordering::Relaxed)
+        if self.following() {
+            self.s.clock.running()
+        } else {
+            self.s.playing.load(Ordering::Relaxed)
+        }
     }
     /// The step most recently played, if the clock is running and has
     /// played one.
@@ -807,6 +865,7 @@ struct KidProcessor {
     /// Samples until the next step.
     until_step: f64,
     was_playing: bool,
+    follower: crate::clock::StepFollower,
     mono: Vec<f32>,
     peak: f32,
 }
@@ -824,6 +883,7 @@ impl KidProcessor {
             scratch: Vec::with_capacity(64),
             until_step: 0.0,
             was_playing: false,
+            follower: Default::default(),
             mono: Vec::with_capacity(2048),
             peak: 0.0,
         }
@@ -913,11 +973,15 @@ impl AudioProcessor for KidProcessor {
         if let Some(x) = self.extra.as_mut() {
             x.block(frames, sr);
         }
-        let playing = self.s.playing.load(Ordering::Relaxed);
+        let follow = self.s.follow.load(Ordering::Relaxed);
+        let snap = self.s.clock.snap();
+        let playing = if follow { snap.running } else { self.s.playing.load(Ordering::Relaxed) };
         if playing && !self.was_playing {
             self.until_step = 0.0;
         }
         self.was_playing = playing;
+        let per_beat = self.song.as_ref().map_or(4, |s| s.steps_per_beat());
+        let swing = self.s.swing.get();
 
         let gain = self.s.volume.get() * (self.s.mix.get() + self.s.ext_mix.get()).clamp(0.0, 2.0);
         let rv = self.s.reverb.get();
@@ -925,8 +989,20 @@ impl AudioProcessor for KidProcessor {
         self.mono.clear();
         let mut song_evs: Vec<Ev> = std::mem::take(&mut self.scratch);
         let mut peak = 0.0f32;
-        for frame in buffer.chunks_mut(channels) {
-            if playing && self.s.playing.load(Ordering::Relaxed) {
+        for (fi, frame) in buffer.chunks_mut(channels).enumerate() {
+            if follow {
+                // Sample-locked to the device transport: the same beat
+                // every other follower sees on this very sample.
+                if let Some(step) = self.follower.poll(&snap, snap.beat_at(fi, sr), per_beat, swing) {
+                    if let Some(song) = self.song.as_mut() {
+                        song.step(step, &mut song_evs);
+                    }
+                    for ev in song_evs.drain(..) {
+                        self.handle(ev, sr);
+                    }
+                    self.s.steps.store(step + 1, Ordering::Relaxed);
+                }
+            } else if playing && self.s.playing.load(Ordering::Relaxed) {
                 if self.until_step <= 0.0 {
                     let step = self.s.steps.load(Ordering::Relaxed);
                     if let Some(song) = self.song.as_mut() {
@@ -935,7 +1011,6 @@ impl AudioProcessor for KidProcessor {
                     for ev in song_evs.drain(..) {
                         self.handle(ev, sr);
                     }
-                    let per_beat = self.song.as_ref().map_or(4, |s| s.steps_per_beat());
                     self.until_step += self.step_samples(step, sr, per_beat);
                     self.s.steps.store(step + 1, Ordering::Relaxed);
                 }

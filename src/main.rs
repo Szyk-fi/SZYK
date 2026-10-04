@@ -22,6 +22,7 @@ mod arpeggiator;
 mod audio;
 mod audio_bus;
 mod audio_devices;
+mod clock;
 mod clouds_ffi;
 mod controller;
 mod controller_map;
@@ -459,6 +460,10 @@ fn handle_midi_message(
     midi_map: &Arc<midi_map::MidiMap>,
     modbus: &Arc<ModBus>,
 ) {
+    // Clock, Start/Stop and Song Position go to the shared transport.
+    if crate::clock::Clock::shared().midi_message(message) {
+        return;
+    }
     if message.len() < 2 {
         return;
     }
