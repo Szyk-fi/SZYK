@@ -160,7 +160,8 @@ impl Analysis {
 
 /// Hits in a 16 kHz signal: frames whose rise in log-spectral energy
 /// (half-wave-rectified spectral flux) stands well above the local
-/// average and the noise floor, at least 80 ms apart. Returns the hit
+/// average, the noise floor and a tenth of the file's strongest attack,
+/// at least 80 ms apart. Returns the hit
 /// times in seconds.
 pub fn find_hits(x16: &[f32]) -> Vec<f32> {
     const N: usize = 512;
@@ -188,6 +189,9 @@ pub fn find_hits(x16: &[f32]) -> Vec<f32> {
         t += H;
     }
     let peak_e = energy.iter().cloned().fold(0.0f32, f32::max).max(1e-12);
+    // A hit must also be a real attack for this file -- a tenth of its
+    // strongest -- or a held note's vibrato counts as a stream of hits.
+    let peak_f = flux.iter().cloned().fold(0.0f32, f32::max);
     let mut hits = Vec::new();
     let mut last: Option<usize> = None;
     for i in 0..flux.len() {
@@ -196,7 +200,7 @@ pub fn find_hits(x16: &[f32]) -> Vec<f32> {
         let mean = flux[lo..hi].iter().sum::<f32>() / (hi - lo) as f32;
         let local_max = flux[i.saturating_sub(2)..(i + 3).min(flux.len())].iter().all(|&v| v <= flux[i]);
         let loud = energy[i.min(energy.len() - 1)..(i + 3).min(energy.len())].iter().cloned().fold(0.0f32, f32::max) > peak_e * 1e-3;
-        if local_max && loud && flux[i] > 1.5 * mean + 1.0 && last.map_or(true, |l| i - l >= 5) {
+        if local_max && loud && flux[i] > 1.5 * mean + 1.0 && flux[i] >= 0.1 * peak_f && last.map_or(true, |l| i - l >= 5) {
             hits.push((i * H) as f32 / SR16);
             last = Some(i);
         }
