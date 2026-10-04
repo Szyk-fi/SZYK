@@ -1,0 +1,10 @@
+id = "chop"
+name = "Chop"
+category = "instrument"
+description = "A resampler: record anything, chop it across sixteen pads, play it through two bus effects and resample the result."
+audio_outputs = ["Chop"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Chop Level",
+]
