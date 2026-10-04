@@ -1,6 +1,6 @@
 # Portamax neural models
 
-The five AI apps each run a small network made for the STM32N6's
+The AI apps each run a small network made for the STM32N6's
 Neural-ART NPU. This folder trains them, quantises them to int8 and
 exports them. Everything is trained on data synthesized by these scripts,
 so nothing here comes from a dataset.
@@ -12,6 +12,7 @@ so nothing here comes from a dataset.
 | `gesture` | Conductor | 0.8 s of both depth sensors (2×48) | 8 gestures | 119k, 20×/s | `train_gesture.py` |
 | `timbre` | Timbre Map | map point, note, velocity, time | 32 harmonics, 4 noise bands, loudness | ~30k per voice, 250×/s | `train_timbre.py` |
 | `chords` | Band Mate | 256 ms energy per semitone (72 bins) | 24 chords + no chord | ~190k, 10×/s | `train_chords.py` |
+| `sorter_embed` + `sorter_head` | Sorter | 300 ms mel spectrogram (32×24) from a sample's onset | 48-number embedding, then 14 sound kinds | 268k per sample | `train_sorter.py` |
 
 ## Rebuilding
 
@@ -23,6 +24,7 @@ python3 train_mouth.py
 python3 train_gesture.py
 python3 train_timbre.py
 python3 train_chords.py
+python3 train_sorter.py   # sorter_embed and sorter_head
 python3 make_fixture.py   # the runtime's own layer test models
 ```
 

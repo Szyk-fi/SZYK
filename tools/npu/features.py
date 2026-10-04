@@ -120,3 +120,27 @@ def chord_weights():
         d = np.abs(semis - (CHORD_LO + k))
         W[k] = np.maximum(0, 1 - d)
     return W
+
+
+# --- Sorter: 32 mel bands x 24 frames, ~300 ms from a sample's onset -----
+SORT_FRAME = 512
+SORT_HOP = 192
+SORT_FRAMES = 24
+SORT_MELS = 32
+SORT_PRE = 1  # hops before the onset
+SORT_FLOOR = -10.0
+SORT_SAMPLES = SORT_FRAME + SORT_HOP * (SORT_FRAMES - 1)
+SORT_FB = mel_filters(SORT_MELS, SORT_FRAME)
+
+
+def sort_features(clip):
+    """clip: SORT_SAMPLES samples starting SORT_PRE hops before the onset.
+    Returns [32 mels, 24 frames] (channel-major), relative to the loudest
+    cell so it doesn't depend on the sample's level."""
+    clip = np.asarray(clip, dtype=np.float32)
+    frames = np.stack([clip[..., t * SORT_HOP:t * SORT_HOP + SORT_FRAME] for t in range(SORT_FRAMES)], axis=-2)
+    mag = spectrum(frames, SORT_FRAME)
+    mel = mag @ SORT_FB.T
+    peak = np.maximum(mel.max(axis=(-1, -2), keepdims=True), 1e-9)
+    x = np.maximum(np.log(np.maximum(mel / peak, 1e-9)), SORT_FLOOR).astype(np.float32)
+    return np.swapaxes(x, -1, -2)
