@@ -27,9 +27,11 @@
 //! input of any app -- a filter cutoff, a Plaits harmonic -- which is how
 //! a step changes a sound, Elektron-style, across the whole device.
 //!
-//! The sequencer runs on the audio thread, on the shared clock in
-//! kids_kit (sample-accurate, with swing); notes reach other apps through
-//! the note bus, with timed note-offs.
+//! The sequencer runs on the audio thread, on the device clock
+//! (clock.rs; sample-accurate, with swing), so Skins, the Looper and MIDI
+//! clock out play in time with it -- SETUP's Clock row switches Session to
+//! its own tempo instead. Notes reach other apps through the note bus,
+//! with timed note-offs.
 
 use crate::app::{App, Input, SlintExtra};
 use crate::apps::kids_kit::{self as kit, Drum, Ev, Extra, Note, Rng, Size2, Song, Sound, Tone};

@@ -1,7 +1,7 @@
 # Portamax User Manual
 
-Portamax is a self-contained groovebox/instrument simulator: 71 installed
-apps sharing one audio engine, one modulation bus, and one 4x4 pad grid +
+Portamax is a self-contained groovebox/instrument simulator: 89 installed
+apps sharing one audio engine, one clock, one modulation bus, and one 4x4 pad grid +
 D-pad + four knobs/encoders + F1-F4 control surface. This manual covers
 what's actually implemented today, not a roadmap.
 
@@ -112,6 +112,10 @@ way.
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
 | **Rings** | The real Mutable Instruments Rings resonator: modal bodies, sympathetic and inharmonic strings, FM voice, and the hidden "Disastrous Peace" string synth (see §3.5). |
 | **Elements** | The real Mutable Instruments Elements: a bowed, blown and struck physical-modelling voice with its own reverb (see §3.5). |
+| **Chordsmith** | A whole chord under one finger, on any instrument: the bottom two pad rows are the key's chords (I ii iii IV V vi vii° bVII), the top two rows modify them (7th, sus4, add9, flip, 6th, power, bass on the fifth, wide). Each chord is voice-led from the last. Styles: pad, strum, arp up, arp up-down, pulse. **Plays** picks the instrument. |
+| **Skins** | A drum synthesizer: eight synthesized voices (kick, snare, clap, hats, tom, rim, metal) with six controls each, 16-step lanes of independent length (polymeter), accents, ratchets, chance, and per-step sound locks. Four factory kits. Follows the device clock (see §5.1). Notes from 36 (C2) up play the voices. |
+| **Chop** | A resampling sampler in the spirit of the SP-404 (see §3.6): record or load into 16 pads, chop at hits or into equal slices, two effect slots, and resample its own output. Notes from 36 play the pads. |
+| **Looper** | Four loops locked to the device clock, with overdub, undo and redo (see §3.7). |
 
 ### 3.1 Playing Plaits
 
@@ -252,6 +256,46 @@ other obvious candidate, isn't here because its code is GPL-licensed and
 Portamax is MIT. Braids is Plaits' predecessor, Warps is already here, and
 Stages overlaps Tides and Pam's.
 
+### 3.6 Chop
+
+F2 cycles four views. **SAMPLE**: pick the source (the hardware input,
+or any app's output), how to chop (whole, 4, 8, 16 slices, or at each
+hit, with a sensitivity), and press SELECT (or F3) to record; press again
+to stop. The take lands on the picked pad, or across the pads from there
+when chopped. **EDIT**: the picked pad's start, end, pitch, gain, mode
+(one-shot, gate, loop) and reverse, and the **Library** row loads any WAV
+from `media/`. **FX**: two effects in series on everything Chop plays —
+vinyl, lo-fi, DJ filter, tempo delay, reverb, compressor, isolator, tape.
+**PLAY**: the pads play; SELECT resamples Chop's own output, effects and
+all, into the next empty pad. Banks save to `saves/chop/` as WAVs and a
+JSON sheet.
+
+### 3.7 Looper
+
+Four loops, one per column of pads: row 1 records / overdubs, row 2
+plays / mutes, row 3 undoes (and redoes) the last overdub, row 4 clears
+(hold it). SELECT or F3 does record → close → overdub on the selected
+loop; up/down picks the loop.
+
+- **With the clock stopped**, the first recording starts the moment you
+  press and stops when you press again. Closing it sets the tempo — the
+  number of bars that puts it nearest 110 bpm — and starts the clock, so
+  Session, Skins and anything else following the clock play along in
+  time with what you just played.
+- **With the clock running**, recording waits for the next bar (SETUP:
+  *Start on* bar, beat or at once) and closes on a bar line, so loops are
+  whole bars; *Length* can fix it at 1–16 bars instead. A press up to a
+  quarter beat late closes the bar just passed.
+- Loops are tied to the clock's beat, so they never drift and loops of
+  different lengths phase exactly. Change the tempo and they follow like
+  tape (the pitch moves too).
+- SETUP: input, hearing the input, start/length, and per loop level,
+  pan, reverse and how much an overdub keeps of what's there. Eight save
+  slots, as WAVs in `saves/looper/`.
+
+Not modelled: input latency compensation (the device knows its codec's
+round trip; the simulator can't know the computer's).
+
 ## 4. Effects
 
 All effects tap another app's live audio via the shared bus (the **Source**
@@ -279,6 +323,8 @@ row) rather than generating their own signal.
 
 | App | What it does |
 |---|---|
+| **Session** | The song layer: 8 tracks × 8 scenes of clips, each track playing any instrument app or Session's own sounds (drum tracks on the built-in kit). LAUNCH (pads launch clips and scenes on the next bar), STEP (edit steps: note, velocity, length, chance, lock), PLAY (play and record from pads or MIDI), SONG (chain scenes into an arrangement), SETUP (routing, mute, octave, lock-lane target, tempo, swing, clock, 8 project slots). Each track's lock lane sends a value per step to any app's modulation input. |
+| **Tempo** | The device clock's front panel (see §5.1): tempo, tap tempo, play/stop, MIDI clock in and out, bar length, and a metronome. |
 | **Bloom** | Generative circular sequencer built from two groups of the same element ("dots"). |
 | **Pam's** | Clone of the core of Pamela's Pro Workout — multi-channel clock/gate generator with logic combinators between channels. |
 | **Turing Machine** | Music Thing Modular Turing Machine clone: clocked 16-bit shift register, "Locks" sets random-vs-repeat. |
@@ -289,6 +335,23 @@ row) rather than generating their own signal.
 | **CV Out** | 32 independent CV outputs sent as MIDI CC to an external MIDI-to-CV box. |
 | **MIDI Learn** | Browse/add/remove CC → modulation-target mappings. |
 | **Portal** | Eight-cable patch matrix: any registered source (LFOs, clocked random, audio buses) to any registered destination (Portal's own sends, or another app's modulation parameter). Direct monitor is off by default. Patches last for the session only — no patch-file persistence yet. |
+
+### 5.1 The device clock
+
+There's one tempo and one transport for the whole device. Session,
+Skins and the Looper follow it by default (each has a **Clock** setting
+to run on its own tempo instead), so pressing play in any of them starts
+all of them, locked to the same sample. Tempo is its front panel:
+
+- **Tap**: any pad, in time (four taps or more average out).
+- **Follow**: *internal*, or *MIDI clock in* — another device's clock
+  (24 pulses a beat, Start, Continue, Stop and Song Position) drives the
+  tempo and the transport. Jittery clocks are smoothed.
+- **Send MIDI clock**: sends clock, Start, Stop and Continue to every MIDI
+  output, so drum machines and DAWs follow the Portamax.
+- **Bar**: beats per bar (the Looper's bar length and the metronome's
+  accent).
+- **Metronome**: off, on, or only while something records.
 
 ## 6. Recording & library
 
@@ -501,7 +564,7 @@ headphones, or the live mic turned down, stop that.
 
 ### 8.4 AI apps (the NPU)
 
-Five apps in the launcher's **AI** section, each built around a small
+Seven apps in the launcher's **AI** section, each built around a small
 neural network made for the STM32N6's Neural-ART NPU. The networks are
 trained in `tools/npu` (see its README) on data synthesized there,
 quantised to int8, and exported twice: a `.pmxn` file the sim runs, and
@@ -518,8 +581,10 @@ what share of the NPU it would use.
 | **Conductor** | Gesture recognition on the two depth sensors: swipe right/left, push, wave left/right, tap left/right, 20 times a second. Holding still to play is not a gesture. | Six outputs (left hand, right hand, swipes, push, waves, taps) patch to any modulation input. Its own pad shows the gestures while your hands are over the sensors. |
 | **Timbre Map** | A neural synthesizer: a decoder turns a point on a 2-D map of 16 instrument families, the note, the velocity and the time into 32 harmonic levels, 4 noise bands and a loudness, every 4 ms per voice, played by an additive synth. | Pads, MIDI or other apps play it. D-pad, joystick or hands move across the map (moving morphs sounding notes); SELECT jumps to the next landmark, hold SELECT drifts. |
 | **Band Mate** | Chord recognition: 10 times a second, which of 24 major and minor chords is playing, or none (94% on its test set, including sevenths and inversions). | Play chords into the input; drums and bass follow (Rock, Ballad, Funk, Reggae, Shuffle). The band comes in on your first chord. Pad 1 taps the tempo. |
+| **Choir** | Hum's pitch tracker, for a vocal tuner and harmoniser. The shifting is TD-PSOLA, which keeps the voice's formants, so harmonies sound like a second singer rather than sped-up tape. Every voice comes out 33 ms late, together. | Sing into the input. The lead is pulled into the key (Tuning amount; Retune speed, down to instant for the hard-tuned sound). Pads pick two harmony intervals (top rows voice 1, bottom rows voice 2), always in the key; Harmony "keys" sings the notes you hold on a keyboard or that a sequencer sends instead. |
+| **Sorter** | Sound classification and similarity: a sample's first 300 ms becomes 48 numbers ("sounds like") and a name — kick, snare, clap, closed or open hat, cymbal, tom, rim, metal, shaker, hand perc, bass, tonal, texture. 97% on its synthetic test set; on drums from synths it never heard, 13 of 14 exactly right. | It hears every WAV in `media/` once (remembered in `saves/sorter/`). MAP: the library laid out by similarity; the D-pad walks, the pads play the 16 most alike. LIST: kind by kind. KIT: SELECT builds a 16-pad kit around the sound you're on, left/right for other takes, down exports it to `media/Kits/`. |
 
-The listening apps (Hum, Mouth Drums, Band Mate) start on the device's
+The listening apps (Hum, Mouth Drums, Band Mate, Choir) start on the device's
 hardware input, which only listens once an input is chosen in Settings →
 Input. The network always runs on a worker thread, never the audio
 thread, as it would on the NPU.
