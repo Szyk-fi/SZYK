@@ -181,6 +181,9 @@ pub trait Extra: Send {
     /// Called at the start of each block, before any frame.
     fn block(&mut self, _frames: usize, _sample_rate: f32) {}
     fn event(&mut self, _a: u32, _b: f32, _c: f32) {}
+    /// Called before every frame: events the extra wants the kit's own
+    /// voices to play at exactly this sample (a strum, an arpeggio).
+    fn poll(&mut self, _out: &mut Vec<Ev>) {}
     /// One stereo frame.
     fn frame(&mut self, sample_rate: f32) -> (f32, f32);
 }
@@ -563,7 +566,10 @@ impl Voice {
                 let y = self.ks[i0] * (1.0 - fr) + self.ks[i1] * fr;
                 // The two-point average is the string's loss; low notes
                 // ring longer, as on a harp.
-                let loss = if self.released { 0.97 } else { 0.996 + 0.003 * (1.0 - (f / 1000.0).min(1.0)) };
+                // A released string is damped: about 50 ms to die whatever its
+                // pitch (the loss is per trip round the loop, so it's set
+                // from the period).
+                let loss = if self.released { (-1.0 / (f * 0.05)).exp() } else { 0.996 + 0.003 * (1.0 - (f / 1000.0).min(1.0)) };
                 let next = 0.5 * (y + self.ks_prev) * loss;
                 self.ks_prev = y;
                 self.ks[self.ks_w] = next;
@@ -796,6 +802,8 @@ struct KidProcessor {
     drums: Vec<DrumVoice>,
     fx: StereoFx,
     pending: Vec<Ev>,
+    /// Scratch for events made during a block, kept to avoid allocating.
+    scratch: Vec<Ev>,
     /// Samples until the next step.
     until_step: f64,
     was_playing: bool,
@@ -813,6 +821,7 @@ impl KidProcessor {
             drums: (0..DRUMS).map(|i| DrumVoice::new(0x85EB_CA6B ^ (i as u32 * 104_729 + 3))).collect(),
             fx: StereoFx::new(),
             pending: Vec::with_capacity(64),
+            scratch: Vec::with_capacity(64),
             until_step: 0.0,
             was_playing: false,
             mono: Vec::with_capacity(2048),
@@ -914,7 +923,7 @@ impl AudioProcessor for KidProcessor {
         let rv = self.s.reverb.get();
         let fxs = FxSettings { reverb_size: 0.45, reverb_mix: 1.0, ..Default::default() };
         self.mono.clear();
-        let mut song_evs: Vec<Ev> = Vec::new();
+        let mut song_evs: Vec<Ev> = std::mem::take(&mut self.scratch);
         let mut peak = 0.0f32;
         for frame in buffer.chunks_mut(channels) {
             if playing && self.s.playing.load(Ordering::Relaxed) {
@@ -931,6 +940,12 @@ impl AudioProcessor for KidProcessor {
                     self.s.steps.store(step + 1, Ordering::Relaxed);
                 }
                 self.until_step -= 1.0;
+            }
+            if let Some(x) = self.extra.as_mut() {
+                x.poll(&mut song_evs);
+            }
+            for ev in song_evs.drain(..) {
+                self.handle(ev, sr);
             }
             let (mut l, mut r) = (0.0f32, 0.0f32);
             for v in self.voices.iter_mut().filter(|v| v.active) {
@@ -970,6 +985,7 @@ impl AudioProcessor for KidProcessor {
             }
         }
         // Jumps up at once, falls back over a few blocks.
+        self.scratch = song_evs;
         self.peak = peak.max(self.peak * 0.85);
         self.s.peak.set(self.peak);
         if let Some(bus) = &self.s.bus {
@@ -989,6 +1005,8 @@ impl AudioProcessor for KidProcessor {
 /// why the youngest kids' instruments use it.
 pub const PENTATONIC: [i32; 5] = [0, 2, 4, 7, 9];
 pub const MAJOR: [i32; 7] = [0, 2, 4, 5, 7, 9, 11];
+/// Natural minor.
+pub const MINOR_SCALE: [i32; 7] = [0, 2, 3, 5, 7, 8, 10];
 
 /// The `degree`th note (0-based, may run past one octave) of `scale`
 /// from `root`.
