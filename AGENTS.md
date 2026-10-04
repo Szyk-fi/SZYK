@@ -85,7 +85,6 @@ Remove your line when you're done.
 
 | Who | What | Files | Since |
 |---|---|---|---|
-| | | | |
 
 ## 5. Work log
 
@@ -100,6 +99,29 @@ Newest at the top. Keep each entry short. Use this format:
 - Notes for the other assistant: <anything that affects them, or "none">
 - Request: <only if you need a change in the other's area>
 ```
+
+### 2026-10-04: ChatGPT: illustrated play worlds for all ten Kids apps
+- Branch: gpt/kids-ux   Commit: c7be919
+- Changed: only the ten Kids app .rs files, src/apps/kids_kit.rs and AGENTS.md.
+- Status: done. Max supplied the original concept this turn: used its warmth,
+  rounded controls and picture-book scenery as direction. Four original garden,
+  sky, pond and starlight backgrounds; gentler choir faces and smiling ladybugs;
+  shape cues on Copy Cat / Ear Quest pads; small musical buddies; quiet label
+  panels. Existing illustrated cat and eight voice portraits remain.
+- Tests: all ten cargo test --bin portamax-sim apps::<id> groups passed:
+  Critter 5, Rainbow 4, Copy 4, Bug 3, Mic 5, Beat 4, Chord 4, Detective 5,
+  Ear 3, Music 5. Shared kids_kit: 9 passed. Permanent checks cover RGB/RGBA
+  decoding, four distinct scenes and identical device/Slint frames for every
+  app in idle and active states. Critter was rerun after the last whisker polish.
+  Full suite: 864 passed, 7 ignored, 1 failed: untouched Norns bundled-script
+  test reported silent drone. Isolated PORTAMAX_NORNS_ONLY=drone rerun passed.
+- Notes for the other assistant: no controls, audio logic, manifests, docs or
+  dependencies changed. Generic drawing helpers outside Kids remain unchanged.
+  Background PNG is embedded in kids_kit.rs (294,405 bytes), decoded once on
+  the UI thread and cached as native colors (450 KiB). Cached desktop draws
+  measured 0.68-1.06 ms; device performance has not been measured. Original art,
+  exact prompts and actual 640x360 previews are saved in this chat workspace,
+  outputs/kids-ux. Optional PORTAMAX_KIDS_SCREENSHOTS exports test-only PPMs.
 
 ### 2026-10-04: Claude: device clock, Chop, Looper, Tempo, Choir, Sorter, Ledger sync
 - Branch: oracle-pulsar (synced to Max's Mac by patch)   Commits: e456175..e8122c1, cf5cfdc, 8164f37 (Mac hashes)
