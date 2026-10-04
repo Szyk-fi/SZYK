@@ -116,8 +116,12 @@ export component ParamListColumn inherits Rectangle {
 // One step on press; repeat after 250 ms, then every 100 ms until release.
 component DirectionalButton inherits Rectangle {
     in property <string> symbol;
-    callback activated();
+    callback activated(int);
     property <bool> repeating: false;
+    // Repeats counted since the press; first lands at 250 ms, then every
+    // 100 ms, so 6 is 0.75 s and 16 is 1.75 s -- same schedule as
+    // controller_map::hold_multiplier (x1, x5, x20).
+    property <int> ticks: 0;
     width: 38px; height: 38px; border-radius: 4px;
     background: touch.pressed ? #4b5055 : #222528;
     Text {
@@ -128,7 +132,8 @@ component DirectionalButton inherits Rectangle {
         pointer-event(event) => {
             if event.kind == PointerEventKind.down {
                 root.repeating = false;
-                root.activated();
+                root.ticks = 0;
+                root.activated(1);
             }
             if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
                 root.repeating = false;
@@ -141,13 +146,16 @@ component DirectionalButton inherits Rectangle {
         triggered => {
             if touch.pressed {
                 root.repeating = true;
-                root.activated();
+                root.ticks += 1;
+                root.activated(root.ticks < 6 ? 1 : root.ticks < 16 ? 5 : 20);
             }
         }
     }
 }
 
 export component DeviceFrame inherits Window {
+    // Steps the current D-pad press is worth (held ◄/► ramps up).
+    in-out property <int> dpad-step: 1;
     width: 1240px;
     height: 560px;
     background: #252628;
@@ -392,7 +400,7 @@ export component DeviceFrame inherits Window {
                 x: direction == 1 ? 94px : (direction == 3 ? 12px : 50px);
                 y: direction == 0 ? 12px : (direction == 2 ? 94px : 50px);
                 symbol: direction == 0 ? "▴" : (direction == 1 ? "▸" : (direction == 2 ? "▾" : "◂"));
-                activated => { root.navigation-pressed(direction); }
+                activated(step) => { root.dpad-step = step; root.navigation-pressed(direction); }
             }
             Rectangle {
                 x: 53px; y: 53px; width: 38px; height: 38px;

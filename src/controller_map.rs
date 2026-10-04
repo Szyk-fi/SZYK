@@ -432,12 +432,26 @@ const SELECT_HOLD: Duration = Duration::from_millis(500);
 const REPEAT_DELAY: Duration = Duration::from_millis(250);
 const REPEAT_EVERY: Duration = Duration::from_millis(100);
 
+/// How many steps one repeat of a held ◄/► is worth: x1, x5 after 0.75 s,
+/// x20 after 1.75 s (the contract's schedule), so a long hold sweeps a whole
+/// range in about two seconds instead of crawling at 10 steps a second.
+/// Browsing (▲▼) never multiplies: skipping rows would lose your place.
+pub fn hold_multiplier(held: Duration) -> i32 {
+    match held.as_millis() {
+        0..=749 => 1,
+        750..=1749 => 5,
+        _ => 20,
+    }
+}
+
 /// Turns snapshots into Portamax input, tracking press edges and
 /// key-repeat per binding.
 #[derive(Default)]
 pub struct Mapper {
     was_down: Vec<bool>,
     next_repeat: Vec<Option<Instant>>,
+    /// When each binding went down, for the hold multiplier.
+    down_since: Vec<Option<Instant>>,
     /// When a SELECT binding went down, and whether holding it has
     /// already fired Reset (so letting go doesn't also "tap").
     select_since: Vec<Option<Instant>>,
@@ -454,6 +468,7 @@ impl Mapper {
             // a button that was already held.
             self.was_down = list.iter().map(|(e, _)| e.amount(snap) > PRESS_THRESHOLD).collect();
             self.next_repeat = vec![None; list.len()];
+            self.down_since = vec![None; list.len()];
             self.select_since = vec![None; list.len()];
             self.select_held = vec![false; list.len()];
             self.last_ctx = Some(ctx);
@@ -500,6 +515,12 @@ impl Mapper {
                     self.select_since[i] = None;
                 }
             }
+            if edge {
+                self.down_since[i] = Some(now);
+            } else if !down {
+                self.down_since[i] = None;
+            }
+            let held = self.down_since[i].map_or(Duration::ZERO, |t| now.duration_since(t));
             let repeat = if edge {
                 self.next_repeat[i] = Some(now + REPEAT_DELAY);
                 true
@@ -533,8 +554,8 @@ impl Mapper {
                 match action {
                     Action::NavUp => c.add_nav_delta(-1),
                     Action::NavDown => c.add_nav_delta(1),
-                    Action::ValueUp => c.add_nav_x(1),
-                    Action::ValueDown => c.add_nav_x(-1),
+                    Action::ValueUp => c.add_nav_x(hold_multiplier(held)),
+                    Action::ValueDown => c.add_nav_x(-hold_multiplier(held)),
                     _ => {}
                 }
             }
@@ -795,6 +816,29 @@ mod tests {
         mp.apply(&m, &press(b::DOWN), &c, t + Duration::from_millis(260));
         mp.apply(&m, &press(b::DOWN), &c, t + Duration::from_millis(370));
         assert_eq!(c.take_nav_delta(), 2, "then repeats");
+    }
+
+    #[test]
+    fn holding_right_sweeps_faster_and_releasing_starts_over() {
+        let (m, c, mut mp) = (ControllerMap::defaults(), ControllerState::new(), Mapper::default());
+        let t = Instant::now();
+        let ms = |n| t + Duration::from_millis(n);
+        mp.apply(&m, &Snapshot::default(), &c, t);
+        let mut total = 0;
+        for n in (0..=2000).step_by(20) {
+            mp.apply(&m, &press(b::RIGHT), &c, ms(n));
+            total += c.take_nav_x();
+        }
+        assert!(total >= 100, "two seconds of hold sweeps a 100-detent range, got {total}");
+        mp.apply(&m, &Snapshot::default(), &c, ms(2100));
+        mp.apply(&m, &press(b::RIGHT), &c, ms(2200));
+        assert_eq!(c.take_nav_x(), 1, "a fresh press is one plain step");
+        let mut nav = 0;
+        for n in (0..=2000).step_by(20) {
+            mp.apply(&m, &press(b::DOWN), &c, ms(3000 + n));
+            nav += c.take_nav_delta().abs();
+        }
+        assert!(nav <= 20, "browsing never multiplies, got {nav}");
     }
 
     #[test]

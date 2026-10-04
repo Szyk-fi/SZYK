@@ -253,8 +253,8 @@ slint::slint! {
         navigation-pressed(direction) => {
             if direction == 0 { root.navigation-delta -= 1; }
             if direction == 2 { root.navigation-delta += 1; }
-            if direction == 1 { root.knob2-delta += 1; root.nav-x-delta += 1; }
-            if direction == 3 { root.knob2-delta -= 1; root.nav-x-delta -= 1; }
+            if direction == 1 { root.knob2-delta += root.dpad-step; root.nav-x-delta += root.dpad-step; }
+            if direction == 3 { root.knob2-delta -= root.dpad-step; root.nav-x-delta -= root.dpad-step; }
             if direction == 4 { root.knob1-clicked(); }
         }
         // While a play-surface app is up, the shoulders are its own held
