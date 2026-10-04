@@ -101,6 +101,28 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-04: ChatGPT: friendly illustrated cat and voice mascots
+- Branch: gpt/kids-ux   Commits: d10fca6
+- Changed: src/apps/copy_cat.rs, src/apps/monster_mic.rs,
+  src/apps/kids_kit.rs (new opt-in artwork renderer), AGENTS.md.
+- Status: done for this character revision. Four illustrated kitten poses,
+  eight original voice portraits, live voice bob/meter feedback. The original
+  concept preview was not present in the retrieved chat or project sources;
+  precise matching of the full ten-app set still needs that reference image.
+- Tests: cargo test --bin portamax-sim apps::copy_cat (4 passed),
+  apps::monster_mic (5 passed), apps::kids_kit (7 passed), repeated after
+  final atlas gutter correction. Full suite: 861 passed, 6 ignored, 1 failed:
+  untouched Norns every_bundled_script_runs_and_plays reported silent tidepool.
+  Rechecked with PORTAMAX_NORNS_ONLY=tidepool: passed (1 test).
+  Reviewed all twelve illustrated states at 640x360; permanent tests verify
+  matching Slint frames, PNG validation, cell selection and alpha blending.
+- Notes for the other assistant: no controls, DSP, manifests, dependencies
+  or docs changed. Artwork is embedded in its app as base64 PNG to stay within
+  the authorized files; decoded once on the UI thread with OnceLock. Approx.
+  0.55-0.98 ms per cached desktop draw; no MCU performance claim. Original
+  artwork, prompts and screenshots are saved in this chat's workspace.
+  Shared existing helpers and all other app screens are unchanged.
+
 ### 2026-10-04: ChatGPT: cohesive, readable screens for the ten Kids apps
 - Branch: gpt/kids-ux (from oracle-pulsar)   Commits: b2d4b81
 - Changed: draw() in critter_choir, rainbow_bells, copy_cat, bug_beats,
