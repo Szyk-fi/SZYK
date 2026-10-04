@@ -56,6 +56,32 @@ patch JSON ──migrate──▶ Patch ──compile (UI thread)──▶ Engin
 - `chorus`.
 - `grain`: granular with freeze.
 
+**Ported from Cardinal** (`blocks/ports.rs`)
+
+These are ten modules from Cardinal, the open-source VCV Rack distribution,
+that Portamax had no equivalent for. Mutable Instruments is left out
+because its real code already runs here. Each port is written from the
+published technique the module uses, not copied from its source. Nearly
+all of Cardinal is GPL-3 and this project is MIT, so copying the code
+would relicense it. Each doc comment says where the port differs from
+the original.
+
+| Block | After | What it is |
+|---|---|---|
+| `plateau` | Valley Plateau | Dattorro's figure-eight plate tank (the 1997 paper's delays and taps), mono |
+| `spring` | Befaco / Surge Spring Reverb | Parker–Abel dispersive-allpass spring model: each bounce is the falling "drip" chirp |
+| `phaser` | Surge XT Phaser | 4/6/8/12 first-order allpass stages, LFO and feedback |
+| `freqshift` | Surge XT Frequency Shifter | Bode single-sideband shifter on Niemitalo's IIR Hilbert pair |
+| `rotary` | Surge XT Rotary Speaker | Leslie horn and drum: crossover, Doppler, tremolo, spin-up inertia |
+| `tape` | ChowDSP ChowTape | pre-emphasised tanh saturation, wow, flutter, head loss (no hysteresis solver) |
+| `comp` | Bogaudio Pressor | soft-knee feed-forward compressor with sidechain |
+| `kick` | Befaco Kickall | swept sine kick with drive |
+| `walk` | Bogaudio Walk | bounded Brownian random walk with jump |
+| `eq` | Bogaudio EQ | RBJ low shelf, bell and high shelf |
+
+`plateau` holds about 1.4 s of delay lines (roughly 270 KB at 48 kHz),
+so on the device use it in global scope, not per voice.
+
 Each node's inputs are expressions. A node's id can be read by any later node,
 and also by earlier ones, in which case it reads the previous sample. So generators interact
 directly:

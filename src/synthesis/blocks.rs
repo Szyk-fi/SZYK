@@ -13,6 +13,9 @@
 use super::expr::white;
 use std::f32::consts::{PI, TAU};
 
+mod ports;
+pub use ports::{Comp, Eq3, FreqShift, Kick, Phaser, Plateau, Rotary, Spring, Tape, Walk};
+
 pub const MAX_IN: usize = 8;
 
 /// Per-sample context shared by every block.
@@ -385,6 +388,138 @@ pub const SPECS: &[BlockSpec] = &[
         inputs: &[ig("in", "0", "in", "signal"), i("sens", "0.5", "sensitivity 0..1")],
         opts: &[],
     },
+    // ------------------------- ports of Cardinal modules (see ports.rs)
+    BlockSpec {
+        name: "plateau",
+        summary: "Dattorro plate reverb, the tank Valley's Plateau is built on (output is wet only)",
+        output: "follows input",
+        inputs: &[
+            i("in", "0", "signal"),
+            i("decay", "0.6", "tail length 0..1 (0.95+ holds almost forever)"),
+            i("size", "1", "tank size 0.5..1.5"),
+            i("damp", "0.3", "high damping inside the tank 0..1"),
+            i("pre", "0.01", "pre-delay s 0..0.2"),
+            i("mod", "0.3", "tank modulation 0..1 (a chorused, less metallic tail)"),
+        ],
+        opts: &[],
+    },
+    BlockSpec {
+        name: "spring",
+        summary: "spring reverb tank: every bounce comes back as a real spring's falling 'drip' chirp (output is wet only)",
+        output: "follows input",
+        inputs: &[
+            i("in", "0", "signal"),
+            i("decay", "0.6", "how long it keeps bouncing 0..1"),
+            i("time", "0.045", "spring transit time s 0.02..0.1"),
+            i("drip", "0.6", "dispersion 0..1: how far the lows lag the highs"),
+            i("tone", "0.5", "brightness 0..1"),
+        ],
+        opts: &[],
+    },
+    BlockSpec {
+        name: "phaser",
+        summary: "allpass-stage phaser with its own LFO and feedback",
+        output: "follows input",
+        inputs: &[
+            i("in", "0", "signal"),
+            i("rate", "0.3", "LFO Hz (0 = static: steer it with center)"),
+            i("depth", "0.6", "sweep 0..1 (1 = +-3 octaves)"),
+            i("center", "800", "centre of the sweep Hz"),
+            i("fb", "0.4", "feedback -0.95..0.95 (sharper, more vocal notches)"),
+            i("mix", "0.5", "wet 0..1 (0.5 = deepest notches)"),
+        ],
+        opts: &[OptSpec { name: "stages", choices: &["4", "6", "8", "12"], default: "6", doc: "allpass stages: one notch per two" }],
+    },
+    BlockSpec {
+        name: "freqshift",
+        summary: "Bode frequency shifter: moves every partial by the same number of Hz (inharmonic, clangorous; barber-pole inside a feedback delay)",
+        output: "follows input",
+        inputs: &[i("in", "0", "signal"), i("shift", "100", "shift Hz -5000..5000 (negative = down)"), i("mix", "1", "wet 0..1")],
+        opts: &[],
+    },
+    BlockSpec {
+        name: "rotary",
+        summary: "rotary speaker (Leslie): horn and drum with Doppler, tremolo and spin-up inertia",
+        output: "follows input",
+        inputs: &[
+            i("in", "0", "signal"),
+            i("speed", "0", "0 chorale (slow) .. 1 tremolo (fast); the rotors take time to get there"),
+            i("depth", "0.7", "Doppler and tremolo amount 0..1"),
+            i("mix", "1", "wet 0..1"),
+        ],
+        opts: &[],
+    },
+    BlockSpec {
+        name: "tape",
+        summary: "tape machine: pre-emphasised saturation, wow, flutter and head wear (4 ms latency)",
+        output: "about -1..1",
+        inputs: &[
+            i("in", "0", "signal"),
+            i("drive", "1.5", "recording level 0.5..10"),
+            i("wow", "0.3", "slow pitch drift 0..1"),
+            i("flutter", "0.2", "fast pitch wobble 0..1"),
+            i("age", "0.3", "head wear: high-frequency loss 0..1"),
+        ],
+        opts: &[],
+    },
+    BlockSpec {
+        name: "comp",
+        summary: "soft-knee compressor with a sidechain (glue, ducking, pumping)",
+        output: "follows input",
+        inputs: &[
+            i("in", "0", "signal to compress"),
+            i("side", "0", "sidechain signal (e.g. a kick)"),
+            i("key", "0", "detector listens to 0 = in .. 1 = side"),
+            i("thresh", "-18", "threshold dB -60..0"),
+            i("ratio", "4", "ratio 1..20"),
+            i("attack", "0.005", "s"),
+            i("release", "0.15", "s"),
+            i("makeup", "0", "output gain dB -24..24"),
+        ],
+        opts: &[],
+    },
+    BlockSpec {
+        name: "kick",
+        summary: "kick drum: a sine with a falling pitch sweep and its own envelope",
+        output: "-1..1",
+        inputs: &[
+            ig("trig", "trig", "padtrig", "strikes when this rises above 0.5"),
+            i("freq", "50", "body pitch Hz 20..400"),
+            i("bend", "0.5", "sweep depth 0..1 (1 = starts 4 octaves up)"),
+            i("bendtime", "0.04", "sweep time s 0.002..0.5"),
+            i("decay", "0.5", "s until about -40 dB"),
+            i("tone", "0", "drive 0..1 (clean sine .. hard, square-ish)"),
+        ],
+        opts: &[],
+    },
+    BlockSpec {
+        name: "walk",
+        summary: "random walk: smooth wandering modulation that bounces inside a range",
+        output: "-range..range",
+        inputs: &[
+            i("rate", "0.5", "how fast it wanders 0..20"),
+            i("range", "1", "limit 0..10"),
+            i("jump", "0", "leaps to a random point when this rises above 0.5"),
+            i("smooth", "0.02", "output lag s"),
+        ],
+        opts: &[],
+    },
+    BlockSpec {
+        name: "eq",
+        summary: "3-band EQ: low shelf, bell, high shelf",
+        output: "follows input",
+        inputs: &[
+            i("in", "0", "signal"),
+            i("low", "0", "low shelf dB -24..24"),
+            i("mid", "0", "bell dB -24..24"),
+            i("high", "0", "high shelf dB -24..24"),
+            i("lowf", "200", "low shelf Hz"),
+            i("midf", "1000", "bell Hz"),
+            i("highf", "4000", "high shelf Hz"),
+            i("q", "0.7", "bell width 0.1..10"),
+        ],
+        opts: &[],
+    },
 ];
 
 /// Relative CPU cost of one sample of a block, in units of one `osc`
@@ -409,6 +544,20 @@ pub fn cost(name: &str) -> f32 {
         "grain" => 5.0,
         "plaits" => 7.0,
         "reverb" => 14.0,
+        // The Cardinal ports, measured in one run alongside `reverb` and
+        // scaled to its entry (that run's absolute ratios to `osc` came
+        // out lower across the board, so anchoring to the reverb errs on
+        // the expensive side).
+        "walk" => 3.0,
+        "freqshift" => 3.2,
+        "eq" => 3.8,
+        "kick" => 4.2,
+        "comp" => 4.8,
+        "phaser" => 5.6,
+        "rotary" => 6.4,
+        "tape" => 6.8,
+        "spring" => 10.6,
+        "plateau" => 13.6,
         _ => 1.0,
     }
 }
@@ -749,6 +898,16 @@ pub enum Block {
     Plaits { voice: Box<crate::plaits_ffi::PlaitsVoice>, engine: i32, prev_gate: f32 },
     Pitch { lp: f32, prev: f32, last_cross: f32, t: f32, period: f32, hz: f32, env: f32 },
     Onset { fast: f32, slow: f32, hold: f32, refractory: f32 },
+    Plateau(Box<Plateau>),
+    Spring(Box<Spring>),
+    Phaser(Box<Phaser>),
+    FreqShift(Box<FreqShift>),
+    Rotary(Box<Rotary>),
+    Tape(Box<Tape>),
+    Comp(Comp),
+    Kick(Kick),
+    Walk(Walk),
+    Eq(Box<Eq3>),
 }
 
 pub struct Fdn {
@@ -853,6 +1012,16 @@ impl Block {
             "plaits" => Block::Plaits { voice: Box::new(crate::plaits_ffi::PlaitsVoice::new()), engine: choice("engine", &PLAITS_ENGINES) as i32, prev_gate: 0.0 },
             "pitch" => Block::Pitch { lp: 0.0, prev: 0.0, last_cross: 0.0, t: 0.0, period: 0.0, hz: 0.0, env: 0.0 },
             "onset" => Block::Onset { fast: 0.0, slow: 0.0, hold: 0.0, refractory: 0.0 },
+            "plateau" => Block::Plateau(Box::new(Plateau::new(sr))),
+            "spring" => Block::Spring(Box::new(Spring::new(sr))),
+            "phaser" => Block::Phaser(Box::new(Phaser::new([4, 6, 8, 12][choice("stages", &["4", "6", "8", "12"]) as usize]))),
+            "freqshift" => Block::FreqShift(Box::new(FreqShift::new())),
+            "rotary" => Block::Rotary(Box::new(Rotary::new(sr))),
+            "tape" => Block::Tape(Box::new(Tape::new(sr))),
+            "comp" => Block::Comp(Comp::new()),
+            "kick" => Block::Kick(Kick::new()),
+            "walk" => Block::Walk(Walk::new()),
+            "eq" => Block::Eq(Box::new(Eq3::new())),
             _ => return None,
         })
     }
@@ -915,6 +1084,16 @@ impl Block {
                 *fast = 0.0;
                 *slow = 0.0;
             }
+            Block::Plateau(b) => b.reset(),
+            Block::Spring(b) => b.reset(),
+            Block::Phaser(b) => b.reset(),
+            Block::FreqShift(b) => b.reset(),
+            Block::Rotary(b) => b.reset(),
+            Block::Tape(b) => b.reset(),
+            Block::Comp(b) => b.reset(),
+            Block::Kick(b) => b.reset(),
+            Block::Walk(b) => b.reset(),
+            Block::Eq(b) => b.reset(),
             _ => {}
         }
     }
@@ -1544,6 +1723,16 @@ impl Block {
                 }
                 if *hold > 0.0 { 1.0 } else { 0.0 }
             }
+            Block::Plateau(b) => b.tick(v, c),
+            Block::Spring(b) => b.tick(v, c),
+            Block::Phaser(b) => b.tick(v, c),
+            Block::FreqShift(b) => b.tick(v, c),
+            Block::Rotary(b) => b.tick(v, c),
+            Block::Tape(b) => b.tick(v, c, rng),
+            Block::Comp(b) => b.tick(v, c),
+            Block::Kick(b) => b.tick(v, c),
+            Block::Walk(b) => b.tick(v, c, rng),
+            Block::Eq(b) => b.tick(v, c),
         }
     }
 }

@@ -708,6 +708,11 @@ fn delay_seconds(n: &NodeSpec) -> f32 {
         "allpass" => 0.1,
         "grain" => 2.0,
         "chorus" => 0.05,
+        // pre-delay + diffusers + the tank at its largest size
+        "plateau" => 1.4,
+        "spring" => 0.1,
+        "rotary" => 0.01,
+        "tape" => 0.012,
         _ => 0.0,
     }
 }
