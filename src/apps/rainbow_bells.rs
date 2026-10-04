@@ -17,7 +17,7 @@
 
 use crate::app::{App, Input, SlintExtra};
 use crate::audio::AudioProcessor;
-use crate::display::{FrameBuffer, WIDTH};
+use crate::display::FrameBuffer;
 use crate::led_output::PadColor;
 use crate::apps::kids_kit::{self as kit, Ev, Note, Size2, Song, Sound, Tone};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -33,8 +33,6 @@ const MIN_STEPS: u64 = STEPS_PER_BEAT as u64;
 const TONES: [Tone; 4] = [Tone::Glock, Tone::Marimba, Tone::Pluck, Tone::Flute];
 const ROOT: i32 = 72; // C5: a glockenspiel sounds two octaves above its written range, high and bright
 
-const SKY: Rgb565 = Rgb565::new(24, 52, 31);
-const SKY2: Rgb565 = Rgb565::new(28, 58, 31);
 const WOOD: Rgb565 = Rgb565::new(18, 26, 8);
 
 /// Bar `i` (0 = lowest) of the 16.
@@ -297,10 +295,8 @@ impl App for RainbowBells {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        // Sky, in bands.
-        for k in 0..12 {
-            kit::rect(fb, 0, k * 30, WIDTH as i32, 30, kit::blend(SKY, SKY2, k as f32 / 11.0));
-        }
+        kit::kids_scene(fb, kit::PlayWorld::Sky);
+        kit::kids_title(fb, "Every note fits", 320, 50, kit::INK, 0);
         kit::kids_header(fb, NAME, "AGES 6-9");
         // Two rails the bars rest on.
         kit::card(fb, 8, 128, 624, 10, 4, WOOD);
@@ -325,9 +321,9 @@ impl App for RainbowBells {
 
         // The sound and the loop.
         kit::card(fb, 12, 290, 260, 44, 12, kit::TEAL);
-        kit::text(fb, "<", 26, 296, Size2::Large, kit::WHITE, -1);
+        kit::kids_title(fb, "<", 26, 296, kit::WHITE, -1);
         kit::text(fb, TONES[self.tone].name(), 142, 302, Size2::Medium, kit::WHITE, 0);
-        kit::text(fb, ">", 242, 296, Size2::Large, kit::WHITE, -1);
+        kit::kids_title(fb, ">", 242, 296, kit::WHITE, -1);
         let oct = match self.octave {
             -1 => "low",
             1 => "high",

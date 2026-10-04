@@ -332,7 +332,7 @@ impl App for MusicCode {
         let bg = kit::PAPER;
         let panel = kit::rgb(222, 235, 225);
         let dim = kit::MUTED;
-        kit::clear(fb, bg);
+        kit::kids_scene(fb, kit::PlayWorld::Sky);
         kit::kids_header(fb, NAME, "AGES 10-12");
         let prog = self.program.lock().unwrap().clone();
         let running = self.sound.playing();
@@ -347,12 +347,14 @@ impl App for MusicCode {
             let flash = matches!(self.flash, Some((j, _)) if j == i);
             let c = if live || flash { kit::blend(b.color(), kit::WHITE, 0.5) } else { kit::blend(b.color(), bg, 0.25) };
             kit::card(fb, x, y, bw, bh, 8, c);
+            kit::circle(fb, x + bw / 2, y, 4, c);
             kit::text(fb, b.label(), x + bw / 2, y + bh / 2 - 6, Size2::Small, kit::BLACK, 0);
             if live {
                 kit::outline(fb, x, y, bw, bh, 8, 2, kit::TEAL);
                 kit::triangle(fb, [(x + bw / 2 - 6, y + bh + 2), (x + bw / 2 + 6, y + bh + 2), (x + bw / 2, y + bh + 9)], kit::INK);
             }
         }
+        kit::buddy(fb, 602, 120, 20, kit::rgb(126, 199, 220), if running { 0.6 } else { 0.0 });
         // The cursor: a caret where the next block goes.
         if prog.len() < MAX_BLOCKS || self.cursor < prog.len() {
             let (x, y) = if self.cursor < 8 * 3 { at(self.cursor) } else { at(MAX_BLOCKS - 1) };
@@ -365,6 +367,7 @@ impl App for MusicCode {
         // The note variable, on a ladder of the scale.
         let note = self.shown_note.load(Ordering::Relaxed);
         let (lx, ly) = (590, 200);
+        kit::card(fb, 546, 190, 84, 145, 16, kit::PAPER);
         kit::text(fb, "note", lx, 196 - 0, Size2::Small, dim, 0);
         for d in 0..8 {
             let y = ly + 120 - d * 14;

@@ -333,7 +333,7 @@ impl App for BeatLab {
         let ink = kit::INK;
         let dim = kit::MUTED;
         let track_colors = [kit::rgb(240, 90, 80), kit::rgb(250, 190, 60), kit::rgb(80, 210, 200), kit::rgb(170, 120, 240)];
-        kit::clear(fb, bg);
+        kit::kids_scene(fb, kit::PlayWorld::Sky);
         kit::kids_header(fb, NAME, "AGES 10-12");
         let k = self.kit.lock().unwrap().clone();
 
@@ -408,6 +408,7 @@ impl App for BeatLab {
         if self.style_loaded.is_none() && ROWS[self.row] == Row::Style {
             kit::text(fb, "(your own beat now: left/right loads a style)", 182, ty + 46, Size2::Small, dim, -1);
         }
+        kit::buddy(fb, 78, 307, 18, track_colors[self.track], self.flash[self.track]);
         let play = if self.sound.playing() { "SELECT: stop" } else { "SELECT: play" };
         kit::kids_footer(fb, &format!("{} pads: on/loud/soft/off   up/down: menu   {play}   hold SELECT: clear", TRACK_NAMES[self.track]));
     }

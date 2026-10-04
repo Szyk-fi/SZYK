@@ -448,13 +448,13 @@ impl App for MonsterMic {
     fn draw(&mut self, fb: &mut FrameBuffer) {
         let v = self.voice();
         let bg = kit::blend(kit::PAPER, v.color(), 0.12);
-        kit::clear(fb, bg);
+        kit::kids_scene(fb, match v { VoiceFx::Ghost => kit::PlayWorld::Starlight, VoiceFx::Alien | VoiceFx::Underwater => kit::PlayWorld::Pond, VoiceFx::Monster | VoiceFx::Chipmunk => kit::PlayWorld::Garden, _ => kit::PlayWorld::Sky });
         kit::kids_header(fb, NAME, "AGES 6-9");
 
-        // The face of the current voice; its mouth follows your voice.
+        // The portrait and level meter follow the live voice.
         let level = self.sound.peak();
         draw_face(fb, v, 170, 170, level, self.frame);
-        kit::text(fb, v.name(), 170, 282, Size2::Large, kit::INK, 0);
+        kit::kids_title(fb, v.name(), 170, 282, kit::INK, 0);
 
         // The eight voices as the top two rows of pads.
         let (px, py) = (340, 44);

@@ -365,8 +365,8 @@ impl App for CritterChoir {
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
         let choir = self.choir_index();
-        let (sky, ground) = if choir == 0 { (kit::rgb(207, 232, 236), kit::rgb(109, 157, 98)) } else { (kit::rgb(215, 231, 221), kit::rgb(73, 142, 126)) };
-        kit::clear(fb, sky);
+        let ground = if choir == 0 { kit::rgb(192, 221, 157) } else { kit::rgb(161, 214, 195) };
+        kit::kids_scene(fb, if choir == 0 { kit::PlayWorld::Garden } else { kit::PlayWorld::Pond });
         kit::rect(fb, 0, 250, WIDTH as i32, 110, ground);
         if choir == 1 {
             // The pond.
@@ -386,7 +386,7 @@ impl App for CritterChoir {
         }
         kit::circle(fb, 580, 70, 28, Rgb565::new(31, 56, 10));
         kit::kids_header(fb, NAME, "AGES 6-9");
-        kit::text(fb, CHOIR_NAMES[choir], 320, 40, Size2::Large, Rgb565::new(4, 14, 10), 0);
+        kit::kids_title(fb, CHOIR_NAMES[choir], 320, 40, Rgb565::new(4, 14, 10), 0);
 
         for col in 0..4 {
             let c = CHOIRS[choir][col];
@@ -394,7 +394,7 @@ impl App for CritterChoir {
             let m = self.mouth[col];
             let hop = (m * m * 10.0) as i32;
             draw_critter(fb, c, x, 190 - hop, m);
-            kit::text(fb, c.name(), x, 262, Size2::Medium, kit::WHITE, 0);
+            kit::text(fb, c.name(), x, 262, Size2::Medium, kit::INK, 0);
             // Its four pads, top to bottom, the lit one being sung.
             for row in 0..4 {
                 let lit = m > 0.2 && self.sang_row[col] == row;
@@ -417,17 +417,24 @@ impl App for CritterChoir {
 
 /// Eyes with a shine, looking slightly up.
 fn eyes(fb: &mut FrameBuffer, x: i32, y: i32, gap: i32, r: i32) {
-    for s in [-1, 1] {
-        kit::circle(fb, x + s * gap, y, r, kit::WHITE);
-        kit::circle(fb, x + s * gap, y - 1, r * 3 / 5, kit::BLACK);
-        kit::circle(fb, x + s * gap + r / 4, y - r / 3, (r / 4).max(1), kit::WHITE);
+    for side in [-1, 1] {
+        let eye = x + side * gap;
+        kit::circle(fb, eye, y, (r * 3 / 5).max(2), kit::INK);
+        kit::circle(fb, eye + 1, y - 2, 1, kit::WHITE);
+        kit::circle(fb, eye + side * 5, y + 8, 3, kit::rgb(240, 159, 138));
     }
 }
 
-/// An open mouth: wider and taller the louder the critter sings.
+/// A relaxed smile opens gently when the critter sings.
 fn mouth(fb: &mut FrameBuffer, x: i32, y: i32, w: i32, open: f32, c: Rgb565) {
-    let h = 3 + (open * 16.0) as i32;
-    kit::round_rect(fb, x - w / 2, y, w, h, (h / 2).max(1) as u32, c);
+    if open < 0.15 {
+        kit::line(fb, x - w / 2, y, x - w / 4, y + 3, 2, c);
+        kit::line(fb, x - w / 4, y + 3, x + w / 4, y + 3, 2, c);
+        kit::line(fb, x + w / 4, y + 3, x + w / 2, y, 2, c);
+    } else {
+        let h = 5 + (open * 12.0) as i32;
+        kit::round_rect(fb, x - w / 2, y, w, h, (h / 2) as u32, c);
+    }
 }
 
 fn draw_critter(fb: &mut FrameBuffer, c: Critter, x: i32, y: i32, open: f32) {
@@ -465,8 +472,8 @@ fn draw_critter(fb: &mut FrameBuffer, c: Critter, x: i32, y: i32, open: f32) {
             kit::triangle(fb, [(x + 38, y - 30), (x + 30, y - 76), (x + 6, y - 52)], body);
             kit::circle(fb, x, y - 22, 40, body);
             for s in [-1, 1] {
-                kit::line(fb, x + s * 14, y - 8, x + s * 48, y - 14, 2, dark);
-                kit::line(fb, x + s * 14, y - 4, x + s * 48, y, 2, dark);
+                kit::line(fb, x + s * 14, y - 8, x + s * 40, y - 12, 1, kit::MUTED);
+                kit::line(fb, x + s * 14, y - 4, x + s * 40, y, 1, kit::MUTED);
             }
             kit::triangle(fb, [(x - 6, y - 14), (x + 6, y - 14), (x, y - 8)], Rgb565::new(31, 30, 24));
             eyes(fb, x, y - 32, 15, 9);
@@ -492,7 +499,7 @@ fn draw_critter(fb: &mut FrameBuffer, c: Critter, x: i32, y: i32, open: f32) {
             eyes(fb, x, y - 48, 24, 11);
             // The throat sac puffs out on each croak.
             kit::circle(fb, x, y + 12, 8 + (open * 18.0) as i32, Rgb565::new(24, 56, 18));
-            kit::rect(fb, x - 34, y - 6, 68, 4, Rgb565::new(4, 24, 4));
+            mouth(fb, x, y - 6, 44, open, kit::rgb(37, 104, 62));
         }
         Critter::Owl => {
             let body = Rgb565::new(18, 28, 10);

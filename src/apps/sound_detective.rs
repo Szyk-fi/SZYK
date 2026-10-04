@@ -305,19 +305,22 @@ impl App for SoundDetective {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = kit::PAPER;
         let panel = kit::rgb(223, 231, 242);
         let ink = kit::INK;
         let dim = kit::MUTED;
         let good = kit::TEAL;
-        kit::clear(fb, bg);
+        kit::kids_scene(fb, kit::PlayWorld::Pond);
         kit::kids_header(fb, NAME, "AGES 10-12");
+        kit::round_rect(fb, 8, 35, 550, 23, 10, kit::PAPER);
         kit::text(fb, &format!("Case {}   level {} of {}   score {}", self.case_no, self.level, LEVELS, self.score), 12, 38, Size2::Medium, ink, -1);
         // Solved-at-this-level dots.
         for k in 0..SOLVES_PER_LEVEL {
             let c = if k < self.solved { good } else { panel };
-            kit::circle(fb, 600 + k as i32 * 12 - 24, 46, 5, c);
+            kit::circle(fb, 536 + k as i32 * 12 - 24, 46, 5, c);
         }
+        kit::buddy(fb, 610, 48, 8, kit::rgb(112, 204, 192), 0.0);
+        kit::ring(fb, 584, 47, 7, 2, kit::TEAL);
+        kit::line(fb, 579, 52, 574, 57, 3, kit::TEAL);
         let hidden = self.hidden();
         let (m, t) = (self.mine(), self.mystery());
         for c in 0..CONTROLS {
@@ -393,6 +396,7 @@ impl App for SoundDetective {
             kit::card(fb, 10, 270, 300, 54, 8, kit::blend(panel, good, 0.25));
             kit::paragraph(fb, &self.message.0, 20, 278, 284, Size2::Small, kit::INK);
         } else {
+            kit::card(fb, 10, 268, 300, 58, 12, kit::PAPER);
             kit::paragraph(fb, "Pad 1: hear the mystery\nPad 2: hear yours\nPad 3 or SELECT: check   Pad 4: new case", 14, 274, 296, Size2::Small, dim);
         }
         kit::kids_footer(fb, "up/down: control   left/right: change   pads 5-16: play   hold SELECT: new case");
