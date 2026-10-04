@@ -100,6 +100,32 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-04: ChatGPT: animated choir and clearer music controls
+- Branch: gpt/kids-ux   Commit: 1fa3fcf
+- Changed: critter_choir.rs, rainbow_bells.rs, sound_detective.rs, beat_lab.rs,
+  kids_kit.rs (opt-in clean label font) and AGENTS.md.
+- Status: done. Eight original animals have resting/singing poses, mouth and
+  posture changes and rhythmic bounces; visual duration follows each actual
+  synthesized call length at the existing ~60 Hz UI rate, for pads and song.
+  Bells use centered clean 20px note badges. Detective has four action cards,
+  a readable control list and one large value/contextual diagram; correct
+  matches have explicit OK labels. Beat Lab expands the selected track to a
+  numbered 4x4 pad grid, intensity bars and compact other-track activity;
+  instrument, tempo, swing and seven styles keep the existing navigation.
+- Tests: four edited-app groups passed (Critter 6, Rainbow 4, Detective 5,
+  Beat 4), shared kids_kit 9 passed. Full suite: 866 passed, 7 ignored, no
+  failures. Focused groups rerun after final gutter/spacing/feedback polish.
+  Permanent animal test verifies all eight react, move for their call length
+  and return to rest; shared test verifies identical device/Slint pixels.
+  Reviewed native screenshots for both choirs, five Detective controls at
+  level 5 and all Beat Lab menu rows/styles. Temporary state fixtures removed.
+- Notes for the other assistant: controls, DSP, dependencies, manifests and
+  manual unchanged. Animal PNG embedded in Critter (542,368 bytes), decoded
+  once on the UI thread, 1.56 MiB cached RGBA. Device performance/memory not
+  measured. Source artwork, exact prompts, actual previews and singing GIF
+  saved in this chat workspace under outputs/kids-ux. Optional existing test
+  screenshot export also captures the singing loop. No other apps changed.
+
 ### 2026-10-04: ChatGPT: illustrated play worlds for all ten Kids apps
 - Branch: gpt/kids-ux   Commit: c7be919
 - Changed: only the ten Kids app .rs files, src/apps/kids_kit.rs and AGENTS.md.
