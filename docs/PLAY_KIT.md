@@ -19,6 +19,41 @@ things in the same places:
 | **Pads, Moments layer** | Tap = recall a whole sound, hold 0.6 s = store. Saved to `saves/<app>/moments.json` |
 | **Pads, Throws layer** | Hold = push a control to a set value; release = spring back |
 
+## No dials: how modulation works on the device
+
+The device has no knobs, so nothing here needs one. The "Knob 1/Knob 2" rows
+above describe the *simulator's* encoders and a plugged-in MIDI controller;
+on the device the same jobs are done like this:
+
+| Job | On the device |
+|---|---|
+| Turn one control | D-pad left/right turns the focused dial; SELECT moves the focus |
+| Play a control with your hands | The stick (X/Y), the two depth sensors and **pad pressure** each push one control |
+| Choose *which* control a source pushes | **Bind by wiggling** (below) |
+| Change a whole sound at once | **Moments** (tap to recall), or an app's own state pads |
+
+**Pad pressure.** The pads are pressure sensitive (`Input::pad_pressure`,
+0..1; the simulator reports 0.6 for a held pad that has no pressure data, a
+Push 2 supplies note-on velocity and polyphonic aftertouch). The firmest pad
+being *played* pushes the app's pressure route by up to 0.6, and lets go
+exactly like the stick does. Pads on a layer that picks things rather than
+plays (`PlayHost::kit_pads_play`) don't count. An app suggests a default with
+`kit.suggest_pressure_route(control)`; Atlas sends it to ENERGY.
+
+**Bind by wiggling.** On the Controls layer, tap a control's pad to grab it,
+then *move the source you want on it*: sweep the stick, wave a hand over a
+sensor, or lean hard into the control's own pad (about a third of a second at
+85% pressure) for pressure. That source now pushes that control, moving off
+whatever it pushed before. Doing it again unbinds it. Stepped controls (a
+mode, a preset) refuse, since nothing can push a choice. Holding L1 to peek at
+Controls never rebinds. Bindings are saved in `saves/<app>/routes.json`; the
+app's own routes are only the starting point.
+
+**Atlas's STATES layer.** F2 in Atlas goes PLAY, STATES, CONTROLS, MOMENTS. On
+STATES the bottom row of pads is A B C D: tap one and MORPH glides there in
+about a second. Nothing sounds, and the pads light to show which state the
+sound is at (yellow while gliding, green once there).
+
 The app's own pad behaviour is always the first layer, so its pads work
 exactly as before until F2 is pressed. In the menu (R1) the knobs and
 D-pad behave exactly as they always did, and the pads stay on whatever

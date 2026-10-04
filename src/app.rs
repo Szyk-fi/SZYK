@@ -79,7 +79,18 @@ pub struct Input {
     pub mod_wheel: f32,
     /// MIDI channel aftertouch, 0..1.
     pub aftertouch: f32,
+    /// How firmly each pad is pressed, 0..1 (0 = not touched). On hardware
+    /// the pads are pressure sensitive and the driver fills this in; a
+    /// Push 2 supplies note-on velocity and polyphonic aftertouch. Pads
+    /// with no pressure data (computer keyboard, gamepad) report
+    /// `SIM_PAD_PRESSURE` while held, so a pressure route still does
+    /// something audible in the simulator.
+    pub pad_pressure: [f32; 16],
 }
+
+/// What a held pad with no real pressure data reports (see
+/// `Input::pad_pressure`).
+pub const SIM_PAD_PRESSURE: f32 = 0.6;
 
 /// 128 MIDI note velocities -- a newtype only because `Default` isn't
 /// derived for arrays longer than 32.
@@ -138,6 +149,16 @@ impl Input {
         for (i, (slot, key)) in top.iter_mut().zip(Self::TOP_KEYS).enumerate() {
             *slot = pressed(key) || controller.take_top(i);
         }
+        // Real pressure where a driver reported it; held pads without any
+        // (keyboard, gamepad, a controller that only sends velocity 0)
+        // get the simulator default.
+        let pad_pressure: [f32; 16] = std::array::from_fn(|i| {
+            if !grid[i] {
+                return 0.0;
+            }
+            let real = controller.pad_pressure[i].get();
+            if real > 0.0 { real } else { SIM_PAD_PRESSURE }
+        });
 
         // Auto-repeating (unlike `pressed`) so holding the key down keeps
         // spinning the knob instead of needing repeated taps.
@@ -171,6 +192,7 @@ impl Input {
             nav_up: pressed(Key::Up) || knob1 < 0 || navigation_steps < 0,
             nav_down: pressed(Key::Down) || knob1 > 0 || navigation_steps > 0,
             nav_select: pressed(Key::Enter) || knob1_press,
+            pad_pressure,
             ..controller.play_surface_input(Self::keyboard_play_surface(window))
         }
     }

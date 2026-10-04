@@ -101,6 +101,33 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-04: Claude: dial-free modulation (pad pressure, bind-by-wiggle, Atlas states)
+- Branch: claude/atlas-play (cut from 341d3fa, my last commit; oracle-pulsar
+  is behind it)   Commits: see git log on the branch
+- Changed: Atlas (mine): STATES pad layer, morph glide, pressure -> ENERGY.
+  **Shared files, minimal and additive**, because Max said the pads are
+  pressure sensitive and asked for a dial-free design: `src/app.rs` (new
+  `Input::pad_pressure`, `SIM_PAD_PRESSURE`), `src/controller.rs` (new
+  `pad_pressure` atomics), `src/main.rs` (Push 2 velocity + poly aftertouch
+  fill it), `src/play_kit.rs` (live routes copied from `cfg.routes`, a
+  pressure route, bind-by-wiggling, `saves/<app>/routes.json`, new
+  `PlayHost::kit_pads_play` with a default), `docs/PLAY_KIT.md`.
+- Status: partial. Done: pressure as a control source, rebindable routes
+  for every play-kit app (they inherit it, no per-app change), Atlas states
+  on pads. Not done: a gesture looper (record a stick/hand move and loop it),
+  per-note pressure inside the synthesis engine (pressure is currently the
+  firmest pad, applied to one control), an on-screen marker for the pressure
+  route beyond the status line, and the real pad driver filling
+  `ControllerState::pad_pressure` (the simulator and a Push 2 do).
+- Tests: kit 13 pass (6 new), Atlas 9 pass (3 new); full suite 873 passed, 0 failed, 7 ignored. One
+  existing kit test changed: it set `k.cfg.routes`, which is now only the
+  starting point, so it sets `k.routes` instead.
+- Notes for the other assistant: nothing for the Kids apps to change. The
+  other ~40 play-kit apps can now be rebound by wiggling; their own
+  `KitConfig` routes still apply until the player rebinds. `CLAUDE.md` still
+  says "two knobs/encoders" (shared file, left alone for Max).
+- Request: none.
+
 ### 2026-10-04: Claude: device clock, Chop, Looper, Tempo, Choir, Sorter, Ledger sync
 - Branch: oracle-pulsar (synced to Max's Mac by patch)   Commits: e456175..e8122c1, cf5cfdc, 8164f37 (Mac hashes)
 - Changed: new apps chop, tempo, looper, choir, sorter (+ assets/npu/sorter_*,

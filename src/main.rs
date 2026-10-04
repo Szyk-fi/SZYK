@@ -477,6 +477,9 @@ fn handle_midi_message(
             let is_on = status == 0x90 && data2 > 0;
             if let Some(i) = controller::GRID_NOTES.iter().position(|&n| n == data1) {
                 controller.grid[i].store(is_on, std::sync::atomic::Ordering::Relaxed);
+                // Strike velocity is the pad's first pressure reading;
+                // polyphonic aftertouch (0xA0 below) then follows it.
+                controller.pad_pressure[i].set(if is_on { data2 as f32 / 127.0 } else { 0.0 });
             } else if let Some(i) = controller::TOP_NOTES.iter().position(|&n| n == data1) {
                 if is_on {
                     controller.set_top(i);
@@ -498,6 +501,12 @@ fn handle_midi_message(
                 controller.grid[i].store(is_on, std::sync::atomic::Ordering::Relaxed);
             } else {
                 eprintln!("midi: unmapped note {data1} (on={is_on})");
+            }
+        }
+        0xA0 => {
+            // Polyphonic aftertouch: how hard a pad is being leaned on.
+            if let Some(i) = controller::GRID_NOTES.iter().position(|&n| n == data1) {
+                controller.pad_pressure[i].set(data2 as f32 / 127.0);
             }
         }
         0xD0 | 0xE0 => {

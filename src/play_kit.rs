@@ -16,9 +16,15 @@
 //! - **Knobs** turn the current hero pair; knob 1 press = next pair, knob 2
 //!   press = reset the pair. **D-pad up/down** steps the app's "browse"
 //!   control (engine, preset, algorithm...); left/right nudge knob 2.
-//! - **Stick, hands, mod wheel, aftertouch** push routed controls away
-//!   from their knob setting without overwriting it (see `Expression`).
-//!   A stick click keeps where you've pushed to.
+//! - **Stick, hands, mod wheel, aftertouch, pad pressure** push routed
+//!   controls away from their knob setting without overwriting it (see
+//!   `Expression`). A stick click keeps where you've pushed to.
+//! - **Binding by wiggling.** There are no dials to assign things with, so
+//!   on the Controls layer the player grabs a control (tap its pad), then
+//!   *moves the source they want on it*: sweep the stick, wave a hand, or
+//!   lean hard into the control's own pad for pressure. That source now
+//!   pushes that control (moving it off whatever it pushed before; doing
+//!   it again unbinds). Bindings are saved per app.
 //!
 //! The app describes itself through `PlayHost` (its controls in order of
 //! importance) and a `KitConfig`; this module owns all the shared
@@ -44,6 +50,17 @@ pub const STORE_HOLD_S: f32 = 0.6;
 const STICK_SPAN: f32 = 0.5;
 /// A hand fully in the beam moves its control by this much.
 const HAND_SPAN: f32 = 0.6;
+/// Full pad pressure moves its control by this much.
+const PRESSURE_SPAN: f32 = 0.6;
+/// A source must travel this far from where it was when a control was
+/// grabbed to bind (or unbind) it, and come back within `LEARN_REARM`
+/// before it can do so again.
+const LEARN_THRESHOLD: f32 = 0.35;
+const LEARN_REARM: f32 = 0.12;
+/// Leaning on the grabbed control's own pad at least this hard, for
+/// `LEAN_FRAMES` frames (~0.33 s), binds pressure to it.
+const LEAN_PRESSURE: f32 = 0.85;
+const LEAN_FRAMES: u32 = 20;
 /// Depth-sensor noise floor: below it, no hand.
 pub const HAND_FLOOR: f32 = 0.02;
 /// Frames a status message stays up (~1.5 s at 60 fps).
@@ -110,6 +127,13 @@ pub struct KitConfig {
 /// What the app tells the kit about itself. Controls are indexed in order
 /// of importance: the first ones land on the knobs and the bottom pads.
 pub trait PlayHost {
+    /// Whether the pads on native layer `layer` are being *played* (so
+    /// pressing them is musical pressure) rather than used to pick
+    /// things, as Atlas's STATES pads are. Pad pressure only drives its
+    /// route while this is true.
+    fn kit_pads_play(&self, _layer: u8) -> bool {
+        true
+    }
     fn kit_control_count(&self) -> usize;
     fn kit_label(&self, i: usize) -> String;
     fn kit_value(&self, i: usize) -> String;
@@ -197,7 +221,32 @@ pub struct PlayKit {
     status_frames: u32,
     stick: [f32; 2],
     hands: [f32; 2],
+    /// The routes in force: the app's own (`cfg.routes`) until the player
+    /// rebinds one, or the saved set if there is one.
+    routes: Routes,
+    /// Which control pad pressure pushes (not part of `Routes`, which
+    /// every app already builds by hand).
+    pressure_route: Option<usize>,
+    routes_path: Option<PathBuf>,
+    /// A saved set was found, so an app's suggested defaults don't apply.
+    routes_loaded: bool,
+    /// Stick x/y and hands l/r when the current control was grabbed.
+    learn_base: [f32; 4],
+    learn_armed: [bool; 4],
+    lean_frames: u32,
 }
+
+/// Where each source is bound, for saving.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct SavedRoutes {
+    stick_x: Option<usize>,
+    stick_y: Option<usize>,
+    hand_l: Option<usize>,
+    hand_r: Option<usize>,
+    pressure: Option<usize>,
+}
+
+const SOURCE_NAMES: [&str; 4] = ["Stick X", "Stick Y", "Left hand", "Right hand"];
 
 impl PlayKit {
     /// `persist`: false keeps moments in memory (tests, previews).
@@ -211,7 +260,29 @@ impl PlayKit {
                 }
             }
         }
-        PlayKit { cfg, moments, moments_path: path, ..Default::default() }
+        let routes_path = persist.then(|| PathBuf::from(format!("{}/saves/{}/routes.json", env!("CARGO_MANIFEST_DIR"), cfg.app_id)));
+        let mut routes = cfg.routes;
+        let mut pressure_route = None;
+        let mut routes_loaded = false;
+        if let Some(saved) = routes_path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str::<SavedRoutes>(&t).ok()) {
+            routes = Routes { stick_x: saved.stick_x, stick_y: saved.stick_y, hand_l: saved.hand_l, hand_r: saved.hand_r };
+            pressure_route = saved.pressure;
+            routes_loaded = true;
+        }
+        PlayKit { cfg, moments, moments_path: path, routes, pressure_route, routes_path, routes_loaded, learn_armed: [true; 4], ..Default::default() }
+    }
+
+    /// An app's suggestion for what pad pressure should push, used only
+    /// until the player (or a saved set) says otherwise.
+    pub fn suggest_pressure_route(&mut self, control: usize) {
+        if !self.routes_loaded && self.pressure_route.is_none() {
+            self.pressure_route = Some(control);
+        }
+    }
+
+    /// Where pad pressure is routed right now.
+    pub fn pressure_route(&self) -> Option<usize> {
+        self.pressure_route
     }
 
     pub fn layer(&self) -> Layer {
@@ -323,6 +394,9 @@ impl PlayKit {
         self.hands = input.hands;
         if !self.cfg.own_expression {
             self.expression(host, input, layer, n);
+            if !self.peek && layer == Layer::Controls && !self.menu {
+                self.learn(host, input, n);
+            }
         }
         Step { menu: self.menu, native, input: out }
     }
@@ -386,6 +460,9 @@ impl PlayKit {
             match layer {
                 Layer::Controls if down && !was && rank < n => {
                     self.focused = rank;
+                    self.learn_base = [input.stick[0], input.stick[1], input.hands[0], input.hands[1]];
+                    self.learn_armed = [true; 4];
+                    self.lean_frames = 0;
                     self.flash(format!("Dial: {}", host.kit_label(rank)));
                 }
                 Layer::Moments => {
@@ -441,7 +518,7 @@ impl PlayKit {
     /// controls once per audio block hear that as fine steps on fast
     /// gestures. Plaits smooths in its DSP; others may want to as well.
     fn expression(&mut self, host: &mut dyn PlayHost, input: &Input, layer: Layer, n: usize) {
-        let r = self.cfg.routes;
+        let r = self.routes;
         if input.stick_click {
             // Keep: whatever is applied becomes the new setting.
             self.applied.iter_mut().for_each(|a| *a = 0.0);
@@ -467,6 +544,14 @@ impl PlayKit {
         // A keyboard's wheel and pressure follow the stick's routing.
         add(r.stick_y, input.mod_wheel * STICK_SPAN);
         add(r.stick_x, input.aftertouch * STICK_SPAN);
+        // The firmest pad being played pushes the pressure route. (Pads
+        // are only "played" on a native layer whose pads make sound.)
+        if let Layer::Native(id, _) = layer {
+            if host.kit_pads_play(id) {
+                let firmest = input.pad_pressure.iter().zip(input.grid.iter()).filter(|(_, &g)| g).map(|(&p, _)| p).fold(0.0f32, f32::max);
+                add(self.pressure_route, firmest * PRESSURE_SPAN);
+            }
+        }
         if layer == Layer::Throws {
             for (i, t) in self.cfg.throws.iter().enumerate().take(16) {
                 if input.grid[rank_pad(i)] && t.control < n {
@@ -507,6 +592,94 @@ impl PlayKit {
             let landed = host.kit_norm(c).unwrap_or(new);
             self.applied[c] = landed - base;
         }
+    }
+
+    /// Bind-by-wiggling on the Controls layer: whichever source travels
+    /// furthest from where it was when the control was grabbed is bound to
+    /// it (or unbound, if it already was), and leaning hard on the
+    /// control's own pad binds pressure.
+    fn learn(&mut self, host: &mut dyn PlayHost, input: &Input, n: usize) {
+        let c = self.focused;
+        if c >= n {
+            return;
+        }
+        let now = [input.stick[0], input.stick[1], input.hands[0], input.hands[1]];
+        for s in 0..4 {
+            let d = (now[s] - self.learn_base[s]).abs();
+            if d < LEARN_REARM {
+                self.learn_armed[s] = true;
+            } else if d > LEARN_THRESHOLD && self.learn_armed[s] {
+                self.learn_armed[s] = false;
+                self.bind_source(host, s, c);
+            }
+        }
+        let pad = rank_pad(c);
+        if input.grid[pad] && input.pad_pressure[pad] >= LEAN_PRESSURE {
+            self.lean_frames += 1;
+            if self.lean_frames == LEAN_FRAMES {
+                self.bind_pressure(host, c);
+            }
+        } else {
+            self.lean_frames = 0;
+        }
+    }
+
+    fn bind_source(&mut self, host: &mut dyn PlayHost, source: usize, control: usize) {
+        if host.kit_stepped(control) {
+            self.flash(format!("{} is a choice: nothing can push it", host.kit_label(control)));
+            return;
+        }
+        // Put everything back on its base before a route moves, so the old
+        // target isn't left pushed.
+        self.clear_offsets(host);
+        let slot = match source {
+            0 => &mut self.routes.stick_x,
+            1 => &mut self.routes.stick_y,
+            2 => &mut self.routes.hand_l,
+            _ => &mut self.routes.hand_r,
+        };
+        let label = host.kit_label(control);
+        if *slot == Some(control) {
+            *slot = None;
+            self.flash(format!("{} no longer pushes {label}", SOURCE_NAMES[source]));
+        } else {
+            *slot = Some(control);
+            self.flash(format!("{} now pushes {label}", SOURCE_NAMES[source]));
+        }
+        self.save_routes();
+    }
+
+    fn bind_pressure(&mut self, host: &mut dyn PlayHost, control: usize) {
+        if host.kit_stepped(control) {
+            self.flash(format!("{} is a choice: nothing can push it", host.kit_label(control)));
+            return;
+        }
+        self.clear_offsets(host);
+        let label = host.kit_label(control);
+        if self.pressure_route == Some(control) {
+            self.pressure_route = None;
+            self.flash(format!("Pressure no longer pushes {label}"));
+        } else {
+            self.pressure_route = Some(control);
+            self.flash(format!("Pressure now pushes {label}"));
+        }
+        self.save_routes();
+    }
+
+    fn save_routes(&self) {
+        let Some(path) = &self.routes_path else { return };
+        let saved = SavedRoutes {
+            stick_x: self.routes.stick_x,
+            stick_y: self.routes.stick_y,
+            hand_l: self.routes.hand_l,
+            hand_r: self.routes.hand_r,
+            pressure: self.pressure_route,
+        };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).ok();
+        }
+        // A failed save only loses the binding on the next launch.
+        std::fs::write(path, serde_json::to_string_pretty(&saved).unwrap_or_default()).ok();
     }
 
     fn save_moments(&self) -> Result<(), String> {
@@ -579,7 +752,7 @@ impl PlayKit {
                 knob: if k2 == Some(c) { 2 } else if pair.is_some_and(|p| p.contains(&c)) { 1 } else { 0 },
             })
             .collect();
-        let r = self.cfg.routes;
+        let r = self.routes;
         PlayColumn {
             layer: self.layer().label().to_string(),
             dials,
@@ -595,7 +768,12 @@ impl PlayKit {
                 })
                 .collect(),
             stick: self.stick,
-            stick_label: format!("{} / {}", Self::route_label(host, r.stick_x), Self::route_label(host, r.stick_y)),
+            stick_label: format!(
+                "{} / {}{}",
+                Self::route_label(host, r.stick_x),
+                Self::route_label(host, r.stick_y),
+                self.pressure_route.map(|c| format!(" · press {}", host.kit_label(c))).unwrap_or_default()
+            ),
             hands: self.hands,
             hand_labels: [Self::route_label(host, r.hand_l), Self::route_label(host, r.hand_r)],
             line: host.kit_line(),
@@ -933,9 +1111,128 @@ mod tests {
         assert!(s.native.is_none() && k.focused == 1);
         k.tick(&mut f, &Input::default());
         assert_eq!(k.layer_label(), "PLAY");
-        k.cfg.routes.stick_x = Some(6);
+        k.routes.stick_x = Some(6);
         k.tick(&mut f, &Input { stick: [1.0, 0.0], ..Default::default() });
         assert_eq!(f.mode, 0);
+    }
+
+    /// A pad held at a given firmness.
+    fn press(rank: usize, firmness: f32) -> Input {
+        let mut input = pad(rank);
+        input.pad_pressure[rank_pad(rank)] = firmness;
+        input
+    }
+
+    #[test]
+    fn wiggling_a_source_binds_it_to_the_grabbed_control_and_again_unbinds() {
+        let (mut k, mut f) = (kit(), fake());
+        k.next_layer(); // Controls
+        k.tick(&mut f, &pad(4)); // grab control 4
+        k.tick(&mut f, &Input::default());
+        // The stick's X axis already pushed control 0; sweeping it now
+        // moves it to the grabbed control instead.
+        k.tick(&mut f, &Input { stick: [1.0, 0.0], ..Default::default() });
+        assert_eq!(k.routes.stick_x, Some(4));
+        assert!(k.status().contains("Stick X now pushes C4"), "{}", k.status());
+        k.tick(&mut f, &Input { stick: [1.0, 0.0], ..Default::default() });
+        assert!((f.v[4] - 1.0).abs() < 1e-5, "the new target is pushed: {}", f.v[4]);
+        assert!((f.v[0] - 0.5).abs() < 1e-5, "and the old one is left where it was: {}", f.v[0]);
+        // Hold it there: no flapping between bound and unbound.
+        for _ in 0..5 {
+            k.tick(&mut f, &Input { stick: [1.0, 0.0], ..Default::default() });
+        }
+        assert_eq!(k.routes.stick_x, Some(4));
+        // Let go, then sweep again: it unbinds.
+        k.tick(&mut f, &Input::default());
+        k.tick(&mut f, &Input { stick: [1.0, 0.0], ..Default::default() });
+        assert_eq!(k.routes.stick_x, None);
+        assert!(k.status().contains("no longer pushes C4"), "{}", k.status());
+        k.tick(&mut f, &Input::default());
+        assert!((f.v[4] - 0.5).abs() < 1e-5, "unbound, it returns home: {}", f.v[4]);
+    }
+
+    #[test]
+    fn a_hand_wave_binds_the_hand_and_a_stepped_control_refuses() {
+        let (mut k, mut f) = (kit(), fake());
+        k.next_layer();
+        k.tick(&mut f, &pad(3));
+        k.tick(&mut f, &Input::default());
+        k.tick(&mut f, &Input { hands: [0.0, 0.8], ..Default::default() });
+        assert_eq!(k.routes.hand_r, Some(3), "the right hand had no route and now has one");
+        // Control 6 is a choice (stepped): nothing may be bound to it.
+        k.tick(&mut f, &Input::default());
+        k.tick(&mut f, &pad(6));
+        k.tick(&mut f, &Input::default());
+        k.tick(&mut f, &Input { stick: [0.0, 1.0], ..Default::default() });
+        assert_eq!(k.routes.stick_y, Some(1), "unchanged");
+        assert!(k.status().contains("is a choice"), "{}", k.status());
+    }
+
+    #[test]
+    fn pad_pressure_pushes_its_route_and_lets_go_exactly() {
+        let (mut k, mut f) = (kit(), fake());
+        k.pressure_route = Some(5);
+        k.tick(&mut f, &press(0, 0.5));
+        assert!((f.v[5] - 0.8).abs() < 1e-5, "0.5 firmness x 0.6 span: {}", f.v[5]);
+        k.tick(&mut f, &press(0, 0.25));
+        assert!((f.v[5] - 0.65).abs() < 1e-5, "it follows the pressure, not a latch: {}", f.v[5]);
+        k.tick(&mut f, &Input::default());
+        assert!((f.v[5] - 0.5).abs() < 1e-5, "released: {}", f.v[5]);
+        // Unrouted, pressure does nothing.
+        k.pressure_route = None;
+        k.tick(&mut f, &press(0, 1.0));
+        assert!((f.v[5] - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn leaning_hard_on_the_grabbed_pad_binds_pressure_and_a_light_press_does_not() {
+        let (mut k, mut f) = (kit(), fake());
+        k.next_layer();
+        for _ in 0..(LEAN_FRAMES * 2) {
+            k.tick(&mut f, &press(2, 0.6));
+        }
+        assert_eq!(k.pressure_route(), None, "an ordinary press is just selecting the control");
+        k.tick(&mut f, &Input::default());
+        for _ in 0..(LEAN_FRAMES + 2) {
+            k.tick(&mut f, &press(2, 0.95));
+        }
+        assert_eq!(k.pressure_route(), Some(2));
+        assert!(k.status().contains("Pressure now pushes C2"), "{}", k.status());
+    }
+
+    #[test]
+    fn peeking_with_l1_never_rebinds_anything() {
+        let (mut k, mut f) = (kit(), fake());
+        k.tick(&mut f, &Input { shoulders: [true, false], ..pad(4) });
+        k.tick(&mut f, &Input { shoulders: [true, false], stick: [1.0, 0.0], ..Default::default() });
+        assert_eq!(k.routes.stick_x, Some(0), "a peek is a look, not an edit");
+    }
+
+    #[test]
+    fn an_apps_suggested_pressure_route_yields_to_a_saved_one() {
+        let mut k = kit();
+        k.suggest_pressure_route(3);
+        assert_eq!(k.pressure_route(), Some(3));
+        k.routes_loaded = true;
+        k.pressure_route = None;
+        k.suggest_pressure_route(3);
+        assert_eq!(k.pressure_route(), None, "the player's saved choice wins");
+    }
+
+    #[test]
+    fn bindings_persist_to_disk() {
+        let dir = std::env::temp_dir().join(format!("kit_routes_{}", std::process::id()));
+        let path = dir.join("routes.json");
+        let (mut k, mut f) = (kit(), fake());
+        k.routes_path = Some(path.clone());
+        k.next_layer();
+        k.tick(&mut f, &pad(4));
+        k.tick(&mut f, &Input::default());
+        k.tick(&mut f, &Input { stick: [1.0, 0.0], ..Default::default() });
+        let saved: SavedRoutes = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.stick_x, Some(4));
+        assert_eq!(saved.stick_y, Some(1), "untouched routes are saved too");
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
