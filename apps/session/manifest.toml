@@ -1,0 +1,10 @@
+id = "session"
+name = "Session"
+category = "sequencer"
+description = "The song: eight tracks playing any instrument, clips in scenes, a song arranger, recording and saved projects."
+audio_outputs = ["Session"]
+note_outputs = ["Session 1", "Session 2", "Session 3", "Session 4", "Session 5", "Session 6", "Session 7", "Session 8"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Session Level",
+]
