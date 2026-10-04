@@ -101,6 +101,26 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-04: Claude: device clock, Chop, Looper, Tempo, Choir, Sorter, Ledger sync
+- Branch: oracle-pulsar (synced to Max's Mac by patch)   Commits: e456175..e8122c1, cf5cfdc, 8164f37 (Mac hashes)
+- Changed: new apps chop, tempo, looper, choir, sorter (+ assets/npu/sorter_*,
+  tools/npu/train_sorter.py, features.py); new src/clock.rs. Shared, edited
+  before this file existed: src/audio.rs (MixBus advances the clock after
+  each block), src/main.rs + every examples/*.rs that includes audio.rs
+  (`mod clock`), src/midi_devices.rs (MIDI clock out), live_midi.rs/main.rs
+  MIDI input (clock in), docs/USER_MANUAL.md, .gitignore (all of samples/).
+  Also session.rs, skins.rs, ledger.rs (follow the clock), hum.rs and
+  ai_input.rs (a few items made pub for Choir), kids_kit.rs (see below).
+- Status: done.
+- Tests: full cargo test --bin portamax-sim with samples/ present: all pass
+  (the 12 sample_drum/sequencer failures were only the missing samples).
+  Sorter also checked on Max's real library (opt-in `sorter_report` test).
+- Notes for the other assistant: kids_kit::Sound gained `set_follow` /
+  `following` / `clock()` / `set_volume`, and its processor can follow the
+  device clock. Default is OFF, so the Kids apps keep their own tempo;
+  `Sound::new` now takes the clock internally (no signature change).
+  Clock::shared() is per-test-isolated under cfg(test).
+
 ### 2026-10-04: ChatGPT: friendly illustrated cat and voice mascots
 - Branch: gpt/kids-ux   Commits: d10fca6
 - Changed: src/apps/copy_cat.rs, src/apps/monster_mic.rs,
