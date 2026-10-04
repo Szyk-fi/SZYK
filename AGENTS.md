@@ -101,6 +101,23 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-04: ChatGPT: cohesive, readable screens for the ten Kids apps
+- Branch: gpt/kids-ux (from oracle-pulsar)   Commits: b2d4b81
+- Changed: draw() in critter_choir, rainbow_bells, copy_cat, bug_beats,
+  monster_mic, beat_lab, chord_garden, sound_detective, ear_quest, music_code;
+  src/apps/kids_kit.rs drawing helpers; AGENTS.md locks and log.
+- Status: done. Warm paper/teal chrome, tactile cards, selection outlines,
+  pad-location labels, readable recording/empty-clip states and shorter hints.
+- Tests: cargo test --bin portamax-sim apps::<id> for all ten (40 passed),
+  apps::kids_kit (5 passed), full cargo test --bin portamax-sim
+  (858 passed, 6 ignored, 0 failed). Temporary visual harness checked idle
+  and active renders and identical draw()/screen_extra pixels for all ten;
+  reviewed 640x360 screenshots, then removed the harness.
+- Notes for the other assistant: controls/audio unchanged; manifests and
+  docs unchanged. New kids_header/kids_footer/card helpers are opt-in;
+  existing generic helpers and the shared sound engine are unchanged.
+  No Bluey assets, branding or characters were added.
+
 ### 2026-10-04: Claude: ten synthesis blocks ported from Cardinal modules
 - Branch: cardinal-ports, fast-forwarded into oracle-pulsar   Commits: daebfce
 - Changed: src/synthesis/blocks.rs, src/synthesis/blocks/ports.rs (new),
