@@ -1,0 +1,9 @@
+id = "looper"
+name = "Looper"
+category = "instrument"
+description = "Four loops locked to the device clock: the first sets the tempo, the rest record on the bar, with overdub, undo and redo."
+audio_outputs = ["Looper"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Looper Level",
+]
