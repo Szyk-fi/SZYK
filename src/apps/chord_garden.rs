@@ -358,11 +358,11 @@ impl App for ChordGarden {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let sky = Rgb565::new(5, 12, 12);
-        let soil = Rgb565::new(10, 14, 6);
+        let sky = kit::rgb(218, 238, 227);
+        let soil = kit::rgb(210, 187, 149);
         kit::clear(fb, sky);
         kit::rect(fb, 0, 214, WIDTH as i32, 50, soil);
-        kit::header(fb, NAME, "AGES 10-12", Rgb565::new(3, 8, 8), kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 10-12");
         let g = self.garden.lock().unwrap().clone();
         let playing = self.playing_slot();
         for i in 0..4 {
@@ -373,21 +373,21 @@ impl App for ChordGarden {
             let r = 26 + (b * 8.0) as i32 + if playing == Some(i) { 6 } else { 0 };
             let top = 120;
             kit::rect(fb, x - 3, top, 6, 214 - top, Rgb565::new(8, 34, 8));
-            kit::round_rect(fb, x + 2, 170, 26, 12, 6, Rgb565::new(8, 40, 8));
+            kit::card(fb, x + 2, 170, 26, 12, 6, Rgb565::new(8, 40, 8));
             // Petals: one per chord note.
             let n = if c.seventh { 8 } else { 6 };
             for k in 0..n {
                 let a = k as f32 / n as f32 * std::f32::consts::TAU + b * 0.6;
-                kit::circle(fb, x + (a.cos() * r as f32) as i32, top + (a.sin() * r as f32) as i32, r / 2 + 3, kit::blend(col, kit::WHITE, b * 0.4));
+                kit::circle(fb, x + (a.cos() * r as f32) as i32, top + (a.sin() * r as f32) as i32, r / 2 + 3, kit::blend(col, kit::INK, b * 0.4));
             }
             kit::circle(fb, x, top, r / 2 + 4, Rgb565::new(31, 52, 10));
             kit::text(fb, NUMERALS[c.degree], x, top - 8, Size2::Medium, kit::BLACK, 0);
             if c.seventh {
-                kit::text(fb, "7", x + r / 2 + 6, top - 4, Size2::Small, kit::WHITE, 0);
+                kit::text(fb, "7", x + r / 2 + 6, top - 4, Size2::Small, kit::INK, 0);
             }
-            kit::text(fb, &chord_name(g.key, c), x, 222, Size2::Large, kit::WHITE, 0);
+            kit::text(fb, &chord_name(g.key, c), x, 222, Size2::Large, kit::INK, 0);
             if i == self.slot {
-                kit::round_rect(fb, x - 40, 256, 80, 5, 2, kit::WHITE);
+                kit::card(fb, x - 40, 256, 80, 5, 2, kit::INK);
             }
         }
         for &(x, y, age) in &self.sparkle {
@@ -398,26 +398,27 @@ impl App for ChordGarden {
         for (k, s) in SETTINGS.iter().enumerate() {
             let y = 44 + k as i32 * 52;
             let sel = k == self.setting;
-            kit::round_rect(fb, sx, y, 76, 46, 8, if sel { Rgb565::new(8, 22, 20) } else { Rgb565::new(4, 12, 12) });
+            kit::card(fb, sx, y, 76, 46, 8, if sel { kit::rgb(182, 216, 201) } else { kit::PAPER });
+            if sel { kit::outline(fb, sx, y, 76, 46, 8, 2, kit::TEAL); }
             let (label, value) = match s {
                 Setting::Key => ("key", format!("{} major", kit::note_name(g.key))),
                 Setting::Style => ("style", STYLES[g.style].to_string()),
                 Setting::Tempo => ("tempo", format!("{:.0} bpm", self.sound.tempo())),
             };
-            kit::text(fb, label, sx + 38, y + 6, Size2::Small, Rgb565::new(16, 36, 24), 0);
-            kit::text(fb, &value, sx + 38, y + 24, Size2::Small, kit::WHITE, 0);
+            kit::text(fb, label, sx + 38, y + 6, Size2::Small, kit::MUTED, 0);
+            kit::text(fb, &value, sx + 38, y + 24, Size2::Small, kit::INK, 0);
         }
         // Explanation and key.
-        kit::round_rect(fb, 10, 270, 620, 60, 10, Rgb565::new(3, 8, 8));
-        kit::paragraph(fb, &self.explain(), 20, 278, 440, Size2::Small, kit::WHITE);
+        kit::card(fb, 10, 270, 620, 60, 10, kit::PAPER);
+        kit::paragraph(fb, &self.explain(), 20, 278, 440, Size2::Small, kit::INK);
         for (k, (label, f)) in [("home", 0), ("away", 1), ("pull home", 2)].iter().enumerate() {
             let x = 470 + (k as i32 % 2) * 76;
             let y = 280 + (k as i32 / 2) * 20;
             kit::circle(fb, x, y + 6, 6, function_color(*f));
-            kit::text(fb, label, x + 10, y, Size2::Small, kit::WHITE, -1);
+            kit::text(fb, label, x + 10, y, Size2::Small, kit::INK, -1);
         }
         let play = if self.sound.playing() { "SELECT stop" } else { "SELECT play" };
-        kit::footer(fb, &format!("Row 1: pick a flower  Rows 2-3: plant a chord / 7th  Row 4: melody   {play}   hold: famous"), Rgb565::new(3, 8, 8), Rgb565::new(18, 40, 26));
+        kit::kids_footer(fb, &format!("R1 flower  R2 chord  R3 seventh  R4 melody   {play}   hold SELECT: famous"));
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

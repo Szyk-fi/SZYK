@@ -19,7 +19,6 @@ use crate::audio::AudioProcessor;
 use crate::display::FrameBuffer;
 use crate::led_output::PadColor;
 use crate::apps::kids_kit::{self as kit, Note, Rng, Size2, Sound, Tone};
-use embedded_graphics::pixelcolor::Rgb565;
 use std::sync::Arc;
 
 const NAME: &str = "Ear Quest";
@@ -260,11 +259,11 @@ impl App for EarQuest {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = Rgb565::new(6, 4, 12);
-        let panel = Rgb565::new(10, 8, 20);
-        let dim = Rgb565::new(18, 30, 24);
+        let bg = kit::PAPER;
+        let panel = kit::rgb(225, 216, 235);
+        let dim = kit::MUTED;
         kit::clear(fb, bg);
-        kit::header(fb, NAME, "AGES 10-12", panel, kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 10-12");
 
         // The quest map down the left: a path of five stops.
         for (i, name) in QUESTS.iter().enumerate() {
@@ -277,7 +276,7 @@ impl App for EarQuest {
             let c = if here { kit::rgb(250, 200, 60) } else if open { kit::rgb(110, 200, 150) } else { panel };
             kit::circle(fb, 29, y + 10, 14, c);
             kit::text(fb, &(i + 1).to_string(), 29, y + 2, Size2::Medium, if open { kit::BLACK } else { dim }, 0);
-            kit::text(fb, name, 50, y + 2, Size2::Small, if open { kit::WHITE } else { dim }, -1);
+            kit::text(fb, name, 50, y + 2, Size2::Small, if open { kit::INK } else { dim }, -1);
             let progress = if open { format!("{} right", self.right[i]) } else { "locked".into() };
             kit::text(fb, &progress, 50, y + 14, Size2::Small, dim, -1);
         }
@@ -285,7 +284,7 @@ impl App for EarQuest {
         // The question.
         let (qx, qw) = (180, 450);
         let title = if !self.started { "Press any pad to start".to_string() } else { QUESTS[self.quest].to_string() };
-        kit::text(fb, &title, qx + qw / 2, 40, Size2::Large, kit::WHITE, 0);
+        kit::text(fb, &title, qx + qw / 2, 40, if self.started { Size2::Large } else { Size2::Medium }, kit::INK, 0);
         let listening = self.playing.is_some();
         let say = match self.phase {
             _ if !self.started => "Listen, then answer on the pads.".to_string(),
@@ -294,13 +293,13 @@ impl App for EarQuest {
             Phase::Right(_) => "Right!".to_string(),
             Phase::Wrong(_) => format!("Not quite. {} Listen again.", self.q.explain),
         };
-        kit::text(fb, &say, qx + qw / 2, 76, Size2::Small, if matches!(self.phase, Phase::Right(_)) { kit::rgb(120, 230, 140) } else { dim }, 0);
+        kit::paragraph(fb, &say, qx + 8, 72, qw - 16, Size2::Small, if matches!(self.phase, Phase::Right(_)) { kit::TEAL } else { dim });
 
         // The answer mats, laid out like the pads.
         let n = self.q.choices.len();
         let colors = [kit::rgb(80, 140, 240), kit::rgb(240, 200, 60), kit::rgb(90, 200, 110), kit::rgb(235, 80, 80)];
         for (k, label) in self.q.choices.iter().enumerate() {
-            let (x, y, w, h) = if n == 2 { (qx + k as i32 * (qw / 2), 96, qw / 2 - 10, 200) } else { (qx + (k as i32 % 2) * (qw / 2), 96 + (k as i32 / 2) * 102, qw / 2 - 10, 96) };
+            let (x, y, w, h) = if n == 2 { (qx + k as i32 * (qw / 2), 108, qw / 2 - 10, 188) } else { (qx + (k as i32 % 2) * (qw / 2), 108 + (k as i32 / 2) * 96, qw / 2 - 10, 90) };
             let mut c = kit::blend(colors[k], bg, 0.35);
             if let Some(pick) = self.picked {
                 if k == self.q.answer && self.phase != Phase::Asking {
@@ -309,18 +308,20 @@ impl App for EarQuest {
                     c = kit::blend(colors[k], bg, 0.7);
                 }
             }
-            kit::round_rect(fb, x, y, w, h, 14, c);
-            kit::text(fb, label, x + w / 2, y + h / 2 - 8, Size2::Medium, kit::WHITE, 0);
+            kit::card(fb, x, y, w, h, 14, c);
+            kit::text(fb, label, x + w / 2, y + h / 2 - 8, Size2::Medium, kit::INK, 0);
+            let pads = if n == 2 { ["LEFT PADS", "RIGHT PADS"][k] } else { ["TOP LEFT", "TOP RIGHT", "BOTTOM LEFT", "BOTTOM RIGHT"][k] };
+            kit::text(fb, pads, x + w / 2, y + h - 22, Size2::Small, kit::INK, 0);
             if self.phase != Phase::Asking && k == self.q.answer {
-                kit::star(fb, x + w - 24, y + 22, 12, kit::WHITE);
+                kit::star(fb, x + w - 24, y + 22, 12, kit::INK);
             }
         }
-        kit::text(fb, &format!("streak {}   best {}", self.streak, self.best_streak), qx + qw / 2, 304, Size2::Medium, kit::WHITE, 0);
+        kit::text(fb, &format!("streak {}   best {}", self.streak, self.best_streak), qx + qw / 2, 304, Size2::Medium, kit::INK, 0);
         if self.unlocked + 1 < QUESTS.len() {
             let need = UNLOCK_AFTER.saturating_sub(self.right[self.unlocked]);
             kit::text(fb, &format!("{need} more right in quest {} unlocks quest {}", self.unlocked + 1, self.unlocked + 2), qx + qw / 2, 322, Size2::Small, dim, 0);
         }
-        kit::footer(fb, "pads: answer   SELECT: hear it again   up/down: quest   hold SELECT: skip", panel, dim);
+        kit::kids_footer(fb, "pads: answer   SELECT: hear it again   up/down: quest   hold SELECT: skip");
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

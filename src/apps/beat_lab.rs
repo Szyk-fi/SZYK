@@ -22,7 +22,6 @@ use crate::audio::AudioProcessor;
 use crate::display::{FrameBuffer, WIDTH};
 use crate::led_output::PadColor;
 use crate::apps::kids_kit::{self as kit, Drum, Ev, Size2, Song, Sound};
-use embedded_graphics::pixelcolor::Rgb565;
 use std::sync::{Arc, Mutex};
 
 const NAME: &str = "Beat Lab";
@@ -329,20 +328,20 @@ impl App for BeatLab {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = Rgb565::new(3, 6, 9);
-        let panel = Rgb565::new(5, 11, 15);
-        let ink = Rgb565::new(26, 54, 29);
-        let dim = Rgb565::new(12, 26, 16);
+        let bg = kit::PAPER;
+        let panel = kit::rgb(222, 235, 225);
+        let ink = kit::INK;
+        let dim = kit::MUTED;
         let track_colors = [kit::rgb(240, 90, 80), kit::rgb(250, 190, 60), kit::rgb(80, 210, 200), kit::rgb(170, 120, 240)];
         kit::clear(fb, bg);
-        kit::header(fb, NAME, "AGES 10-12", panel, kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 10-12");
         let k = self.kit.lock().unwrap().clone();
 
         // The menu.
         for (i, r) in ROWS.iter().enumerate() {
             let y = 40 + i as i32 * 34;
             let sel = i == self.row;
-            kit::round_rect(fb, 8, y, 150, 30, 8, if sel { kit::blend(panel, kit::WHITE, 0.2) } else { panel });
+            kit::card(fb, 8, y, 150, 30, 8, if sel { kit::blend(panel, kit::TEAL, 0.18) } else { panel });
             let (label, value, c) = match r {
                 Row::Track(t) => (TRACK_NAMES[*t].to_string(), TRACK_SOUNDS[*t][k.sounds[*t] % TRACK_SOUNDS[*t].len()].name().to_string(), track_colors[*t]),
                 Row::Tempo => ("Tempo".into(), format!("{:.0} bpm", self.sound.tempo()), ink),
@@ -350,12 +349,13 @@ impl App for BeatLab {
                 Row::Style => ("Style".into(), STYLES[self.style].name.to_string(), ink),
             };
             if let Row::Track(t) = r {
-                kit::round_rect(fb, 12, y + 6, 6, 18, 3, kit::blend(c, kit::WHITE, self.flash[*t]));
+                kit::card(fb, 12, y + 6, 6, 18, 3, kit::blend(c, kit::INK, self.flash[*t]));
             }
-            kit::text(fb, &label, 24, y + 3, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
-            kit::text(fb, &value, 24, y + 15, Size2::Small, c, -1);
+            kit::text(fb, &label, 24, y + 3, Size2::Small, if sel { kit::INK } else { dim }, -1);
+            kit::text(fb, &value, 24, y + 15, Size2::Small, ink, -1);
             if sel {
-                kit::text(fb, "< >", 150, y + 9, Size2::Small, kit::WHITE, 1);
+                kit::outline(fb, 8, y, 150, 30, 8, 2, kit::TEAL);
+                kit::text(fb, "< >", 150, y + 9, Size2::Small, kit::INK, 1);
             }
         }
 
@@ -367,25 +367,25 @@ impl App for BeatLab {
             let y = gy + t as i32 * (chh + 6);
             let sel = t == self.track;
             if sel {
-                kit::round_rect(fb, gx - 6, y - 4, 16 * cw + 12 + 6, chh + 8, 8, kit::blend(panel, track_colors[t], 0.25));
+                kit::card(fb, gx - 6, y - 4, 16 * cw + 12 + 6, chh + 8, 8, kit::blend(panel, track_colors[t], 0.25));
             }
             for s in 0..16 {
                 let x = gx + s as i32 * cw + (s as i32 / 4) * 4;
-                let base = if s % 4 == 0 { Rgb565::new(7, 15, 18) } else { panel };
+                let base = if s % 4 == 0 { kit::rgb(194, 216, 206) } else { panel };
                 let l = k.pattern[t][s];
                 let c = match l {
                     0 => base,
                     1 => kit::blend(track_colors[t], bg, 0.6),
                     2 => track_colors[t],
-                    _ => kit::blend(track_colors[t], kit::WHITE, 0.45),
+                    _ => kit::blend(track_colors[t], kit::INK, 0.45),
                 };
                 let h = match l {
                     1 => chh / 2,
                     _ => chh,
                 };
-                kit::round_rect(fb, x, y + chh - h, cw - 4, h, 5, c);
+                kit::card(fb, x, y + chh - h, cw - 4, h, 5, c);
                 if now == Some(s) {
-                    kit::outline(fb, x - 2, y - 2, cw, chh + 4, 6, 2, kit::WHITE);
+                    kit::outline(fb, x - 2, y - 2, cw, chh + 4, 6, 2, kit::INK);
                 }
             }
         }
@@ -403,13 +403,13 @@ impl App for BeatLab {
 
         // What the selected row means.
         let ty = 268;
-        kit::round_rect(fb, 172, ty, WIDTH as i32 - 180, 64, 10, panel);
-        kit::paragraph(fb, &self.tip(), 182, ty + 8, WIDTH as i32 - 200, Size2::Small, kit::WHITE);
+        kit::card(fb, 172, ty, WIDTH as i32 - 180, 64, 10, panel);
+        kit::paragraph(fb, &self.tip(), 182, ty + 8, WIDTH as i32 - 200, Size2::Small, kit::INK);
         if self.style_loaded.is_none() && ROWS[self.row] == Row::Style {
             kit::text(fb, "(your own beat now: left/right loads a style)", 182, ty + 46, Size2::Small, dim, -1);
         }
         let play = if self.sound.playing() { "SELECT: stop" } else { "SELECT: play" };
-        kit::footer(fb, &format!("Pads: {} steps (tap: on, loud, soft, off)   up/down: menu   {play}   hold: clear", TRACK_NAMES[self.track]), panel, dim);
+        kit::kids_footer(fb, &format!("{} pads: on/loud/soft/off   up/down: menu   {play}   hold SELECT: clear", TRACK_NAMES[self.track]));
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

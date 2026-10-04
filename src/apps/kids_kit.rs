@@ -1302,6 +1302,40 @@ impl DrawTarget for Scaled<'_> {
     }
 }
 
+/// Warm paper and dark ink are confined to the ten Kids screens. Other
+/// apps also use the generic header/footer, so those helpers stay unchanged.
+pub const PAPER: Rgb565 = Rgb565::new(31, 59, 27);
+pub const INK: Rgb565 = Rgb565::new(5, 13, 9);
+pub const MUTED: Rgb565 = Rgb565::new(10, 25, 14);
+pub const TEAL: Rgb565 = Rgb565::new(4, 27, 14);
+
+/// A tactile card: a small offset shadow and a quiet edge, with no image
+/// assets or changes to the hardware/Slint rendering path.
+pub fn card(fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32, r: u32, c: Rgb565) {
+    round_rect(fb, x, y + 2, w, h, r, blend(c, INK, 0.25));
+    round_rect(fb, x, y, w, h, r, c);
+    outline(fb, x, y, w, h, r, 1, blend(c, INK, 0.12));
+}
+
+pub fn kids_header(fb: &mut FrameBuffer, title: &str, ages: &str) {
+    rect(fb, 0, 0, WIDTH as i32, 32, PAPER);
+    round_rect(fb, 8, 6, 4, 20, 2, TEAL);
+    text(fb, title, 20, 8, Size2::Medium, INK, -1);
+    let x = 32 + text_width(title, Size2::Medium);
+    round_rect(fb, x, 8, text_width(ages, Size2::Small) + 12, 16, 8, blend(PAPER, TEAL, 0.12));
+    text(fb, ages, x + 6, 10, Size2::Small, TEAL, -1);
+    round_rect(fb, WIDTH as i32 - 82, 6, 74, 20, 10, TEAL);
+    text(fb, "F1 home", WIDTH as i32 - 45, 10, Size2::Small, WHITE, 0);
+}
+
+/// Callers keep hints below 102 characters so every control fits on the
+/// 640-pixel display at the native small font size.
+pub fn kids_footer(fb: &mut FrameBuffer, s: &str) {
+    rect(fb, 0, HEIGHT as i32 - 22, WIDTH as i32, 22, PAPER);
+    line(fb, 12, HEIGHT as i32 - 22, WIDTH as i32 - 12, HEIGHT as i32 - 22, 1, blend(PAPER, TEAL, 0.2));
+    text(fb, s, 12, HEIGHT as i32 - 17, Size2::Small, INK, -1);
+}
+
 /// The strip along the top of every Kids screen: the app's name, which
 /// age group it's for, and the way home.
 pub fn header(fb: &mut FrameBuffer, title: &str, ages: &str, bg: Rgb565, ink: Rgb565) {

@@ -365,7 +365,7 @@ impl App for CritterChoir {
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
         let choir = self.choir_index();
-        let (sky, ground) = if choir == 0 { (Rgb565::new(18, 48, 30), Rgb565::new(12, 40, 8)) } else { (Rgb565::new(14, 40, 28), Rgb565::new(6, 30, 20)) };
+        let (sky, ground) = if choir == 0 { (kit::rgb(207, 232, 236), kit::rgb(109, 157, 98)) } else { (kit::rgb(215, 231, 221), kit::rgb(73, 142, 126)) };
         kit::clear(fb, sky);
         kit::rect(fb, 0, 250, WIDTH as i32, 110, ground);
         if choir == 1 {
@@ -379,8 +379,13 @@ impl App for CritterChoir {
             kit::rect(fb, 0, 222, WIDTH as i32, 6, Rgb565::new(24, 44, 18));
             kit::rect(fb, 0, 242, WIDTH as i32, 6, Rgb565::new(24, 44, 18));
         }
+        for (x, y) in [(82, 92), (290, 96)] {
+            kit::round_rect(fb, x - 30, y, 72, 16, 8, kit::PAPER);
+            kit::circle(fb, x, y, 16, kit::PAPER);
+            kit::circle(fb, x + 20, y + 2, 12, kit::PAPER);
+        }
         kit::circle(fb, 580, 70, 28, Rgb565::new(31, 56, 10));
-        kit::header(fb, NAME, "AGES 6-9", Rgb565::new(6, 18, 14), kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 6-9");
         kit::text(fb, CHOIR_NAMES[choir], 320, 40, Size2::Large, Rgb565::new(4, 14, 10), 0);
 
         for col in 0..4 {
@@ -402,7 +407,7 @@ impl App for CritterChoir {
             kit::circle(fb, x as i32, y as i32, 6, c);
             kit::rect(fb, x as i32 + 4, y as i32 - 18, 3, 18, c);
         }
-        kit::footer(fb, "Each column of pads is a critter (low notes at the bottom).   < >: other choir   F3: sing a song", Rgb565::new(6, 18, 14), kit::WHITE);
+        kit::kids_footer(fb, "Each column of pads is a critter (low notes at the bottom).   < >: other choir   F3: sing a song");
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

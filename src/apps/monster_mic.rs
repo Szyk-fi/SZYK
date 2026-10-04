@@ -447,14 +447,14 @@ impl App for MonsterMic {
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
         let v = self.voice();
-        let bg = kit::blend(v.color(), kit::BLACK, 0.75);
+        let bg = kit::blend(kit::PAPER, v.color(), 0.12);
         kit::clear(fb, bg);
-        kit::header(fb, NAME, "AGES 6-9", kit::blend(bg, kit::BLACK, 0.5), kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 6-9");
 
         // The face of the current voice; its mouth follows your voice.
         let level = self.sound.peak();
         draw_face(fb, v, 170, 170, level, self.frame);
-        kit::text(fb, v.name(), 170, 282, Size2::Large, kit::WHITE, 0);
+        kit::text(fb, v.name(), 170, 282, Size2::Large, kit::INK, 0);
 
         // The eight voices as the top two rows of pads.
         let (px, py) = (340, 44);
@@ -462,13 +462,14 @@ impl App for MonsterMic {
             let x = px + (i as i32 % 4) * 72;
             let y = py + (i as i32 / 4) * 60;
             let sel = *vv == v;
-            kit::round_rect(fb, x, y, 66, 54, 10, if sel { vv.color() } else { kit::blend(vv.color(), kit::BLACK, 0.55) });
-            kit::text(fb, vv.name(), x + 33, y + 21, Size2::Small, if sel { kit::BLACK } else { kit::WHITE }, 0);
+            kit::card(fb, x, y, 66, 54, 10, if sel { vv.color() } else { kit::blend(kit::PAPER, vv.color(), 0.2) });
+            if sel { kit::outline(fb, x - 2, y - 2, 70, 58, 12, 2, kit::TEAL); }
+            kit::text(fb, vv.name(), x + 33, y + 21, Size2::Small, kit::INK, 0);
         }
         // The parrot: record pad and seven pitch pads.
         let y2 = py + 130;
         let rec = self.s.recording.load(Ordering::Relaxed);
-        kit::round_rect(fb, px, y2, 66, 54, 10, if rec { kit::rgb(250, 60, 60) } else { kit::rgb(120, 40, 40) });
+        kit::card(fb, px, y2, 66, 54, 10, if rec { kit::rgb(250, 60, 60) } else { kit::rgb(120, 40, 40) });
         kit::circle(fb, px + 33, y2 + 20, 9, kit::WHITE);
         kit::text(fb, "hold", px + 33, y2 + 34, Size2::Small, kit::WHITE, 0);
         let has_clip = self.clip_seconds() > 0.05;
@@ -477,31 +478,33 @@ impl App for MonsterMic {
             let x = px + (i as i32 % 4) * 72;
             let y = y2 + (i as i32 / 4) * 60;
             let g = self.parrot_glow[k];
-            let c = if has_clip { kit::blend(kit::rainbow(k), kit::WHITE, g * 0.6) } else { kit::blend(kit::rainbow(k), kit::BLACK, 0.7) };
-            kit::round_rect(fb, x, y, 66, 54, 10, c);
+            let c = if has_clip { kit::blend(kit::rainbow(k), kit::WHITE, g * 0.6) } else { kit::blend(kit::PAPER, kit::rainbow(k), 0.15) };
+            kit::card(fb, x, y, 66, 54, 10, c);
             let label = match PARROT_PITCHES[k] {
                 0 => "parrot".to_string(),
                 n => format!("{n:+}"),
             };
+            if !has_clip { kit::text(fb, "no clip", x + 33, y + 36, Size2::Small, kit::MUTED, 0); }
             kit::text(fb, &label, x + 33, y + 21, Size2::Small, kit::BLACK, 0);
         }
         // The clip and the mic.
         let ly = 304;
-        kit::round_rect(fb, px, ly, 282, 14, 7, kit::blend(bg, kit::BLACK, 0.5));
+        kit::card(fb, px, ly, 282, 14, 7, kit::blend(bg, kit::TEAL, 0.15));
         let frac = (self.clip_seconds() / CLIP_SECONDS).min(1.0);
-        kit::round_rect(fb, px, ly, (282.0 * frac) as i32 + 6, 14, 7, if rec { kit::rgb(250, 60, 60) } else { kit::rgb(120, 220, 140) });
+        kit::card(fb, px, ly, (282.0 * frac) as i32 + 6, 14, 7, if rec { kit::rgb(250, 60, 60) } else { kit::rgb(120, 220, 140) });
         let head = self.s.playhead.get();
         if head >= 0.0 {
             kit::rect(fb, px + (282.0 * frac * head) as i32, ly - 3, 3, 20, kit::WHITE);
         }
+        let source_name: String = self.bus.source_name(self.source).chars().take(35).collect();
         let status = if self.source == NO_SOURCE {
             "No microphone: ask a grown-up to pick one in Settings > Input".to_string()
         } else if self.s.mic.get() <= 0.0 {
-            format!("Live mic off (up/down)   input: {}", self.bus.source_name(self.source))
+            format!("Live mic off (up/down)   input: {}", source_name)
         } else {
-            format!("Live mic {:.0}% (up/down)   input: {} (< >)", self.s.mic.get() * 100.0, self.bus.source_name(self.source))
+            format!("Live mic {:.0}% (up/down)   input: {} (< >)", self.s.mic.get() * 100.0, source_name)
         };
-        kit::footer(fb, &status, kit::blend(bg, kit::BLACK, 0.5), kit::WHITE);
+        kit::kids_footer(fb, &status);
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

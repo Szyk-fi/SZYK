@@ -35,7 +35,6 @@ const ROOT: i32 = 72; // C5: a glockenspiel sounds two octaves above its written
 
 const SKY: Rgb565 = Rgb565::new(24, 52, 31);
 const SKY2: Rgb565 = Rgb565::new(28, 58, 31);
-const INK: Rgb565 = Rgb565::new(6, 12, 14);
 const WOOD: Rgb565 = Rgb565::new(18, 26, 8);
 
 /// Bar `i` (0 = lowest) of the 16.
@@ -302,17 +301,17 @@ impl App for RainbowBells {
         for k in 0..12 {
             kit::rect(fb, 0, k * 30, WIDTH as i32, 30, kit::blend(SKY, SKY2, k as f32 / 11.0));
         }
-        kit::header(fb, NAME, "AGES 6-9", Rgb565::new(10, 22, 26), kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 6-9");
         // Two rails the bars rest on.
-        kit::round_rect(fb, 8, 128, 624, 10, 4, WOOD);
-        kit::round_rect(fb, 8, 262, 624, 10, 4, WOOD);
+        kit::card(fb, 8, 128, 624, 10, 4, WOOD);
+        kit::card(fb, 8, 262, 624, 10, 4, WOOD);
         for i in 0..16 {
             let (x, y, w, h) = bar_rect(i);
             let g = self.glow[i];
             let bounce = (g * g * 6.0) as i32;
             let c = kit::blend(bar_color(i), kit::WHITE, g * 0.6);
-            kit::round_rect(fb, x + 2, y + 4 + bounce, w, h, 8, kit::blend(c, kit::BLACK, 0.45));
-            kit::round_rect(fb, x, y + bounce, w, h, 8, c);
+            kit::card(fb, x + 2, y + 4 + bounce, w, h, 8, kit::blend(c, kit::BLACK, 0.45));
+            kit::card(fb, x, y + bounce, w, h, 8, c);
             // The two nail holes a real bar hangs on.
             kit::circle(fb, x + w / 2, 133 + bounce, 3, kit::blend(c, kit::BLACK, 0.5));
             kit::circle(fb, x + w / 2, 267 + bounce, 3, kit::blend(c, kit::BLACK, 0.5));
@@ -325,7 +324,7 @@ impl App for RainbowBells {
         }
 
         // The sound and the loop.
-        kit::round_rect(fb, 12, 290, 260, 44, 12, Rgb565::new(10, 22, 26));
+        kit::card(fb, 12, 290, 260, 44, 12, kit::TEAL);
         kit::text(fb, "<", 26, 296, Size2::Large, kit::WHITE, -1);
         kit::text(fb, TONES[self.tone].name(), 142, 302, Size2::Medium, kit::WHITE, 0);
         kit::text(fb, ">", 242, 296, Size2::Large, kit::WHITE, -1);
@@ -342,10 +341,10 @@ impl App for RainbowBells {
             Rec::Looping => (if self.sound.playing() { "Looping! SELECT: add more" } else { "Loop stopped. F3 to play" }, Rgb565::new(8, 44, 14)),
             Rec::Overdub => ("Adding more... SELECT: done", Rgb565::new(31, 30, 4)),
         };
-        kit::round_rect(fb, 284, 290, 344, 44, 12, Rgb565::new(10, 22, 26));
+        kit::card(fb, 284, 290, 344, 44, 12, kit::TEAL);
         let pulse = matches!(self.rec, Rec::First | Rec::Overdub) && (self.frame / 15) % 2 == 0;
         kit::circle(fb, 310, 312, if pulse { 13 } else { 11 }, c);
-        kit::text(fb, label, 334, 298, Size2::Medium, kit::WHITE, -1);
+        kit::text(fb, label, 334, 298, Size2::Small, kit::WHITE, -1);
         if self.rec != Rec::Empty {
             // How far round the loop we are.
             let t = self.take.lock().unwrap();
@@ -354,10 +353,10 @@ impl App for RainbowBells {
                 (Some(s), _) => s as f32 / MAX_STEPS as f32,
                 _ => 0.0,
             };
-            kit::round_rect(fb, 334, 318, 280, 8, 4, Rgb565::new(16, 32, 18));
-            kit::round_rect(fb, 334, 318, (280.0 * frac) as i32 + 8, 8, 4, c);
+            kit::card(fb, 334, 318, 280, 8, 4, Rgb565::new(16, 32, 18));
+            kit::card(fb, 334, 318, (280.0 * frac) as i32 + 8, 8, 4, c);
         }
-        kit::text(fb, "hold SELECT: start over   up/down: high/low", 320, 342, Size2::Small, INK, 0);
+        kit::kids_footer(fb, "Pads: play   left/right: sound   up/down: octave   SELECT: record / loop   hold SELECT: clear");
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

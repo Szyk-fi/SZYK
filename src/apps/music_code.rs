@@ -329,11 +329,11 @@ impl App for MusicCode {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = Rgb565::new(3, 5, 8);
-        let panel = Rgb565::new(6, 10, 16);
-        let dim = Rgb565::new(14, 28, 20);
+        let bg = kit::PAPER;
+        let panel = kit::rgb(222, 235, 225);
+        let dim = kit::MUTED;
         kit::clear(fb, bg);
-        kit::header(fb, NAME, "AGES 10-12", panel, kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 10-12");
         let prog = self.program.lock().unwrap().clone();
         let running = self.sound.playing();
         let pc = self.shown_pc.load(Ordering::Relaxed);
@@ -346,10 +346,11 @@ impl App for MusicCode {
             let live = running && i == pc;
             let flash = matches!(self.flash, Some((j, _)) if j == i);
             let c = if live || flash { kit::blend(b.color(), kit::WHITE, 0.5) } else { kit::blend(b.color(), bg, 0.25) };
-            kit::round_rect(fb, x, y, bw, bh, 8, c);
+            kit::card(fb, x, y, bw, bh, 8, c);
             kit::text(fb, b.label(), x + bw / 2, y + bh / 2 - 6, Size2::Small, kit::BLACK, 0);
             if live {
-                kit::triangle(fb, [(x + bw / 2 - 6, y + bh + 2), (x + bw / 2 + 6, y + bh + 2), (x + bw / 2, y + bh + 9)], kit::WHITE);
+                kit::outline(fb, x, y, bw, bh, 8, 2, kit::TEAL);
+                kit::triangle(fb, [(x + bw / 2 - 6, y + bh + 2), (x + bw / 2 + 6, y + bh + 2), (x + bw / 2, y + bh + 9)], kit::INK);
             }
         }
         // The cursor: a caret where the next block goes.
@@ -375,12 +376,12 @@ impl App for MusicCode {
             kit::text(fb, kit::note_name(kit::scale_note(ROOT, &kit::MAJOR, d)), lx - 34, y - 6, Size2::Small, dim, 1);
         }
         if running && !(0..8).contains(&note) {
-            kit::text(fb, &format!("{note:+}"), lx, ly + 132, Size2::Small, kit::WHITE, 0);
+            kit::text(fb, &format!("{note:+}"), lx, ly + 132, Size2::Small, kit::INK, 0);
         }
 
         // What the block does, and the pad map.
-        kit::round_rect(fb, 12, 200, 520, 40, 8, panel);
-        kit::paragraph(fb, &self.explain(), 20, 206, 504, Size2::Small, kit::WHITE);
+        kit::card(fb, 12, 200, 520, 40, 8, panel);
+        kit::paragraph(fb, &self.explain(), 20, 206, 504, Size2::Small, kit::INK);
         let (gx, gy, gw, gh) = (12, 248, 128, 18);
         for p in 0..16 {
             let x = gx + (p as i32 % 4) * (gw + 4);
@@ -392,11 +393,11 @@ impl App for MusicCode {
                 14 => ("delete", panel),
                 _ => (if running { "STOP" } else { "RUN" }, kit::rgb(60, 120, 70)),
             };
-            kit::round_rect(fb, x, y, gw, gh, 5, c);
-            kit::text(fb, label, x + gw / 2, y + 3, Size2::Small, kit::WHITE, 0);
+            kit::card(fb, x, y, gw, gh, 5, c);
+            kit::text(fb, label, x + gw / 2, y + 3, Size2::Small, kit::INK, 0);
         }
         let tone = TONES[self.tone.load(Ordering::Relaxed) % TONES.len()].name();
-        kit::footer(fb, &format!("{} of {MAX_BLOCKS} blocks   sound: {tone} (up/down)   left/right: cursor   hold SELECT: clear", prog.len()), panel, dim);
+        kit::kids_footer(fb, &format!("{}/{MAX_BLOCKS} blocks   up/down: {tone}   left/right: cursor   hold SELECT: clear", prog.len()));
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

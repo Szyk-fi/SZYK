@@ -233,19 +233,20 @@ impl App for CopyCat {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = Rgb565::new(25, 50, 26);
+        let bg = kit::PAPER;
         kit::clear(fb, bg);
-        kit::header(fb, NAME, "AGES 6-9", Rgb565::new(12, 20, 16), kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 6-9");
 
         // The four mats, laid out like the pads.
         for m in 0..4 {
             let x = 24 + (m as i32 % 2) * 152;
-            let y = 44 + (m as i32 / 2) * 150;
+            let y = 44 + (m as i32 / 2) * 142;
             let g = self.glow[m];
-            let c = kit::blend(kit::blend(mat_color(m), kit::BLACK, 0.25), kit::WHITE, g * 0.7);
+            let c = kit::blend(mat_color(m), kit::WHITE, g * 0.7);
             let grow = (g * 6.0) as i32;
-            kit::round_rect(fb, x + 4, y + 6, 140, 138, 22, kit::blend(bg, kit::BLACK, 0.25));
-            kit::round_rect(fb, x - grow, y - grow, 140 + 2 * grow, 138 + 2 * grow, 22, c);
+            kit::round_rect(fb, x + 4, y + 6, 140, 130, 22, kit::blend(bg, kit::BLACK, 0.25));
+            kit::card(fb, x - grow, y - grow, 140 + 2 * grow, 130 + 2 * grow, 22, c);
+            kit::text(fb, ["top left", "top right", "bottom left", "bottom right"][m], x + 70, y + 106, Size2::Small, kit::INK, 0);
             if g > 0.3 {
                 kit::star(fb, x + 70, y + 69, 28 + (g * 10.0) as i32, kit::WHITE);
             }
@@ -307,21 +308,22 @@ impl App for CopyCat {
         // Stars and tries.
         let stars = self.score.min(10) as i32;
         for k in 0..stars {
-            kit::star(fb, 344 + k * 26, 318, 11, Rgb565::new(31, 52, 4));
+            kit::star(fb, 344 + k * 26, 304, 11, Rgb565::new(31, 52, 4));
         }
         if self.score > 10 {
-            kit::text(fb, &format!("x{}", self.score), 344 + 10 * 26, 310, Size2::Medium, kit::BLACK, -1);
+            kit::text(fb, &format!("x{}", self.score), 344 + 10 * 26, 296, Size2::Medium, kit::BLACK, -1);
         }
         for k in 0..LIVES as i32 {
             let c = if (k as u32) < self.lives { Rgb565::new(30, 12, 12) } else { Rgb565::new(18, 34, 18) };
-            kit::circle(fb, 586 - k * 26 - 5, 336, 7, c);
-            kit::circle(fb, 586 - k * 26 + 5, 336, 7, c);
-            kit::triangle(fb, [(586 - k * 26 - 12, 338), (586 - k * 26 + 12, 338), (586 - k * 26, 352)], c);
+            kit::circle(fb, 586 - k * 26 - 5, 322, 7, c);
+            kit::circle(fb, 586 - k * 26 + 5, 322, 7, c);
+            kit::triangle(fb, [(586 - k * 26 - 12, 324), (586 - k * 26 + 12, 324), (586 - k * 26, 334)], c);
         }
-        kit::text(fb, &format!("best {}", self.best), 344, 336, Size2::Small, Rgb565::new(8, 18, 12), -1);
+        kit::text(fb, &format!("best {}", self.best), 344, 322, Size2::Small, Rgb565::new(8, 18, 12), -1);
         if let State::Copying { i } = self.state {
             kit::text(fb, &format!("{} of {}", i, self.tune.len()), 476, 140, Size2::Medium, Rgb565::new(6, 14, 10), 0);
         }
+        kit::kids_footer(fb, "Pads: copy the cat on matching mats   SELECT: start   F3: start / stop");
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

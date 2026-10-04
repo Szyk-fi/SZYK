@@ -205,30 +205,31 @@ impl App for BugBeats {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let grass = Rgb565::new(14, 44, 12);
+        let grass = kit::rgb(216, 233, 186);
         kit::clear(fb, grass);
         // Blades of grass.
         for k in 0..40 {
             let x = (k * 53 % 640) as i32;
             let y = 40 + (k * 97 % 300) as i32;
-            kit::line(fb, x, y, x + 3, y - 8, 2, Rgb565::new(10, 36, 8));
+            kit::line(fb, x, y, x + 3, y - 8, 2, kit::rgb(194, 217, 160));
         }
-        kit::header(fb, NAME, "AGES 6-9", Rgb565::new(6, 20, 6), kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 6-9");
         let p = *self.pattern.lock().unwrap();
         let col_now = self.column();
         let band = self.band();
         let (gx, gy, cw, ch) = (150, 40, 104, 64);
         if let Some(c) = col_now {
-            kit::round_rect(fb, gx + c as i32 * cw - 4, gy - 4, cw, ch * 4 + 4, 14, Rgb565::new(24, 56, 14));
+            kit::card(fb, gx + c as i32 * cw - 4, gy - 4, cw, ch * 4 + 4, 14, Rgb565::new(24, 56, 14));
         }
         for row in 0..4 {
             let y = gy + row as i32 * ch;
             // The sound's name on the left.
-            kit::round_rect(fb, 10, y + 10, 128, ch - 20, 10, kit::blend(bug_color(row), kit::BLACK, 0.3));
+            kit::card(fb, 10, y + 10, 128, ch - 20, 10, kit::blend(bug_color(row), kit::BLACK, 0.3));
             kit::text(fb, BANDS[band].1[row].name(), 74, y + ch / 2 - 8, Size2::Medium, kit::WHITE, 0);
             for col in 0..4 {
                 let x = gx + col as i32 * cw;
-                kit::round_rect(fb, x + 4, y + 4, cw - 16, ch - 8, 12, Rgb565::new(10, 34, 8));
+                kit::card(fb, x + 4, y + 4, cw - 16, ch - 8, 12, kit::PAPER);
+                kit::ring(fb, x + cw / 2 - 6, y + ch / 2, 5, 1, kit::rgb(180, 198, 152));
                 if p[row][col] {
                     let j = self.jump[row][col];
                     let hop = ((j * std::f32::consts::PI).sin() * 14.0) as i32;
@@ -244,7 +245,7 @@ impl App for BugBeats {
         }
 
         // Band and speed.
-        kit::round_rect(fb, 578, 50, 52, 140, 12, Rgb565::new(6, 20, 6));
+        kit::card(fb, 578, 50, 52, 140, 12, Rgb565::new(6, 20, 6));
         kit::text(fb, "band", 604, 58, Size2::Small, Rgb565::new(20, 50, 18), 0);
         kit::text(fb, BANDS[band].0, 604, 74, Size2::Small, kit::WHITE, 0);
         kit::text(fb, "< >", 604, 90, Size2::Small, Rgb565::new(20, 50, 18), 0);
@@ -257,7 +258,7 @@ impl App for BugBeats {
         kit::text(fb, "up/dn", 604, 174, Size2::Small, Rgb565::new(20, 50, 18), 0);
 
         let play = if self.sound.playing() { "SELECT: stop" } else { "SELECT: play" };
-        kit::footer(fb, &format!("Tap a pad to add a bug, tap again to shoo it.   {play}   hold SELECT: clear"), Rgb565::new(6, 20, 6), kit::WHITE);
+        kit::kids_footer(fb, &format!("Tap a pad to add a bug, tap again to shoo it.   {play}   hold SELECT: clear"));
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

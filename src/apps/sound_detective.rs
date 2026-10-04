@@ -22,7 +22,6 @@ use crate::audio::AudioProcessor;
 use crate::display::FrameBuffer;
 use crate::led_output::PadColor;
 use crate::apps::kids_kit::{self as kit, Extra, Rng, Size2, Sound, Svf};
-use embedded_graphics::pixelcolor::Rgb565;
 use std::f32::consts::TAU;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -306,13 +305,13 @@ impl App for SoundDetective {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = Rgb565::new(4, 6, 10);
-        let panel = Rgb565::new(7, 12, 18);
-        let ink = Rgb565::new(28, 56, 30);
-        let dim = Rgb565::new(14, 28, 18);
-        let good = kit::rgb(90, 220, 120);
+        let bg = kit::PAPER;
+        let panel = kit::rgb(223, 231, 242);
+        let ink = kit::INK;
+        let dim = kit::MUTED;
+        let good = kit::TEAL;
         kit::clear(fb, bg);
-        kit::header(fb, NAME, "AGES 10-12", panel, kit::WHITE);
+        kit::kids_header(fb, NAME, "AGES 10-12");
         kit::text(fb, &format!("Case {}   level {} of {}   score {}", self.case_no, self.level, LEVELS, self.score), 12, 38, Size2::Medium, ink, -1);
         // Solved-at-this-level dots.
         for k in 0..SOLVES_PER_LEVEL {
@@ -325,13 +324,14 @@ impl App for SoundDetective {
             let y = 64 + c as i32 * 40;
             let is_hidden = hidden.contains(&c);
             let sel = c == self.control;
-            let bgc = if sel { kit::blend(panel, kit::WHITE, 0.15) } else { panel };
-            kit::round_rect(fb, 10, y, 300, 36, 8, bgc);
+            let bgc = if sel { kit::blend(panel, kit::INK, 0.15) } else { panel };
+            kit::card(fb, 10, y, 300, 36, 8, bgc);
+            if sel { kit::outline(fb, 10, y, 300, 36, 8, 2, kit::TEAL); }
             let right = self.right.map(|r| r[c]).unwrap_or(false);
-            let name_c = if !is_hidden { dim } else if right { good } else { kit::WHITE };
+            let name_c = if !is_hidden { dim } else if right { good } else { kit::INK };
             kit::text(fb, CONTROL_NAMES[c], 20, y + 10, Size2::Medium, name_c, -1);
             if is_hidden {
-                kit::text(fb, &format!("< {} >", CHOICES[c][m[c]]), 300, y + 10, Size2::Medium, if sel { kit::WHITE } else { ink }, 1);
+                kit::text(fb, &format!("< {} >", CHOICES[c][m[c]]), 300, y + 10, Size2::Medium, if sel { kit::INK } else { ink }, 1);
                 if right {
                     kit::text(fb, "ok", 150, y + 12, Size2::Small, good, -1);
                 }
@@ -342,7 +342,7 @@ impl App for SoundDetective {
 
         // Your sound, drawn: one cycle of the wave and its envelope.
         let (px, py, pw, ph) = (326, 64, 300, 92);
-        kit::round_rect(fb, px, py, pw, ph, 8, panel);
+        kit::card(fb, px, py, pw, ph, 8, panel);
         kit::text(fb, "your wave", px + 8, py + 4, Size2::Small, dim, -1);
         let mut last = None;
         // A one-pole filter over the drawn cycle shows roughly what the
@@ -370,7 +370,7 @@ impl App for SoundDetective {
             }
         }
         let (ex, ey, eh) = (px, py + ph + 8, 60);
-        kit::round_rect(fb, ex, ey, pw, eh, 8, panel);
+        kit::card(fb, ex, ey, pw, eh, 8, panel);
         kit::text(fb, "your envelope", ex + 8, ey + 4, Size2::Small, dim, -1);
         let total = 2.2;
         let mut last = None;
@@ -387,15 +387,15 @@ impl App for SoundDetective {
         }
 
         // What the selected control does.
-        kit::round_rect(fb, 326, 232, 300, 92, 8, panel);
-        kit::paragraph(fb, about(self.control, m[self.control]), 336, 240, 284, Size2::Small, kit::WHITE);
+        kit::card(fb, 326, 232, 300, 92, 8, panel);
+        kit::paragraph(fb, about(self.control, m[self.control]), 336, 240, 284, Size2::Small, kit::INK);
         if self.message.1 > 0 {
-            kit::round_rect(fb, 10, 270, 300, 54, 8, kit::blend(panel, good, 0.25));
-            kit::paragraph(fb, &self.message.0, 20, 278, 284, Size2::Small, kit::WHITE);
+            kit::card(fb, 10, 270, 300, 54, 8, kit::blend(panel, good, 0.25));
+            kit::paragraph(fb, &self.message.0, 20, 278, 284, Size2::Small, kit::INK);
         } else {
             kit::paragraph(fb, "Pad 1: hear the mystery\nPad 2: hear yours\nPad 3 or SELECT: check   Pad 4: new case", 14, 274, 296, Size2::Small, dim);
         }
-        kit::footer(fb, "up/down: pick a control   left/right: turn it   other pads: play your sound   hold SELECT: new case", panel, dim);
+        kit::kids_footer(fb, "up/down: control   left/right: change   pads 5-16: play   hold SELECT: new case");
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
