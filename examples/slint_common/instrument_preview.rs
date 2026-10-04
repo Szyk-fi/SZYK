@@ -6,6 +6,9 @@ use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferTyp
 use slint::platform::{Platform, PlatformError, WindowAdapter};
 use slint::{PhysicalSize, Rgb8Pixel, SharedPixelBuffer};
 
+#[path = "atlas_howto.rs"]
+pub mod atlas_howto;
+
 pub fn render(directory: &str) {
     struct PreviewPlatform(Rc<MinimalSoftwareWindow>, Rc<std::cell::Cell<std::time::Duration>>);
     impl Platform for PreviewPlatform {

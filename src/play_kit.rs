@@ -246,12 +246,19 @@ struct SavedRoutes {
     pressure: Option<usize>,
 }
 
+/// Where moments and bindings are saved: the project's `saves/` folder,
+/// unless `PORTAMAX_SAVES_DIR` points elsewhere (screenshot and demo runs
+/// use a scratch folder so they never touch the player's own saves).
+fn saves_root() -> PathBuf {
+    std::env::var_os("PORTAMAX_SAVES_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/saves")))
+}
+
 const SOURCE_NAMES: [&str; 4] = ["Stick X", "Stick Y", "Left hand", "Right hand"];
 
 impl PlayKit {
     /// `persist`: false keeps moments in memory (tests, previews).
     pub fn new(cfg: KitConfig, persist: bool) -> PlayKit {
-        let path = persist.then(|| PathBuf::from(format!("{}/saves/{}/moments.json", env!("CARGO_MANIFEST_DIR"), cfg.app_id)));
+        let path = persist.then(|| saves_root().join(cfg.app_id).join("moments.json"));
         let mut moments = vec![None; 16];
         if let Some(text) = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()) {
             if let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -260,7 +267,7 @@ impl PlayKit {
                 }
             }
         }
-        let routes_path = persist.then(|| PathBuf::from(format!("{}/saves/{}/routes.json", env!("CARGO_MANIFEST_DIR"), cfg.app_id)));
+        let routes_path = persist.then(|| saves_root().join(cfg.app_id).join("routes.json"));
         let mut routes = cfg.routes;
         let mut pressure_route = None;
         let mut routes_loaded = false;

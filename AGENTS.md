@@ -101,6 +101,26 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-04: Claude: Atlas how-to (PDF + screenshot harness)
+- Branch: claude/atlas-play   Commits: see git log on the branch
+- Changed: new `docs/atlas-howto/` (HTML source + 16 figures),
+  `tools/atlas_howto_figures.py`, `examples/slint_common/atlas_howto.rs`
+  (renders the app's real states through the Slint shell). Shared, minimal:
+  `examples/slint_home_live.rs` (a `--render-atlas-howto DIR` flag),
+  `examples/slint_common/instrument_preview.rs` (declares the module),
+  `src/play_kit.rs` (moments/bindings folder can be set with
+  `PORTAMAX_SAVES_DIR`, so screenshot runs never touch real saves). Atlas:
+  the "Gliding to state X" message now clears once the glide ends.
+- Status: done for Atlas. The PDF is built from the HTML with headless
+  Chrome (`--print-to-pdf`), and the guide's Appendix C lists the control
+  problems it found. It is the template for the other apps' guides.
+- Tests: kit 13 and Atlas 9 pass.
+- Notes for the other assistant: the same harness shape works for any app
+  (copy `atlas_howto.rs`, change the states). Findings that cross into your
+  area are in Appendix C (e.g. PS5 D-pad meaning differs between Home and
+  play apps; Reset and F4 have no default gamepad button).
+- Request: none.
+
 ### 2026-10-04: Claude: dial-free modulation (pad pressure, bind-by-wiggle, Atlas states)
 - Branch: claude/atlas-play (cut from 341d3fa, my last commit; oracle-pulsar
   is behind it)   Commits: see git log on the branch

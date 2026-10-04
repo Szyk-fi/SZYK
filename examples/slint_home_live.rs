@@ -4369,6 +4369,10 @@ mod instrument_preview;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--render-atlas-howto") {
+        instrument_preview::atlas_howto::render(args.get(2).expect("usage: --render-atlas-howto OUTPUT_DIRECTORY"));
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--render-instruments") {
         instrument_preview::render(args.get(2).expect("usage: --render-instruments OUTPUT_DIRECTORY"));
         return;

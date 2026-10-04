@@ -798,6 +798,10 @@ impl AtlasApp {
         if (target - next).abs() < 0.002 {
             self.s.morph.set(target);
             self.morph_target = None;
+            // "Gliding to state B" is only true while it's gliding.
+            if self.status.starts_with("Gliding") {
+                self.status.clear();
+            }
         } else {
             self.s.morph.set(next);
         }
@@ -1464,6 +1468,7 @@ mod tests {
         }
         assert!((a.s.morph.get() - 1.0).abs() < 1e-3, "settled on B: {}", a.s.morph.get());
         assert!(a.morph_target.is_none());
+        assert!(!a.status.contains("Gliding"), "the message goes once it has arrived: {}", a.status);
         assert_eq!(a.kit_pad_color(STATES_LAYER, b_pad, false), PadColor::Green, "now at B");
         a.tick(&pads(&[kit::rank_pad(0)]));
         for _ in 0..200 {
