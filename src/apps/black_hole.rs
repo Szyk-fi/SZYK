@@ -62,9 +62,10 @@
 //!   edge-triggered button presses, not press duration or multi-click,
 //!   so "hold to save" / "press twice to recall" collapse into two
 //!   explicit menu rows (Save Patch / Recall Patch) that fire on the
-//!   normal per-leaf "press knob2 to act" gesture already used
+//!   normal per-leaf "hold SELECT to act" gesture already used
 //!   everywhere else for reset-to-default.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -316,6 +317,67 @@ pub struct BlackHoleApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first. The algorithm's own
+/// three parameters lead because they are what changes the sound most
+/// (and their names follow the algorithm, like the module's panel
+/// legend); Dry/Wet, Crush and In Level are the module's other knobs.
+/// Source stays menu-only: it's patching, not playing.
+const CONTROLS: [Selection; 9] = [
+    Selection::Param1,
+    Selection::Param2,
+    Selection::Param3,
+    Selection::DryWet,
+    Selection::Crush,
+    Selection::InLevel,
+    Selection::Algorithm,
+    Selection::SavePatch,
+    Selection::RecallPatch,
+];
+const C_P1: usize = 0;
+const C_P2: usize = 1;
+const C_P3: usize = 2;
+const C_DRY_WET: usize = 3;
+const C_CRUSH: usize = 4;
+const C_IN_LEVEL: usize = 5;
+const C_ALGORITHM: usize = 6;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "black_hole",
+        // The pads did nothing before, so there's no native layer to
+        // keep: an effect opens straight onto its Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        // Save/Recall Patch stay off the knobs: knob 2 press resets the
+        // pair, and "reset" on those rows *is* save/recall.
+        hero: vec![[C_P1, C_P2], [C_P3, C_DRY_WET], [C_CRUSH, C_IN_LEVEL]],
+        browse: Some(C_ALGORITHM),
+        // P1 is Feedback on 13 of the 24 algorithms and P2 a time or
+        // size on most of the rest, so the stick is "how long / how
+        // much comes back"; hands blend wet in and push P3 (filter,
+        // pitch, chirp, raiser...).
+        routes: Routes { stick_x: Some(C_P2), stick_y: Some(C_P1), hand_l: Some(C_DRY_WET), hand_r: Some(C_P3) },
+        // Labels name the slot rather than a meaning because what P1-P3
+        // do changes with the algorithm (P1 MAX is runaway feedback on a
+        // delay and Record -- i.e. freeze -- on the Freezers).
+        throws: vec![
+            Throw { control: C_DRY_WET, to: 1.0, label: "WET" },
+            Throw { control: C_P1, to: 1.0, label: "P1 MAX" },
+            Throw { control: C_P2, to: 0.03, label: "P2 MIN" },
+            Throw { control: C_P2, to: 1.0, label: "P2 MAX" },
+            Throw { control: C_P3, to: 1.0, label: "P3 MAX" },
+            Throw { control: C_CRUSH, to: 1.0, label: "CRUSH" },
+            // In Level also feeds the capture buffer, so muting it lets
+            // delay/reverb tails ring out on their own.
+            Throw { control: C_IN_LEVEL, to: 0.0, label: "IN MUTE" },
+            Throw { control: C_DRY_WET, to: 0.0, label: "DRY" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Black Hole's own palette: true void black with one searing
@@ -332,6 +394,8 @@ const BLACK_HOLE_TITLE: Rgb565 = Rgb565::new(31, 55, 22);
 const BLACK_HOLE_ACCENT: Rgb565 = Rgb565::new(31, 35, 7);
 /// Dim ember red -- secondary/dim text, cooling toward the dark.
 const BLACK_HOLE_DIM: Rgb565 = Rgb565::new(15, 18, 7);
+/// Barely-lit ember -- unlit pads and dial tracks on the play view.
+const BLACK_HOLE_FAINT: Rgb565 = Rgb565::new(5, 6, 2);
 
 impl BlackHoleApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -342,6 +406,7 @@ impl BlackHoleApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -579,6 +644,62 @@ impl BlackHoleApp {
     }
 }
 
+impl BlackHoleApp {
+    /// Every P/Crush/Wet/In row is a raw 0..1 knob (edit() clamps them
+    /// there); the engineering units come from `algo_engineering_values`.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS.get(i) {
+            Some(Selection::Param1) => Knob::F(&p.param1, 0.0, 1.0),
+            Some(Selection::Param2) => Knob::F(&p.param2, 0.0, 1.0),
+            Some(Selection::Param3) => Knob::F(&p.param3, 0.0, 1.0),
+            Some(Selection::DryWet) => Knob::F(&p.dry_wet, 0.0, 1.0),
+            Some(Selection::Crush) => Knob::F(&p.crush, 0.0, 1.0),
+            Some(Selection::InLevel) => Knob::F(&p.in_level, 0.0, 1.0),
+            Some(Selection::Algorithm) => Knob::U(&p.algorithm, NUM_ALGORITHMS as u32),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for BlackHoleApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or(String::new(), |s| self.leaf_name(*s))
+    }
+    fn kit_value(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or(String::new(), |s| self.leaf_value(*s))
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        if let Some(s) = CONTROLS.get(i) {
+            self.edit(*s, delta);
+        }
+    }
+    /// On Save/Recall Patch this is the action itself, exactly as knob 2
+    /// press on those rows in the menu.
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(s) = CONTROLS.get(i) {
+            self.reset(*s);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    fn kit_line(&self) -> String {
+        let algo = self.algo();
+        let clip = if self.params.clip.load(Ordering::Relaxed) { "  CLIP" } else { "" };
+        format!("{} {}{clip}", algo + 1, ALGORITHMS[algo].name)
+    }
+}
+
 fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     let next = (value.get() + accelerate(delta) * sensitivity * 0.01).clamp(min, max);
     value.set(next);
@@ -586,7 +707,26 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 
 impl App for BlackHoleApp {
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through to the list below.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -661,8 +801,13 @@ impl App for BlackHoleApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, BLACK_HOLE_BG, BLACK_HOLE_DIM, BLACK_HOLE_ACCENT);
-        let _ = dim;
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, BLACK_HOLE_BG, BLACK_HOLE_DIM, BLACK_HOLE_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: BLACK_HOLE_BG, ink: BLACK_HOLE_TITLE, accent: BLACK_HOLE_ACCENT, dim: BLACK_HOLE_DIM, faint: BLACK_HOLE_FAINT };
+            kit::draw::column(fb, &col, 16, 44, 350, 290, pal);
+            Text::new("L/R: P1-P3/wet   U/D: algorithm   F2: pads   R1: menu", Point::new(16, HEIGHT as i32 - 10), dim).draw(fb).ok();
+        }
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1504,4 +1649,52 @@ mod tests {
         let published = app.params.bus_out.lock().unwrap();
         assert_eq!(published.len(), 256);
     }
+
+    #[test]
+    fn opens_on_throws_and_knob_one_turns_p1() {
+        let (mut app, _audio_bus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        let p1 = app.params.param1.get();
+        app.tick(&Input { knob1: 5, ..Default::default() });
+        assert!(app.params.param1.get() > p1, "knob 1 is P1 on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.algorithm.load(Ordering::Relaxed), 1, "D-pad up = next algorithm");
+    }
+
+    #[test]
+    fn throws_push_real_controls_and_spring_back() {
+        let (mut app, _audio_bus) = new_app();
+        app.params.dry_wet.set(0.3);
+        // Throw 0 (WET) sits on rank 0, the bottom-left pad.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0)), ..Default::default() });
+        assert_eq!(app.params.dry_wet.get(), 1.0, "held WET throw is fully wet");
+        app.tick(&Input::default());
+        assert!((app.params.dry_wet.get() - 0.3).abs() < 1e-5, "released, back to the knob");
+        // IN MUTE (rank 6) silences the input feeding the buffer.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(6)), ..Default::default() });
+        assert_eq!(app.params.in_level.get(), 0.0);
+        app.tick(&Input::default());
+        assert!((app.params.in_level.get() - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn r1_opens_the_menu_and_the_menu_still_edits() {
+        let (mut app, _audio_bus) = new_app();
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+        // Second group (Effect): expand it and turn its Algorithm row.
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        app.tick(&Input { knob1_press: true, ..Default::default() });
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        app.tick(&Input { knob2: 1, ..Default::default() });
+        assert_eq!(app.params.algorithm.load(Ordering::Relaxed), 1, "menu rows still edit");
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(BlackHoleApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

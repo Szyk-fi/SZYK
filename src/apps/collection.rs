@@ -3,6 +3,9 @@
 //! Disk and network operations run on workers; the audio callback only exchanges
 //! bounded commands and telemetry. Inputs are explicit mono AudioBus routes.
 use crate::app::music_scales::{self, ScaleInfo, SCALE_TYPES, ROOT_NAMES};
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
+use crate::led_output::PadColor;
+use crate::spleen_fonts::SPLEEN_6X12;
 use crate::{
     app::{App, CollectionExtra, Input, SlintExtra},
     audio::AudioProcessor,
@@ -11,7 +14,13 @@ use crate::{
     mixer_bus::MixerBus,
     modbus::ModBus,
     paramlist::ParamList,
-    util::AtomicF32,
+    util::{note_name, AtomicF32},
+};
+use embedded_graphics::{
+    mono_font::MonoTextStyle,
+    pixelcolor::Rgb565,
+    prelude::{Drawable, Point},
+    text::Text,
 };
 use rustfft::{num_complex::Complex, FftPlanner};
 use std::{
@@ -43,7 +52,15 @@ const VOICE_NAMES: [&str; 8] = [
 ];
 const RATE: f32 = 48000.0;
 const CAP: usize = 48000 * 8;
-const MEDIA_LIMIT: usize = 48000 * 120;
+/// Studio's tracks: a minute each (Tape's old looper length; Studio
+/// replaced Tape). Reserved up front so recording never allocates on the
+/// audio thread; on the device this is PSRAM, streamed to the SD card.
+const STUDIO_CAP: usize = 48000 * 60;
+/// Longest file the players load: half an hour at 48 kHz (whole albums'
+/// worth of FLAC tracks fit; a DJ mix may not). Held as 16-bit (`Pcm`,
+/// 4 bytes a frame, ~350 MB at the limit) -- the sim decodes whole files;
+/// the device will stream from the SD card instead.
+const MEDIA_LIMIT: usize = 48000 * 60 * 30;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Orbit,
@@ -105,6 +122,72 @@ impl Kind {
     }
     fn passive(self) -> bool {
         matches!(self, Self::Portal | Self::Scope | Self::Master)
+    }
+    /// Kinds that get a play view. Portal is a patch matrix and Scope an
+    /// analyser: their pads route and inspect rather than make music, and
+    /// neither has a knob worth performing, so they keep their menu-first
+    /// screen untouched.
+    fn playable(self) -> bool {
+        !matches!(self, Self::Portal | Self::Scope)
+    }
+    /// Processors of another app's audio: these get a Throws layer.
+    fn effect(self) -> bool {
+        matches!(self, Self::Fracture | Self::Ghosts | Self::TapeMachine | Self::Master)
+    }
+    /// Kinds whose pads have two modes (the menu's "Pads" row). They map
+    /// onto native layers 0 and 1, so F2 and the menu row stay in step.
+    fn two_pad_modes(self) -> bool {
+        self.synth() || matches!(self, Self::SampleHunter | Self::Studio)
+    }
+    fn id(self) -> &'static str {
+        APPS.iter().find(|a| a.0 == self).unwrap().1
+    }
+    fn default_voice(self) -> usize {
+        match self {
+            Self::Orbit => 3,
+            Self::Swarm => 2,
+            Self::Mutant => 4,
+            Self::Constellation => 4,
+            Self::Dream => 1,
+            _ => 0,
+        }
+    }
+    fn default_pattern(self) -> usize {
+        match self {
+            Self::Swarm => 4,
+            Self::Mutant => 3,
+            Self::Constellation => 5,
+            Self::Dream => 2,
+            _ => 0,
+        }
+    }
+    fn default_rhythm(self) -> usize {
+        match self {
+            Self::Swarm | Self::Dream => 2,
+            Self::Mutant => 3,
+            Self::Constellation => 1,
+            _ => 0,
+        }
+    }
+    /// One palette per family, so an instrument, an effect, a recorder and
+    /// a player read as different things at a glance even though they
+    /// share an engine.
+    fn palette(self) -> kit::draw::Palette {
+        let c = Rgb565::new;
+        let (bg, ink, accent, dim, faint) = if self.synth() {
+            // Night violet: the generative instruments.
+            (c(2, 2, 6), c(28, 56, 31), c(23, 34, 31), c(13, 24, 20), c(5, 7, 11))
+        } else if self.effect() {
+            // Umber and amber: things that process another app's audio.
+            (c(3, 3, 1), c(31, 58, 26), c(31, 42, 6), c(17, 28, 9), c(8, 9, 3))
+        } else if self.capture() {
+            // Coral on oxblood: the recorders, like a record lamp.
+            (c(4, 1, 1), c(31, 56, 28), c(31, 22, 14), c(17, 22, 14), c(9, 5, 4))
+        } else {
+            // Teal: the library players.
+            (c(1, 4, 4), c(26, 60, 30), c(8, 52, 26), c(9, 30, 19), c(3, 11, 10))
+        };
+        kit::draw::Palette { bg, ink, accent, dim, faint }
     }
     fn name(self) -> &'static str {
         APPS.iter().find(|a| a.0 == self).unwrap().2
@@ -439,8 +522,64 @@ impl Kind {
     }
 }
 #[derive(Clone, Debug)]
+/// Decoded stereo audio at 16 bits: half the memory of f32, so long files
+/// fit, and 96 dB is more than playback needs.
+#[derive(Default)]
+pub(crate) struct Pcm(Vec<[i16; 2]>);
+
+#[allow(dead_code)]
+impl Pcm {
+    pub(crate) fn with_capacity(n: usize) -> Self {
+        Self(Vec::with_capacity(n))
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub(crate) fn push(&mut self, f: [f32; 2]) {
+        self.0.push(f.map(|x| (x.clamp(-1.0, 1.0) * 32767.0).round() as i16));
+    }
+    /// Frame `i` as floats (panics past the end, like indexing).
+    pub(crate) fn at(&self, i: usize) -> [f32; 2] {
+        self.0[i].map(|x| x as f32 / 32767.0)
+    }
+    pub(crate) fn get(&self, i: usize) -> Option<[f32; 2]> {
+        self.0.get(i).map(|f| f.map(|x| x as f32 / 32767.0))
+    }
+    /// The first `max` frames as floats (tools that analyse a clip).
+    pub(crate) fn frames(&self, max: usize) -> Vec<[f32; 2]> {
+        self.0.iter().take(max).map(|f| f.map(|x| x as f32 / 32767.0)).collect()
+    }
+    /// Peak per bucket, for thumbnails (see `take_overview`).
+    pub(crate) fn overview(&self, count: usize) -> Vec<f32> {
+        let n = self.0.len();
+        (0..count)
+            .map(|i| {
+                let start = i * n / count;
+                let end = ((i + 1) * n / count).max(start + 1).min(n);
+                if start >= end {
+                    return 0.0;
+                }
+                self.0[start..end].iter().step_by(((end - start) / 16).max(1)).map(|f| f[0].unsigned_abs().max(f[1].unsigned_abs()) as f32 / 32767.0).fold(0f32, f32::max)
+            })
+            .collect()
+    }
+}
+
+impl From<Vec<[f32; 2]>> for Pcm {
+    fn from(v: Vec<[f32; 2]>) -> Self {
+        let mut p = Pcm::with_capacity(v.len());
+        for f in v {
+            p.push(f);
+        }
+        p
+    }
+}
+
 pub(crate) struct Clip {
-    pub(crate) samples: Arc<Vec<[f32; 2]>>,
+    pub(crate) samples: Arc<Pcm>,
     pub(crate) rate: f32,
     pub(crate) name: String,
     pub(crate) peak: f32,
@@ -569,7 +708,208 @@ pub struct CollectionApp {
     tag: usize,
     auto_start: bool,
     loaded_file: Option<PathBuf>,
+    /// The shared play view (play_kit.rs); unused by Portal and Scope.
+    kit: PlayKit,
+    /// The pad mode last agreed between the kit's native layer and
+    /// `Shared::alternate`, so a change on either side (F2, or the menu's
+    /// Pads row) can be told apart and followed by the other.
+    kit_alt: bool,
+    /// Orbit's gate pattern while its pads are being played as keys:
+    /// otherwise every trip through the KEYS layer would erase it.
+    gates: usize,
+    /// A library step that arrived while a load was still in flight,
+    /// with whether playback should start when it lands.
+    pending_load: Option<bool>,
+    /// Synth kinds: where the generated notes go (own voices, another
+    /// app, or nowhere) -- see note_bus.rs. The sending end goes to the
+    /// audio thread with the processor.
+    note_route: crate::note_bus::NoteRoute,
+    note_out: Option<crate::note_bus::NoteOut>,
 }
+
+/// One play-view control. `Param(j)` is one of the kind's six engine
+/// parameters (`Kind::labels`); the rest are the shared rows below them in
+/// the menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Ctl {
+    Param(usize),
+    Voice,
+    Color,
+    Attack,
+    Tail,
+    Scale,
+    Octave,
+    MotionRate,
+    MotionDepth,
+    /// Dream's root lives outside its six parameters.
+    DreamRoot,
+    Pattern,
+    Rhythm,
+    Freeze,
+    Scene,
+    /// The selected library file (track, station, memory).
+    File,
+}
+
+/// Each kind's play-view controls, most important first: 0-7 are the knob
+/// pairs (continuous where the kind has them), all of them the Controls
+/// layer. Everything not listed stays in the menu.
+fn controls(kind: Kind) -> &'static [Ctl] {
+    use Ctl::*;
+    match kind {
+        // A polyrhythm sequencer: tempo and probability are what you ride.
+        Kind::Orbit => &[
+            Param(0), Param(4), Color, MotionDepth, Param(3), Param(5), Attack, MotionRate,
+            Param(2), Param(1), Octave, Scale, Pattern, Rhythm, Voice, Scene,
+        ],
+        // Cohesion against spread is the swarm's whole character.
+        Kind::Swarm => &[
+            Param(1), Param(2), Color, Param(4), MotionDepth, Param(5), Attack, MotionRate,
+            Param(3), Param(0), Rhythm, Octave, Scale, Pattern, Voice, Scene,
+        ],
+        // Brightness and parent blend reshape the partials live; Mutation
+        // only matters at the next Breed, so it sits further down.
+        Kind::Mutant => &[
+            Param(4), Param(0), Color, MotionDepth, Param(5), Attack, MotionRate, Param(1),
+            Param(2), Param(3), Rhythm, Octave, Scale, Pattern, Voice, Scene,
+        ],
+        Kind::Constellation => &[
+            Param(4), Param(3), Color, MotionDepth, Attack, Tail, MotionRate, Param(2),
+            Param(0), Param(1), Param(5), Scale, Pattern, Rhythm, Voice, Scene,
+        ],
+        Kind::Dream => &[
+            Param(4), Param(3), Color, Param(5), Param(2), Param(0), MotionDepth, Tail,
+            Param(1), DreamRoot, Rhythm, Octave, Scale, Pattern, Voice, Scene,
+        ],
+        Kind::Fracture => &[Param(5), Param(4), Param(0), Param(3), Param(1), Param(2), Freeze, Scene],
+        Kind::Ghosts => &[Param(1), Param(5), Param(0), Param(3), Param(2), Param(4), Freeze, Scene],
+        Kind::TapeMachine => &[Param(2), Param(0), Param(1), Param(5), Param(3), Param(4), Freeze, Scene],
+        Kind::Master => &[Param(4), Param(5), Param(2), Param(3), Param(0), Param(1), Freeze, Scene],
+        Kind::Reference => &[Param(5), Param(1), Param(0), Param(2), Param(4), Param(3), File, Scene],
+        Kind::Vinyl => &[Param(1), Param(5), Param(0), Param(4), Param(3), Param(2), File, Scene],
+        Kind::Practice => &[Param(0), Param(3), Param(1), Param(2), Param(4), Param(5), File, Scene],
+        Kind::Radio => &[Param(5), Param(1), Param(0), Param(2), Param(4), Param(3), File, Scene],
+        Kind::Memories => &[Param(5), Param(0), Param(1), Param(2), Param(4), Param(3), File, Scene],
+        Kind::Field => &[Param(0), Param(5), Param(3), Param(1), Param(2), Param(4), Scene],
+        Kind::SampleHunter => &[Param(0), Param(1), Param(3), Param(4), Param(2), Param(5), Scene],
+        Kind::Studio => &[Param(1), Param(2), Param(0), Param(3), Param(4), Param(5), Scene],
+        Kind::Portal | Kind::Scope => &[],
+    }
+}
+
+fn kit_config(kind: Kind) -> KitConfig {
+    let app_id = kind.id();
+    if !kind.playable() {
+        return KitConfig { app_id, ..Default::default() };
+    }
+    let list = controls(kind);
+    let at = |c: Ctl| list.iter().position(|&x| x == c);
+    let mut layers = match kind {
+        Kind::Orbit => vec![Layer::Native(0, "GATES"), Layer::Native(1, "KEYS")],
+        Kind::Dream => vec![Layer::Native(0, "STATES"), Layer::Native(1, "KEYS")],
+        Kind::Swarm | Kind::Mutant | Kind::Constellation => vec![Layer::Native(0, "KEYS"), Layer::Native(1, "SCENES")],
+        Kind::SampleHunter => vec![Layer::Native(0, "RECORD"), Layer::Native(1, "KEYS")],
+        Kind::Studio => vec![Layer::Native(0, "RECORD"), Layer::Native(1, "MUTE/SOLO")],
+        Kind::Field => vec![Layer::Native(0, "RECORD")],
+        Kind::Fracture => vec![Layer::Native(0, "SLICES")],
+        Kind::Ghosts => vec![Layer::Native(0, "ECHOES")],
+        Kind::TapeMachine => vec![Layer::Native(0, "HEADS")],
+        Kind::Master => vec![Layer::Native(0, "A/B")],
+        Kind::Radio => vec![Layer::Native(0, "STATIONS")],
+        Kind::Practice => vec![Layer::Native(0, "PRACTICE")],
+        _ => vec![Layer::Native(0, "PLAYER")],
+    };
+    layers.extend([Layer::Controls, Layer::Moments]);
+    if kind.effect() {
+        layers.push(Layer::Throws);
+    }
+    // Four pairs on the 16-control instruments; the shorter lists end in
+    // Freeze/Scene/File, which are steps, not something to turn.
+    let pairs = if list.len() >= 16 { 4 } else { 3 };
+    let hero = (0..pairs).map(|p| [2 * p, 2 * p + 1]).collect();
+    // D-pad: a player steps through its library, Studio through its
+    // tracks; everything else steps its four scenes, which are the
+    // closest thing these apps have to presets.
+    let browse = if kind.media() {
+        at(Ctl::File)
+    } else if kind == Kind::Studio {
+        at(Ctl::Param(0))
+    } else {
+        at(Ctl::Scene)
+    };
+    let p = |j: usize| at(Ctl::Param(j));
+    let routes = match kind {
+        Kind::Orbit => Routes { stick_x: at(Ctl::Color), stick_y: at(Ctl::MotionDepth), hand_l: p(4), hand_r: p(3) },
+        Kind::Swarm => Routes { stick_x: p(2), stick_y: at(Ctl::Color), hand_l: p(1), hand_r: at(Ctl::MotionDepth) },
+        Kind::Mutant => Routes { stick_x: p(4), stick_y: p(0), hand_l: at(Ctl::Color), hand_r: at(Ctl::MotionDepth) },
+        Kind::Constellation => Routes { stick_x: p(4), stick_y: at(Ctl::Color), hand_l: p(3), hand_r: at(Ctl::MotionDepth) },
+        Kind::Dream => Routes { stick_x: p(4), stick_y: at(Ctl::Color), hand_l: p(5), hand_r: p(3) },
+        Kind::Fracture => Routes { stick_x: p(0), stick_y: p(3), hand_l: p(5), hand_r: p(4) },
+        Kind::Ghosts => Routes { stick_x: p(3), stick_y: p(1), hand_l: p(2), hand_r: p(5) },
+        Kind::TapeMachine => Routes { stick_x: p(0), stick_y: p(2), hand_l: p(3), hand_r: p(5) },
+        // A hand raising the ceiling would mean *less* limiting, the
+        // opposite of what reaching in suggests, so the right hand is free.
+        Kind::Master => Routes { stick_x: p(3), stick_y: p(2), hand_l: p(4), hand_r: None },
+        // Pushing the platter: the stick is a pitch-bend on the speed.
+        Kind::Vinyl => Routes { stick_x: p(1), stick_y: p(5), ..Default::default() },
+        Kind::Practice => Routes { stick_x: p(0), stick_y: p(3), ..Default::default() },
+        // Position is never routed: it would seek every frame.
+        Kind::Reference | Kind::Radio | Kind::Memories => Routes { stick_y: p(5), ..Default::default() },
+        Kind::Field => Routes { stick_x: p(3), stick_y: p(0), ..Default::default() },
+        Kind::SampleHunter => Routes { stick_x: p(3), stick_y: p(0), ..Default::default() },
+        Kind::Studio => Routes { stick_x: p(2), stick_y: p(1), ..Default::default() },
+        Kind::Portal | Kind::Scope => Routes::default(),
+    };
+    let t = |c: Ctl, to: f32, label: &'static str| at(c).map(|control| Throw { control, to, label });
+    let throws: Vec<Throw> = match kind {
+        Kind::Fracture => vec![
+            t(Ctl::Param(5), 1.0, "WET"),
+            t(Ctl::Param(2), 1.0, "REVERSE"),
+            t(Ctl::Freeze, 1.0, "FREEZE"),
+            t(Ctl::Param(0), 0.0, "STUTTER"), // 25 ms slices
+            t(Ctl::Param(3), 0.75, "+12"),
+            t(Ctl::Param(3), 0.25, "-12"),
+            t(Ctl::Param(4), 1.0, "SCATTER"),
+            t(Ctl::Param(1), 1.0, "REPEAT"), // 16 repeats
+        ],
+        Kind::Ghosts => vec![
+            t(Ctl::Param(1), 1.0, "HOLD"), // decay 0.95: the longest memory
+            t(Ctl::Param(5), 1.0, "WET"),
+            t(Ctl::Freeze, 1.0, "FREEZE"),
+            t(Ctl::Param(4), 1.0, "REVERSE"),
+            t(Ctl::Param(3), 0.03, "DARK"), // ~640 Hz low pass
+            t(Ctl::Param(3), 1.0, "BRIGHT"),
+            t(Ctl::Param(2), 1.0, "DRIFT"),
+            t(Ctl::Param(0), 0.0, "SHORT"), // 0.1 s loop
+        ],
+        Kind::TapeMachine => vec![
+            t(Ctl::Param(2), 1.0, "DUB"), // the bounded 0.92 feedback ceiling
+            t(Ctl::Param(0), 0.25 / 1.75, "HALF"), // speed 0.5
+            t(Ctl::Param(0), 1.0, "DOUBLE"),
+            t(Ctl::Freeze, 1.0, "FREEZE"),
+            t(Ctl::Param(3), 1.0, "WOW"),
+            t(Ctl::Param(4), 1.0, "FLUTTER"),
+            t(Ctl::Param(5), 1.0, "DRIVE"),
+            t(Ctl::Param(1), 0.0, "SLAP"), // heads 25 ms apart
+        ],
+        Kind::Master => vec![
+            t(Ctl::Param(0), 1.0, "REF B"),
+            t(Ctl::Freeze, 1.0, "BYPASS"),
+            t(Ctl::Param(4), 1.0, "DRIVE"),
+            t(Ctl::Param(5), 1.0 / 3.0, "LIMIT"), // ceiling -12 dB
+            t(Ctl::Param(2), 0.75, "BASS+6"),
+            t(Ctl::Param(2), 0.25, "BASS-6"),
+            t(Ctl::Param(3), 0.75, "PRES+6"),
+            t(Ctl::Param(1), 1.0, "MATCH"), // only acts while B is selected
+        ],
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .flatten()
+    .collect();
+    KitConfig { app_id, layers, hero, browse, routes, throws, midi_to_pads: true, own_expression: false }
+}
+
 impl CollectionApp {
     pub fn new(
         kind: Kind,
@@ -590,21 +930,14 @@ impl CollectionApp {
                 values: kind.defaults().map(AtomicF32::new),
                 modulation: std::array::from_fn(|i| if kind.synth() || matches!(kind,Kind::Fracture|Kind::Ghosts|Kind::TapeMachine|Kind::Master) {mods.register(format!("{}: {}",kind.name(),kind.labels()[i]))} else {Arc::new(AtomicF32::new(0.))}),
                 color_modulation: if kind.synth() {mods.register(format!("{}: Tone color",kind.name()))} else {Arc::new(AtomicF32::new(0.))},
-                voice: AtomicUsize::new(match kind {
-                    Kind::Orbit => 3,
-                    Kind::Swarm => 2,
-                    Kind::Mutant => 4,
-                    Kind::Constellation => 4,
-                    Kind::Dream => 1,
-                    _ => 0,
-                }),
+                voice: AtomicUsize::new(kind.default_voice()),
                 color: AtomicF32::new(0.5),
                 attack: AtomicF32::new(0.008),
                 release: AtomicF32::new(0.45),
                 scale: AtomicUsize::new(1),
                 dream_root: AtomicUsize::new(48),
-                pattern: AtomicUsize::new(match kind {Kind::Swarm=>4,Kind::Mutant=>3,Kind::Constellation=>5,Kind::Dream=>2,_=>0}),
-                rhythm: AtomicUsize::new(match kind {Kind::Swarm|Kind::Dream=>2,Kind::Mutant=>3,Kind::Constellation=>1,_=>0}),
+                pattern: AtomicUsize::new(kind.default_pattern()),
+                rhythm: AtomicUsize::new(kind.default_rhythm()),
                 octave: AtomicF32::new(0.),
                 motion_rate: AtomicF32::new(0.25),
                 motion_depth: AtomicF32::new(0.),
@@ -658,7 +991,23 @@ impl CollectionApp {
             tag: 0,
             auto_start: false,
             loaded_file: None,
+            kit: PlayKit::new(kit_config(kind), !cfg!(test) && kind.playable()),
+            kit_alt: false,
+            gates: 0,
+            pending_load: None,
+            note_route: crate::note_bus::NoteRoute::new(None, kind.name(), kind.id(), true).0,
+            note_out: None,
         }
+    }
+
+    /// Lets a synth kind's generator play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<crate::note_bus::NoteBus>>) -> Self {
+        if self.kind.synth() {
+            let (route, out) = crate::note_bus::NoteRoute::new(bus, self.kind.name(), self.kind.id(), true);
+            self.note_route = route;
+            self.note_out = Some(out);
+        }
+        self
     }
     fn send(&mut self, c: Command) {
         if self.tx.try_send(c).is_err() {
@@ -716,29 +1065,7 @@ impl CollectionApp {
             ));
         }
         for (i, label) in self.kind.labels().iter().enumerate() {
-            let v = self.p.values[i].get();
-            let value = if self.kind == Kind::Memories && i == 2 {
-                ["Unsorted", "Nature", "Voice", "Music", "Idea"][v as usize].into()
-            } else if self.kind == Kind::Scope && i == 3 {
-                if v > 0. { "Hann" } else { "Rectangle" }.into()
-            } else if self.kind == Kind::Scope && i == 4 {
-                visuals::MODES[(v as usize).min(9)].into()
-            } else if self.kind == Kind::Master && i == 0 {
-                if v > 0. { "B / reference" } else { "A / mix" }.into()
-            } else if self.kind.ranges()[i].2 == 1. && self.kind.ranges()[i].1 == 1. {
-                if v > 0. {
-                    "on".into()
-                } else {
-                    "off".into()
-                }
-            } else {
-                if self.kind.ranges()[i].2 >= 1. {
-                    format!("{v:.0}")
-                } else {
-                    format!("{v:.2}")
-                }
-            };
-            r.push(((*label).into(), value, false));
+            r.push(((*label).into(), self.value_text(i), false));
         }
         if self.kind.capture() {
             r.push(("Save WAV".into(), "R1 exports".into(), false));
@@ -830,6 +1157,9 @@ impl CollectionApp {
             r.push(("Root note".into(), ROOT_NAMES[self.root_note() as usize % 12].into(),false));
             r.push(("Pattern".into(),PATTERNS[self.p.pattern.load(Ordering::Relaxed)%6].into(),false));
             r.push(("Rhythm".into(),RHYTHMS[self.p.rhythm.load(Ordering::Relaxed)%5].into(),false));
+            // Last, so it never shifts the rows above: where the
+            // generator's notes go.
+            r.push(("Plays".into(), self.note_route.label(), false));
         } else if matches!(self.kind, Kind::Fracture | Kind::Ghosts | Kind::TapeMachine) {
             r.push((
                 "Freeze input buffer".into(),
@@ -884,6 +1214,253 @@ impl CollectionApp {
             ));
         }
         r
+    }
+    /// One engine parameter as the menu shows it (shared with the play view).
+    fn value_text(&self, i: usize) -> String {
+        let v = self.p.values[i].get();
+        if self.kind == Kind::Memories && i == 2 {
+            ["Unsorted", "Nature", "Voice", "Music", "Idea"][(v as usize).min(4)].into()
+        } else if self.kind == Kind::Scope && i == 3 {
+            if v > 0. { "Hann" } else { "Rectangle" }.into()
+        } else if self.kind == Kind::Scope && i == 4 {
+            visuals::MODES[(v as usize).min(9)].into()
+        } else if self.kind == Kind::Master && i == 0 {
+            if v > 0. { "B / reference" } else { "A / mix" }.into()
+        } else if self.kind.ranges()[i].2 == 1. && self.kind.ranges()[i].1 == 1. {
+            if v > 0. { "on" } else { "off" }.into()
+        } else if self.kind.ranges()[i].2 >= 1. {
+            format!("{v:.0}")
+        } else {
+            format!("{v:.2}")
+        }
+    }
+    /// Steps one engine parameter by `d` of its own step, exactly as the
+    /// menu row does, side effects included.
+    fn edit_value(&mut self, j: usize, d: i32) {
+        let (lo, hi, step) = self.kind.ranges()[j];
+        let v = (self.p.values[j].get() + d as f32 * step).clamp(lo, hi);
+        self.p.values[j].set(v);
+        self.value_changed(j);
+    }
+    /// What a parameter change has to do beyond storing the value: seek
+    /// the player, keep Studio's per-track settings in step, re-sort
+    /// Vinyl's library, write a memory's journal sidecar.
+    fn value_changed(&mut self, j: usize) {
+        let v = self.p.values[j].get();
+        if self.kind.media() && j == 0 && self.kind != Kind::Practice && self.kind != Kind::Radio {
+            self.send(Command::Seek(v / 100.));
+        }
+        if self.kind == Kind::Studio {
+            let track = (self.p.values[0].get() as usize - 1).min(7);
+            if track != self.last_track {
+                self.last_track = track;
+                for k in 0..4 {
+                    self.p.values[k + 1].set(self.tracks[track][k]);
+                }
+            } else {
+                for k in 0..4 {
+                    self.tracks[track][k] = self.p.values[k + 1].get();
+                }
+                self.send(Command::Track(track, self.tracks[track]));
+            }
+        }
+        if self.kind == Kind::Vinyl && j == 2 {
+            if v > 0. {
+                self.files.sort_by_key(|p| std::cmp::Reverse(p.metadata().and_then(|m| m.modified()).ok()));
+            } else {
+                self.files.sort();
+            }
+            self.file = 0;
+        }
+        if self.kind == Kind::Memories && (j == 1 || j == 2) {
+            self.favorite = self.p.values[1].get() > 0.;
+            self.tag = self.p.values[2].get() as usize;
+            if let Some(file) = self.loaded_file.clone() {
+                let text = format!("favorite = {}\ntag = {}\n", self.favorite, self.tag);
+                let tx = self.work_tx.clone();
+                std::thread::spawn(move || {
+                    let result = std::fs::write(file.with_extension("journal.toml"), text);
+                    let _ = tx.send(WorkerResult {
+                        recycle: None,
+                        journal: None,
+                        clip: None,
+                        files: None,
+                        message: if result.is_ok() {
+                            "Journal metadata saved".into()
+                        } else {
+                            "Unable to save journal metadata".into()
+                        },
+                    });
+                });
+            }
+        }
+    }
+    /// The menu's Instrument row.
+    fn edit_voice(&mut self, d: i32) {
+        let voice = (self.p.voice.load(Ordering::Relaxed) as i32 + d.signum()).rem_euclid(8) as usize;
+        self.p.voice.store(voice, Ordering::Relaxed);
+        self.status = match voice {
+            6 => "Choose Source for a live audio wavetable",
+            7 => "Scroll to WAV instrument; R1 loads your sample",
+            _ => "Pads play the selected instrument",
+        }
+        .into();
+    }
+    /// The instruments' performance rows, `j` counted from Recall scene.
+    fn edit_perf(&mut self, j: usize, d: i32) {
+        match j {
+            1 => self.p.color.set((self.p.color.get() + d as f32 * 0.05).clamp(0., 1.)),
+            2 => self.p.attack.set((self.p.attack.get() + d as f32 * 0.005).clamp(0.001, 1.)),
+            3 => self.p.release.set((self.p.release.get() + d as f32 * 0.045).clamp(0.09, 1.8)),
+            4 => self.p.scale.store(
+                (self.p.scale.load(Ordering::Relaxed) as i32 + d.signum()).rem_euclid(SCALE_TYPES.len() as i32) as usize,
+                Ordering::Relaxed,
+            ),
+            5 => self.p.octave.set((self.p.octave.get() + d as f32).clamp(-2., 2.)),
+            6 => self.p.motion_rate.set((self.p.motion_rate.get() + d as f32 * 0.05).clamp(0.05, 8.)),
+            7 => self.p.motion_depth.set((self.p.motion_depth.get() + d as f32 * 0.05).clamp(0., 1.)),
+            8 => self.set_alternate(d > 0),
+            9 => {
+                if !self.files.is_empty() {
+                    self.file = (self.file as i32 + d.signum()).rem_euclid(self.files.len() as i32) as usize;
+                }
+            }
+            11 => {
+                let old = self.root_note();
+                self.set_root(old / 12 * 12 + (old + d.signum()).rem_euclid(12));
+            }
+            12 => self.p.pattern.store((self.p.pattern.load(Ordering::Relaxed) as i32 + d.signum()).rem_euclid(6) as usize, Ordering::Relaxed),
+            13 => self.p.rhythm.store((self.p.rhythm.load(Ordering::Relaxed) as i32 + d.signum()).rem_euclid(5) as usize, Ordering::Relaxed),
+            _ => {}
+        }
+    }
+    /// Switches the pads' mode (menu Pads row, F2 native layers). Held
+    /// key bits must not survive into gate mode or vice versa, so the
+    /// mask is cleared -- except that Orbit's gate pattern is put aside
+    /// and given back, since it's a composition, not a held chord.
+    fn set_alternate(&mut self, alt: bool) {
+        if self.p.alternate.swap(alt, Ordering::Relaxed) == alt {
+            return;
+        }
+        if self.kind == Kind::Orbit {
+            if alt {
+                self.gates = self.p.pads.swap(0, Ordering::Relaxed);
+            } else {
+                self.p.pads.store(self.gates, Ordering::Relaxed);
+            }
+        } else if self.kind.synth() {
+            self.p.pads.store(0, Ordering::Relaxed);
+        }
+    }
+    /// D-pad on a player: select the neighbouring file and load it,
+    /// carrying on playing if it was. A step during a load is queued
+    /// rather than dropped, so the loaded file always ends up matching
+    /// the one shown.
+    fn browse_file(&mut self, d: i32) {
+        if self.files.is_empty() {
+            self.scan();
+            return;
+        }
+        self.file = (self.file as i32 + d.signum()).rem_euclid(self.files.len() as i32) as usize;
+        let start = self.auto_start || self.p.play.load(Ordering::Relaxed);
+        if self.busy {
+            // The in-flight load is superseded: don't let it start playing.
+            self.auto_start = false;
+            self.pending_load = Some(start);
+        } else {
+            self.auto_start = start;
+            self.load();
+        }
+    }
+    fn ctl(&self, i: usize) -> Ctl {
+        controls(self.kind).get(i).copied().unwrap_or(Ctl::Scene)
+    }
+    fn ctl_knob(&self, c: Ctl) -> Knob<'_> {
+        let p = &self.p;
+        match c {
+            Ctl::Param(j) => {
+                let (lo, hi, _) = self.kind.ranges()[j];
+                Knob::F(&p.values[j], lo, hi)
+            }
+            Ctl::Color => Knob::F(&p.color, 0., 1.),
+            Ctl::Attack => Knob::F(&p.attack, 0.001, 1.),
+            Ctl::Tail => Knob::F(&p.release, 0.09, 1.8),
+            Ctl::MotionRate => Knob::F(&p.motion_rate, 0.05, 8.),
+            Ctl::MotionDepth => Knob::F(&p.motion_depth, 0., 1.),
+            Ctl::Freeze => Knob::B(&p.freeze),
+            _ => Knob::None,
+        }
+    }
+    /// Controls that pick *where* rather than *how it sounds*: a moment
+    /// leaves them alone, exactly as scene recall already does (it keeps a
+    /// player's position, Studio's track and a memory's journal tags).
+    fn outside_a_moment(&self, c: Ctl) -> bool {
+        match c {
+            Ctl::File | Ctl::Scene => true,
+            Ctl::Param(0) => (self.kind.media() && !matches!(self.kind, Kind::Practice | Kind::Radio)) || self.kind == Kind::Studio,
+            Ctl::Param(j) => (self.kind == Kind::Memories && (j == 1 || j == 2)) || (self.kind == Kind::Vinyl && j == 2),
+            _ => false,
+        }
+    }
+    /// Whether the pads are pitched right now (the KEYS layers).
+    fn keys_layer(&self) -> bool {
+        let alt = self.p.alternate.load(Ordering::Relaxed);
+        match self.kind {
+            Kind::Orbit | Kind::Dream | Kind::SampleHunter => alt,
+            Kind::Swarm | Kind::Mutant | Kind::Constellation => !alt,
+            _ => false,
+        }
+    }
+    /// The MIDI note a synth pad plays. The engine's own per-voice pitch
+    /// once it has run (it includes modulation); before that, the same
+    /// formula `Processor::synth` uses, without modulation.
+    fn pad_note(&self, pad: usize) -> Option<i32> {
+        if !self.kind.synth() || pad >= 16 {
+            return None;
+        }
+        if let Ok(view) = self.p.view.try_lock() {
+            if view.notes.len() == 16 {
+                return Some(view.notes[pad].round() as i32);
+            }
+        }
+        let v = |j: usize| {
+            let (_, _, step) = self.kind.ranges()[j];
+            let x = self.p.values[j].get();
+            if step >= 1. { x.round() } else { x }
+        };
+        let (degree, octave) = match self.kind {
+            Kind::Constellation => (
+                (pad % 4) * 2 + v(2) as usize + if pad % 4 == 3 { (v(4) * 2.).round() as usize } else { 0 },
+                (pad / 4) as f32 * v(1) * 12.,
+            ),
+            Kind::Dream => {
+                let state = self.p.step.load(Ordering::Relaxed) % 4;
+                (pad % ((v(3) * 12.) as usize + 1) + (state as f32 * v(4) * 3.).round() as usize, 0.)
+            }
+            _ => (pad, 0.),
+        };
+        let scale = self.p.scale.load(Ordering::Relaxed);
+        Some(self.root_note() + music_scales::degree(scale, degree) + (octave + self.p.octave.get() * 12.).round() as i32)
+    }
+    /// The play view's hint line: what the knobs, D-pad, F2, F3 and R1 do here.
+    fn play_hint(&self) -> String {
+        let browse = self.kit.cfg.browse.map(|b| self.kit_label(b).to_lowercase()).unwrap_or_default();
+        let f3 = if self.kind.synth() {
+            "   F3: generator"
+        } else if matches!(self.kind, Kind::Fracture | Kind::Ghosts | Kind::TapeMachine) {
+            "   F3: process"
+        } else if self.kind.capture() {
+            "   F3: rec/play"
+        } else if self.kind.media() {
+            "   F3: play"
+        } else {
+            ""
+        };
+        format!(
+            "L/R: {} / {}   U/D: {browse}   F2: pads{f3}   R1: menu",
+            self.kit_label(0).to_lowercase(),
+            self.kit_label(1).to_lowercase()
+        )
     }
     fn root_note(&self) -> i32 {
         match self.kind {Kind::Orbit=>self.p.values[2].get() as i32,Kind::Swarm|Kind::Mutant=>self.p.values[3].get() as i32,Kind::Constellation=>self.p.values[0].get() as i32,_=>self.p.dream_root.load(Ordering::Relaxed) as i32}
@@ -1286,9 +1863,23 @@ impl CollectionApp {
                 .into();
             }
         }
+        if !self.busy {
+            if let Some(start) = self.pending_load.take() {
+                self.auto_start = start;
+                self.load();
+            }
+        }
+    }
+    /// The synth kinds' "Plays" row (always last).
+    fn plays_row(&self) -> Option<usize> {
+        self.kind.synth().then(|| self.rows().len() - 1)
     }
     fn action(&mut self) {
         let row = self.list.selected;
+        if Some(row) == self.plays_row() {
+            self.note_route.reset();
+            return;
+        }
         let base = self.performance_base();
         if row == base {
             self.recall_scene(self.p.variation.load(Ordering::Relaxed));
@@ -1342,24 +1933,45 @@ impl App for CollectionApp {
         }
     }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach the app only on its own layers.
+        let step_input;
+        let input = if self.kind.playable() {
+            let two = self.kind.two_pad_modes();
+            let alt = self.p.alternate.load(Ordering::Relaxed);
+            if two && alt != self.kit_alt {
+                // The menu's Pads row changed the mode: the kit follows.
+                self.kit.set_native(alt as u8);
+                self.kit_alt = alt;
+            }
+            let mut play = std::mem::take(&mut self.kit);
+            let step = play.tick(self, input);
+            self.kit = play;
+            if two {
+                // F2 changed the layer: the app's pad mode follows.
+                if let Some(id) = step.native {
+                    self.set_alternate(id == 1);
+                    self.kit_alt = id == 1;
+                }
+            }
+            step_input = step.input;
+            &step_input
+        } else {
+            input
+        };
         self.poll();
         let rows = self.rows().len();
         self.list.navigate_input(input, rows, self.nav.get() as i32);
         let d = input.knob2;
         let off = self.offset();
+        if d != 0 && Some(self.list.selected) == self.plays_row() {
+            self.note_route.step(d);
+        }
         if d != 0 {
             let i = self.list.selected;
             if i < off {
                 if self.kind.synth() && i == 0 {
-                    let voice = (self.p.voice.load(Ordering::Relaxed) as i32 + d.signum())
-                        .rem_euclid(8) as usize;
-                    self.p.voice.store(voice, Ordering::Relaxed);
-                    self.status = match voice {
-                        6 => "Choose Source for a live audio wavetable",
-                        7 => "Scroll to WAV instrument; R1 loads your sample",
-                        _ => "Pads play the selected instrument",
-                    }
-                    .into();
+                    self.edit_voice(d);
                 } else if self.kind.media() {
                     if !self.files.is_empty() {
                         self.file = (self.file as i32 + d.signum())
@@ -1390,63 +2002,7 @@ impl App for CollectionApp {
                     .into();
                 }
             } else if i < off + 6 {
-                let j = i - off;
-                let (lo, hi, step) = self.kind.ranges()[j];
-                let v = (self.p.values[j].get() + d as f32 * step).clamp(lo, hi);
-                self.p.values[j].set(v);
-                if self.kind.media()
-                    && j == 0
-                    && self.kind != Kind::Practice
-                    && self.kind != Kind::Radio
-                {
-                    self.send(Command::Seek(v / 100.));
-                }
-                if self.kind == Kind::Studio {
-                    let track = (self.p.values[0].get() as usize - 1).min(7);
-                    if track != self.last_track {
-                        self.last_track = track;
-                        for k in 0..4 {
-                            self.p.values[k + 1].set(self.tracks[track][k]);
-                        }
-                    } else {
-                        for k in 0..4 {
-                            self.tracks[track][k] = self.p.values[k + 1].get();
-                        }
-                        self.send(Command::Track(track, self.tracks[track]));
-                    }
-                }
-                if self.kind == Kind::Vinyl && j == 2 {
-                    if v > 0. {
-                        self.files.sort_by_key(|p| {
-                            std::cmp::Reverse(p.metadata().and_then(|m| m.modified()).ok())
-                        });
-                    } else {
-                        self.files.sort();
-                    }
-                    self.file = 0;
-                }
-                if self.kind == Kind::Memories && (j == 1 || j == 2) {
-                    self.favorite = self.p.values[1].get() > 0.;
-                    self.tag = self.p.values[2].get() as usize;
-                    if let Some(file) = self.loaded_file.clone() {
-                        let text = format!("favorite = {}\ntag = {}\n", self.favorite, self.tag);
-                        let tx = self.work_tx.clone();
-                        std::thread::spawn(move || {
-                            let result = std::fs::write(file.with_extension("journal.toml"), text);
-                            let _ = tx.send(WorkerResult {
-                                recycle: None,
-                                journal: None,
-                                clip: None,
-                                files: None,
-                                message: if result.is_ok() {
-                                    "Journal metadata saved".into()
-                                } else {
-                                    "Unable to save journal metadata".into()
-                                },
-                            });
-                        });
-                    }
-                }
+                self.edit_value(i - off, d);
             }
         }
         if d != 0 && self.list.selected >= self.performance_base() {
@@ -1457,52 +2013,7 @@ impl App for CollectionApp {
                 self.p.variation.store(n, Ordering::Relaxed);
                 self.status = "R1 recalls the selected scene".into();
             } else if self.kind.synth() {
-                match j {
-                    1 => self
-                        .p
-                        .color
-                        .set((self.p.color.get() + d as f32 * 0.05).clamp(0., 1.)),
-                    2 => self
-                        .p
-                        .attack
-                        .set((self.p.attack.get() + d as f32 * 0.005).clamp(0.001, 1.)),
-                    3 => self
-                        .p
-                        .release
-                        .set((self.p.release.get() + d as f32 * 0.045).clamp(0.09, 1.8)),
-                    4 => self.p.scale.store(
-                        (self.p.scale.load(Ordering::Relaxed) as i32 + d.signum()).rem_euclid(SCALE_TYPES.len() as i32)
-                            as usize,
-                        Ordering::Relaxed,
-                    ),
-                    5 => self
-                        .p
-                        .octave
-                        .set((self.p.octave.get() + d as f32).clamp(-2., 2.)),
-                    6 => self
-                        .p
-                        .motion_rate
-                        .set((self.p.motion_rate.get() + d as f32 * 0.05).clamp(0.05, 8.)),
-                    7 => self
-                        .p
-                        .motion_depth
-                        .set((self.p.motion_depth.get() + d as f32 * 0.05).clamp(0., 1.)),
-                    8 => {
-                        self.p.alternate.store(d > 0, Ordering::Relaxed);
-                        self.p.pads.store(0, Ordering::Relaxed);
-                    }
-                    9 => {
-                        if !self.files.is_empty() {
-                            self.file = (self.file as i32 + d.signum())
-                                .rem_euclid(self.files.len() as i32)
-                                as usize;
-                        }
-                    }
-                    11 => {let old=self.root_note(); self.set_root(old/12*12+(old+d.signum()).rem_euclid(12));},
-                    12 => self.p.pattern.store((self.p.pattern.load(Ordering::Relaxed) as i32+d.signum()).rem_euclid(6) as usize,Ordering::Relaxed),
-                    13 => self.p.rhythm.store((self.p.rhythm.load(Ordering::Relaxed) as i32+d.signum()).rem_euclid(5) as usize,Ordering::Relaxed),
-                    _ => {}
-                }
+                self.edit_perf(j, d);
             } else if j == 1
                 && matches!(self.kind, Kind::Fracture | Kind::Ghosts | Kind::TapeMachine)
             {
@@ -1783,6 +2294,12 @@ impl App for CollectionApp {
         }
     }
     fn draw(&mut self, fb: &mut FrameBuffer) {
+        if let Some(col) = self.play_column() {
+            let pal = self.kind.palette();
+            kit::draw::column(fb, &col, 16, 40, 350, 280, pal);
+            Text::new(&self.play_hint(), Point::new(16, 337), MonoTextStyle::new(&SPLEEN_6X12, pal.dim)).draw(fb).ok();
+            return;
+        }
         let rows = self
             .rows()
             .into_iter()
@@ -1850,36 +2367,26 @@ impl App for CollectionApp {
             end < rows.len(),
         )
     }
-    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
-        use crate::led_output::PadColor::{Blue, Green, Off, Red};
-        std::array::from_fn(|i| {
-            if self.kind == Kind::Orbit && !self.p.alternate.load(Ordering::Relaxed) {
-                if self.p.pads.load(Ordering::Relaxed) & (1 << i) != 0 {
-                    Green
-                } else {
-                    Off
-                }
-            } else if self.kind == Kind::Studio && self.p.alternate.load(Ordering::Relaxed) {
-                if self.tracks[i % 8][if i < 8 { 2 } else { 3 }] > 0. {
-                    if i < 8 {
-                        Red
-                    } else {
-                        Green
-                    }
-                } else {
-                    Off
-                }
-            } else if self.kind == Kind::Studio && (4..12).contains(&i) && i - 4 == self.last_track {
-                Blue
-            } else if self.kind == Kind::Dream
-                && !self.p.alternate.load(Ordering::Relaxed)
-                && i == self.p.step.load(Ordering::Relaxed) % 4
-            {
-                Blue
-            } else {
-                Off
-            }
-        })
+    /// Orbit's gates, Dream's state, Studio's tracks and mutes: all now
+    /// in `kit_pad_color`, so they show on the app's own layers as before.
+    fn grid_led_overlay(&self) -> [PadColor; 16] {
+        if self.kind.playable() { self.kit.led_overlay(self) } else { [PadColor::Off; 16] }
+    }
+    fn play_surface(&self) -> bool {
+        self.kind.playable()
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (self.kind.playable() && !self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        self.kind.playable().then(|| self.kit.layer_label())
+    }
+    /// The pad-mode sync with `Shared::alternate` happens in `tick`, from
+    /// the layer the kit reports.
+    fn toggle_grid_mode(&mut self) {
+        if self.kind.playable() {
+            self.kit.next_layer();
+        }
     }
     fn slint_scale_info(&self)->Option<ScaleInfo> {
         if self.kind.synth() && [self.performance_base()+4,self.performance_base()+11].contains(&self.list.selected) {
@@ -1962,7 +2469,7 @@ impl App for CollectionApp {
             recording: self.p.record.load(Ordering::Relaxed),
             playing: self.p.play.load(Ordering::Relaxed),
             source: self.bus.source_name(self.p.source.load(Ordering::Relaxed)),
-            hint: match self.kind {
+            hint: if self.kind.playable() && !self.kit.menu { self.play_hint() } else { (match self.kind {
                 Kind::Orbit => "Pads: gates / keys • Instrument selects sound • scenes below",
                 Kind::Swarm => "Play keys or switch Pads to Scenes • Motion moves the tone",
                 Kind::Mutant => "Breed changes real partials • load WAV or live instruments",
@@ -1980,20 +2487,318 @@ impl App for CollectionApp {
                 Kind::Practice => "Pads 1 set A · 2 set B · 3 slower · 4 faster · 13 play",
                 Kind::Radio => "Pads 1–12 select stations · 13 connect/stop · 14 repeat",
                 _ => "Pads 1–12 load tracks · 13 play · 14 repeat · 15 rewind",
-            }
-            .into(),
+            })
+            .into() },
         })
     }
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
-        Some(Box::new(Processor::new(
-            self.kind,
-            self.p.clone(),
-            self.bus.clone(),
-            self.rx.take()?,
-            self.take_tx.take()?,
-        )))
+        let mut processor = Processor::new(self.kind, self.p.clone(), self.bus.clone(), self.rx.take()?, self.take_tx.take()?);
+        if let Some(out) = self.note_out.take() {
+            processor.notes = out;
+        }
+        Some(Box::new(processor))
     }
 }
+impl PlayHost for CollectionApp {
+    fn kit_control_count(&self) -> usize {
+        controls(self.kind).len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        let label = match self.ctl(i) {
+            Ctl::Param(j) => self.kind.labels()[j],
+            Ctl::Voice => "Instrument",
+            Ctl::Color => "Tone color",
+            Ctl::Attack => "Attack",
+            Ctl::Tail => "Tail length",
+            Ctl::Scale => "Scale",
+            Ctl::Octave => "Octave",
+            Ctl::MotionRate => "Motion rate",
+            Ctl::MotionDepth => "Motion depth",
+            Ctl::DreamRoot => "Root note",
+            Ctl::Pattern => "Pattern",
+            Ctl::Rhythm => "Rhythm",
+            Ctl::Freeze if self.kind == Kind::Master => "Bypass",
+            Ctl::Freeze => "Freeze",
+            Ctl::Scene => "Scene",
+            Ctl::File if self.kind == Kind::Radio => "Station",
+            Ctl::File if self.kind == Kind::Memories => "Memory",
+            Ctl::File => "Track",
+        };
+        label.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        let p = &self.p;
+        match self.ctl(i) {
+            Ctl::Param(j) => self.value_text(j),
+            Ctl::Voice => VOICE_NAMES[p.voice.load(Ordering::Relaxed).min(7)].into(),
+            Ctl::Color => format!("{:.0}%", p.color.get() * 100.),
+            Ctl::Attack => format!("{:.0} ms", p.attack.get() * 1000.),
+            Ctl::Tail => format!("{:.2}×", p.release.get() / 0.45),
+            Ctl::Scale => SCALE_TYPES[p.scale.load(Ordering::Relaxed) % SCALE_TYPES.len()].0.into(),
+            Ctl::Octave => format!("{:+.0}", p.octave.get()),
+            Ctl::MotionRate => format!("{:.2} Hz", p.motion_rate.get()),
+            Ctl::MotionDepth => format!("{:.0}%", p.motion_depth.get() * 100.),
+            Ctl::DreamRoot => note_name(self.root_note()),
+            Ctl::Pattern => PATTERNS[p.pattern.load(Ordering::Relaxed) % 6].into(),
+            Ctl::Rhythm => RHYTHMS[p.rhythm.load(Ordering::Relaxed) % 5].into(),
+            Ctl::Freeze => {
+                let on = p.freeze.load(Ordering::Relaxed);
+                match (self.kind == Kind::Master, on) {
+                    (true, true) => "Bypass",
+                    (true, false) => "Process",
+                    (false, true) => "Frozen",
+                    (false, false) => "Live",
+                }
+                .into()
+            }
+            Ctl::Scene => self.scene_names()[p.variation.load(Ordering::Relaxed) % 4].into(),
+            Ctl::File => self
+                .files
+                .get(self.file)
+                .and_then(|f| f.file_stem())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Scan media/".into()),
+        }
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        let p = &self.p;
+        let frac = |v: usize, n: usize| Some(v.min(n.saturating_sub(1)) as f32 / n.saturating_sub(1).max(1) as f32);
+        match self.ctl(i) {
+            Ctl::Voice => frac(p.voice.load(Ordering::Relaxed), 8),
+            Ctl::Scale => frac(p.scale.load(Ordering::Relaxed) % SCALE_TYPES.len(), SCALE_TYPES.len()),
+            Ctl::Octave => Some(((p.octave.get() + 2.) / 4.).clamp(0., 1.)),
+            Ctl::DreamRoot => Some(((self.root_note() as f32 - 24.) / 60.).clamp(0., 1.)),
+            Ctl::Pattern => frac(p.pattern.load(Ordering::Relaxed) % 6, 6),
+            Ctl::Rhythm => frac(p.rhythm.load(Ordering::Relaxed) % 5, 5),
+            Ctl::Scene => frac(p.variation.load(Ordering::Relaxed) % 4, 4),
+            Ctl::File => frac(self.file, self.files.len()),
+            c => self.ctl_knob(c).norm(),
+        }
+    }
+    /// Small sets of whole numbers (repeats, inversion, a mode, an on/off)
+    /// are choices: shown on dials and thrown, never pushed by the stick.
+    /// Wide integer ranges (tempo, a cutoff in 100 Hz steps, semitones)
+    /// are left continuous; the engine rounds them anyway.
+    fn kit_stepped(&self, i: usize) -> bool {
+        match self.ctl(i) {
+            Ctl::Param(j) => {
+                let (lo, hi, step) = self.kind.ranges()[j];
+                step >= 1. && (hi - lo) / step <= 16.
+            }
+            Ctl::Color | Ctl::Attack | Ctl::Tail | Ctl::MotionRate | Ctl::MotionDepth => false,
+            _ => true,
+        }
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        match self.ctl(i) {
+            Ctl::Param(j) => self.edit_value(j, delta),
+            Ctl::Voice => self.edit_voice(delta),
+            Ctl::Color => self.edit_perf(1, delta),
+            Ctl::Attack => self.edit_perf(2, delta),
+            Ctl::Tail => self.edit_perf(3, delta),
+            Ctl::Scale => self.edit_perf(4, delta),
+            Ctl::Octave => self.edit_perf(5, delta),
+            Ctl::MotionRate => self.edit_perf(6, delta),
+            Ctl::MotionDepth => self.edit_perf(7, delta),
+            Ctl::DreamRoot => self.edit_perf(11, delta),
+            Ctl::Pattern => self.edit_perf(12, delta),
+            Ctl::Rhythm => self.edit_perf(13, delta),
+            Ctl::Freeze => self.p.freeze.store(delta > 0, Ordering::Relaxed),
+            // On the play view a scene step recalls it at once: the menu's
+            // select-then-press is two hands for one move.
+            Ctl::Scene => {
+                let n = (self.p.variation.load(Ordering::Relaxed) as i32 + delta.signum()).rem_euclid(4) as usize;
+                self.recall_scene(n);
+            }
+            Ctl::File => self.browse_file(delta),
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        let p = self.p.clone();
+        match self.ctl(i) {
+            Ctl::Param(j) => {
+                p.values[j].set(self.kind.defaults()[j]);
+                self.value_changed(j);
+            }
+            Ctl::Voice => p.voice.store(self.kind.default_voice(), Ordering::Relaxed),
+            Ctl::Color => p.color.set(0.5),
+            Ctl::Attack => p.attack.set(0.008),
+            Ctl::Tail => p.release.set(0.45),
+            Ctl::Scale => p.scale.store(1, Ordering::Relaxed),
+            Ctl::Octave => p.octave.set(0.),
+            Ctl::MotionRate => p.motion_rate.set(0.25),
+            Ctl::MotionDepth => p.motion_depth.set(0.),
+            Ctl::DreamRoot => p.dream_root.store(48, Ordering::Relaxed),
+            Ctl::Pattern => p.pattern.store(self.kind.default_pattern(), Ordering::Relaxed),
+            Ctl::Rhythm => p.rhythm.store(self.kind.default_rhythm(), Ordering::Relaxed),
+            Ctl::Freeze => p.freeze.store(false, Ordering::Relaxed),
+            // Re-recall the current scene: the menu's press on that row.
+            Ctl::Scene => self.recall_scene(p.variation.load(Ordering::Relaxed)),
+            Ctl::File => {}
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let v = v.clamp(0., 1.);
+        let p = self.p.clone();
+        let pick = |n: usize| (v * n.saturating_sub(1) as f32).round() as usize;
+        match self.ctl(i) {
+            Ctl::Param(j) => {
+                let (lo, hi, step) = self.kind.ranges()[j];
+                let mut x = lo + v * (hi - lo);
+                if step >= 1. {
+                    x = ((x - lo) / step).round() * step + lo;
+                }
+                let x = x.clamp(lo, hi);
+                // Only real changes: each one may seek, message the engine
+                // or write a journal file.
+                if p.values[j].get() != x {
+                    p.values[j].set(x);
+                    self.value_changed(j);
+                }
+            }
+            Ctl::Voice => p.voice.store(pick(8), Ordering::Relaxed),
+            Ctl::Scale => p.scale.store(pick(SCALE_TYPES.len()), Ordering::Relaxed),
+            // Whole octaves only: the engine adds octave * 12 semitones, so
+            // a fraction would detune rather than transpose.
+            Ctl::Octave => p.octave.set((-2. + v * 4.).round()),
+            Ctl::DreamRoot => self.set_root(24 + (v * 60.).round() as i32),
+            Ctl::Pattern => p.pattern.store(pick(6), Ordering::Relaxed),
+            Ctl::Rhythm => p.rhythm.store(pick(5), Ordering::Relaxed),
+            Ctl::Scene => {
+                if pick(4) != p.variation.load(Ordering::Relaxed) % 4 {
+                    self.recall_scene(pick(4));
+                }
+            }
+            // Selects without loading (loading is the D-pad's job).
+            Ctl::File => {
+                if !self.files.is_empty() {
+                    self.file = pick(self.files.len());
+                }
+            }
+            c => self.ctl_knob(c).set(v),
+        }
+    }
+    fn kit_snapshot(&self) -> serde_json::Value {
+        serde_json::Value::Array(
+            (0..self.kit_control_count())
+                .map(|i| match self.kit_norm(i) {
+                    Some(v) if !self.outside_a_moment(self.ctl(i)) => serde_json::json!(v),
+                    _ => serde_json::Value::Null,
+                })
+                .collect(),
+        )
+    }
+    fn kit_line(&self) -> String {
+        self.status.clone()
+    }
+    /// A key plays the pad with its pitch on the KEYS layers (folding by
+    /// octave when no pad has the exact note); elsewhere the shell's old
+    /// note % 16, so a keyboard still taps the transport/slice pads it
+    /// always did.
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        let note = note as i32;
+        if !self.keys_layer() {
+            return (note >= 21).then_some(note as usize % 16);
+        }
+        if self.kind == Kind::SampleHunter {
+            // Pad n auditions the take n semitones up; C4 is the take as
+            // recorded (plus its own Pitch setting).
+            let d = note - 60;
+            let pad = if (0..16).contains(&d) { d } else { d.rem_euclid(12) };
+            return Some(pad as usize);
+        }
+        let notes: Vec<Option<i32>> = (0..16).map(|i| self.pad_note(i)).collect();
+        notes
+            .iter()
+            .position(|&n| n == Some(note))
+            .or_else(|| notes.iter().position(|&n| n.is_some_and(|n| n.rem_euclid(12) == note.rem_euclid(12))))
+    }
+    fn kit_pad_label(&self, layer: u8, pad: usize) -> String {
+        let alt = layer == 1;
+        let pick = |names: &[&str]| names.get(pad).copied().unwrap_or("").to_string();
+        if self.keys_layer() {
+            return if self.kind == Kind::SampleHunter {
+                format!("+{pad}")
+            } else {
+                self.pad_note(pad).map(note_name).unwrap_or_default()
+            };
+        }
+        match self.kind {
+            Kind::Orbit => {
+                // Row r fires every 1 + r * ratio steps (Processor::synth).
+                let every = 1 + (pad / 4) * self.p.values[1].get().round() as usize;
+                let on = self.p.pads.load(Ordering::Relaxed) & (1 << pad) != 0;
+                if on { format!("● /{every}") } else { format!("/{every}") }
+            }
+            Kind::Dream => ["Calm", "Tension", "Chaos", "Release"][pad % 4].to_string(),
+            Kind::Swarm | Kind::Mutant | Kind::Constellation => {
+                self.scene_names()[pad % 4].split(' ').next().unwrap_or("").to_string()
+            }
+            Kind::Fracture => format!("S{}", pad + 1),
+            Kind::Ghosts if pad < 4 => format!("Gen {}", pad + 1),
+            Kind::TapeMachine if pad < 4 => format!("Head {}", pad + 1),
+            Kind::Master => pick(&["A", "B", "MATCH", "BYPASS"]),
+            Kind::Field => pick(&["REC", "PLAY", "SAVE", "MARK", "AUTO", "MON", "LIMIT", "LOCUT"]),
+            Kind::SampleHunter => pick(&["REC", "PLAY", "SAVE", "MARK"]),
+            Kind::Studio if alt => format!("{}{}", if pad < 8 { "M" } else { "S" }, pad % 8 + 1),
+            Kind::Studio => match pad {
+                0..=3 => pick(&["REC", "PLAY", "SAVE", "MARK"]),
+                4..=11 => format!("T{}", pad - 3),
+                _ => String::new(),
+            },
+            k if k.media() => match (k, pad) {
+                (Kind::Practice, 0..=3) => pick(&["SET A", "SET B", "SLOWER", "FASTER"]),
+                (_, 0..=11) => self
+                    .files
+                    .get(pad)
+                    .and_then(|f| f.file_stem())
+                    .map(|s| s.to_string_lossy().chars().take(8).collect())
+                    .unwrap_or_default(),
+                (Kind::Practice, 13) => "CLICK".into(),
+                (_, 12) => "PLAY".into(),
+                (_, 13) => "REPEAT".into(),
+                (_, 14) => "REWIND".into(),
+                _ => "SCAN".into(),
+            },
+            _ => String::new(),
+        }
+    }
+    fn kit_pad_color(&self, layer: u8, pad: usize, held: bool) -> PadColor {
+        let alt = layer == 1;
+        let bit = |m: usize| m & (1 << pad) != 0;
+        let p = &self.p;
+        if self.kind == Kind::Orbit && !alt {
+            return if bit(p.pads.load(Ordering::Relaxed)) { PadColor::Green } else { PadColor::Off };
+        }
+        if self.kind == Kind::Studio && alt {
+            return if self.tracks[pad % 8][if pad < 8 { 2 } else { 3 }] > 0. {
+                if pad < 8 { PadColor::Red } else { PadColor::Green }
+            } else {
+                PadColor::Off
+            };
+        }
+        if held {
+            return PadColor::Green;
+        }
+        let playing = p.play.load(Ordering::Relaxed);
+        match self.kind {
+            Kind::Studio if (4..12).contains(&pad) && pad - 4 == self.last_track => PadColor::Blue,
+            Kind::Dream if !alt && pad == p.step.load(Ordering::Relaxed) % 4 => PadColor::Blue,
+            Kind::Swarm | Kind::Mutant | Kind::Constellation if alt && pad % 4 == p.variation.load(Ordering::Relaxed) % 4 => PadColor::Blue,
+            _ if self.keys_layer() && self.kind != Kind::SampleHunter => {
+                if self.pad_note(pad).is_some_and(|n| n.rem_euclid(12) == self.root_note().rem_euclid(12)) { PadColor::Blue } else { PadColor::Off }
+            }
+            k if k.capture() && !self.keys_layer() && pad == 0 && p.record.load(Ordering::Relaxed) => PadColor::Red,
+            k if k.capture() && !self.keys_layer() && pad == 1 && playing => PadColor::Yellow,
+            k if k.media() && pad == 12 && playing => PadColor::Yellow,
+            Kind::Master if pad < 2 && (p.values[0].get() > 0.) == (pad == 1) => PadColor::Blue,
+            Kind::Master if pad == 2 && p.values[1].get() > 0. => PadColor::Yellow,
+            Kind::Master if pad == 3 && p.freeze.load(Ordering::Relaxed) => PadColor::Red,
+            _ => PadColor::Off,
+        }
+    }
+}
+
 fn load_journal(path: &Path) -> (bool, usize) {
     let Ok(text) = std::fs::read_to_string(path.with_extension("journal.toml")) else {
         return (false, 0);
@@ -2044,7 +2849,7 @@ fn load_wav(path: &Path) -> Result<Clip, String> {
         return Err("Use mono or stereo PCM/float WAV".into());
     }
     if r.duration() as usize > MEDIA_LIMIT {
-        return Err("Clip too long: limit 5.76M frames (120s at 48k)".into());
+        return Err("Clip too long: the limit is 30 minutes".into());
     }
     let raw: Result<Vec<f32>, _> = if s.sample_format == hound::SampleFormat::Float {
         r.samples::<f32>().collect()
@@ -2069,7 +2874,7 @@ fn load_wav(path: &Path) -> Result<Clip, String> {
         .collect::<Vec<_>>();
     let peak = samples.iter().flatten().fold(0f32, |a, v| a.max(v.abs()));
     Ok(Clip {
-        samples: Arc::new(samples),
+        samples: Arc::new(Pcm::from(samples)),
         rate: s.sample_rate as f32,
         name: path
             .file_stem()
@@ -2184,8 +2989,14 @@ struct Processor {
     motion_clock: f32,
     perf: [f32; 8],
     audition: Option<i32>,
+    /// Where generated notes go (synth kinds; see note_bus.rs).
+    notes: crate::note_bus::NoteOut,
 }
 impl Processor {
+    /// How long one take may be (frames).
+    fn take_cap(&self) -> usize {
+        if self.kind == Kind::Studio { STUDIO_CAP } else { CAP }
+    }
     fn new(
         kind: Kind,
         p: Arc<Shared>,
@@ -2224,7 +3035,7 @@ impl Processor {
             clip: None,
             recordings: if kind.capture() {
                 (0..if kind == Kind::Studio { 8 } else { 1 })
-                    .map(|_| Vec::with_capacity(CAP))
+                    .map(|_| Vec::with_capacity(if kind == Kind::Studio { STUDIO_CAP } else { CAP }))
                     .collect()
             } else {
                 vec![]
@@ -2244,7 +3055,7 @@ impl Processor {
             marker: 0,
             stretch_clock: 0,
             export: if kind.capture() {
-                Vec::with_capacity(CAP)
+                Vec::with_capacity(if kind == Kind::Studio { STUDIO_CAP } else { CAP })
             } else {
                 vec![]
             },
@@ -2266,6 +3077,7 @@ impl Processor {
             motion_clock: 0.,
             perf: [0.; 8],
             audition: None,
+            notes: crate::note_bus::NoteOut::detached(),
         }
     }
     fn random(&mut self) -> f32 {
@@ -2318,7 +3130,7 @@ impl Processor {
                 Command::Save => {
                     if !self.p.record.load(Ordering::Relaxed)
                         && !self.pending_save
-                        && self.export.capacity() >= CAP
+                        && self.export.capacity() >= self.take_cap()
                     {
                         self.pending_save = true;
                         self.p.export_busy.store(true, Ordering::Relaxed);
@@ -2439,7 +3251,9 @@ impl Processor {
                     _ => generated & (1<<i)!=0,
                 }
             };
-            if fire || manual_edge {
+            // Generated notes sound here, go to another app, or (route
+            // None) nowhere; the pads always play here.
+            if manual_edge || (fire && self.notes.internal()) {
                 self.env[i] = 1.;
                 self.sample_position[i] = 0.;
             }
@@ -2456,6 +3270,9 @@ impl Processor {
             let octave = if self.kind==Kind::Constellation {(i/4) as f32*v[1]*12.}else{0.};
             let note=root + music_scales::degree(scale,degree) as f32 + octave + perf[5]*12.;
             self.note_values[i] = note;
+            if fire && self.notes.external() {
+                self.notes.trigger(note.round().clamp(0., 127.) as u8, 100, (beat_len * 1.5) as u32);
+            }
             if self.env[i] < 0.00001 && self.voice_amplitude[i] < 0.00001 {
                 self.voice_amplitude[i] = 0.;
                 continue;
@@ -2489,6 +3306,7 @@ impl Processor {
                     let index = self.sample_position[i] as usize;
                     if let Some(frame) = clip.samples.get(index) {
                         let next = clip.samples.get(index + 1).unwrap_or(frame);
+                        let (frame, next) = (&frame, &next);
                         let f = self.sample_position[i].fract() as f32;
                         osc =
                             (frame[0] + frame[1]) * (1. - f) * 0.5 + (next[0] + next[1]) * f * 0.5;
@@ -2617,10 +3435,8 @@ impl Processor {
             let i = pos as usize;
             let j = if i + 1 < b { i + 1 } else { a };
             let f = (pos - i as f64) as f32;
-            [
-                c.samples[i][0] * (1. - f) + c.samples[j][0] * f,
-                c.samples[i][1] * (1. - f) + c.samples[j][1] * f,
-            ]
+            let (si, sj) = (c.samples.at(i), c.samples.at(j));
+            [si[0] * (1. - f) + sj[0] * f, si[1] * (1. - f) + sj[1] * f]
         };
         // Two overlapped 40ms grains decouple practice speed from pitch. This
         // lightweight granular stretch is deliberately not a phase-vocoder claim.
@@ -2713,7 +3529,7 @@ impl Processor {
         }
         if record {
             self.recorded_peak = self.recorded_peak.max(input.abs());
-            if self.record_pos < CAP {
+            if self.record_pos < self.take_cap() {
                 let t = &mut self.recordings[track];
                 if self.record_pos < t.len() {
                     t[self.record_pos] = [input, input];
@@ -2947,6 +3763,12 @@ impl AudioProcessor for Processor {
         let play = self.p.play.load(Ordering::Relaxed);
         let record = self.p.record.load(Ordering::Relaxed);
         let mix = (self.p.mix.get() + self.p.ext.get()).clamp(0., 2.);
+        // notes sent to another app end on time (or all at once on stop)
+        if play {
+            self.notes.advance((out.len() / channels) as u32);
+        } else {
+            self.notes.all_off();
+        }
         self.mono.clear();
         let radio = self.p.radio.try_lock().ok().and_then(|s| s.clone());
         let mut radio_ended = false;
@@ -3126,7 +3948,7 @@ impl AudioProcessor for Processor {
             let buffer: Vec<f32> = if self.kind==Kind::Fracture {
                 (0..128).map(|i|self.delay(v[0]*rate*((i/8+1) as f32-(i%8) as f32/8.))).collect()
             } else if let Some(clip) = &self.clip {
-                take_overview(&clip.samples, 128)
+                clip.samples.overview(128)
             } else if self.kind.capture() {
                 let track = if self.kind == Kind::Studio {
                     (v[0] as usize - 1).min(7)
@@ -3294,14 +4116,14 @@ mod tests {
         app.p.motion_rate.set(4.);
         if sample {
             app.send(Command::Load(Clip {
-                samples: Arc::new(
+                samples: Arc::new(Pcm::from(
                     (0..48000)
                         .map(|i| {
                             let v = (TAU * i as f32 / 87.).sin() * 0.7;
                             [v, v]
                         })
-                        .collect(),
-                ),
+                        .collect::<Vec<_>>(),
+                )),
                 rate: RATE,
                 name: "test instrument".into(),
                 peak: 0.7,
@@ -3488,6 +4310,7 @@ mod tests {
     fn all_apps_are_independent_silent_at_rest_and_finite_at_parameter_extremes() {
         for &(kind, _, _) in APPS {
             let (mut app, mut dsp, input) = fixture(kind);
+            app.kit.menu = true; // drives the list with the D-pad below
             let mut out = [0.; 1024];
             for _ in 0..4 {
                 dsp.process(&mut out, 2, RATE);
@@ -3551,6 +4374,7 @@ mod tests {
             Kind::Master,
         ] {
             let (mut app, _, _) = fixture(kind);
+            app.kit.menu = true; // knob 2 on the Source row
             app.tick(&Input {
                 knob2: 1,
                 ..Default::default()
@@ -3630,14 +4454,14 @@ mod tests {
             Kind::Memories,
         ] {
             let (mut app, mut dsp, _) = fixture(kind);
-            let samples = (0..4800)
+            let samples: Vec<[f32; 2]> = (0..4800)
                 .map(|i| {
                     let s = (TAU * i as f32 / 32.).sin() * 0.2;
                     [s, s]
                 })
                 .collect();
             app.send(Command::Load(Clip {
-                samples: Arc::new(samples),
+                samples: Arc::new(Pcm::from(samples)),
                 rate: RATE,
                 name: "fixture".into(),
                 peak: 0.2,
@@ -3689,8 +4513,171 @@ mod tests {
         let clip = load_wav(&path).unwrap();
         assert_eq!(clip.rate, 44100.);
         assert_eq!(clip.samples.len(), 128);
-        assert!((clip.samples[0][1] + 0.5).abs() < 1e-6);
+        assert!((clip.samples.at(0)[1] + 0.5).abs() < 1e-4);
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod play_view_tests {
+    use super::*;
+    use kit::rank_pad;
+
+    fn app(kind: Kind) -> CollectionApp {
+        let bus = Arc::new(AudioBus::new());
+        let input = bus.register("Test input");
+        *input.lock().unwrap() = vec![0.1; 512];
+        CollectionApp::new(kind, bus, Arc::new(ModBus::new()), Arc::new(MixerBus::new()), Arc::new(AtomicF32::new(3.)))
+    }
+    fn pad(i: usize) -> Input {
+        Input { grid: std::array::from_fn(|k| k == i), ..Default::default() }
+    }
+    fn musical() -> impl Iterator<Item = Kind> {
+        APPS.iter().map(|a| a.0).filter(|k| k.playable())
+    }
+
+    #[test]
+    fn musical_kinds_open_playable_and_utilities_keep_their_menu() {
+        for &(kind, id, _) in APPS {
+            let a = app(kind);
+            assert_eq!(a.play_column().is_some(), kind.playable(), "{kind:?}");
+            assert_eq!(a.play_surface(), kind.playable());
+            assert_eq!(a.kit.cfg.app_id, id, "moments saved under the app's own id");
+            if kind.playable() {
+                let n = a.kit_control_count();
+                assert!((7..=16).contains(&n), "{kind:?}");
+                for i in 0..n {
+                    assert!(!a.kit_label(i).is_empty() && !a.kit_value(i).is_empty());
+                }
+                let r = a.kit.cfg.routes;
+                for c in [r.stick_x, r.stick_y, r.hand_l, r.hand_r].into_iter().flatten() {
+                    assert!(!a.kit_stepped(c), "{kind:?} routes a stepped control");
+                }
+            } else {
+                assert_eq!(a.grid_mode_label(), None);
+            }
+        }
+        let mut s = app(Kind::Scope);
+        s.tick(&Input { navigation_steps: 1, ..Default::default() });
+        assert_eq!(s.slint_selected(), 1, "Scope's D-pad still walks its menu");
+    }
+
+    #[test]
+    fn knob_1_turns_hero_control_0_and_r1_opens_the_menu() {
+        for kind in musical() {
+            let mut a = app(kind);
+            let before = a.kit_norm(0).unwrap();
+            a.tick(&Input { knob1: 1, ..Default::default() });
+            assert!(a.kit_norm(0).unwrap() > before, "{kind:?}: knob 1 = {}", a.kit_label(0));
+            assert_eq!(a.slint_selected(), 0, "the list didn't move");
+            a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+            assert!(a.play_column().is_none(), "{kind:?}: R1 opens the menu");
+            a.tick(&Input { navigation_steps: 1, ..Default::default() });
+            assert_eq!(a.slint_selected(), 1, "{kind:?}: the menu has the D-pad back");
+        }
+    }
+
+    #[test]
+    fn native_layers_do_what_the_pads_did() {
+        // Orbit: a pad toggles its gate.
+        let mut orbit = app(Kind::Orbit);
+        let gates = orbit.p.pads.load(Ordering::Relaxed);
+        orbit.tick(&pad(1));
+        orbit.tick(&Input::default());
+        assert_eq!(orbit.p.pads.load(Ordering::Relaxed), gates ^ 2);
+        // F2 to KEYS: gates set aside, pads play; back to GATES restores them.
+        orbit.toggle_grid_mode();
+        orbit.tick(&pad(3));
+        assert!(orbit.p.alternate.load(Ordering::Relaxed), "KEYS layer = the menu's Keys mode");
+        assert_eq!(orbit.p.pads.load(Ordering::Relaxed), 1 << 3);
+        for _ in 0..3 {
+            orbit.toggle_grid_mode(); // Controls, Moments, Gates
+        }
+        orbit.tick(&Input::default());
+        assert!(!orbit.p.alternate.load(Ordering::Relaxed));
+        assert_eq!(orbit.p.pads.load(Ordering::Relaxed), gates ^ 2, "gate pattern survived");
+
+        // Swarm: held pads are held keys; Fracture: held pads punch slices.
+        for kind in [Kind::Swarm, Kind::Fracture] {
+            let mut a = app(kind);
+            a.tick(&pad(5));
+            assert_eq!(a.p.pads.load(Ordering::Relaxed), 1 << 5, "{kind:?}");
+            a.tick(&Input::default());
+            assert_eq!(a.p.pads.load(Ordering::Relaxed), 0);
+        }
+
+        // Field: pad 1 records once a source is chosen.
+        let mut field = app(Kind::Field);
+        field.p.source.store(0, Ordering::Relaxed);
+        field.tick(&pad(0));
+        assert!(field.p.record.load(Ordering::Relaxed));
+
+        // Studio: the menu's Pads row and F2 stay in step.
+        let mut studio = app(Kind::Studio);
+        studio.toggle_grid_mode();
+        studio.tick(&Input::default());
+        assert!(studio.p.alternate.load(Ordering::Relaxed));
+        assert_eq!(studio.grid_mode_label(), Some("MUTE/SOLO"));
+        studio.tick(&pad(2));
+        assert_eq!(studio.tracks[2][2], 1., "mute pad");
+        studio.p.alternate.store(false, Ordering::Relaxed);
+        studio.tick(&Input::default());
+        assert_eq!(studio.grid_mode_label(), Some("RECORD"));
+    }
+
+    #[test]
+    fn effect_throws_spring_back_exactly() {
+        let mut a = app(Kind::Fracture);
+        for _ in 0..3 {
+            a.toggle_grid_mode();
+        }
+        assert_eq!(a.grid_mode_label(), Some("THROWS"));
+        let wet = a.p.values[5].get();
+        a.tick(&pad(rank_pad(0)));
+        assert_eq!(a.p.values[5].get(), 1., "WET throw");
+        a.tick(&Input::default());
+        assert!((a.p.values[5].get() - wet).abs() < 1e-5);
+        a.tick(&pad(rank_pad(2)));
+        assert!(a.p.freeze.load(Ordering::Relaxed), "FREEZE throw");
+        a.tick(&Input::default());
+        assert!(!a.p.freeze.load(Ordering::Relaxed));
+
+        let mut tape = app(Kind::TapeMachine);
+        let speed = tape.p.values[0].get();
+        tape.tick(&Input { stick: [1.0, 0.0], ..Default::default() });
+        assert!(tape.p.values[0].get() > speed, "stick X pushes speed");
+        tape.tick(&Input::default());
+        assert!((tape.p.values[0].get() - speed).abs() < 1e-5, "and returns to the knob");
+    }
+
+    #[test]
+    fn midi_keys_play_pitched_pads_and_d_pad_browses() {
+        let mut a = app(Kind::Swarm);
+        let note = a.pad_note(3).unwrap();
+        let mut keys = crate::app::MidiKeys::default();
+        keys.0[note as usize] = 100;
+        a.tick(&Input { midi_keys: keys, ..Default::default() });
+        assert_ne!(a.p.pads.load(Ordering::Relaxed) & (1 << 3), 0, "a key presses the pad with its pitch");
+
+        let mut f = app(Kind::Fracture);
+        f.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(f.p.variation.load(Ordering::Relaxed), 1, "D-pad up recalls the next scene");
+        assert_eq!(f.p.values[1].get(), 2., "Reverse shards' repeats");
+
+        let mut s = app(Kind::Studio);
+        s.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(s.p.values[0].get(), 2., "Studio's D-pad steps tracks");
+        assert_eq!(s.last_track, 1);
+    }
+
+    #[test]
+    fn moments_leave_where_you_are_alone() {
+        let a = app(Kind::Reference);
+        let snap = a.kit_snapshot();
+        let at = |c| controls(Kind::Reference).iter().position(|&x| x == c).unwrap();
+        assert!(snap[at(Ctl::Param(0))].is_null(), "position is not part of a sound");
+        assert!(snap[at(Ctl::File)].is_null() && snap[at(Ctl::Scene)].is_null());
+        assert!(snap[at(Ctl::Param(5))].is_number(), "output level is");
     }
 }
 
@@ -3762,4 +4749,16 @@ impl Drop for CollectionApp {
 #[cfg(test)] mod visual_interaction_tests {
  use super::*;
  #[test] fn scope_cycles_all_ten_modes_and_freezes_all_geometry(){let bus=Arc::new(AudioBus::new());let input=bus.register("Signal");*input.lock().unwrap()=(0..512).map(|i|(i as f32*0.2).sin()*0.3).collect();let mut app=CollectionApp::new(Kind::Scope,bus,Arc::new(ModBus::new()),Arc::new(MixerBus::new()),Arc::new(AtomicF32::new(1.)));app.p.source.store(0,Ordering::Relaxed);let mut dsp=app.audio_processor().unwrap();let mut out=[0.;1024];for mode in 0..10 {app.p.values[4].set(mode as f32);app.p.values[5].set(0.);for _ in 0..4{dsp.process(&mut out,2,48000.);}let SlintExtra::Collection(before)=app.slint_extra()else{panic!()};app.p.values[5].set(1.);for _ in 0..4{dsp.process(&mut out,2,48000.);}let SlintExtra::Collection(after)=app.slint_extra()else{panic!()};assert_eq!(before.visual_lines,after.visual_lines);assert_eq!(before.terrain,after.terrain);assert!(out.iter().all(|s|*s==0.));}app.p.values[4].set(9.);let mut input=Input::default();input.grid[1]=true;app.tick(&input);assert_eq!(app.p.values[4].get(),0.);}
+}
+
+/// Builds one of the Collection apps (or Portal) for the registry: the
+/// manifest's id picks the kind, so every Collection app shares this
+/// one entry point (`module = "collection"` in its manifest).
+pub fn create(ctx: &crate::app::AppContext, id: &str) -> Box<dyn crate::app::App> {
+    let kind = APPS.iter().find(|(_, app, _)| *app == id).map(|(k, _, _)| *k).unwrap_or(Kind::Orbit);
+    if kind == Kind::Portal {
+        Box::new(portal::PortalApp::new(ctx.get(), ctx.get(), ctx.get(), ctx.named("nav_speed")).with_notes(ctx.try_get()))
+    } else {
+        Box::new(CollectionApp::new(kind, ctx.get(), ctx.get(), ctx.get(), ctx.named("nav_speed")).with_notes(ctx.try_get()))
+    }
 }

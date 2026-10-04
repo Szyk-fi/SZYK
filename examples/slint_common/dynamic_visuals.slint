@@ -19,8 +19,8 @@ export component SpectralTerrain inherits Rectangle {
   property <float> by:0.22+self.next*0.62-min(1,max(0,root.history[(self.layer+1)*32+self.bin])*8)*0.3*(0.38+self.next*0.62);
   center-x:(self.ax+self.bx)/2*root.width;center-y:(self.ay+self.by)/2*root.height;delta-x:(self.bx - self.ax)*root.width/1px;delta-y:(self.by - self.ay)*root.height/1px;trace:root.accent.with-alpha(0.15);line-width:1px;
  }
- Text {x:12px;y:9px;text:root.frozen?"SPECTRAL TERRAIN / HOLD":"SPECTRAL TERRAIN / LIVE";color:root.accent;font-size:9px;}
- Text {x:12px;y:parent.height - 20px;text:"LOW → HIGH      DEPTH / RECENT HISTORY";color:root.ink.with-alpha(0.5);font-size:8px;}
+ Text {x:12px;y:9px;text:root.frozen?"SPECTRAL TERRAIN / HOLD":"SPECTRAL TERRAIN / LIVE";color:root.accent;font-size:12px;}
+ Text {x:12px;y:parent.height - 20px;text:"LOW → HIGH      DEPTH / RECENT HISTORY";color:root.ink.with-alpha(0.72);font-size:12px;}
 }
 export component SwarmNetwork inherits Rectangle {
  in property <[float]> levels;in property <[float]> phases;in property <[float]> notes;
@@ -42,9 +42,9 @@ export component SwarmNetwork inherits Rectangle {
   x:parent.width*(0.5+cos(self.angle*1deg)*self.radius)-14px;y:parent.height*(0.51+sin(self.angle*1deg)*self.radius*0.85)-14px;width:28px;height:28px;
   Rectangle {width:28px;height:28px;border-radius:14px;background:root.accent.with-alpha(root.levels[i]*0.08);}
   Rectangle {x:8px;y:8px;width:12px;height:12px;border-radius:6px;border-width:1px;border-color:root.accent.with-alpha(0.3+root.levels[i]*0.7);background:root.accent.with-alpha(root.levels[i]*0.7);}
-  Text {x:22px;y:2px;text:root.levels[i]>0.01?["C","C♯","D","E♭","E","F","F♯","G","A♭","A","B♭","B"][mod(round(root.notes[i]),12)]+(floor(root.notes[i]/12)-1):"";color:root.ink.with-alpha(0.3+root.levels[i]*0.5);font-size:8px;}
+  Text {x:22px;y:2px;text:root.levels[i]>0.01?["C","C♯","D","E♭","E","F","F♯","G","A♭","A","B♭","B"][mod(round(root.notes[i]),12)]+(floor(root.notes[i]/12)-1):"";color:root.ink.with-alpha(0.3+root.levels[i]*0.5);font-size:12px;}
   TouchArea {pointer-event(e)=>{if e.kind==PointerEventKind.down {root.pad(i,true);}else if e.kind==PointerEventKind.up || e.kind==PointerEventKind.cancel {root.pad(i,false);}}}
  }
- Text {x:12px;y:9px;text:"VOICE NETWORK / "+root.count+" NODES";color:root.accent;font-size:9px;}
- Text {x:12px;y:parent.height - 20px;text:"PITCH · PHASE · ENVELOPE / TOUCH TO PLAY";color:root.ink.with-alpha(0.5);font-size:8px;}
+ Text {x:12px;y:9px;text:"VOICE NETWORK / "+root.count+" NODES";color:root.accent;font-size:12px;}
+ Text {x:12px;y:parent.height - 20px;text:"PITCH · PHASE · ENVELOPE / TOUCH TO PLAY";color:root.ink.with-alpha(0.72);font-size:12px;}
 }

@@ -116,8 +116,9 @@ media workers and app processors retain the existing lazy activation rules.
   the existing grace period; new synth tails explicitly keep processing until
   quiet. Previously opened app state stays in memory to preserve takes/settings.
   This is lazy startup and DSP suspension, not a claim of automatic RAM eviction.
-- Capture is bounded to 384,000 frames per track (8 s at 48 kHz). Studio can retain
-  eight such stereo buffers; it is a short-take workstation, not disk streaming.
+- Capture is bounded to 384,000 frames per take (8 s at 48 kHz) for Field and
+  Sample Hunter. Studio's eight tracks hold a minute each (it replaced the old
+  Tape looper, and loops its takes); it is a RAM workstation, not disk streaming.
   Save snapshots copy at most 512 frames per callback; file encoding runs on a
   worker. Clear explicitly discards takes.
 - Local playback supports WAV, FLAC, MP3, Ogg Vorbis, AAC/M4A/ALAC and AIFF, bounded to 5,760,000 frames (120 seconds at 48 kHz). Long-form local-file streaming is not implemented. Radio streams PCM/float WAV through a one-second

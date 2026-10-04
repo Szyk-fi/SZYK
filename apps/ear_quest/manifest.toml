@@ -1,0 +1,9 @@
+id = "ear_quest"
+name = "Ear Quest"
+category = "kids"
+description = "Ages 10-12. Five ear-training games that unlock in turn: higher or lower, major or minor, intervals and more."
+audio_outputs = ["Ear Quest"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Ear Quest Level",
+]

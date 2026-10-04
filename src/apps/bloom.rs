@@ -44,6 +44,7 @@
 //! comment) -- everything else about crossing detection here is
 //! exact, not a visual approximation.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, ROOT_NAMES, SCALE_TYPES};
 use crate::audio::AudioProcessor;
@@ -51,6 +52,7 @@ use crate::audio_bus::AudioBus;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
+use crate::note_bus::{NoteBus, NoteOut, NoteRoute};
 use crate::paramlist::ParamList;
 use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
@@ -878,8 +880,19 @@ fn bloom_petal_color(frac: f32) -> Rgb565 {
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
     MasterBpm,
+    /// Where Bloom's notes go: its own Plaits voices, another app (any
+    /// instrument on the note bus), or nowhere -- "signal only", when the
+    /// CV outputs below are all that matters.
+    Plays,
+    /// Gate CV: high while a note sounds (Decay sets how long). App, then
+    /// input, like every other modulation output.
+    GateApp,
+    GateInput,
+    /// Pitch CV of the last note, 0..1 over MIDI 0..127.
+    PitchApp,
+    PitchInput,
     /// Randomizes every one of the 8 shapes at once -- press-only,
-    /// same "press knob2" idiom as the per-shape `Randomize`, just
+    /// same "hold SELECT" idiom as the per-shape `Randomize`, just
     /// scoped to all of them. Lives in the Master Clock group since
     /// it isn't any one shape's own action.
     RandomizeAll,
@@ -1085,6 +1098,9 @@ impl ShapeParams {
 
 struct Params {
     master_bpm: AtomicF32,
+    /// Gate / Pitch CV routes: 0 = off, else ModBus target index + 1.
+    gate_cv: AtomicUsize,
+    pitch_cv: AtomicUsize,
     shapes: [ShapeParams; NUM_SHAPES],
     /// This app's rendered mono output, republished every block for
     /// another app (Clouds) to tap -- see audio_bus.rs.
@@ -1100,6 +1116,8 @@ impl Params {
         let (mix_level, ext_mix_level) = mixer_bus.register("Bloom", modbus);
         Self {
             master_bpm: AtomicF32::new(DEFAULT_BPM),
+            gate_cv: AtomicUsize::new(0),
+            pitch_cv: AtomicUsize::new(0),
             shapes: std::array::from_fn(|i| ShapeParams::new(i + 1, modbus)),
             bus_out: audio_bus.register("Bloom"),
             mix_level,
@@ -1122,6 +1140,70 @@ pub struct BloomApp {
     /// behavior (Bloom otherwise doesn't use the grid at all).
     custom_scale_edit: Option<usize>,
     prev_grid: [bool; 16],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+    modbus: Arc<ModBus>,
+    /// Where the notes go (see `Selection::Plays`); the sending end goes
+    /// to the audio thread with the processor.
+    note_route: NoteRoute,
+    note_out: Option<NoteOut>,
+}
+
+/// Play-view control indexes (see `BloomApp::kit_sel`). Every one acts
+/// on the focused shape -- the one the circle shows and F3 runs.
+const C_SPEED: usize = 0;
+const C_OUTER_ANGLE: usize = 1;
+const C_PROBABILITY: usize = 2;
+const C_DOT_ANGLE: usize = 3;
+const C_TIMBRE: usize = 4;
+const C_DECAY: usize = 6;
+const C_RING_ROTATION: usize = 7;
+const C_PATTERN: usize = 10;
+/// Not a parameter: which of the 8 shapes the play view (and F3) acts
+/// on. Kept as the menu's own selection, so R1 lands on that shape.
+const C_SHAPE: usize = 15;
+const KIT_CONTROLS: usize = 16;
+/// The Custom Scale editor as a pad layer: being on it *is* Custom
+/// Scale Edit mode (see `BloomApp::tick`/`toggle_grid_mode`).
+const SCALE_LAYER: u8 = 0;
+const SCALE_LAYER_LABEL: &str = "SCALE";
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "bloom",
+        // Bloom's only pad behaviour is the Custom Scale editor, which used
+        // to be reachable only from the menu and was off by default -- so
+        // it goes last, not first: the app still opens with pads that
+        // can't silently rewrite a scale, and F2 (or the menu's Edit
+        // Custom Scale row, as before) reaches it.
+        // Throws first: on Controls, knob 2 follows the grabbed pad
+        // instead of the hero pair, which is the wrong default.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments, Layer::Native(SCALE_LAYER, SCALE_LAYER_LABEL)],
+        hero: vec![[C_SPEED, C_OUTER_ANGLE], [C_PROBABILITY, C_DOT_ANGLE], [C_TIMBRE, 5], [C_DECAY, C_RING_ROTATION]],
+        // 50 curated patterns: stepping through them is the quickest way
+        // to a new shape.
+        browse: Some(C_PATTERN),
+        // Stick: dot speed on X, rotating the trigger dots on Y (which
+        // angles get crossed -- the rhythm). Hands: fanning the dots apart
+        // (Dot Angle) and density (Probability).
+        routes: Routes { stick_x: Some(C_SPEED), stick_y: Some(C_OUTER_ANGLE), hand_l: Some(C_DOT_ANGLE), hand_r: Some(C_PROBABILITY) },
+        throws: vec![
+            Throw { control: C_SPEED, to: 1.0, label: "FAST" },
+            Throw { control: C_SPEED, to: 0.0, label: "CRAWL" },
+            // Offsets span -1..1 turns, so +-1 is no rotation at all; 0.75
+            // is +half a turn.
+            Throw { control: C_OUTER_ANGLE, to: 0.75, label: "FLIP" },
+            Throw { control: C_DOT_ANGLE, to: 0.6, label: "FAN" },
+            Throw { control: C_RING_ROTATION, to: 0.75, label: "MIRROR" },
+            Throw { control: C_PROBABILITY, to: 0.0, label: "HUSH" },
+            Throw { control: C_TIMBRE, to: 1.0, label: "BRIGHT" },
+            Throw { control: C_DECAY, to: 1.0, label: "LONG" },
+        ],
+        // A keyboard toggling scale degrees would be a surprise, not a
+        // feature.
+        midi_to_pads: false,
+        own_expression: false,
+    }
 }
 
 impl BloomApp {
@@ -1130,6 +1212,7 @@ impl BloomApp {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos())
             .unwrap_or(24681);
+        let (note_route, note_out) = NoteRoute::new(None, "Bloom", "bloom", true);
         Self {
             params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)),
             sensitivity,
@@ -1140,7 +1223,42 @@ impl BloomApp {
             rng: seed | 1,
             custom_scale_edit: None,
             prev_grid: [false; 16],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+            modbus,
+            note_route,
+            note_out: Some(note_out),
         }
+    }
+
+    /// Lets Bloom play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
+        let (route, out) = NoteRoute::new(bus, "Bloom", "bloom", true);
+        self.note_route = route;
+        self.note_out = Some(out);
+        self
+    }
+
+    /// The shape the screen, F3 and the play view act on -- whatever the
+    /// menu's selection points into.
+    fn focus_shape(&self) -> usize {
+        let rows = self.visible_rows();
+        self.current_shape(&rows)
+    }
+
+    /// Moves the menu's selection onto shape `s`'s group row, so the
+    /// circle, F3 and a later R1 into the menu all follow.
+    fn set_focus_shape(&mut self, s: usize) {
+        let rows = self.visible_rows();
+        if let Some(idx) = rows.iter().position(|r| matches!(r, Row::Group(g) if *g == s + 1)) {
+            self.list.selected = idx;
+        }
+        self.last_shape = s;
+    }
+
+    /// Ignores L1's peek on purpose: peeking at Controls doesn't leave
+    /// the editor.
+    fn on_scale_layer(&self) -> bool {
+        self.kit.layer_label() == SCALE_LAYER_LABEL
     }
 
     fn next_rand01(&mut self) -> f32 {
@@ -1196,7 +1314,7 @@ impl BloomApp {
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         if g == 0 {
-            return vec![Selection::MasterBpm, Selection::RandomizeAll];
+            return vec![Selection::Plays, Selection::GateApp, Selection::GateInput, Selection::PitchApp, Selection::PitchInput, Selection::MasterBpm, Selection::RandomizeAll];
         }
         let s = g - 1;
         // Running comes first -- the master on/off for this shape.
@@ -1258,7 +1376,7 @@ impl BloomApp {
 
     fn selection_shape(sel: Selection) -> Option<usize> {
         match sel {
-            Selection::MasterBpm | Selection::RandomizeAll => None,
+            Selection::MasterBpm | Selection::RandomizeAll | Selection::Plays | Selection::GateApp | Selection::GateInput | Selection::PitchApp | Selection::PitchInput => None,
             Selection::Running(s)
             | Selection::Pattern(s)
             | Selection::Dots(s)
@@ -1305,6 +1423,11 @@ impl BloomApp {
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::MasterBpm => "BPM".into(),
+            Selection::Plays => "Plays".into(),
+            Selection::GateApp => "Gate CV".into(),
+            Selection::GateInput => "  Gate input".into(),
+            Selection::PitchApp => "Pitch CV".into(),
+            Selection::PitchInput => "  Pitch input".into(),
             Selection::RandomizeAll => "Randomize All".into(),
             Selection::Running(_) => "Running".into(),
             Selection::Pattern(_) => "Pattern".into(),
@@ -1344,7 +1467,12 @@ impl BloomApp {
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
             Selection::MasterBpm => format!("{:.0}", self.params.master_bpm.get()),
-            Selection::RandomizeAll => "press knob2".into(),
+            Selection::Plays => self.note_route.label(),
+            Selection::GateApp => crate::modbus::Patch::app_label(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed)),
+            Selection::GateInput => crate::modbus::Patch::input_label(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed)),
+            Selection::PitchApp => crate::modbus::Patch::app_label(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed)),
+            Selection::PitchInput => crate::modbus::Patch::input_label(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed)),
+            Selection::RandomizeAll => "hold SELECT".into(),
             Selection::Running(s) => {
                 if self.params.shapes[s].running.load(Ordering::Relaxed) { "running".into() } else { "stopped".into() }
             }
@@ -1370,7 +1498,7 @@ impl BloomApp {
                 }
             }
             Selection::ScaleCustomEdit(s) => {
-                if self.custom_scale_edit == Some(s) { "ON -- press knob1 to exit".into() } else { "off".into() }
+                if self.custom_scale_edit == Some(s) { "ON -- SELECT to exit".into() } else { "off".into() }
             }
             Selection::Root(s) => ROOT_NAMES[self.params.shapes[s].root.load(Ordering::Relaxed) as usize % 12].to_string(),
             Selection::OctaveRange(s) => format!("{} oct", self.params.shapes[s].octave_range.load(Ordering::Relaxed)),
@@ -1401,8 +1529,8 @@ impl BloomApp {
             Selection::Harmonics(s) => format!("{:.2}", self.params.shapes[s].harmonics.get()),
             Selection::Timbre(s) => format!("{:.2}", self.params.shapes[s].timbre.get()),
             Selection::Decay(s) => format!("{:.2}", self.params.shapes[s].decay.get()),
-            Selection::Randomize(_) => "press knob2".into(),
-            Selection::Retrigger(_) => "press knob2".into(),
+            Selection::Randomize(_) => "hold SELECT".into(),
+            Selection::Retrigger(_) => "hold SELECT".into(),
             Selection::RandomStart(s) => {
                 if self.params.shapes[s].random_start.load(Ordering::Relaxed) { "on".into() } else { "off".into() }
             }
@@ -1430,6 +1558,11 @@ impl BloomApp {
         let sensitivity = self.sensitivity.get();
         let step = delta.signum();
         match sel {
+            Selection::Plays => self.note_route.step(step),
+            Selection::GateApp => self.params.gate_cv.store(crate::modbus::Patch::step_app(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
+            Selection::GateInput => self.params.gate_cv.store(crate::modbus::Patch::step_input(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
+            Selection::PitchApp => self.params.pitch_cv.store(crate::modbus::Patch::step_app(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
+            Selection::PitchInput => self.params.pitch_cv.store(crate::modbus::Patch::step_input(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::MasterBpm => {
                 let next = (self.params.master_bpm.get() + accelerate(delta) * sensitivity * 2.0).clamp(MIN_BPM, MAX_BPM);
                 self.params.master_bpm.set(next);
@@ -1548,6 +1681,9 @@ impl BloomApp {
     fn reset(&mut self, sel: Selection) {
         match sel {
             Selection::MasterBpm => self.params.master_bpm.set(DEFAULT_BPM),
+            Selection::Plays => self.note_route.reset(),
+            Selection::GateApp | Selection::GateInput => self.params.gate_cv.store(0, Ordering::Relaxed),
+            Selection::PitchApp | Selection::PitchInput => self.params.pitch_cv.store(0, Ordering::Relaxed),
             Selection::Pattern(s) => self.apply_pattern(s, 0),
             Selection::OuterAngleOffset(s) => self.params.shapes[s].outer_angle_offset.set(0.0),
             Selection::DotAngleOffset(s) => {
@@ -1778,7 +1914,220 @@ impl BloomApp {
     }
 }
 
+impl BloomApp {
+    /// The menu leaf behind each play-view control, for the focused
+    /// shape. Control 0 follows the shape's own Tempo Sync the way its
+    /// menu does: Speed when free-running, Clock Mod when synced.
+    fn kit_sel(&self, i: usize) -> Option<Selection> {
+        let s = self.focus_shape();
+        Some(match i {
+            C_SPEED => {
+                if self.params.shapes[s].tempo_sync.load(Ordering::Relaxed) { Selection::ClockMod(s) } else { Selection::Speed(s) }
+            }
+            C_OUTER_ANGLE => Selection::OuterAngleOffset(s),
+            C_PROBABILITY => Selection::Probability(s),
+            C_DOT_ANGLE => Selection::DotAngleOffset(s),
+            C_TIMBRE => Selection::Timbre(s),
+            5 => Selection::Harmonics(s),
+            C_DECAY => Selection::Decay(s),
+            C_RING_ROTATION => Selection::RingRotationOffset(s),
+            8 => Selection::Dots(s),
+            9 => Selection::OuterDots(s),
+            C_PATTERN => Selection::Pattern(s),
+            11 => Selection::Engine(s),
+            12 => Selection::Scale(s),
+            13 => Selection::Root(s),
+            // An action: grab it on the Controls layer, press knob 2.
+            14 => Selection::Randomize(s),
+            C_SHAPE => return None,
+            _ => return None,
+        })
+    }
+
+    /// Ranges match `edit()`'s clamps exactly.
+    fn knob(&self, sel: Selection) -> Knob<'_> {
+        let p = &self.params;
+        match sel {
+            Selection::Speed(s) => Knob::F(&p.shapes[s].speed_hz, MIN_SPEED_HZ, MAX_SPEED_HZ),
+            Selection::OuterAngleOffset(s) => Knob::F(&p.shapes[s].outer_angle_offset, -1.0, 1.0),
+            Selection::DotAngleOffset(s) => Knob::F(&p.shapes[s].dot_angle_offset, -1.0, 1.0),
+            Selection::RingRotationOffset(s) => Knob::F(&p.shapes[s].ring_rotation_offset, -1.0, 1.0),
+            Selection::Probability(s) => Knob::F(&p.shapes[s].probability, 0.0, 1.0),
+            Selection::Harmonics(s) => Knob::F(&p.shapes[s].harmonics, 0.0, 1.0),
+            Selection::Timbre(s) => Knob::F(&p.shapes[s].timbre, 0.0, 1.0),
+            Selection::Decay(s) => Knob::F(&p.shapes[s].decay, 0.0, 1.0),
+            Selection::Engine(s) => Knob::U(&p.shapes[s].engine, 24),
+            // +1 for the Custom slot, same as `edit()`.
+            Selection::Scale(s) => Knob::U(&p.shapes[s].scale, SCALE_TYPES.len() as u32 + 1),
+            Selection::Root(s) => Knob::U(&p.shapes[s].root, 12),
+            _ => Knob::None,
+        }
+    }
+
+    /// Controls stored in `AtomicUsize`s, which `Knob` has no variant
+    /// for -- (atomic, min, max) handled by hand instead.
+    fn usize_knob(&self, sel: Selection) -> Option<(&AtomicUsize, usize, usize)> {
+        let p = &self.params;
+        match sel {
+            Selection::ClockMod(s) => Some((&p.shapes[s].clock_mod, 0, CLOCK_MODS.len() - 1)),
+            Selection::Dots(s) => Some((&p.shapes[s].dots, MIN_DOTS, MAX_DOTS)),
+            Selection::OuterDots(s) => Some((&p.shapes[s].outer, MIN_OUTER, MAX_OUTER)),
+            Selection::Pattern(s) => Some((&p.shapes[s].pattern, 0, PATTERN_PRESETS.len() - 1)),
+            _ => None,
+        }
+    }
+
+    /// The shape the SCALE layer's pads edit.
+    fn scale_edit_shape(&self) -> usize {
+        self.custom_scale_edit.unwrap_or_else(|| self.focus_shape())
+    }
+}
+
+impl PlayHost for BloomApp {
+    fn kit_control_count(&self) -> usize {
+        KIT_CONTROLS
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match self.kit_sel(i) {
+            Some(sel) => self.leaf_name(sel),
+            None => "Shape".into(),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        match self.kit_sel(i) {
+            Some(sel) => self.leaf_value(sel),
+            None => format!("{} of {NUM_SHAPES}", self.focus_shape() + 1),
+        }
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        let sel = self.kit_sel(i)?;
+        if let Some((a, lo, hi)) = self.usize_knob(sel) {
+            return Some((a.load(Ordering::Relaxed).clamp(lo, hi) - lo) as f32 / (hi - lo) as f32);
+        }
+        self.knob(sel).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        match self.kit_sel(i) {
+            Some(sel) => self.usize_knob(sel).is_some() || self.knob(sel).stepped(),
+            None => true,
+        }
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        match self.kit_sel(i) {
+            // The menu's edit() restarts the orbit after every detent of
+            // these two, a leftover from before they were applied live
+            // (`dot_angle_bias`). On a performance knob that would restart
+            // the pattern while you turn it, so the play view only moves
+            // the value; the menu row keeps its old behaviour.
+            Some(Selection::DotAngleOffset(s)) => bump(&self.params.shapes[s].dot_angle_offset, delta, self.sensitivity.get(), -1.0, 1.0),
+            Some(Selection::RingRotationOffset(s)) => bump(&self.params.shapes[s].ring_rotation_offset, delta, self.sensitivity.get(), -1.0, 1.0),
+            Some(sel) => self.edit(sel, delta),
+            None if delta != 0 => {
+                let next = (self.focus_shape() as i32 + delta.signum()).rem_euclid(NUM_SHAPES as i32) as usize;
+                self.set_focus_shape(next);
+            }
+            None => {}
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(sel) = self.kit_sel(i) {
+            self.reset(sel);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let Some(sel) = self.kit_sel(i) else { return };
+        let Some((cur, lo, hi)) = self.usize_knob(sel).map(|(a, lo, hi)| (a.load(Ordering::Relaxed), lo, hi)) else {
+            self.knob(sel).set(v);
+            return;
+        };
+        let next = lo + (v.clamp(0.0, 1.0) * (hi - lo) as f32).round() as usize;
+        if cur == next {
+            return;
+        }
+        // The same side effects the menu's edit() has: a count change
+        // restarts the dots (rings get reassigned), a pattern applies its
+        // whole bundle.
+        match sel {
+            Selection::Pattern(s) => self.apply_pattern(s, next),
+            Selection::Dots(s) => {
+                self.params.shapes[s].dots.store(next, Ordering::Relaxed);
+                self.reset_dot_phases(s);
+            }
+            Selection::OuterDots(s) => {
+                self.params.shapes[s].outer.store(next, Ordering::Relaxed);
+                self.reset_dot_phases(s);
+            }
+            Selection::ClockMod(s) => self.params.shapes[s].clock_mod.store(next, Ordering::Relaxed),
+            _ => {}
+        }
+    }
+    /// A pattern rewrites dots/outer/offsets, so it has to land first or
+    /// it would wipe out the moment's own values for those.
+    fn kit_recall(&mut self, v: &serde_json::Value) {
+        let Some(items) = v.as_array() else { return };
+        let order = std::iter::once(C_PATTERN).chain((0..KIT_CONTROLS).filter(|&i| i != C_PATTERN));
+        for i in order {
+            if let Some(x) = items.get(i).and_then(|x| x.as_f64()) {
+                self.kit_set_norm(i, (x as f32).clamp(0.0, 1.0));
+            }
+        }
+    }
+    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+        if pad >= NUM_CUSTOM_DEGREES {
+            return String::new();
+        }
+        let root = self.params.shapes[self.scale_edit_shape()].root.load(Ordering::Relaxed) as usize;
+        ROOT_NAMES[(root + pad) % 12].to_string()
+    }
+    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if pad >= NUM_CUSTOM_DEGREES {
+            return PadColor::Off;
+        }
+        let on = self.params.shapes[self.scale_edit_shape()].custom_scale[pad].load(Ordering::Relaxed);
+        if held {
+            PadColor::Red
+        } else if on {
+            PadColor::Green
+        } else if pad == 0 {
+            PadColor::Blue // the root, so the row reads as a keyboard
+        } else {
+            PadColor::Off
+        }
+    }
+    fn kit_line(&self) -> String {
+        if self.on_scale_layer() {
+            let s = self.scale_edit_shape();
+            let custom = self.params.shapes[s].scale.load(Ordering::Relaxed) == custom_scale_index();
+            return format!("Shape {} scale{}", s + 1, if custom { "" } else { ": set Custom" });
+        }
+        let s = self.focus_shape();
+        let sp = &self.params.shapes[s];
+        let state = if sp.running.load(Ordering::Relaxed) { "running" } else { "stopped: F3" };
+        format!("Shape {} {state}", s + 1)
+    }
+}
+
 impl App for BloomApp {
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    /// Landing on the SCALE layer enters Custom Scale Edit for the
+    /// focused shape; leaving it exits.
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+        self.custom_scale_edit = if self.on_scale_layer() { Some(self.focus_shape()) } else { None };
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
     }
@@ -1816,8 +2165,26 @@ impl App for BloomApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // Custom Scale Edit mode needs the pads, which only a native layer
+        // passes through -- so entering it from the menu (or any other
+        // way) puts the pads on the SCALE layer.
+        if self.custom_scale_edit.is_some() && !self.on_scale_layer() {
+            self.kit.set_native(SCALE_LAYER);
+        }
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
+
         if let Some(shape) = self.custom_scale_edit {
             self.tick_custom_scale_edit(shape, input);
+            // Knob 1 (in the menu) exits the mode; the pads leave the
+            // editor with it.
+            if self.custom_scale_edit.is_none() && self.on_scale_layer() {
+                self.kit.next_layer();
+            }
             return;
         }
 
@@ -1837,6 +2204,10 @@ impl App for BloomApp {
             }
         }
         self.last_shape = self.current_shape(&rows);
+        // The menu's Edit Custom Scale row just switched the mode on.
+        if self.custom_scale_edit.is_some() && !self.on_scale_layer() {
+            self.kit.set_native(SCALE_LAYER);
+        }
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
@@ -1844,6 +2215,10 @@ impl App for BloomApp {
             params: Arc::clone(&self.params),
             shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)),
             mono_buf: Vec::new(),
+            notes: self.note_out.take().unwrap_or_else(NoteOut::detached),
+            modbus: Arc::clone(&self.modbus),
+            gate_left: 0.0,
+            pitch: 0.0,
         }))
     }
 
@@ -1878,7 +2253,13 @@ impl App for BloomApp {
         // (`BLOOM_BG`) to read against it, not `BLOOM_ACCENT` (which
         // -- now that the chip itself *is* that same orange -- would
         // be invisible orange-on-orange.
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, BLOOM_BG, BLOOM_DIM, BLOOM_CHIP_BG);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, BLOOM_BG, BLOOM_DIM, BLOOM_CHIP_BG);
+        } else if let Some(col) = self.play_column() {
+            // Ends at x=366, clear of the circle (its left edge is x=390).
+            let pal = kit::draw::Palette { bg: BLOOM_BG, ink: BLOOM_TITLE, accent: BLOOM_ACCENT, dim: BLOOM_DIM, faint: BLOOM_RING };
+            kit::draw::column(fb, &col, 16, 40, 350, 280, pal);
+        }
 
         // --- Right: the fixed circle; static outer dots on its
         // boundary (the trigger references); inner dots each
@@ -1977,8 +2358,9 @@ impl App for BloomApp {
         Text::new(&format!("Shape {} -- {}", shape + 1, status), Point::new(420, 300), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: speed/rotate   U/D: pattern   F2: pads   F3: run shape   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -2054,6 +2436,12 @@ struct BloomProcessor {
     params: Arc<Params>,
     shapes: [ShapeRuntime; NUM_SHAPES],
     mono_buf: Vec<f32>,
+    notes: NoteOut,
+    modbus: Arc<ModBus>,
+    /// Seconds the Gate CV stays high.
+    gate_left: f32,
+    /// Pitch CV, 0..1.
+    pitch: f32,
 }
 
 impl AudioProcessor for BloomProcessor {
@@ -2165,7 +2553,15 @@ impl AudioProcessor for BloomProcessor {
                             let vmin = sp.vel_min.get().min(sp.vel_max.get());
                             let vmax = sp.vel_min.get().max(sp.vel_max.get());
                             let velocity = vmin + rt.next_rand01() * (vmax - vmin);
-                            rt.trigger_note(note, velocity);
+                            // Own voices, another app, or nothing but the CVs.
+                            let gate_s = 0.05 + sp.decay.get() * 0.95;
+                            if self.notes.internal() {
+                                rt.trigger_note(note, velocity);
+                            } else if self.notes.external() {
+                                self.notes.trigger(note.clamp(0.0, 127.0) as u8, (velocity * 127.0).clamp(1.0, 127.0) as u8, (gate_s * sample_rate) as u32);
+                            }
+                            self.gate_left = self.gate_left.max(gate_s);
+                            self.pitch = (note / 127.0).clamp(0.0, 1.0);
                             sp.last_fired_dot.store(d, Ordering::Relaxed);
                             sp.last_fired_outer.store(o, Ordering::Relaxed);
                         }
@@ -2216,6 +2612,18 @@ impl AudioProcessor for BloomProcessor {
             *m /= headroom;
         }
 
+        // Notes sent elsewhere end on time; the CVs follow the last note.
+        self.notes.advance(frames as u32);
+        let gate = if self.gate_left > 0.0 { 1.0 } else { 0.0 };
+        self.gate_left = (self.gate_left - dt).max(0.0);
+        for (route, v) in [(self.params.gate_cv.load(Ordering::Relaxed), gate), (self.params.pitch_cv.load(Ordering::Relaxed), self.pitch)] {
+            if route > 0 {
+                if let Some(h) = self.modbus.get(route - 1) {
+                    h.set(v);
+                }
+            }
+        }
+
         {
             let mut bus_out = self.params.bus_out.lock().unwrap();
             bus_out.clear();
@@ -2252,7 +2660,7 @@ mod tests {
         params.shapes[0].running.store(true, Ordering::Relaxed);
         params.shapes[0].speed_hz.set(2.0); // fast, so the test doesn't need many blocks
 
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new() };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
 
         let dot0_start = params.shapes[0].dot_phases[0].get();
         let gen_start = proc.shapes[0].voice_gen;
@@ -2355,7 +2763,7 @@ mod tests {
             params.shapes[s].vel_max.set(1.0);
         }
 
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new() };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
 
         for s in 0..NUM_SHAPES {
             for _ in 0..NUM_VOICES {
@@ -2424,6 +2832,7 @@ mod tests {
     #[test]
     fn custom_scale_edit_mode_toggles_degrees_via_the_grid_and_exits_on_knob1() {
         let mut app = new_app();
+        app.kit.menu = true; // knob 1 exiting is the menu's gesture
         app.custom_scale_edit = Some(2);
 
         let mut grid = [false; 16];
@@ -2439,6 +2848,53 @@ mod tests {
         assert!(app.custom_scale_edit.is_some(), "must still be in edit mode before knob1 is pressed");
         app.tick(&Input { knob1_press: true, ..Default::default() });
         assert_eq!(app.custom_scale_edit, None, "knob1 press must exit Custom Scale Edit mode");
+        assert_ne!(app.grid_mode_label(), Some(SCALE_LAYER_LABEL), "and the pads leave the editor with it");
+    }
+
+    #[test]
+    fn opens_playable_knob1_is_speed_d_pad_browses_patterns_and_r1_opens_the_menu() {
+        let mut app = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let speed = app.params.shapes[0].speed_hz.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.shapes[0].speed_hz.get() > speed, "knob 1 is shape 1's Speed on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.shapes[0].pattern.load(Ordering::Relaxed), 1, "D-pad up = next pattern");
+        assert_eq!(app.params.shapes[0].dots.load(Ordering::Relaxed), PATTERN_PRESETS[1].dots, "and it really applies");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    /// The shape control on the Controls layer moves what F3 runs.
+    #[test]
+    fn the_controls_layer_shape_pad_picks_what_f3_runs() {
+        let mut app = new_app();
+        app.toggle_grid_mode();
+        assert_eq!(app.grid_mode_label(), Some("CONTROLS"));
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(C_SHAPE)), ..Default::default() });
+        app.tick(&Input { knob2: 1, ..Default::default() });
+        assert_eq!(app.focus_shape(), 1);
+        app.toggle_running();
+        assert!(app.params.shapes[1].running.load(Ordering::Relaxed) && !app.params.shapes[0].running.load(Ordering::Relaxed));
+    }
+
+    /// The old Custom Scale Edit pad behaviour lives on as the SCALE
+    /// layer: reaching it with F2 enters the mode, the pads toggle
+    /// degrees, and F2 off it exits.
+    #[test]
+    fn the_scale_layer_is_custom_scale_edit() {
+        let mut app = new_app();
+        for _ in 0..3 {
+            app.toggle_grid_mode();
+        }
+        assert_eq!(app.grid_mode_label(), Some(SCALE_LAYER_LABEL));
+        assert_eq!(app.custom_scale_edit, Some(0));
+        app.tick(&Input { grid: std::array::from_fn(|i| i == 4), ..Default::default() });
+        assert!(app.params.shapes[0].custom_scale[4].load(Ordering::Relaxed), "pad 4 toggles degree 4");
+        app.toggle_grid_mode();
+        assert_eq!(app.custom_scale_edit, None, "leaving the layer leaves the mode");
+        app.tick(&Input { grid: std::array::from_fn(|i| i == 4), ..Default::default() });
+        assert!(app.params.shapes[0].custom_scale[4].load(Ordering::Relaxed), "and pads no longer edit the scale");
     }
 
     /// Octave Transpose must shift every triggered note by exactly
@@ -2454,7 +2910,7 @@ mod tests {
             params.shapes[0].running.store(true, Ordering::Relaxed);
             params.shapes[0].speed_hz.set(4.0);
             params.shapes[0].octave_transpose.store(octave_transpose_index, Ordering::Relaxed);
-            let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new() };
+            let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
             let mut buffer = vec![0.0f32; 512 * 2];
             for _ in 0..400 {
                 proc.process(&mut buffer, 2, 48000.0);
@@ -2490,7 +2946,7 @@ mod tests {
         params.shapes[0].octave_range.store(MAX_OCTAVE_RANGE, Ordering::Relaxed); // wide native range
         params.shapes[0].min_note.store(60, Ordering::Relaxed);
         params.shapes[0].max_note.store(61, Ordering::Relaxed); // deliberately narrow
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new() };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
 
         let mut buffer = vec![0.0f32; 512 * 2];
         let mut saw_a_trigger = false;
@@ -2527,7 +2983,7 @@ mod tests {
         params.shapes[0].outer.store(2, Ordering::Relaxed);
         params.shapes[0].outer_octave[0].store(0, Ordering::Relaxed);
         params.shapes[0].outer_octave[1].store(2, Ordering::Relaxed); // +2 octaves = +24 semitones
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new() };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
 
         let mut notes_by_outer: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
         let mut buffer = vec![0.0f32; 512 * 2];
@@ -2728,7 +3184,7 @@ mod tests {
     #[test]
     fn every_pattern_applies_and_runs_without_panicking() {
         let mut app = new_app();
-        let mut proc = BloomProcessor { params: Arc::clone(&app.params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new() };
+        let mut proc = BloomProcessor { params: Arc::clone(&app.params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
         let mut buffer = vec![0.0f32; 128 * 2];
         for idx in 0..PATTERN_PRESETS.len() {
             app.apply_pattern(0, idx);
@@ -2822,3 +3278,9 @@ mod tests {
     }
 }
 
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(BloomApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
+}

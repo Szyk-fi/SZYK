@@ -1,2 +1,10 @@
 id = "studio"
 name = "Studio"
+module = "collection"
+category = "library"
+description = "Record, layer, loop and mix eight independent takes."
+audio_outputs = ["Studio"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Studio Level",
+]

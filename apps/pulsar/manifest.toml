@@ -1,0 +1,22 @@
+id = "pulsar"
+name = "Pulsar"
+category = "sequencer"
+description = "A genre-aware drum machine with its own sample kits."
+audio_outputs = ["Pulsar", "Pulsar Kick"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Pulsar Level",
+    "Pulsar: Lane Chance",
+    "Pulsar: DJ Filter",
+    "Pulsar: Fatten",
+    "Pulsar: Swing",
+    "Pulsar: Kick Level",
+    "Pulsar: Snare Level",
+    "Pulsar: Clap Level",
+    "Pulsar: Closed Hat Level",
+    "Pulsar: Open Hat Level",
+    "Pulsar: Perc 1 Level",
+    "Pulsar: Perc 2 Level",
+    "Pulsar: Crash Level",
+]

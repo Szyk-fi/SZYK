@@ -13,11 +13,41 @@ pub struct LazyApp {
     screen_open: bool,
     last_input: Option<Instant>,
     bus: Arc<AudioBus>,
+    /// Writing into one of this app's declared modulation inputs wakes it.
+    modbus: Option<Arc<crate::modbus::ModBus>>,
+    /// Notes other apps play on this one (instruments only), delivered to
+    /// the app as MIDI keys -- see note_bus.rs.
+    notes: Option<Arc<crate::note_bus::NoteBus>>,
+    inbox: Option<crate::note_bus::NoteInboxRef>,
+    view: crate::note_bus::NoteView,
+    /// Bus notes were held when last delivered off screen (so their
+    /// release gets delivered too).
+    delivering: bool,
     outputs: Vec<usize>,
 }
 impl LazyApp {
     pub fn new(id: String, make: Rc<dyn Fn() -> Box<dyn App>>, bus: Arc<AudioBus>) -> Self {
-        Self { id, make, instance: None, processor: Arc::new(Mutex::new(None)), enabled: Arc::new(AtomicBool::new(false)), screen_open: false, last_input: None, bus, outputs: Vec::new() }
+        Self { id, make, instance: None, processor: Arc::new(Mutex::new(None)), enabled: Arc::new(AtomicBool::new(false)), screen_open: false, last_input: None, bus, modbus: None, notes: None, inbox: None, view: Default::default(), delivering: false, outputs: Vec::new() }
+    }
+    pub fn with_modbus(mut self, modbus: Arc<crate::modbus::ModBus>) -> Self {
+        self.modbus = Some(modbus);
+        self
+    }
+    pub fn with_notes(mut self, notes: Arc<crate::note_bus::NoteBus>, inbox: Option<crate::note_bus::NoteInboxRef>) -> Self {
+        self.notes = Some(notes);
+        self.inbox = inbox;
+        self
+    }
+    /// Bus notes merged into a frame's input, as if played on a keyboard.
+    fn with_bus_notes(&mut self, input: &Input) -> Input {
+        let mut merged = input.clone();
+        if let Some(inbox) = self.inbox.as_ref() {
+            inbox.poll(&mut self.view);
+            for (k, v) in merged.midi_keys.0.iter_mut().zip(self.view.keys.iter()) {
+                *k = (*k).max(*v);
+            }
+        }
+        merged
     }
     fn ensure(&mut self) -> &mut dyn App {
         if self.instance.is_none() {
@@ -33,7 +63,7 @@ impl LazyApp {
     }
     fn wake(&mut self) { self.last_input = Some(Instant::now()); self.enabled.store(true, Ordering::Release); }
     fn update_activity(&mut self) {
-        let requested=self.bus.requested(&self.id);
+        let requested=self.bus.requested(&self.id) || self.modbus.as_ref().is_some_and(|m| m.requested(&self.id)) || self.notes.as_ref().is_some_and(|n| n.requested(&self.id));
         if requested {self.ensure();}
         let needed = self.instance.as_ref().is_some_and(|app| requested || self.screen_open || app.running() == Some(true) || app.needs_background_audio()
             || self.last_input.is_some_and(|t| t.elapsed() < Duration::from_secs(5)));
@@ -57,18 +87,33 @@ impl AudioProcessor for DeferredProcessor {
 impl App for LazyApp {
     fn system_role(&self) -> Option<SystemRole> { match self.id.as_str() { "mixer" => Some(SystemRole::Mixer), "settings" => Some(SystemRole::Settings), _ => self.instance.as_ref().and_then(|a| a.system_role()) } }
     fn supports_pad_lock(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.supports_pad_lock()) }
+    fn play_surface(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.play_surface()) }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> { self.instance.as_ref().and_then(|a| a.play_column()) }
     fn transport_action(&self) -> Option<&'static str> { self.instance.as_ref().and_then(|a| a.transport_action()) }
     fn running(&self) -> Option<bool> { self.instance.as_ref().and_then(|a| a.running()) }
     fn wants_fullscreen(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.wants_fullscreen()) }
     fn grid_mode_label(&self) -> Option<&'static str> { self.instance.as_ref().and_then(|a| a.grid_mode_label()) }
     fn on_enter(&mut self) { self.screen_open = true; self.ensure().on_enter(); self.wake(); }
     fn on_exit(&mut self) { if let Some(app) = self.instance.as_mut() { app.on_exit(); } self.screen_open = false; self.update_activity(); }
-    fn tick(&mut self, input: &Input) { self.ensure().tick(input); self.wake(); }
+    fn tick(&mut self, input: &Input) { let input = self.with_bus_notes(input); self.delivering = false; self.ensure().tick(&input); self.wake(); }
     fn draw(&mut self, fb: &mut FrameBuffer) { self.ensure().draw(fb); }
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> { Some(Box::new(DeferredProcessor { processor: Arc::clone(&self.processor), enabled: Arc::clone(&self.enabled) })) }
     fn toggle_running(&mut self) { self.ensure().toggle_running(); self.wake(); }
     fn toggle_grid_mode(&mut self) { self.ensure().toggle_grid_mode(); self.wake(); }
-    fn background_tick(&mut self) { self.update_activity(); if self.enabled.load(Ordering::Acquire) { if let Some(app) = self.instance.as_mut() { app.background_tick(); } } }
+    fn background_tick(&mut self) {
+        self.update_activity();
+        // An instrument off screen still plays what other apps send it:
+        // its notes arrive as keys on an otherwise empty frame.
+        if !self.screen_open && self.inbox.is_some() {
+            let input = self.with_bus_notes(&Input::default());
+            let any = self.view.any();
+            if any || self.delivering {
+                self.ensure().tick(&input);
+            }
+            self.delivering = any;
+        }
+        if self.enabled.load(Ordering::Acquire) { if let Some(app) = self.instance.as_mut() { app.background_tick(); } }
+    }
     fn slint_pointer_pick(&mut self, x:f32, y:f32) { self.ensure().slint_pointer_pick(x,y); self.wake(); }
     fn grid_led_overlay(&self) -> [PadColor;16] { self.instance.as_ref().map_or([PadColor::Off;16], |a| a.grid_led_overlay()) }
     fn slint_rows(&self) -> Vec<(String,String,bool)> { self.instance.as_ref().map_or_else(Vec::new, |a| a.slint_rows()) }

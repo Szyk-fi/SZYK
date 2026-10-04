@@ -43,6 +43,7 @@
 //! trim (Tap + Dispersal Attenuverter) isn't modeled -- this sim's
 //! AudioBus taps are already normalized, unlike real Eurorack levels.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -226,6 +227,7 @@ enum Selection {
     Purge,
     SonarMode,
     SonarTarget,
+    SonarInput,
     SonarLevel,
 }
 
@@ -313,6 +315,64 @@ pub struct NautilusApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: Feedback and Mix,
+/// then Dispersal and Chroma Depth (the continuous panel knobs), the
+/// delay time as Resolution + Rate, the network's shape (Sensors,
+/// Reversal), and the modes, Purge and Sonar on the upper pads. Source
+/// and Sonar Target are routing and stay menu-only.
+const CONTROLS: [(Selection, &str); 15] = [
+    (Selection::Feedback, "Feedback"),
+    (Selection::Mix, "Mix"),
+    (Selection::Dispersal, "Dispersal"),
+    (Selection::Depth, "Depth"),
+    (Selection::Resolution, "Resolution"),
+    (Selection::Rate, "Rate"),
+    (Selection::Sensors, "Sensors"),
+    (Selection::Reversal, "Reversal"),
+    (Selection::Freeze, "Freeze"),
+    (Selection::Chroma, "Chroma"),
+    (Selection::DelayMode, "Delay Mode"),
+    (Selection::FeedbackMode, "Fb Mode"),
+    (Selection::Purge, "Purge"),
+    (Selection::SonarLevel, "Sonar Lvl"),
+    (Selection::SonarMode, "Sonar Mode"),
+];
+const C_RESOLUTION: usize = 4;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "nautilus",
+        // Nautilus never used the pads, so the first layer is Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // Resolution is the delay time a player actually picks (Rate is
+        // the clock it divides); D-pad up = the next, shorter division.
+        browse: Some(C_RESOLUTION),
+        // Stick: Dispersal (spreading the lines apart) on X, Feedback on
+        // Y. Hands: Chroma Depth and Mix.
+        routes: Routes { stick_x: Some(2), stick_y: Some(0), hand_l: Some(3), hand_r: Some(1) },
+        throws: vec![
+            Throw { control: 8, to: 1.0, label: "FREEZE" },
+            // Feedback's top is MAX_FEEDBACK, which the app calls infinite.
+            Throw { control: 0, to: 1.0, label: "INFINITE" },
+            Throw { control: 1, to: 1.0, label: "WET" },
+            // Delay Mode 2 of 0..3.
+            Throw { control: 10, to: 2.0 / 3.0, label: "SHIMMER" },
+            // All 8 lines reversed.
+            Throw { control: 7, to: 1.0, label: "REVERSE" },
+            // Resolution 11 of 0..15: 32nd notes, a beat-repeat stutter
+            // at any sane Rate.
+            Throw { control: 4, to: 11.0 / 15.0, label: "STUTTER" },
+            Throw { control: 3, to: 1.0, label: "CHROMA" },
+            Throw { control: 2, to: 1.0, label: "SPREAD" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Nautilus's own palette: abyssal navy with a bioluminescent
@@ -324,6 +384,7 @@ const NAUTILUS_TITLE: Rgb565 = Rgb565::new(27, 61, 29);
 const NAUTILUS_ACCENT: Rgb565 = Rgb565::new(5, 55, 24);
 const NAUTILUS_DIM: Rgb565 = Rgb565::new(7, 26, 13);
 const NAUTILUS_GATE_OFF: Rgb565 = Rgb565::new(2, 5, 4);
+const NAUTILUS_FAINT: Rgb565 = Rgb565::new(1, 9, 6);
 
 impl NautilusApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -335,6 +396,7 @@ impl NautilusApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -344,7 +406,7 @@ impl NautilusApp {
             1 => vec![Selection::DelayMode, Selection::Rate, Selection::Resolution, Selection::Sensors, Selection::Dispersal, Selection::Reversal],
             2 => vec![Selection::FeedbackMode, Selection::Feedback],
             3 => vec![Selection::Chroma, Selection::Depth],
-            _ => vec![Selection::Mix, Selection::Freeze, Selection::Purge, Selection::SonarMode, Selection::SonarTarget, Selection::SonarLevel],
+            _ => vec![Selection::Mix, Selection::Freeze, Selection::Purge, Selection::SonarMode, Selection::SonarTarget, Selection::SonarInput, Selection::SonarLevel],
         }
     }
 
@@ -402,14 +464,6 @@ impl NautilusApp {
         self.audio_bus.source_name(self.params.source.load(Ordering::Relaxed))
     }
 
-    fn target_name(&self, idx: usize) -> String {
-        if idx == 0 {
-            "None".into()
-        } else {
-            self.modbus.names().get(idx - 1).cloned().unwrap_or_else(|| "None".into())
-        }
-    }
-
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::Source => "Source".into(),
@@ -427,7 +481,8 @@ impl NautilusApp {
             Selection::Freeze => "Freeze".into(),
             Selection::Purge => "Purge".into(),
             Selection::SonarMode => "Sonar Mode".into(),
-            Selection::SonarTarget => "Sonar Target".into(),
+            Selection::SonarTarget => "Sonar App".into(),
+            Selection::SonarInput => "Sonar Input".into(),
             Selection::SonarLevel => "Sonar Level".into(),
         }
     }
@@ -455,7 +510,8 @@ impl NautilusApp {
             Selection::Freeze => if self.params.freeze.load(Ordering::Relaxed) { "on".into() } else { "off".into() },
             Selection::Purge => "press to clear".into(),
             Selection::SonarMode => SONAR_MODE_NAMES[self.params.sonar_mode.load(Ordering::Relaxed) as usize % 4].into(),
-            Selection::SonarTarget => self.target_name(self.params.sonar_target.load(Ordering::Relaxed)),
+            Selection::SonarTarget => crate::modbus::Patch::app_label(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed)),
+            Selection::SonarInput => crate::modbus::Patch::input_label(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed)),
             Selection::SonarLevel => format!("{:.0}%", self.params.sonar_level.get() * 100.0),
         }
     }
@@ -509,12 +565,8 @@ impl NautilusApp {
                 let cur = self.params.sonar_mode.load(Ordering::Relaxed) as i32;
                 self.params.sonar_mode.store((cur + step).rem_euclid(4) as u32, Ordering::Relaxed);
             }
-            Selection::SonarTarget => {
-                let n = self.modbus.len();
-                let cur = self.params.sonar_target.load(Ordering::Relaxed) as i32;
-                let next = (cur + step).rem_euclid(n as i32 + 1);
-                self.params.sonar_target.store(next as usize, Ordering::Relaxed);
-            }
+            Selection::SonarTarget => self.params.sonar_target.store(crate::modbus::Patch::step_app(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed), step), Ordering::Relaxed),
+            Selection::SonarInput => self.params.sonar_target.store(crate::modbus::Patch::step_input(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::SonarLevel => bump(&self.params.sonar_level, delta, sensitivity, 0.0, 1.0),
         }
     }
@@ -539,6 +591,7 @@ impl NautilusApp {
             Selection::Purge => self.params.purge_pending.store(true, Ordering::Relaxed),
             Selection::SonarMode => self.params.sonar_mode.store(0, Ordering::Relaxed),
             Selection::SonarTarget => self.params.sonar_target.store(0, Ordering::Relaxed),
+            Selection::SonarInput => self.params.sonar_target.store(crate::modbus::Patch::first_input(&self.modbus, self.params.sonar_target.load(Ordering::Relaxed)), Ordering::Relaxed),
             Selection::SonarLevel => self.params.sonar_level.set(1.0),
         }
     }
@@ -613,6 +666,77 @@ impl NautilusApp {
     }
 }
 
+impl NautilusApp {
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Selection::Feedback => Knob::F(&p.feedback, 0.0, MAX_FEEDBACK),
+            Selection::Mix => Knob::F(&p.mix, 0.0, 1.0),
+            Selection::Dispersal => Knob::F(&p.dispersal, 0.0, 1.0),
+            Selection::Depth => Knob::F(&p.depth, 0.0, 1.0),
+            Selection::Rate => Knob::F(&p.rate_hz, MIN_RATE_HZ, MAX_RATE_HZ),
+            Selection::Freeze => Knob::B(&p.freeze),
+            Selection::Chroma => Knob::U(&p.chroma, CHROMA_NAMES.len() as u32),
+            Selection::DelayMode => Knob::U(&p.delay_mode, DELAY_MODE_NAMES.len() as u32),
+            Selection::FeedbackMode => Knob::U(&p.feedback_mode, FEEDBACK_MODE_NAMES.len() as u32),
+            Selection::SonarLevel => Knob::F(&p.sonar_level, 0.0, 1.0),
+            Selection::SonarMode => Knob::U(&p.sonar_mode, SONAR_MODE_NAMES.len() as u32),
+            // Purge is an action (knob 2's press, as in the menu); the
+            // AtomicUsize counts are handled by `count` below.
+            _ => Knob::None,
+        }
+    }
+
+    /// The stepped controls stored as AtomicUsize (which `Knob` has no
+    /// variant for), with the inclusive range `edit` clamps them to.
+    fn count(&self, i: usize) -> Option<(&AtomicUsize, usize, usize)> {
+        let p = &self.params;
+        match CONTROLS[i % CONTROLS.len()].0 {
+            Selection::Resolution => Some((&p.resolution, 0, RESOLUTIONS.len() - 1)),
+            Selection::Sensors => Some((&p.sensors, 1, MAX_LINES_PER_CHANNEL)),
+            Selection::Reversal => Some((&p.reversal, 0, NUM_LINES)),
+            _ => None,
+        }
+    }
+}
+
+impl PlayHost for NautilusApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % CONTROLS.len()].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % CONTROLS.len()].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        match self.count(i) {
+            Some((a, lo, hi)) => Some((a.load(Ordering::Relaxed).clamp(lo, hi) - lo) as f32 / (hi - lo) as f32),
+            None => self.knob(i).norm(),
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.count(i).is_some() || self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % CONTROLS.len()].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % CONTROLS.len()].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        match self.count(i) {
+            Some((a, lo, hi)) => a.store(lo + (v.clamp(0.0, 1.0) * (hi - lo) as f32).round() as usize, Ordering::Relaxed),
+            None => self.knob(i).set(v),
+        }
+    }
+    fn kit_line(&self) -> String {
+        let frozen = if self.params.freeze.load(Ordering::Relaxed) { "  FROZEN" } else { "" };
+        format!("{} / {}{frozen}", self.leaf_value(Selection::DelayMode), self.leaf_value(Selection::FeedbackMode))
+    }
+}
+
 fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     let next = (value.get() + accelerate(delta) * sensitivity * 0.01).clamp(min, max);
     value.set(next);
@@ -620,7 +744,28 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 
 impl App for NautilusApp {
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -672,7 +817,14 @@ impl App for NautilusApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, NAUTILUS_BG, NAUTILUS_DIM, NAUTILUS_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, NAUTILUS_BG, NAUTILUS_DIM, NAUTILUS_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Kept left of the delay-line LEDs at x = 420.
+            let pal = kit::draw::Palette { bg: NAUTILUS_BG, ink: NAUTILUS_TITLE, accent: NAUTILUS_ACCENT, dim: NAUTILUS_DIM, faint: NAUTILUS_FAINT };
+            kit::draw::column(fb, &col, 16, 44, 390, 280, pal);
+            Text::new("L/R: feedback/mix   U/D: resolution   F2: pads   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
+        }
 
         // 8 delay-line ping LEDs, in the manual's own 1L..4R order.
         let gates = self.channel_gates();
@@ -1454,4 +1606,42 @@ mod tests {
         }
         assert_eq!(app.params.sensors.load(Ordering::Relaxed), 1);
     }
+
+    #[test]
+    fn opens_playable_knob1_is_feedback_and_d_pad_steps_resolution() {
+        let (mut app, _bus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let fb = app.params.feedback.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.feedback.get() > fb, "knob 1 is Feedback on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.resolution.load(Ordering::Relaxed), DEFAULT_RESOLUTION + 1, "D-pad up = next division");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn throws_freeze_and_reverse_every_line_then_spring_back() {
+        let (mut app, _bus) = new_app();
+        let hold = |rank: usize| Input { grid: std::array::from_fn(|i| i == kit::rank_pad(rank)), ..Default::default() };
+        app.tick(&hold(0));
+        assert!(app.params.freeze.load(Ordering::Relaxed), "FREEZE held");
+        app.tick(&Input::default());
+        assert!(!app.params.freeze.load(Ordering::Relaxed), "and released");
+        app.tick(&hold(4));
+        assert_eq!(app.params.reversal.load(Ordering::Relaxed), NUM_LINES, "REVERSE flips all 8 lines");
+        app.tick(&Input::default());
+        assert_eq!(app.params.reversal.load(Ordering::Relaxed), 0, "put back exactly");
+        app.tick(&hold(5));
+        assert_eq!(app.params.resolution.load(Ordering::Relaxed), 11, "STUTTER = 32nd notes");
+        app.tick(&Input::default());
+        assert_eq!(app.params.resolution.load(Ordering::Relaxed), DEFAULT_RESOLUTION);
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(NautilusApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

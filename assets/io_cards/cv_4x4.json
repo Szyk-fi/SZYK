@@ -1,0 +1,14 @@
+{
+  "name": "CV 4x4",
+  "vendor": 1,
+  "product": 2,
+  "revision": 1,
+  "current_ma": 150,
+  "description": "Four +-5 V CV inputs and four +-5 V CV outputs (SPI ADC and DAC on the card, with its own +-12 V made from the slot's +5 V), plus two gate inputs and two gate outputs on the slot's GPIO lines.",
+  "resources": [
+    { "kind": "cv_in", "count": 4, "lane": "spi", "bipolar": true, "param": 10000 },
+    { "kind": "cv_out", "count": 4, "lane": "spi", "bipolar": true, "param": 10000 },
+    { "kind": "gate_in", "count": 2, "lane": "gpio" },
+    { "kind": "gate_out", "count": 2, "lane": "gpio" }
+  ]
+}

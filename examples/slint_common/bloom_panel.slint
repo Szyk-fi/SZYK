@@ -11,7 +11,7 @@ export global BloomTheme {
 component Caption inherits Text {
     color: BloomTheme.muted;
     font-family: "JetBrains Mono";
-    font-size: 9px;
+    font-size: 12px;
     letter-spacing: 1px;
     vertical-alignment: center;
 }
@@ -39,10 +39,14 @@ export component BloomPanel inherits Rectangle {
     in property <[float]> line-length;
     in property <[float]> line-angle;
     callback toggle-running();
+    in property <bool> play;
     background: BloomTheme.ground;
     HorizontalLayout {
         spacing: 16px;
-        VerticalLayout {
+        // The shared play column (play_kit.rs) is laid over this spot on
+        // the play view, so the list steps aside rather than being drawn under it.
+        if root.play : Rectangle { width: 244px; }
+        if !root.play : VerticalLayout {
             width: 244px;
             spacing: 4px;
             HorizontalLayout {
@@ -77,13 +81,13 @@ export component BloomPanel inherits Rectangle {
                         Text {
                             text: root.row-values[i];
                             color: row.chosen ? BloomTheme.ground : BloomTheme.muted;
-                            font-family: "JetBrains Mono"; font-size: 10px;
+                            font-family: "JetBrains Mono"; font-size: 12px;
                             vertical-alignment: center;
                         }
                     }
                 }
             }
-            Caption { height: 15px; text: root.more-below ? "↓ MORE PARAMETERS" : "R1 EXPAND  ·  ◀ ▶ ADJUST"; font-size: 8px; }
+            Caption { height: 15px; text: root.more-below ? "↓ MORE PARAMETERS" : "R1 EXPAND  ·  ◀ ▶ ADJUST"; font-size: 12px; }
         }
         Rectangle { width: 1px; background: BloomTheme.rule; }
         VerticalLayout {
@@ -103,7 +107,7 @@ export component BloomPanel inherits Rectangle {
                     background: root.running ? BloomTheme.lime : BloomTheme.surface;
                     Text {
                         text: root.running ? "● LIVE" : "Ⅱ PAUSED";
-                        font-family: "JetBrains Mono"; font-size: 9px; font-weight: 700;
+                        font-family: "JetBrains Mono"; font-size: 12px; font-weight: 700;
                         color: root.running ? BloomTheme.ground : BloomTheme.muted;
                         horizontal-alignment: center; vertical-alignment: center;
                     }
@@ -175,16 +179,16 @@ export component BloomPanel inherits Rectangle {
                     }
                 }
                 Rectangle { x: field.cx - 2px; y: field.cy - 2px; width: 4px; height: 4px; border-radius: 2px; background: BloomTheme.ink; }
-                Caption { x: 0px; y: 5px; text: "SHAPE"; font-size: 8px; }
+                Caption { x: 0px; y: 5px; text: "SHAPE"; font-size: 12px; }
                 Text { x: 0px; y: 19px; text: "0" + (root.shape-index + 1); color: BloomTheme.lime; font-family: "Space Grotesk"; font-size: 26px; }
-                Caption { x: parent.width - 25px; y: parent.height - 22px; text: "/ 08"; font-size: 8px; }
+                Caption { x: parent.width - 25px; y: parent.height - 22px; text: "/ 08"; font-size: 12px; }
             }
             Rectangle { height: 1px; background: BloomTheme.rule; }
             HorizontalLayout {
                 height: 24px;
                 Caption { text: root.inner-x.length + " NOTES"; color: BloomTheme.lime; }
                 Caption { text: root.outer-x.length + " GATES"; }
-                Caption { text: "● LAST HIT"; color: BloomTheme.coral; font-size: 8px; horizontal-alignment: right; }
+                Caption { text: "● LAST HIT"; color: BloomTheme.coral; font-size: 12px; horizontal-alignment: right; }
             }
         }
     }

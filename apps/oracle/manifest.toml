@@ -1,0 +1,35 @@
+id = "oracle"
+name = "Oracle"
+category = "instrument"
+description = "Describe a sound and get an instrument."
+audio_outputs = ["Oracle"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Oracle Level",
+    "Oracle: P1",
+    "Oracle: P2",
+    "Oracle: P3",
+    "Oracle: P4",
+    "Oracle: P5",
+    "Oracle: P6",
+    "Oracle: P7",
+    "Oracle: P8",
+    "Oracle: P9",
+    "Oracle: P10",
+    "Oracle: P11",
+    "Oracle: P12",
+    "Oracle: P13",
+    "Oracle: P14",
+    "Oracle: P15",
+    "Oracle: P16",
+    "Oracle: Macro 1",
+    "Oracle: Macro 2",
+    "Oracle: Macro 3",
+    "Oracle: Macro 4",
+    "Oracle: Macro 5",
+    "Oracle: Macro 6",
+    "Oracle: Macro 7",
+    "Oracle: Macro 8",
+    "Oracle: Morph",
+]

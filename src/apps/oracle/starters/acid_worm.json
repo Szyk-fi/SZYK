@@ -1,0 +1,36 @@
+{
+  "name": "Acid Worm",
+  "kind": "instrument",
+  "description": "Mono squelch bass: saturating ladder, snappy filter envelope, tempo echo.",
+  "voices": 1,
+  "amp_env": true,
+  "params": [
+    {"id": "cutoff", "name": "Cutoff", "min": 50, "max": 4000, "default": 260, "curve": "exp", "unit": "Hz", "page": 1},
+    {"id": "res", "name": "Resonance", "min": 0, "max": 1.05, "default": 0.75, "page": 1},
+    {"id": "envamt", "name": "Env Amount", "min": 0, "max": 8, "default": 3.5, "page": 1},
+    {"id": "fdecay", "name": "Env Decay", "min": 0.04, "max": 1.5, "default": 0.22, "curve": "exp", "unit": "s", "page": 1},
+    {"id": "drive", "name": "Drive", "min": 1, "max": 8, "default": 2.5, "page": 1},
+    {"id": "wave", "name": "Wave", "min": 0, "max": 1, "default": 0, "curve": "choice", "options": ["Saw", "Square"], "page": 1},
+    {"id": "sub", "name": "Sub", "min": 0, "max": 1, "default": 0.25, "page": 2},
+    {"id": "echo", "name": "Echo", "min": 0, "max": 0.8, "default": 0.2, "page": 2},
+    {"id": "echofb", "name": "Echo Feedback", "min": 0, "max": 0.9, "default": 0.45, "page": 2}
+  ],
+  "macros": [
+    {"name": "Squelch", "targets": [{"param": "res", "amount": 0.25}, {"param": "envamt", "amount": 0.4}]},
+    {"name": "Open", "targets": [{"param": "cutoff", "amount": 0.55}]},
+    {"name": "Filth", "targets": [{"param": "drive", "amount": 0.7}, {"param": "sub", "amount": 0.3}]},
+    {"name": "Dub", "targets": [{"param": "echo", "amount": 0.6}, {"param": "echofb", "amount": 0.4}, {"param": "fdecay", "amount": 0.3}]}
+  ],
+  "voice": [
+    {"id": "saw", "type": "osc", "wave": "saw", "in": {"freq": "pitch"}},
+    {"id": "sqr", "type": "osc", "wave": "square", "in": {"freq": "pitch"}},
+    {"id": "subo", "type": "osc", "wave": "sine", "in": {"freq": "pitch / 2"}},
+    {"id": "fenv", "type": "ad", "in": {"a": 0.002, "d": "fdecay"}},
+    {"id": "lad", "type": "ladder", "in": {"in": "(wave < 0.5 ? saw : sqr) + subo * sub", "cutoff": "clamp(cutoff * (1 + fenv * envamt), 30, 16000)", "res": "res", "drive": "drive"}}
+  ],
+  "voice_out": "lad * 0.55",
+  "global": [
+    {"id": "dly", "type": "delay", "max": 2, "in": {"in": "voices", "time": "60 / bpm * 0.75", "fb": "echofb", "damp": 0.5}}
+  ],
+  "out": {"left": "voices + dly * echo", "right": "voices + dly * echo * 0.8"}
+}

@@ -1,2 +1,19 @@
 id = "mutant"
 name = "Mutant"
+module = "collection"
+category = "instrument"
+description = "Breed timbres and play evolving harmonic instruments."
+audio_outputs = ["Mutant"]
+notes_in = true
+note_outputs = ["Mutant"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Mutant Level",
+    "Mutant: Parent blend",
+    "Mutant: Mutation",
+    "Mutant: Harmonics",
+    "Mutant: Root note",
+    "Mutant: Brightness",
+    "Mutant: Release",
+    "Mutant: Tone color",
+]

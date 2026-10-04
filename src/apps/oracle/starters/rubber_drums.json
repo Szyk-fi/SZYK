@@ -1,0 +1,35 @@
+{
+  "name": "Rubber Drums",
+  "kind": "instrument",
+  "description": "Tuned membrane drums: every pad is a kick, tom or zap depending on pitch.",
+  "voices": 8,
+  "amp_env": false,
+  "params": [
+    {"id": "sweep", "name": "Pitch Sweep", "min": 0, "max": 8, "default": 3, "page": 1},
+    {"id": "sweepd", "name": "Sweep Time", "min": 0.005, "max": 0.4, "default": 0.05, "curve": "exp", "unit": "s", "page": 1},
+    {"id": "decay", "name": "Decay", "min": 0.05, "max": 2, "default": 0.45, "curve": "exp", "unit": "s", "page": 1},
+    {"id": "click", "name": "Click", "min": 0, "max": 1, "default": 0.35, "page": 1},
+    {"id": "drive", "name": "Drive", "min": 1, "max": 8, "default": 2, "page": 1},
+    {"id": "tone", "name": "Noise Tone", "min": 500, "max": 12000, "default": 4000, "curve": "exp", "unit": "Hz", "page": 2},
+    {"id": "room", "name": "Room", "min": 0, "max": 0.6, "default": 0.12, "page": 2}
+  ],
+  "macros": [
+    {"name": "Boom", "targets": [{"param": "decay", "amount": 0.4}, {"param": "sweep", "amount": 0.2}]},
+    {"name": "Zap", "targets": [{"param": "sweep", "amount": 0.5}, {"param": "sweepd", "amount": -0.3}]},
+    {"name": "Crunch", "targets": [{"param": "drive", "amount": 0.6}, {"param": "click", "amount": 0.3}]},
+    {"name": "Room", "targets": [{"param": "room", "amount": 0.5}]}
+  ],
+  "voice": [
+    {"id": "penv", "type": "ad", "in": {"a": 0.0005, "d": "sweepd"}},
+    {"id": "aenv", "type": "ad", "in": {"a": 0.001, "d": "decay"}},
+    {"id": "cenv", "type": "ad", "in": {"a": 0.0005, "d": 0.012}},
+    {"id": "body", "type": "osc", "wave": "sine", "in": {"freq": "pitch * (1 + penv * sweep)"}},
+    {"id": "nz", "type": "noise", "color": "white"},
+    {"id": "snap", "type": "filter", "mode": "hp", "in": {"in": "nz", "cutoff": "tone", "res": 0.2}}
+  ],
+  "voice_out": "tanh((body * aenv + snap * cenv * click) * drive) * 0.6",
+  "global": [
+    {"id": "rev", "type": "reverb", "in": {"in": "voices", "size": 0.5, "damp": 0.6, "mod": 0.1}}
+  ],
+  "out": "voices + rev * room"
+}

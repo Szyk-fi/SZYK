@@ -1,0 +1,10 @@
+id = "chordsmith"
+name = "Chordsmith"
+category = "instrument"
+description = "A whole chord under one finger, voice-led, strummed or arpeggiated, playing any instrument."
+audio_outputs = ["Chordsmith"]
+note_outputs = ["Chordsmith"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Chordsmith Level",
+]

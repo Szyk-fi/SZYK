@@ -1,5 +1,7 @@
 # Portamax — context for an agent writing a new app
 
+> **Two assistants work on this repo.** Read [AGENTS.md](AGENTS.md) first and follow it: ownership, locks and the shared work log live there.
+
 Read this before writing any code. If you're building a new app to hand
 back to the project owner, your target checklist is
 [docs/ADDING_AN_APP.md](docs/ADDING_AN_APP.md) — read that too. Your

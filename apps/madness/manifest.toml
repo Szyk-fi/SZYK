@@ -1,2 +1,26 @@
 id = "madness"
 name = "Madness"
+category = "sequencer"
+description = "Phase drift warps a polygon into a generative voice."
+audio_outputs = ["Madness"]
+note_outputs = ["Madness"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Madness Level",
+    "Madness 1: Speed",
+    "Madness 1: Level",
+    "Madness 2: Speed",
+    "Madness 2: Level",
+    "Madness 3: Speed",
+    "Madness 3: Level",
+    "Madness 4: Speed",
+    "Madness 4: Level",
+    "Madness 5: Speed",
+    "Madness 5: Level",
+    "Madness 6: Speed",
+    "Madness 6: Level",
+    "Madness 7: Speed",
+    "Madness 7: Level",
+    "Madness 8: Speed",
+    "Madness 8: Level",
+]

@@ -1,2 +1,9 @@
 id = "black_hole"
 name = "Black Hole"
+category = "effect"
+description = "A 24-algorithm glitch and texture multi-effect."
+audio_outputs = ["Black Hole"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Black Hole Level",
+]

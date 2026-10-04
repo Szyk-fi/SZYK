@@ -173,6 +173,9 @@ impl MixBus {
         }
 
         let frames = (buffer.len() / channels.max(1)) as f32;
+        // Every processor has now rendered this block from the same
+        // transport snapshot; move the shared clock on (see clock.rs).
+        crate::clock::Clock::shared().end_block(frames as usize, sample_rate);
         let budget_secs = (frames / sample_rate.max(1.0)).max(1e-9);
         self.load_frac.set(start.elapsed().as_secs_f32() / budget_secs);
     }

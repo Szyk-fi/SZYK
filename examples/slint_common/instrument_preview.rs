@@ -1,6 +1,7 @@
 //! Offline visual verification with real module state and processors.
 //! Run the live example with --render-instruments OUTPUT_DIRECTORY.
 use super::*;
+use crate::apps::{collection, cv_out, prism};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::platform::{Platform, PlatformError, WindowAdapter};
 use slint::{PhysicalSize, Rgb8Pixel, SharedPixelBuffer};
@@ -30,7 +31,7 @@ pub fn render(directory: &str) {
     let mut manifests = manifest::discover(std::path::Path::new(APPS_DIR));
     for (id, name) in [("analyzer", "Analyzer"), ("synth", "Synth")] {
         if !manifests.iter().any(|m| m.id == id) {
-            manifests.push(manifest::AppManifest { id: id.into(), name: name.into() });
+            manifests.push(manifest::AppManifest { id: id.into(), name: name.into(), audio_outputs: vec![name.into()], ..Default::default() });
         }
     }
     let _catalog=registry.build(&manifests);
@@ -82,6 +83,14 @@ pub fn render(directory: &str) {
         // Device discovery is not part of a headless UI render. The real Settings
         // constructor and theme state remain in use; its device lists stay empty.
         if name != "Settings" { app.on_enter(); }
+        // Apps with a play view open on it, where the D-pad browses; the
+        // menu-driven setup and list-navigation checks below belong to
+        // their menu (R1); the render returns to the play view after.
+        let has_play_view = app.play_column().is_some();
+        if has_play_view {
+            app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+            assert!(app.play_column().is_none(), "{name}: R1 must open the menu");
+        }
         if collection::APPS.iter().any(|a|a.2==name) || name=="Morph" {
             // Actual engine input, explicitly named as a verification tone.
             // Empty media libraries remain empty; no fabricated tracks or meters.
@@ -165,7 +174,8 @@ pub fn render(directory: &str) {
         app.tick(&Input { navigation_steps: -1, ..Default::default() });
         println!("{name}: short D-pad taps move one row; MIDI encoder sensitivity preserved");
         }
-        if name != "Synth" && app.slint_rows().len() > 1 {
+        // A full-screen app (the Kids apps) has no menu column to tap.
+        if name != "Synth" && app.slint_rows().len() > 1 && !matches!(app.slint_extra(), app::SlintExtra::Screen(_)) {
             let before = app.slint_selected();
             for (y, delta) in [(249.0, 1), (167.0, -1)] {
                 let position = slint::LogicalPosition::new(113.0, y);
@@ -177,6 +187,12 @@ pub fn render(directory: &str) {
                 assert_eq!(app.slint_selected(), if delta == 1 { before + 1 } else { before }, "{name}: short tap navigation");
             }
             println!("{name}: pointer tap navigation passed");
+        }
+        if has_play_view && std::env::var("PORTAMAX_MENU").is_err() {
+            app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+            let mut input = Input::default();
+            input.grid[0] = true;
+            app.tick(&input);
         }
         let (rows, selected, above, below) = app.slint_windowed_rows(10);
         ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.0.clone().into()).collect::<Vec<slint::SharedString>>())).into());
@@ -195,6 +211,7 @@ pub fn render(directory: &str) {
         let (bg, ink, accent, _) = app_palette(name).unwrap_or((slint::Color::from_rgb_u8(20,25,31), slint::Color::from_rgb_u8(231,237,244), slint::Color::from_rgb_u8(165,188,233), slint::Color::from_rgb_u8(137,148,170)));
         ui.set_live_bg(bg); ui.set_live_ink(ink); ui.set_live_accent(accent);
         apply_scale_visual(&ui, app.slint_scale_info());
+        apply_play_column(&ui, app.play_column());
         apply_instrument_visual(&ui, app.slint_extra());
         slint::platform::update_timers_and_animations();
         window.request_redraw();
@@ -218,6 +235,11 @@ pub fn render(directory: &str) {
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.write_header().unwrap().write_image_data(pixels.as_bytes()).unwrap();
+        // Everything below drives the menu again.
+        if has_play_view {
+            app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+            apply_play_column(&ui, app.play_column());
+        }
         if name == "Plaits" {
             // Show the actual pressed-state styling, without synthetic audio data.
             let position = slint::LogicalPosition::new(913.0, 149.0);
@@ -357,8 +379,9 @@ pub fn render(directory: &str) {
     ui.set_transport_action("".into());
     ui.set_live_bg(slint::Color::from_rgb_u8(18,27,27));ui.set_live_ink(slint::Color::from_rgb_u8(241,240,230));ui.set_live_accent(slint::Color::from_rgb_u8(183,214,197));
     let names:Vec<String>=manifests.iter().map(|m|m.name.clone()).collect();
+    launcher::install_catalog(manifests.iter().map(|m|(m.name.clone(),m.category.clone(),m.description.clone())));
     let mut browser=launcher::Launcher::default();
-    for (category,slug) in [(0,"home"),(1,"home-instruments"),(6,"home-recent-empty")] {
+    for (category,slug) in [(0,"home"),(1,"home-instruments"),(6,"home-ai"),(7,"home-kids"),(launcher::RECENT,"home-recent-empty")] {
         browser.category=category;
         let ids=browser.indices(&names);let visible:Vec<_>=ids.iter().copied().take(6).collect();
         ui.set_home_names(Rc::new(slint::VecModel::from(visible.iter().map(|i|slint::SharedString::from(names[*i].as_str())).collect::<Vec<_>>())).into());
@@ -366,7 +389,7 @@ pub fn render(directory: &str) {
         ui.set_home_running(Rc::new(slint::VecModel::from(vec![false;visible.len()])).into());
         ui.set_home_category(category as i32);ui.set_home_count(ids.len() as i32);ui.set_home_total(names.len() as i32);
         let name=visible.first().map(|i|names[*i].as_str()).unwrap_or("");
-        ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list."}else{launcher::description(name)}.into());
+        ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list.".to_string()}else{launcher::description(name)}.into());
         ui.set_home_family(if name.is_empty(){"WELCOME"}else{launcher::CATEGORIES[launcher::category(name)]}.into());
         ui.set_home_selected(0); ui.set_home_more_above(false); ui.set_home_more_below(ids.len()>6);
         save_extra_frame(&window,directory,slug);
@@ -499,7 +522,7 @@ fn registry_with_audio(audio_bus:Arc<AudioBus>) -> (Registry, Arc<ModBus>) {
     let sensitivity = Arc::new(AtomicF32::new(0.1));
     let nav = Arc::new(AtomicF32::new(3.0));
     let preview_modbus = Arc::new(ModBus::new());
-    let registry = Registry::new(
+    let registry = Registry::new(registry::standard_context(
         Arc::new(AtomicF32::new(1000.0)),
         Arc::new(audio_devices::AudioDeviceState::new("Offline preview".into())),
         sensitivity, nav, Arc::clone(&preview_modbus), audio_bus,
@@ -508,6 +531,7 @@ fn registry_with_audio(audio_bus:Arc<AudioBus>) -> (Registry, Arc<ModBus>) {
         Arc::new(std::sync::atomic::AtomicBool::new(false)), Arc::new(midi_map::MidiMap::new()),
         Arc::new(theme::ThemeColor::new(theme::ACCENT_DEFAULT_HUE, theme::ACCENT_DEFAULT_SAT, theme::ACCENT_DEFAULT_VAL)),
         Arc::new(theme::ThemeColor::new(theme::BG_DEFAULT_HUE, theme::BG_DEFAULT_SAT, theme::BG_DEFAULT_VAL)),
-    );
+        Arc::new(note_bus::NoteBus::new()),
+    ));
     (registry, preview_modbus)
 }

@@ -1,0 +1,18 @@
+id = "atlas"
+name = "Atlas"
+category = "instrument"
+description = "Designed sounds on one surface: eight performance macros and a MORPH through each preset."
+audio_outputs = ["Atlas"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Atlas Level",
+    "Atlas: Character",
+    "Atlas: Color",
+    "Atlas: Motion",
+    "Atlas: Space",
+    "Atlas: Shape",
+    "Atlas: Energy",
+    "Atlas: Texture",
+    "Atlas: Morph",
+]

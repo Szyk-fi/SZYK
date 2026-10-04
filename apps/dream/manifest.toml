@@ -1,2 +1,19 @@
 id = "dream"
 name = "Dream"
+module = "collection"
+category = "instrument"
+description = "A slow, drifting generative instrument."
+audio_outputs = ["Dream"]
+notes_in = true
+note_outputs = ["Dream"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Dream Level",
+    "Dream: Tempo",
+    "Dream: Dwell bars",
+    "Dream: Transition chance",
+    "Dream: Complexity",
+    "Dream: Tension",
+    "Dream: Note chance",
+    "Dream: Tone color",
+]

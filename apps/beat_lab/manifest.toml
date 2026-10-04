@@ -1,0 +1,9 @@
+id = "beat_lab"
+name = "Beat Lab"
+category = "kids"
+description = "Ages 10-12. A 16-step drum machine with swing and seven styles, explaining what makes each one."
+audio_outputs = ["Beat Lab"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Beat Lab Level",
+]

@@ -1,2 +1,12 @@
 id = "vector_filter"
 name = "Vector Filter"
+category = "effect"
+description = "Sculpt audio in three dimensions: cutoff, resonance and drive."
+audio_outputs = ["Vector Filter"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Vector Filter Level",
+    "Vector Filter: Cutoff",
+    "Vector Filter: Resonance",
+    "Vector Filter: Drive",
+]

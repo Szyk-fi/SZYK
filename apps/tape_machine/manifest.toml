@@ -1,2 +1,16 @@
 id = "tape_machine"
 name = "Tape Machine"
+module = "collection"
+category = "effect"
+description = "A four-head tape delay."
+audio_outputs = ["Tape Machine"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Tape Machine Level",
+    "Tape Machine: Speed",
+    "Tape Machine: Head spacing",
+    "Tape Machine: Feedback",
+    "Tape Machine: Wow",
+    "Tape Machine: Flutter",
+    "Tape Machine: Drive",
+]

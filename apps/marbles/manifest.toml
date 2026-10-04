@@ -1,0 +1,19 @@
+id = "marbles"
+name = "Marbles"
+category = "sequencer"
+description = "The real Mutable Instruments Marbles: random rhythms and melodies, played on any instrument."
+audio_outputs = []
+note_outputs = ["Marbles"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Marbles: Rate",
+    "Marbles: T Bias",
+    "Marbles: Jitter",
+    "Marbles: Deja Vu",
+    "Marbles: Length",
+    "Marbles: Spread",
+    "Marbles: X Bias",
+    "Marbles: Steps",
+    "Marbles: Gate Length",
+    "Marbles: Y Divider",
+]

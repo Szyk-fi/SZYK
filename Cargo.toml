@@ -51,6 +51,12 @@ png = "0.17"
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"
+# Oracle (src/apps/oracle): its AI patch designer exchanges JSON patches
+# with an LLM and posts voice takes to a speech-to-text server, so it
+# needs a JSON value type and a small blocking HTTP client. Both run only
+# on Oracle's own worker threads -- never on the audio thread.
+serde_json = "1"
+ureq = "2"
 # The NES core behind the Retro app (src/apps/retro.rs) -- a real, actively
 # maintained, pure-Rust emulator library (30+ mappers, ~90% of licensed
 # games), statically linked into this binary rather than dynamically loaded
@@ -124,6 +130,10 @@ z80 = "2.0"
 # class chip types, not an approximation via a similar-but-different
 # chip.
 ymfm-sys = "0.2"
+# The Norns cartridge (src/apps/norns) runs norns scripts, which are Lua
+# 5.3 -- the same version norns uses. `vendored` builds Lua itself from
+# source (MIT), so nothing needs installing on the host.
+mlua = { version = "0.10", features = ["lua53", "vendored"] }
 
 
 # GameController.framework bindings -- the correct, native macOS API

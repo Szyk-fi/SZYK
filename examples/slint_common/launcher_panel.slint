@@ -6,18 +6,18 @@ export component LauncherPanel inherits Rectangle {
     callback category-picked(int); callback open-app(int);
     background:#121b1b;
     HorizontalLayout {spacing:18px;padding-top:7px;padding-bottom:9px;
-        VerticalLayout {width:106px;spacing:5px;
-            Text {text:"WORKSPACE";color:#809792;font-size:9px;height:22px;}
-            for name[i] in ["ALL APPS","INSTRUMENTS","EFFECTS","SEQUENCING","LIBRARY","UTILITIES","RECENT"] : Rectangle {
-                height:27px;border-radius:4px;background:root.category==i?#b7d6c5:#ffffff04;
-                Text {x:8px;text:name;color:root.category==i?#17221c:#a8b8b2;font-size:9px;font-weight:root.category==i?600:400;vertical-alignment:center;}
+        VerticalLayout {width:106px;spacing:3px;
+            Text {text:"WORKSPACE";color:#809792;font-size:12px;height:22px;}
+            for name[i] in ["ALL APPS","INSTRUMENTS","EFFECTS","SEQUENCING","LIBRARY","UTILITIES","AI","KIDS","RECENT"] : Rectangle {
+                height:21px;border-radius:4px;background:root.category==i?#b7d6c5:#ffffff04;
+                Text {x:8px;text:name;color:root.category==i?#17221c:#a8b8b2;font-size:12px;font-weight:root.category==i?600:400;vertical-alignment:center;}
                 TouchArea {clicked=>{root.category-picked(i);}}
             }
             Rectangle {vertical-stretch:1;}
-            Text {text:root.total+" INSTALLED";color:#718982;font-size:9px;height:18px;}
+            Text {text:root.total+" INSTALLED";color:#718982;font-size:12px;height:18px;}
         }
         VerticalLayout {width:228px;spacing:5px;
-            HorizontalLayout {height:22px;Text {text:root.count+" APPS";color:#809792;font-size:9px;}Text {text:(root.above?"↑ ":"")+(root.below?"↓":"");color:#b7d6c5;horizontal-alignment:right;font-size:11px;}}
+            HorizontalLayout {height:22px;Text {text:root.count+" APPS";color:#809792;font-size:12px;}Text {text:(root.above?"↑ ":"")+(root.below?"↓":"");color:#b7d6c5;horizontal-alignment:right;font-size:12px;}}
             for name[i] in root.names : Rectangle {height:34px;border-radius:5px;background:i==root.selected?#b7d6c5:#ffffff06;
                 Text {x:11px;width:parent.width - 30px;height:100%;text:name;color:i==root.selected?#17221c:#c5d2cc;font-family:"Space Grotesk";font-size:16px;font-weight:i==root.selected?600:400;vertical-alignment:center;overflow:elide;}
                 Rectangle {x:parent.width - 15px;y:14px;width:5px;height:5px;border-radius:3px;visible:root.running[i];background:i==root.selected?#3a6951:#8ed9a1;}
@@ -27,14 +27,14 @@ export component LauncherPanel inherits Rectangle {
             Rectangle {vertical-stretch:1;}
         }
         VerticalLayout {spacing:10px;
-            Text {text:root.family;color:#91b29f;font-size:9px;height:22px;}
+            Text {text:root.family;color:#91b29f;font-size:12px;height:22px;}
             Rectangle {height:66px;
                 for i in 7 : Rectangle {x:i*22px;y:8px+mod(i*7,5)*7px;width:14px;height:45px - mod(i*7,5)*7px;border-radius:3px;background:#b7d6c5.with-alpha(0.15+i*0.1);}
-                Text {x:160px;y:8px;text:"S\nZ\nY\nK";color:#688578;font-size:10px;}
+                Text {x:160px;y:8px;text:"S\nZ\nY\nK";color:#688578;font-size:12px;}
             }
             Text {text:root.title==""?"Your next session":root.title;color:#f1f0e6;font-family:"Space Grotesk";font-size:29px;font-weight:600;wrap:word-wrap;height:69px;}
             Text {text:root.description;color:#9bafa5;font-size:12px;wrap:word-wrap;vertical-stretch:1;}
-            Rectangle {height:27px;border-radius:4px;background:#ffffff0b;Text {text:root.names.length>0?"R1  OPEN APPLICATION":"← →  BROWSE CATEGORIES";color:#b7d6c5;font-size:9px;horizontal-alignment:center;vertical-alignment:center;}}
+            Rectangle {height:27px;border-radius:4px;background:#ffffff0b;Text {text:root.names.length>0?"R1  OPEN APPLICATION":"← →  BROWSE CATEGORIES";color:#b7d6c5;font-size:12px;horizontal-alignment:center;vertical-alignment:center;}}
         }
     }
 }

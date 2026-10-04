@@ -1,0 +1,14 @@
+# Sources for elements_bridge.cc, relative to vendor/eurorack -- the same
+# list as elements/test/makefile's CC_FILES (plus dsp/string.cc, which
+# the makefile leaves out but the voice needs), minus its test harness.
+elements/dsp/ominous_voice.cc
+elements/dsp/exciter.cc
+elements/dsp/multistage_envelope.cc
+elements/dsp/part.cc
+elements/dsp/resonator.cc
+elements/dsp/string.cc
+elements/dsp/tube.cc
+elements/dsp/voice.cc
+elements/resources.cc
+stmlib/utils/random.cc
+stmlib/dsp/units.cc

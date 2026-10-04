@@ -1,0 +1,9 @@
+id = "sorter"
+name = "Sorter"
+category = "ai"
+description = "Your sample library sorted by sound: a neural network names every sample and maps them by similarity, then builds kits that hang together."
+audio_outputs = ["Sorter"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Sorter Level",
+]

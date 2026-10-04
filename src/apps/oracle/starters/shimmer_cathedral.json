@@ -1,0 +1,26 @@
+{
+  "name": "Shimmer Cathedral",
+  "kind": "effect",
+  "description": "Endless reverb with a pitch-shifted feedback halo.",
+  "params": [
+    {"id": "size", "name": "Size", "min": 0.3, "max": 0.995, "default": 0.88, "page": 1},
+    {"id": "damp", "name": "Damping", "min": 0, "max": 0.9, "default": 0.35, "page": 1},
+    {"id": "shimmer", "name": "Shimmer", "min": 0, "max": 0.9, "default": 0.45, "page": 1},
+    {"id": "semis", "name": "Interval", "min": 0, "max": 3, "default": 0, "curve": "choice", "options": ["+12", "+7", "+19", "-12"], "page": 1},
+    {"id": "predelay", "name": "Pre-delay", "min": 0.001, "max": 0.3, "default": 0.04, "curve": "exp", "unit": "s", "page": 2},
+    {"id": "motion", "name": "Motion", "min": 0, "max": 1, "default": 0.4, "page": 2}
+  ],
+  "macros": [
+    {"name": "Heaven", "targets": [{"param": "shimmer", "amount": 0.4}, {"param": "size", "amount": 0.1}]},
+    {"name": "Dark", "targets": [{"param": "damp", "amount": 0.5}, {"param": "shimmer", "amount": -0.3}]},
+    {"name": "Distance", "targets": [{"param": "predelay", "amount": 0.5}]},
+    {"name": "Swirl", "targets": [{"param": "motion", "amount": 0.6}]}
+  ],
+  "global": [
+    {"id": "pre", "type": "delay", "max": 0.5, "in": {"in": "in", "time": "predelay", "fb": 0}},
+    {"id": "halo", "type": "shift", "in": {"in": "rev", "semis": "semis == 0 ? 12 : semis == 1 ? 7 : semis == 2 ? 19 : -12", "window": 0.08}},
+    {"id": "rev", "type": "reverb", "in": {"in": "pre + halo * shimmer * 0.6", "size": "size", "damp": "damp", "mod": "motion"}},
+    {"id": "sway", "type": "lfo", "shape": "smooth", "in": {"rate": 0.1}}
+  ],
+  "out": {"left": "rev", "right": "rev * (0.9 + sway * 0.1 * motion) + halo * shimmer * 0.1"}
+}

@@ -122,6 +122,7 @@
 //! what keeps every preset -- however it processes what gets read --
 //! exactly as stable as the simplest one.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -703,6 +704,75 @@ pub struct PrismApp {
     audio_bus: Arc<AudioBus>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: the six macro knobs
+/// the pedal itself has (on the knobs in pairs), then Activity and Pitch
+/// Mod, the preset, the utility looper/sampler, and the first five user
+/// preset slots on the top pads of the Controls layer (turn knob 2 one
+/// way to save, the other to load, press to clear -- the same as their
+/// menu rows). The per-source input levels stay menu-only: patching,
+/// not playing.
+const CONTROLS: [Selection; 16] = [
+    Selection::Time,
+    Selection::Repeats,
+    Selection::Shape,
+    Selection::Mix,
+    Selection::Filter,
+    Selection::Space,
+    Selection::Activity,
+    Selection::PitchMod,
+    Selection::Preset,
+    Selection::UtilityMode,
+    Selection::UtilityTrigger,
+    Selection::UserPreset(0),
+    Selection::UserPreset(1),
+    Selection::UserPreset(2),
+    Selection::UserPreset(3),
+    Selection::UserPreset(4),
+];
+const C_TIME: usize = 0;
+const C_REPEATS: usize = 1;
+const C_SHAPE: usize = 2;
+const C_MIX: usize = 3;
+const C_FILTER: usize = 4;
+const C_SPACE: usize = 5;
+const C_ACTIVITY: usize = 6;
+const C_PITCH_MOD: usize = 7;
+const C_PRESET: usize = 8;
+const C_UTILITY_MODE: usize = 9;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "prism",
+        // The pads did nothing before, so there's no native layer to
+        // keep: an effect opens straight onto its Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_TIME, C_REPEATS], [C_SHAPE, C_MIX], [C_FILTER, C_SPACE], [C_ACTIVITY, C_PITCH_MOD]],
+        // 44 presets is what a Microcosm player scrolls through most.
+        browse: Some(C_PRESET),
+        // Filter rather than Time on the stick: Time written at frame
+        // rate steps the delay taps audibly, while the wet lowpass
+        // sweeps cleanly. Repeats on Y is the dub-delay "push the
+        // feedback" move; hands blend the wet path and the reverb in.
+        routes: Routes { stick_x: Some(C_FILTER), stick_y: Some(C_REPEATS), hand_l: Some(C_MIX), hand_r: Some(C_SPACE) },
+        throws: vec![
+            // 1.0 lands on MAX_REPEATS: the knob's own range already
+            // stops short of runaway feedback.
+            Throw { control: C_REPEATS, to: 1.0, label: "FEEDBACK" },
+            Throw { control: C_MIX, to: 1.0, label: "WET" },
+            Throw { control: C_SPACE, to: 1.0, label: "SPACE" },
+            Throw { control: C_FILTER, to: 0.15, label: "DARK" },
+            Throw { control: C_TIME, to: 0.0, label: "SHORT" },
+            Throw { control: C_TIME, to: 1.0, label: "LONG" },
+            Throw { control: C_ACTIVITY, to: 1.0, label: "8 TAPS" },
+            Throw { control: C_PITCH_MOD, to: 1.0, label: "WOBBLE" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Prism's own palette: electric violet on near-black glass, not a
@@ -748,6 +818,7 @@ impl PrismApp {
             audio_bus,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -1090,7 +1161,119 @@ impl PrismApp {
     }
 }
 
+impl PrismApp {
+    /// The CC-mapped macros are the same `Arc`s main.rs writes to, so the
+    /// play view, the menu and MIDI CC all move one value. Same ranges
+    /// edit() clamps to. Activity (an AtomicUsize) and Utility Mode (whose
+    /// change must also drop a half-finished loop) are handled by hand in
+    /// `PlayHost` below.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS.get(i) {
+            Some(Selection::Time) => Knob::F(&*p.time, MIN_TIME, MAX_TIME),
+            Some(Selection::Repeats) => Knob::F(&*p.repeats, 0.0, MAX_REPEATS),
+            Some(Selection::Shape) => Knob::F(&*p.shape, 0.0, 1.0),
+            Some(Selection::Mix) => Knob::F(&*p.mix, 0.0, 1.0),
+            Some(Selection::Filter) => Knob::F(&*p.filter, 0.0, 1.0),
+            Some(Selection::Space) => Knob::F(&*p.space, 0.0, 1.0),
+            Some(Selection::PitchMod) => Knob::B(&p.pitch_mod_on),
+            Some(Selection::Preset) => Knob::U(&p.preset, PRESET_NAMES.len() as u32),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for PrismApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or(String::new(), |s| match s {
+            // "Mode" alone is ambiguous next to the preset on a pad.
+            Selection::UtilityMode => "Utility".into(),
+            _ => self.leaf_name(*s),
+        })
+    }
+    fn kit_value(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or(String::new(), |s| self.leaf_value(*s))
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        match i {
+            C_ACTIVITY => Some((self.params.taps.load(Ordering::Relaxed).clamp(MIN_TAPS, MAX_TAPS) - MIN_TAPS) as f32 / (MAX_TAPS - MIN_TAPS) as f32),
+            C_UTILITY_MODE => Some((self.params.utility_mode.load(Ordering::Relaxed) % 3) as f32 / 2.0),
+            _ => self.knob(i).norm(),
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        match i {
+            C_ACTIVITY | C_UTILITY_MODE => true,
+            _ => self.knob(i).stepped(),
+        }
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        if let Some(s) = CONTROLS.get(i) {
+            self.edit(*s, delta);
+        }
+    }
+    /// On Trigger and the user slots this is the action itself (advance
+    /// the looper/sampler, clear the slot), exactly as in the menu.
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(s) = CONTROLS.get(i) {
+            self.reset(*s);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        match i {
+            C_ACTIVITY => {
+                let taps = MIN_TAPS + (v * (MAX_TAPS - MIN_TAPS) as f32).round() as usize;
+                self.params.taps.store(taps, Ordering::Relaxed);
+            }
+            C_UTILITY_MODE => {
+                let mode = (v * 2.0).round() as u32;
+                if mode != self.params.utility_mode.load(Ordering::Relaxed) % 3 {
+                    // Same rule as edit(): a mode change drops whatever
+                    // the previous mode was half-way through.
+                    self.params.utility_mode.store(mode, Ordering::Relaxed);
+                    self.params.looper_state.store(0, Ordering::Relaxed);
+                    self.params.sampler_state.store(0, Ordering::Relaxed);
+                }
+            }
+            _ => self.knob(i).set(v),
+        }
+    }
+    fn kit_line(&self) -> String {
+        let preset = self.params.preset.load(Ordering::Relaxed) as usize % PRESET_NAMES.len();
+        let (effect, _) = effect_for_preset(preset);
+        let utility = match UtilityMode::from_u32(self.params.utility_mode.load(Ordering::Relaxed)) {
+            UtilityMode::Off => "",
+            UtilityMode::Looper => match self.params.looper_state.load(Ordering::Relaxed) {
+                0 => "  loop: idle",
+                1 => "  loop: REC",
+                _ => "  loop: PLAY",
+            },
+            UtilityMode::Sampler => {
+                if self.params.sampler_state.load(Ordering::Relaxed) == 0 { "  sampler" } else { "  HELD" }
+            }
+        };
+        format!("{} {}{utility}", PRESET_NAMES[preset], category_name(effect))
+    }
+}
+
 impl App for PrismApp {
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn needs_background_audio(&self) -> bool { self.params.input_levels.iter().any(|v| v.get() > 0.0) || self.params.ext_input_level.iter().any(|v| v.get() > 0.0) }
     fn running(&self) -> Option<bool> {
         match UtilityMode::from_u32(self.params.utility_mode.load(Ordering::Relaxed)) {
@@ -1123,6 +1306,12 @@ impl App for PrismApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through to the list below.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -1209,7 +1398,15 @@ impl App for PrismApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, PRISM_BG, PRISM_DIM, PRISM_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, PRISM_BG, PRISM_DIM, PRISM_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // 16..366 stays left of the tap map's axis at x=380, the same
+            // bound `list_text_never_reaches_the_right_panel` holds the
+            // menu list to.
+            let pal = kit::draw::Palette { bg: PRISM_BG, ink: PRISM_TITLE, accent: PRISM_ACCENT, dim: PRISM_DIM, faint: PRISM_AXIS };
+            kit::draw::column(fb, &col, 16, 44, 350, 280, pal);
+        }
 
         // --- Right: for Multidelay, a tap-time map (unchanged); for
         // Micro Loop, the same axis repurposed to show each layer's
@@ -1284,9 +1481,10 @@ impl App for PrismApp {
         Text::new(&caption, Point::new(380, 230), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(Selection::UserPreset(_))) => "knob2: turn one way to save, the other to load   press knob2: clear".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: time/repeats   U/D: preset   F2: pads   F3: looper/sampler   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(Selection::UserPreset(_))) => "left/right: save one way, load the other   hold SELECT: clear".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -2964,6 +3162,68 @@ mod tests {
         const AXIS_X0: i32 = 380;
         assert!(max_x < AXIS_X0, "list text reached x={max_x}, at or past axis_x0 ({AXIS_X0})");
     }
+
+    fn play_app(cc: &PrismCcTargets) -> PrismApp {
+        PrismApp::new_with_cc(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(6.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()), cc)
+    }
+
+    #[test]
+    fn opens_on_throws_and_knob_one_turns_time_on_the_cc_atomic() {
+        let cc = PrismCcTargets::new();
+        let mut app = play_app(&cc);
+        assert!(app.play_column().is_some(), "play view first");
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(cc.time.get() > DEFAULT_TIME, "knob 1 is Time, and moves the same atomic MIDI CC writes");
+        // And a CC write shows straight through on the play view's dial.
+        cc.space.set(0.75);
+        assert_eq!(app.kit_value(C_SPACE), "0.75");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.preset.load(Ordering::Relaxed), 1, "D-pad up = next preset");
+    }
+
+    #[test]
+    fn throws_push_real_controls_and_spring_back() {
+        let cc = PrismCcTargets::new();
+        let mut app = play_app(&cc);
+        // FEEDBACK on rank 0 (bottom-left) goes to the knob's ceiling.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0)), ..Default::default() });
+        assert!((app.params.repeats.get() - MAX_REPEATS).abs() < 1e-5);
+        app.tick(&Input::default());
+        assert!((app.params.repeats.get() - DEFAULT_REPEATS).abs() < 1e-5, "released, back to the knob");
+        // 8 TAPS (rank 6) is a stepped throw on Activity, put back exactly.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(6)), ..Default::default() });
+        assert_eq!(app.params.taps.load(Ordering::Relaxed), MAX_TAPS);
+        app.tick(&Input::default());
+        assert_eq!(app.params.taps.load(Ordering::Relaxed), DEFAULT_TAPS);
+    }
+
+    #[test]
+    fn utility_mode_from_the_play_view_drops_a_half_recorded_loop() {
+        let cc = PrismCcTargets::new();
+        let mut app = play_app(&cc);
+        app.params.utility_mode.store(1, Ordering::Relaxed);
+        app.toggle_running(); // start recording
+        assert_eq!(app.params.looper_state.load(Ordering::Relaxed), 1);
+        app.kit_set_norm(C_UTILITY_MODE, 1.0); // Sampler
+        assert_eq!(app.params.utility_mode.load(Ordering::Relaxed), 2);
+        assert_eq!(app.params.looper_state.load(Ordering::Relaxed), 0, "same rule as the menu's Mode row");
+        assert_eq!(app.transport_action(), Some("HOLD"), "F3 still drives HOLD/RELEASE");
+    }
+
+    #[test]
+    fn r1_opens_the_menu_and_the_menu_still_edits() {
+        let cc = PrismCcTargets::new();
+        let mut app = play_app(&cc);
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+        // Effect group (second row): expand it; its first leaf is Preset.
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        app.tick(&Input { knob1_press: true, ..Default::default() });
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        app.tick(&Input { knob2: 1, ..Default::default() });
+        assert_eq!(app.params.preset.load(Ordering::Relaxed), 1, "menu rows still edit");
+    }
 }
 
 #[cfg(test)]
@@ -2985,4 +3245,11 @@ mod transport_contract_tests {
         app.toggle_running();
         assert_eq!(app.transport_action(), Some("HOLD"));
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(PrismApp::new_with_cc(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get(), &ctx.get()))
 }

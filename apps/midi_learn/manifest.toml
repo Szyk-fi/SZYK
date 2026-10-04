@@ -1,2 +1,5 @@
 id = "midi_learn"
 name = "MIDI Learn"
+category = "system"
+description = "Map MIDI CCs to any app's modulation inputs."
+audio_outputs = []

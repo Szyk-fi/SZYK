@@ -384,7 +384,7 @@ impl App for SettingsApp {
         self.list.draw(fb, 20, 55, 19, 12, &display_rows);
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
             Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: select/reset", self.leaf_name(*sel)),
             None => String::new(),
         };
@@ -406,4 +406,11 @@ mod redesign_tests {
         let mut app=fixture();let background=app.background.hsv();app.slint_pointer_pick(70.,0.);assert_ne!(app.accent.hsv(),(132,62,94));assert_eq!(app.background.hsv(),background);
         app.editing_background=true;let accent=app.accent.hsv();app.slint_pointer_pick(0.,70.);assert_ne!(app.background.hsv(),background);assert_eq!(app.accent.hsv(),accent);
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(SettingsApp::new(ctx.get(), ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.named("show_cpu"), ctx.named("accent"), ctx.named("background")))
 }

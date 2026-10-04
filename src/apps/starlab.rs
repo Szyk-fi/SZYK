@@ -61,6 +61,7 @@
 //! mode; the front-panel LED level/mode indicators; and the analog
 //! dry-path/ADC-DAC spec bullets, which describe hardware, not DSP.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -68,7 +69,7 @@ use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
-use crate::util::{accelerate, AtomicF32};
+use crate::util::{accelerate, note_name, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -296,6 +297,75 @@ pub struct StarlabApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: the tank's decay and
+/// SIZE/PITCH warp on the first knob pair (the two the real module is
+/// played with), then the wet level and shimmer, the shared DELAY/TUNE +
+/// FEEDBACK section, tone, LFO, and the switches on the upper pads.
+const CONTROLS: [(Selection, &str); 16] = [
+    (Selection::Decay, "Decay"),
+    (Selection::SizePitch, "Size/Pitch"),
+    (Selection::Wet, "Wet"),
+    (Selection::ShimmerAmount, "Shimmer"),
+    (Selection::DelayTune, "Delay/Tune"),
+    (Selection::Feedback, "Feedback"),
+    (Selection::HighDamp, "High Damp"),
+    (Selection::GlimmerAmount, "Glimmer"),
+    (Selection::LfoDepth, "LFO Depth"),
+    (Selection::LfoSpeed, "LFO Speed"),
+    (Selection::Dry, "Dry"),
+    (Selection::EchoOn, "Echo On"),
+    (Selection::Texture, "Texture"),
+    (Selection::Infinite, "Infinite"),
+    (Selection::KarplusMode, "Delay/Karplus"),
+    (Selection::Octave, "Octave"),
+];
+const C_DECAY: usize = 0;
+const C_SIZE_PITCH: usize = 1;
+const C_SHIMMER: usize = 3;
+const C_FEEDBACK: usize = 5;
+const C_HIGH_DAMP: usize = 6;
+const C_GLIMMER: usize = 7;
+const C_DRY: usize = 10;
+const C_TEXTURE: usize = 12;
+const C_INFINITE: usize = 13;
+/// Octave range the play view's dial and moments use; the menu's own
+/// Octave row is unbounded (note_for clamps to MIDI range), so this only
+/// bounds the dial's position.
+const OCTAVE_SPAN: i32 = 4;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "starlab",
+        // The pads keep doing what they always did (pluck/bow the string
+        // in Karplus mode, tap the delay time in Delay mode); Throws
+        // because Starlab is first of all an effect on another app.
+        layers: vec![Layer::Native(0, "PLUCK"), Layer::Controls, Layer::Moments, Layer::Throws],
+        hero: vec![[C_DECAY, C_SIZE_PITCH], [2, C_SHIMMER], [4, C_FEEDBACK], [C_HIGH_DAMP, C_GLIMMER]],
+        // TEXTURE changes the tank's actual topology, so it's the choice
+        // worth flicking through while playing.
+        browse: Some(C_TEXTURE),
+        // Stick X warps SIZE/PITCH (the module's signature tape-warp
+        // move), Y pours in shimmer; hands stretch the tail and add
+        // glimmer sparkle.
+        routes: Routes { stick_x: Some(C_SIZE_PITCH), stick_y: Some(C_SHIMMER), hand_l: Some(C_DECAY), hand_r: Some(C_GLIMMER) },
+        throws: vec![
+            Throw { control: C_INFINITE, to: 1.0, label: "FREEZE" },
+            Throw { control: C_DECAY, to: 1.0, label: "DECAY MAX" },
+            Throw { control: C_SHIMMER, to: 1.0, label: "SHIMMER" },
+            // SIZE/PITCH: full CW = 2x size, -1 oct; full CCW = 0.5x, +1 oct.
+            Throw { control: C_SIZE_PITCH, to: 1.0, label: "OCT DOWN" },
+            Throw { control: C_SIZE_PITCH, to: 0.0, label: "OCT UP" },
+            Throw { control: C_FEEDBACK, to: 1.0, label: "FEEDBACK" },
+            Throw { control: C_HIGH_DAMP, to: 1.0, label: "DARK" },
+            Throw { control: C_DRY, to: 0.0, label: "WET ONLY" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Starlab's own palette: flat solid colors, not a
@@ -305,6 +375,8 @@ const STARLAB_BG: Rgb565 = Rgb565::new(1, 3, 4);
 const STARLAB_TITLE: Rgb565 = Rgb565::new(26, 57, 31);
 const STARLAB_ACCENT: Rgb565 = Rgb565::new(17, 47, 31);
 const STARLAB_DIM: Rgb565 = Rgb565::new(9, 19, 13);
+/// Unlit pad cells and dial tracks on the play column.
+const STARLAB_FAINT: Rgb565 = Rgb565::new(3, 7, 9);
 
 impl StarlabApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -315,7 +387,40 @@ impl StarlabApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
+    }
+
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        // Ranges are exactly what `edit` clamps each one to.
+        match CONTROLS[i % 16].0 {
+            Selection::Decay => Knob::F(&p.decay, 0.0, 0.97),
+            Selection::SizePitch => Knob::F(&p.size_pitch, 0.0, 1.0),
+            Selection::Wet => Knob::F(&p.wet, 0.0, 1.0),
+            Selection::ShimmerAmount => Knob::F(&p.shimmer_amount, 0.0, 1.0),
+            Selection::DelayTune => Knob::F(&p.delay_tune, 0.0, 1.0),
+            Selection::Feedback => Knob::F(&p.feedback, 0.0, 0.98),
+            Selection::HighDamp => Knob::F(&p.high_damp, 0.0, 1.0),
+            Selection::GlimmerAmount => Knob::F(&p.glimmer_amount, 0.0, 1.0),
+            Selection::LfoDepth => Knob::F(&p.lfo_depth, 0.0, 1.0),
+            Selection::LfoSpeed => Knob::F(&p.lfo_speed, 0.0, 1.0),
+            Selection::Dry => Knob::F(&p.dry, 0.0, 1.0),
+            Selection::EchoOn => Knob::B(&p.echo_on),
+            Selection::Texture => Knob::U(&p.texture, 3),
+            Selection::Infinite => Knob::B(&p.infinite),
+            Selection::KarplusMode => Knob::B(&p.karplus_mode),
+            Selection::Octave => Knob::I(&p.octave, -OCTAVE_SPAN, OCTAVE_SPAN),
+            _ => Knob::None,
+        }
+    }
+
+    fn karplus(&self) -> bool {
+        self.params.karplus_mode.load(Ordering::Relaxed)
+    }
+
+    fn pad_note(&self, pad: usize) -> i32 {
+        note_for(pad_rank(pad as i32), self.params.octave.load(Ordering::Relaxed))
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
@@ -626,6 +731,77 @@ impl StarlabApp {
     }
 }
 
+impl PlayHost for StarlabApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % 16].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % 16].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % 16].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % 16].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+        // Same rule as `edit`: moving DELAY/TUNE by hand (stick, hands or
+        // a recalled moment) takes over from a tapped tempo, or the move
+        // would be inaudible in Delay mode.
+        if CONTROLS[i % 16].0 == Selection::DelayTune {
+            self.params.tap_active.store(false, Ordering::Relaxed);
+        }
+    }
+    /// A key plucks the pad with its pitch (Karplus mode); keys outside
+    /// the pads' 16-semitone window fold in by octaves. In Delay mode any
+    /// pad is a tap, so the same mapping is as good as any.
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        let d = note as i32 - note_for(0, self.params.octave.load(Ordering::Relaxed));
+        let rank = if (0..16).contains(&d) { d } else { d.rem_euclid(12) };
+        Some(pad_rank(rank) as usize)
+    }
+    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+        if self.karplus() { note_name(self.pad_note(pad)) } else { "TAP".into() }
+    }
+    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if held {
+            PadColor::Green
+        } else if self.karplus() && self.pad_note(pad).rem_euclid(12) == 0 {
+            PadColor::Blue
+        } else if !self.karplus() && self.params.tap_active.load(Ordering::Relaxed) {
+            // A learned tap tempo is in charge of the delay time.
+            PadColor::Yellow
+        } else {
+            PadColor::Off
+        }
+    }
+    fn kit_line(&self) -> String {
+        let p = &self.params;
+        let mode = if self.karplus() {
+            let held = *p.held.lock().unwrap();
+            match (0..16).find(|&i| held[i]) {
+                Some(i) => format!("String {}", note_name(self.pad_note(i))),
+                None => "String".to_string(),
+            }
+        } else {
+            self.leaf_value(Selection::DelayTune)
+        };
+        let frozen = if p.infinite.load(Ordering::Relaxed) { "  FROZEN" } else { "" };
+        format!("{mode}  tank {:.0}%{frozen}", p.tank_energy.get().clamp(0.0, 1.0) * 100.0)
+    }
+}
+
 fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     let next = (value.get() + accelerate(delta) * sensitivity * 0.01).clamp(min, max);
     value.set(next);
@@ -651,8 +827,28 @@ fn lfo_speed_hz(v: f32) -> f32 {
 impl App for StarlabApp {
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
     fn supports_pad_lock(&self) -> bool { true }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach the string/tap input only on
+        // PLUCK (kit layers hand back an empty grid).
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -745,8 +941,13 @@ impl App for StarlabApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, STARLAB_BG, STARLAB_DIM, STARLAB_ACCENT);
-        let _ = dim;
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, STARLAB_BG, STARLAB_DIM, STARLAB_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: STARLAB_BG, ink: STARLAB_TITLE, accent: STARLAB_ACCENT, dim: STARLAB_DIM, faint: STARLAB_FAINT };
+            kit::draw::column(fb, &col, 16, 44, 350, 290, pal);
+            Text::new("L/R: dial (SELECT: next)   U/D: texture   F2: pads   R1: menu", Point::new(16, 348), dim).draw(fb).ok();
+        }
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1537,4 +1738,64 @@ mod tests {
         let energy_after = app.output_visual().tank_energy;
         assert!(energy_after < energy_before, "expected CLEAR to reduce the tank energy reading, before {energy_before} after {energy_after}");
     }
+
+    #[test]
+    fn opens_playable_and_knob1_turns_decay() {
+        let (mut app, _bus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let decay = app.params.decay.get();
+        app.tick(&Input { knob1: 5, ..Default::default() });
+        assert!(app.params.decay.get() > decay, "knob 1 is Decay on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.texture.load(Ordering::Relaxed), 2, "D-pad up = next texture");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    /// The PLUCK layer still feeds the pads to the string: a pad pressed
+    /// through tick() reaches `held`, and a processor plucks from it.
+    #[test]
+    fn pluck_layer_still_plucks_the_string() {
+        let (mut app, _bus) = new_app();
+        app.params.karplus_mode.store(true, Ordering::Relaxed);
+        app.params.echo_on.store(true, Ordering::Relaxed);
+        app.params.dry.set(0.0);
+        app.params.wet.set(1.0);
+        app.params.feedback.set(0.8);
+        let mut processor = app.audio_processor().unwrap();
+        let mut buffer = vec![0.0f32; 512 * 2];
+        app.tick(&Input { grid: std::array::from_fn(|i| i == 12), ..Default::default() });
+        assert!(app.params.held.lock().unwrap()[12]);
+        let mut peak = 0.0f32;
+        for i in 0..30 {
+            if i == 1 {
+                app.tick(&Input::default());
+            }
+            processor.process(&mut buffer, 2, 48000.0);
+            peak = peak.max(buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs())));
+        }
+        assert!(peak > 0.01, "a pad on PLUCK plucks the string, got peak {peak}");
+    }
+
+    #[test]
+    fn throws_freeze_the_tank_and_let_go() {
+        let (mut app, _bus) = new_app();
+        app.toggle_grid_mode(); // Controls
+        app.toggle_grid_mode(); // Moments
+        app.toggle_grid_mode(); // Throws
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        let freeze = Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0)), ..Default::default() };
+        app.tick(&freeze);
+        assert!(app.params.infinite.load(Ordering::Relaxed), "held FREEZE engages INFINITE");
+        assert!(!app.params.held.lock().unwrap().iter().any(|h| *h), "throw pads never pluck");
+        app.tick(&Input::default());
+        assert!(!app.params.infinite.load(Ordering::Relaxed), "and lets go on release");
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(StarlabApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

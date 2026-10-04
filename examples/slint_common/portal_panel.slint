@@ -12,19 +12,19 @@ export component PortalPanel inherits Rectangle {
         VerticalLayout {padding-top:7px;spacing:4px;
             HorizontalLayout {height:24px;
                 Text {text:"PATCH MATRIX";color:root.ink;font-family:"Space Grotesk";font-size:21px;font-weight:600;}
-                Text {text:root.active?"● LIVE":"○ BYPASS";color:root.accent;font-size:9px;horizontal-alignment:right;}
+                Text {text:root.active?"● LIVE":"○ BYPASS";color:root.accent;font-size:12px;horizontal-alignment:right;}
             }
-            Text {text:"SOURCE                 AMOUNT             DESTINATION";color:root.ink.with-alpha(0.5);font-size:8px;height:13px;}
+            Text {text:"SOURCE                 AMOUNT             DESTINATION";color:root.ink.with-alpha(0.72);font-size:12px;height:13px;}
             for i in 8 : Rectangle {height:21px;border-radius:4px;background:i==root.cable?root.accent.with-alpha(0.16):root.ink.with-alpha(0.035);border-width:1px;border-color:i==root.cable?root.accent:root.ink.with-alpha(0.08);
-                Text {x:5px;width:15px;text:i+1;color:root.accent;font-size:9px;vertical-alignment:center;}
-                Text {x:25px;width:115px;height:100%;text:root.sources[i];color:root.ink;font-size:9px;overflow:elide;vertical-alignment:center;}
+                Text {x:5px;width:15px;text:i+1;color:root.accent;font-size:12px;vertical-alignment:center;}
+                Text {x:25px;width:115px;height:100%;text:root.sources[i];color:root.ink;font-size:12px;overflow:elide;vertical-alignment:center;}
                 Rectangle {x:145px;y:15px;width:56px;height:2px;background:root.accent.with-alpha(root.enabled[i]?0.75:0.12);Rectangle {width:min(1,root.levels[i])*parent.width;height:100%;background:root.accent;}}
-                Text {x:143px;y:2px;width:60px;height:10px;text:root.enabled[i]?(root.amounts[i]>=0?"+":"")+round(root.amounts[i]*100)+"%":"OFF";color:root.accent;font-size:7px;horizontal-alignment:center;}
-                Text {x:209px;width:parent.width - 233px;height:100%;text:root.targets[i];color:root.ink;font-size:9px;overflow:elide;vertical-alignment:center;}
+                Text {x:143px;y:2px;width:60px;height:10px;text:root.enabled[i]?(root.amounts[i]>=0?"+":"")+round(root.amounts[i]*100)+"%":"OFF";color:root.accent;font-size:12px;horizontal-alignment:center;}
+                Text {x:209px;width:parent.width - 233px;height:100%;text:root.targets[i];color:root.ink;font-size:12px;overflow:elide;vertical-alignment:center;}
                 TouchArea {width:parent.width - 23px;clicked=>{root.choose(i,0);}}
                 Rectangle {x:parent.width - 18px;y:6px;width:10px;height:10px;border-radius:5px;background:root.enabled[i]?root.accent:root.ink.with-alpha(0.18);TouchArea {clicked=>{root.choose(i+8,0);}}}
             }
-            Text {text:root.status;color:root.ink.with-alpha(0.65);font-size:10px;wrap:word-wrap;height:26px;}
+            Text {text:root.status;color:root.ink.with-alpha(0.72);font-size:12px;wrap:word-wrap;height:26px;}
         }
     }
 }

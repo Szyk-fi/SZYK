@@ -63,6 +63,7 @@
 //! (fixed exponential, same simplification this sim's other
 //! envelopes already make).
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -781,6 +782,80 @@ pub struct SampleDrumApp {
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
     prev_grid: [bool; 16],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first. Like every menu row
+/// here they act on the selected channel. The slice window (Start/End)
+/// and the envelope's decay are what shape a chopped break most, so they
+/// lead; FX and the auto-clock tempo follow; the stepped choices (sample,
+/// slicing, play mode) sit on the upper Controls pads.
+const CONTROLS: [(Selection, &str); 16] = [
+    (Selection::Start, "Start"),
+    (Selection::End, "End"),
+    (Selection::EnvDecay, "Decay"),
+    (Selection::FxMix, "FX Mix"),
+    (Selection::FxParam1, "FX Param 1"),
+    (Selection::FxParam2, "FX Param 2"),
+    (Selection::AutoRate, "Auto Rate"),
+    (Selection::Volume, "Volume"),
+    (Selection::Sample, "Sample"),
+    (Selection::NumSlices, "Slices"),
+    (Selection::SliceStep, "Step"),
+    (Selection::FxType, "FX"),
+    (Selection::Mode, "Mode"),
+    (Selection::Tune, "Tune"),
+    (Selection::EnvAttack, "Attack"),
+    (Selection::Channel, "Channel"),
+];
+const C_DECAY: usize = 2;
+const C_FX_MIX: usize = 3;
+const C_FX_P1: usize = 4;
+const C_SAMPLE: usize = 8;
+const C_SLICES: usize = 9;
+const C_STEP: usize = 10;
+const C_MODE: usize = 12;
+const C_TUNE: usize = 13;
+const C_ATTACK: usize = 14;
+const C_CHANNEL: usize = 15;
+/// The menu's Tune row is unbounded; this only bounds the dial's
+/// position and what moments/throws can set (two octaves each way
+/// covers every musically useful repitch of a drum hit).
+const TUNE_SPAN: i32 = 24;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "sample_drum",
+        // TRIG1/TRIG2 on pads 0/1, exactly as before.
+        layers: vec![Layer::Native(0, "TRIG"), Layer::Controls, Layer::Moments, Layer::Throws],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // Flipping through samples is what a sample player's encoder
+        // does most.
+        browse: Some(C_SAMPLE),
+        // Stick X scrubs where the slice window starts (the classic
+        // "scan through a break" move), Y sweeps the insert FX's first
+        // parameter (cutoff, delay time, drive...). Hands: decay (gate
+        // the hits open) and how wet the FX is.
+        routes: Routes { stick_x: Some(0), stick_y: Some(C_FX_P1), hand_l: Some(C_DECAY), hand_r: Some(C_FX_MIX) },
+        // Most alive with the auto clock running (F3): hold a pad to bend
+        // the chopped loop, let go and it snaps back.
+        throws: vec![
+            // SLICE_STEP_NAMES index 2 = RND, of 5 choices.
+            Throw { control: C_STEP, to: 0.5, label: "RANDOM" },
+            Throw { control: C_DECAY, to: 0.03, label: "CHOKE" },
+            Throw { control: C_DECAY, to: 1.0, label: "OPEN" },
+            Throw { control: C_FX_MIX, to: 1.0, label: "FX WET" },
+            // -24 + 0.75 * 48 = +12 st; 0.25 = -12 st.
+            Throw { control: C_TUNE, to: 0.75, label: "OCT UP" },
+            Throw { control: C_TUNE, to: 0.25, label: "OCT DOWN" },
+            // PLAY_MODE_NAMES index 2 = Backward, of 4.
+            Throw { control: C_MODE, to: 2.0 / 3.0, label: "BACKWARD" },
+            Throw { control: C_FX_P1, to: 0.0, label: "FX P1 MIN" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Sample Drum's own palette: flat solid colors, not a
@@ -800,6 +875,7 @@ impl SampleDrumApp {
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
             prev_grid: [false; 16],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -909,7 +985,7 @@ impl SampleDrumApp {
         match sel {
             Selection::Channel => format!("{}", ch + 1),
             Selection::Preset => format!("{}", self.params.preset_slot.load(Ordering::Relaxed) + 1),
-            Selection::SavePreset | Selection::LoadPreset => "press knob2".into(),
+            Selection::SavePreset | Selection::LoadPreset => "hold SELECT".into(),
             Selection::Sample => self.sample_name(ch),
             Selection::Mode => PLAY_MODE_NAMES[c.mode.load(Ordering::Relaxed) as usize % 4].to_string(),
             Selection::Tune => format!("{:+}", c.tune.load(Ordering::Relaxed)),
@@ -919,7 +995,7 @@ impl SampleDrumApp {
             Selection::NumSlices => format!("{}", c.num_slices.load(Ordering::Relaxed)),
             Selection::SliceMode => SLICE_MODE_NAMES[c.slice_mode.load(Ordering::Relaxed) as usize % 2].to_string(),
             Selection::SliceStep => SLICE_STEP_NAMES[c.slice_step.load(Ordering::Relaxed) as usize % SLICE_STEP_NAMES.len()].to_string(),
-            Selection::ResetSlice => "press knob2".into(),
+            Selection::ResetSlice => "hold SELECT".into(),
             Selection::AutoClock => if c.auto_clock.load(Ordering::Relaxed) { "ON".into() } else { "off".into() },
             Selection::AutoRate => format!("{:.0} BPM", c.auto_rate_bpm.get()),
             Selection::EnvAttack => format!("{:.0}%", c.env_attack.get() * 100.0),
@@ -1270,10 +1346,146 @@ impl SampleDrumApp {
     }
 }
 
+impl SampleDrumApp {
+    /// Storage for the controls that have an atomic Knob can describe
+    /// (the selected channel's); Sample, Slices and Channel are
+    /// AtomicUsize and handled by hand in `kit_norm`/`kit_set_norm`.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let c = &self.params.channels[self.ch()];
+        match CONTROLS[i % 16].0 {
+            Selection::Start => Knob::F(&c.start, 0.0, 1.0),
+            Selection::End => Knob::F(&c.end, 0.0, 1.0),
+            Selection::EnvDecay => Knob::F(&c.env_decay, 0.0, 1.0),
+            Selection::FxMix => Knob::F(&c.fx_mix, 0.0, 1.0),
+            Selection::FxParam1 => Knob::F(&c.fx_param1, 0.0, 1.0),
+            Selection::FxParam2 => Knob::F(&c.fx_param2, 0.0, 1.0),
+            Selection::AutoRate => Knob::F(&c.auto_rate_bpm, 20.0, 300.0),
+            Selection::Volume => Knob::F(&c.volume, 0.0, 1.0),
+            Selection::SliceStep => Knob::U(&c.slice_step, SLICE_STEP_NAMES.len() as u32),
+            Selection::FxType => Knob::U(&c.fx_type, FX_NAMES.len() as u32),
+            Selection::Mode => Knob::U(&c.mode, PLAY_MODE_NAMES.len() as u32),
+            Selection::Tune => Knob::I(&c.tune, -TUNE_SPAN, TUNE_SPAN),
+            Selection::EnvAttack => Knob::F(&c.env_attack, 0.0, 1.0),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for SampleDrumApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % 16].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % 16].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        let ch = self.ch();
+        let c = &self.params.channels[ch];
+        match i % 16 {
+            C_SAMPLE => {
+                // No sample loaded has no position, so a moment taken
+                // then leaves whatever sample is loaded at recall alone.
+                let n = self.params.samples.len();
+                self.resolved_sample(ch).filter(|&idx| idx < n).map(|idx| if n > 1 { idx as f32 / (n - 1) as f32 } else { 0.0 })
+            }
+            C_SLICES => Some((c.num_slices.load(Ordering::Relaxed).clamp(1, MAX_SLICES) - 1) as f32 / (MAX_SLICES - 1) as f32),
+            C_CHANNEL => Some(ch as f32 / (NUM_CHANNELS - 1) as f32),
+            _ => self.knob(i).norm(),
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        i >= C_SAMPLE && i != C_ATTACK
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % 16].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % 16].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        let ch = self.ch();
+        let c = &self.params.channels[ch];
+        match i % 16 {
+            C_SAMPLE => {
+                let n = self.params.samples.len();
+                if n > 0 {
+                    c.sample.store((v * (n - 1) as f32).round() as usize, Ordering::Relaxed);
+                    self.warm_selected_sample(ch);
+                }
+            }
+            C_SLICES => c.num_slices.store(1 + (v * (MAX_SLICES - 1) as f32).round() as usize, Ordering::Relaxed),
+            C_CHANNEL => self.params.channel.store((v * (NUM_CHANNELS - 1) as f32).round() as usize, Ordering::Relaxed),
+            _ => self.knob(i).set(v),
+        }
+    }
+    /// A moment is one channel's sound, recalled onto whichever channel
+    /// is selected -- so the channel selector itself is left out (it
+    /// would otherwise switch channels halfway through the recall).
+    fn kit_snapshot(&self) -> serde_json::Value {
+        serde_json::Value::Array(
+            (0..CONTROLS.len())
+                .map(|i| if i == C_CHANNEL { serde_json::Value::Null } else { self.kit_norm(i).map_or(serde_json::Value::Null, |v| serde_json::json!(v)) })
+                .collect(),
+        )
+    }
+    fn kit_line(&self) -> String {
+        let ch = self.ch();
+        let c = &self.params.channels[ch];
+        let slices = c.num_slices.load(Ordering::Relaxed).max(1);
+        format!("CH{} slice {}/{}  {}", ch + 1, c.step_index.load(Ordering::Relaxed).min(slices - 1) + 1, slices, self.sample_name(ch))
+    }
+    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+        match pad {
+            0 => "TRIG 1".into(),
+            1 => "TRIG 2".into(),
+            _ => String::new(),
+        }
+    }
+    /// TRIG pads lit, yellow while that channel's auto clock is firing
+    /// it on its own; the other 14 pads stay dark, as before.
+    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if pad >= NUM_CHANNELS {
+            PadColor::Off
+        } else if held {
+            PadColor::Green
+        } else if self.params.channels[pad].auto_clock.load(Ordering::Relaxed) {
+            PadColor::Yellow
+        } else {
+            PadColor::Blue
+        }
+    }
+}
+
 impl App for SampleDrumApp {
     fn supports_pad_lock(&self) -> bool { true }
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach TRIG1/TRIG2 only on TRIG.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -1370,13 +1582,20 @@ impl App for SampleDrumApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, SAMPLE_DRUM_BG, SAMPLE_DRUM_DIM, SAMPLE_DRUM_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, SAMPLE_DRUM_BG, SAMPLE_DRUM_DIM, SAMPLE_DRUM_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Ends above the slice view at y = 292.
+            let pal = kit::draw::Palette { bg: SAMPLE_DRUM_BG, ink: SAMPLE_DRUM_TITLE, accent: SAMPLE_DRUM_ACCENT, dim: SAMPLE_DRUM_DIM, faint: Rgb565::new(7, 12, 6) };
+            kit::draw::column(fb, &col, 16, 40, 350, 248, pal);
+        }
 
         self.draw_slice_view(fb);
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: slice/env/FX   U/D: sample   F2: pads   F3: auto clock   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -1939,4 +2158,54 @@ mod tests {
 
         assert_eq!(app.params.channels[0].tune.load(Ordering::Relaxed), 7, "a missing preset file must leave the channel untouched");
     }
+
+    #[test]
+    fn opens_playable_knob_1_moves_the_slice_start_and_r1_opens_the_menu() {
+        let mut app = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let start = app.params.channels[0].start.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.channels[0].start.get() > start, "knob 1 is Start on the play view");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    /// Needs no sample: TRIG only arms the channel's one-shot trigger,
+    /// which the processor consumes (tested above with real samples).
+    #[test]
+    fn trig_layer_pads_still_fire_trig1_and_trig2() {
+        let mut app = new_app();
+        assert_eq!(app.kit.layer_label(), "TRIG");
+        app.tick(&Input { grid: std::array::from_fn(|i| i == 0), ..Default::default() });
+        assert!(app.params.channels[0].trig_pending.load(Ordering::Relaxed), "pad 0 is TRIG1");
+        assert!(!app.params.channels[1].trig_pending.load(Ordering::Relaxed));
+        app.tick(&Input { grid: std::array::from_fn(|i| i == 1), ..Default::default() });
+        assert!(app.params.channels[1].trig_pending.load(Ordering::Relaxed), "pad 1 is TRIG2");
+    }
+
+    #[test]
+    fn throws_hold_a_change_and_spring_back() {
+        let mut app = new_app();
+        while app.kit.layer_label() != "THROWS" {
+            app.toggle_grid_mode();
+        }
+        let c = &app.params.channels[0];
+        c.slice_step.store(0, Ordering::Relaxed);
+        let decay = c.env_decay.get();
+        // RANDOM is rank 0, CHOKE rank 1.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0) || i == kit::rank_pad(1)), ..Default::default() });
+        assert_eq!(app.params.channels[0].slice_step.load(Ordering::Relaxed), 2, "RANDOM holds RND stepping");
+        assert!(app.params.channels[0].env_decay.get() < decay, "CHOKE shortens the decay");
+        app.tick(&Input::default());
+        assert_eq!(app.params.channels[0].slice_step.load(Ordering::Relaxed), 0, "back to FWD");
+        assert!((app.params.channels[0].env_decay.get() - decay).abs() < 1e-5, "decay back exactly");
+        assert!(!app.params.channels[0].trig_pending.load(Ordering::Relaxed), "Throws pads never reach TRIG");
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(SampleDrumApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

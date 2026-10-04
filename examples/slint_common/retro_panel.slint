@@ -6,22 +6,24 @@ export component RetroPanel inherits Rectangle {
     in property <string> status; in property <int> count; in property <bool> running;
     in property <bool> has-frame; in property <image> frame;
     in property <[string]> library; in property <int> library-selected;
+    // every system, from Rust (RetroExtra::consoles) -- never a fixed list
+    in property <[string]> consoles: ["NES","SNES","Arcade","Game Boy","Neo Geo"];
     callback action(float,float);
     HorizontalLayout {spacing:18px;
         VerticalLayout {width:206px;spacing:8px;
-            Text {text:"SYSTEM / GAME LIBRARY";color:root.accent;font-size:9px;height:18px;}
+            Text {text:"SYSTEM / GAME LIBRARY";color:root.accent;font-size:12px;height:18px;}
             ParamListColumn {row-names:root.names;row-values:root.values;selected-row:root.selected;ink:root.ink;paper:root.paper;accent:root.accent;instrument-style:true;}
         }
         VerticalLayout {spacing:8px;padding-top:4px;
-            HorizontalLayout {height:25px;spacing:5px;
-                for name[i] in ["NES","SNES","Arcade","Game Boy"] : Rectangle {background:root.console==name?root.accent:root.ink.with-alpha(0.05);border-radius:4px;
-                    Text {text:name;color:root.console==name?root.paper:root.ink;font-size:10px;horizontal-alignment:center;vertical-alignment:center;}
+            HorizontalLayout {height:25px;spacing:4px;
+                for name[i] in root.consoles : Rectangle {background:root.console==name?root.accent:root.ink.with-alpha(0.05);border-radius:4px;
+                    Text {text:name;color:root.console==name?root.paper:root.ink;font-size:12px;horizontal-alignment:center;vertical-alignment:center;}
                     TouchArea {clicked=>{root.action(i,0);}}
                 }
             }
             HorizontalLayout {height:20px;
-                Text {text:root.count+" GAMES";color:root.ink.with-alpha(0.55);font-size:9px;vertical-alignment:center;}
-                Text {text:root.loaded!=""?(root.running?"● PLAYING":"Ⅱ PAUSED"):"CHOOSE A CARTRIDGE";color:root.accent;font-size:9px;horizontal-alignment:right;vertical-alignment:center;}
+                Text {text:root.count+" GAMES";color:root.ink.with-alpha(0.72);font-size:12px;vertical-alignment:center;}
+                Text {text:root.loaded!=""?(root.running?"● PLAYING":"Ⅱ PAUSED"):"CHOOSE A CARTRIDGE";color:root.accent;font-size:12px;horizontal-alignment:right;vertical-alignment:center;}
             }
             Rectangle {height:115px;border-radius:6px;background:root.ink.with-alpha(0.04);border-width:1px;border-color:root.accent.with-alpha(0.3);clip:true;
                 if root.has-frame : Image {source:root.frame;width:100%;height:100%;image-fit:contain;}
@@ -33,18 +35,18 @@ export component RetroPanel inherits Rectangle {
                         for i in 6 : Rectangle {x:12px+i*8px;y:72px;width:4px;height:10px;background:root.accent.with-alpha(0.5);}
                     }
                     Text {x:112px;y:24px;width:parent.width - 128px;height:27px;text:"INSERT GAME";color:root.ink;font-family:"Space Grotesk";font-size:21px;font-weight:600;}
-                    Text {x:112px;y:57px;width:parent.width - 128px;height:40px;text:root.count>0?"Browse your library.\nSelect a game, then launch.":"Add your ROMs to the\nselected system’s folder.";color:root.ink.with-alpha(0.5);font-size:11px;wrap:word-wrap;}
+                    Text {x:112px;y:57px;width:parent.width - 128px;height:40px;text:root.count>0?"Browse your library.\nSelect a game, then launch.":"Add your ROMs to the\nselected system’s folder.";color:root.ink.with-alpha(0.72);font-size:12px;wrap:word-wrap;}
                 }
-                if root.has-frame : Rectangle {y:parent.height - 20px;width:100%;height:20px;background:#000000aa;Text {text:root.loaded;color:#ffffff;font-size:9px;horizontal-alignment:center;vertical-alignment:center;}}
+                if root.has-frame : Rectangle {y:parent.height - 20px;width:100%;height:20px;background:#000000aa;Text {text:root.loaded;color:#ffffff;font-size:12px;horizontal-alignment:center;vertical-alignment:center;}}
             }
             HorizontalLayout {height:25px;spacing:7px;
                 for label[i] in [root.loaded!=""?"GAME VIEW":"LAUNCH", "LOAD SELECTED"] : Rectangle {background:i==0?root.accent:root.ink.with-alpha(0.07);border-radius:4px;
-                    Text {text:label;color:i==0?root.paper:root.ink;font-size:9px;horizontal-alignment:center;vertical-alignment:center;}
+                    Text {text:label;color:i==0?root.paper:root.ink;font-size:12px;horizontal-alignment:center;vertical-alignment:center;}
                     TouchArea {clicked=>{root.action(i==0?20:21,0);}}
                 }
             }
             Text {text:root.rom;color:root.ink;font-size:12px;font-weight:600;height:19px;overflow:elide;}
-            Text {text:root.status;color:root.ink.with-alpha(0.6);font-size:10px;wrap:word-wrap;vertical-stretch:1;}
+            Text {text:root.status;color:root.ink.with-alpha(0.72);font-size:12px;wrap:word-wrap;vertical-stretch:1;}
         }
     }
 }

@@ -29,6 +29,7 @@
 //! Each shape plays a real Plaits voice (any of the 24 engines) and
 //! exposes Speed/Level to the shared ModBus, same as Pam's.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, ROOT_NAMES, SCALE_TYPES};
 use crate::audio::AudioProcessor;
@@ -36,6 +37,7 @@ use crate::audio_bus::AudioBus;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
+use crate::note_bus::{NoteBus, NoteOut, NoteRoute};
 use crate::paramlist::ParamList;
 use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
@@ -134,6 +136,8 @@ fn crosses(prev_raw: f32, new_raw: f32, target: f32) -> bool {
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
     MasterBpm,
+    /// Where the notes go: Madness's own voices, another app, or nothing.
+    Plays,
     Notes(usize),
     Scale(usize),
     Root(usize),
@@ -252,6 +256,57 @@ pub struct MadnessApp {
     expanded: [bool; NUM_GROUPS],
     last_shape: usize,
     rng: u32,
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+    note_route: NoteRoute,
+    note_out: Option<NoteOut>,
+}
+
+/// Play-view control indexes (see `MadnessApp::kit_sel`). Every one
+/// acts on the focused shape -- the one the circle shows and F3 runs --
+/// except BPM, which is the shared Master Clock.
+const C_SPEED: usize = 0;
+const C_DRIFT: usize = 1;
+const C_TIMBRE: usize = 2;
+const C_PROBABILITY: usize = 4;
+const C_DECAY: usize = 5;
+/// Not a parameter: which of the 8 shapes the play view (and F3) acts
+/// on. Kept as the menu's own selection, so R1 lands on that shape.
+const C_SHAPE: usize = 15;
+const KIT_CONTROLS: usize = 16;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "madness",
+        // Madness never used the pads, so there's no native layer to keep;
+        // Throws gives them a job that suits a generative voice: grab the
+        // motion (rate, drift) or the density for a moment and let go.
+        // Throws first: on Controls, knob 2 follows the grabbed pad
+        // instead of the hero pair, which is the wrong default.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_SPEED, C_DRIFT], [C_TIMBRE, 3], [C_PROBABILITY, C_DECAY], [6, 7]],
+        // D-pad up/down picks the shape: with 8 independent voices,
+        // moving between them is the thing a player does most.
+        browse: Some(C_SHAPE),
+        // Stick: rate on X, drift (how far the polygon warps) on Y -- the
+        // two controls that audibly change the motion. Hands: density
+        // (Probability) and brightness.
+        routes: Routes { stick_x: Some(C_SPEED), stick_y: Some(C_DRIFT), hand_l: Some(C_PROBABILITY), hand_r: Some(C_TIMBRE) },
+        throws: vec![
+            Throw { control: C_SPEED, to: 1.0, label: "FAST" },
+            Throw { control: C_SPEED, to: 0.0, label: "CRAWL" },
+            Throw { control: C_DRIFT, to: 1.0, label: "WARP+" },
+            Throw { control: C_DRIFT, to: 0.0, label: "WARP-" },
+            // Speed Offset 0 (the middle of -1..1): every position moves
+            // together, the polygon snaps rigid.
+            Throw { control: C_DRIFT, to: 0.5, label: "RIGID" },
+            Throw { control: C_PROBABILITY, to: 0.0, label: "HUSH" },
+            Throw { control: C_DECAY, to: 1.0, label: "LONG" },
+            Throw { control: C_TIMBRE, to: 1.0, label: "BRIGHT" },
+        ],
+        midi_to_pads: false,
+        own_expression: false,
+    }
 }
 
 // --- Madness's own palette: hot magenta clashing against acid
@@ -279,7 +334,35 @@ impl MadnessApp {
             expanded: [false; NUM_GROUPS],
             last_shape: 0,
             rng: seed | 1,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+            note_route: NoteRoute::new(None, "Madness", "madness", true).0,
+            note_out: None,
         }
+    }
+
+    /// Lets Madness play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
+        let (route, out) = NoteRoute::new(bus, "Madness", "madness", true);
+        self.note_route = route;
+        self.note_out = Some(out);
+        self
+    }
+
+    /// The shape the screen, F3 and the play view act on -- whatever the
+    /// menu's selection points into.
+    fn focus_shape(&self) -> usize {
+        let rows = self.visible_rows();
+        self.current_shape(&rows)
+    }
+
+    /// Moves the menu's selection onto shape `s`'s group row, so the
+    /// circle, F3 and a later R1 into the menu all follow.
+    fn set_focus_shape(&mut self, s: usize) {
+        let rows = self.visible_rows();
+        if let Some(idx) = rows.iter().position(|r| matches!(r, Row::Group(g) if *g == s + 1)) {
+            self.list.selected = idx;
+        }
+        self.last_shape = s;
     }
 
     fn next_rand01(&mut self) -> f32 {
@@ -291,7 +374,7 @@ impl MadnessApp {
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         if g == 0 {
-            return vec![Selection::MasterBpm];
+            return vec![Selection::Plays, Selection::MasterBpm];
         }
         let s = g - 1;
         // Running comes first -- the master on/off for this shape,
@@ -341,7 +424,7 @@ impl MadnessApp {
 
     fn selection_shape(sel: Selection) -> Option<usize> {
         match sel {
-            Selection::MasterBpm => None,
+            Selection::MasterBpm | Selection::Plays => None,
             Selection::Notes(s)
             | Selection::Scale(s)
             | Selection::Root(s)
@@ -374,6 +457,7 @@ impl MadnessApp {
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::MasterBpm => "BPM".into(),
+            Selection::Plays => "Plays".into(),
             Selection::Notes(_) => "Notes".into(),
             Selection::Scale(_) => "Main scale".into(),
             Selection::Root(_) => "Root note".into(),
@@ -398,6 +482,7 @@ impl MadnessApp {
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
             Selection::MasterBpm => format!("{:.0}", self.params.master_bpm.get()),
+            Selection::Plays => self.note_route.label(),
             Selection::Notes(s) => format!("{}", self.params.shapes[s].notes.load(Ordering::Relaxed)),
             Selection::Scale(s) => {
                 let idx = self.params.shapes[s].scale.load(Ordering::Relaxed) as usize % SCALE_TYPES.len();
@@ -429,7 +514,7 @@ impl MadnessApp {
             Selection::Harmonics(s) => format!("{:.2}", self.params.shapes[s].harmonics.get()),
             Selection::Timbre(s) => format!("{:.2}", self.params.shapes[s].timbre.get()),
             Selection::Decay(s) => format!("{:.2}", self.params.shapes[s].decay.get()),
-            Selection::Randomize(_) => "press knob2".into(),
+            Selection::Randomize(_) => "hold SELECT".into(),
         }
     }
 
@@ -449,6 +534,7 @@ impl MadnessApp {
         let sensitivity = self.sensitivity.get();
         let step = delta.signum();
         match sel {
+            Selection::Plays => self.note_route.step(step),
             Selection::MasterBpm => {
                 let next = (self.params.master_bpm.get() + accelerate(delta) * sensitivity * 2.0).clamp(MIN_BPM, MAX_BPM);
                 self.params.master_bpm.set(next);
@@ -503,6 +589,7 @@ impl MadnessApp {
     fn reset(&mut self, sel: Selection) {
         match sel {
             Selection::MasterBpm => self.params.master_bpm.set(DEFAULT_BPM),
+            Selection::Plays => self.note_route.reset(),
             Selection::Notes(s) => self.params.shapes[s].notes.store(DEFAULT_NOTES, Ordering::Relaxed),
             Selection::Speed(s) => self.params.shapes[s].speed_hz.set(DEFAULT_SPEED_HZ),
             Selection::ClockMod(s) => self.params.shapes[s].clock_mod.store(3, Ordering::Relaxed),
@@ -636,7 +723,143 @@ impl MadnessApp {
     }
 }
 
+impl MadnessApp {
+    /// The menu leaf behind each play-view control, for the focused
+    /// shape. Control 0 follows the shape's own Tempo Sync the way its
+    /// menu does: Speed when free-running, Clock Mod when synced.
+    fn kit_sel(&self, i: usize) -> Option<Selection> {
+        let s = self.focus_shape();
+        Some(match i {
+            C_SPEED => {
+                if self.params.shapes[s].tempo_sync.load(Ordering::Relaxed) { Selection::ClockMod(s) } else { Selection::Speed(s) }
+            }
+            C_DRIFT => Selection::SpeedOffset(s),
+            C_TIMBRE => Selection::Timbre(s),
+            3 => Selection::Harmonics(s),
+            C_PROBABILITY => Selection::Probability(s),
+            C_DECAY => Selection::Decay(s),
+            6 => Selection::VelMin(s),
+            7 => Selection::VelMax(s),
+            8 => Selection::Notes(s),
+            9 => Selection::Engine(s),
+            10 => Selection::Scale(s),
+            11 => Selection::Root(s),
+            12 => Selection::Direction(s),
+            13 => Selection::MasterBpm,
+            // An action: grab it on the Controls layer, press knob 2.
+            14 => Selection::Randomize(s),
+            _ => return None,
+        })
+    }
+
+    /// Ranges match `edit()`'s clamps exactly.
+    fn knob(&self, sel: Selection) -> Knob<'_> {
+        let p = &self.params;
+        match sel {
+            Selection::MasterBpm => Knob::F(&p.master_bpm, MIN_BPM, MAX_BPM),
+            Selection::Speed(s) => Knob::F(&p.shapes[s].speed_hz, MIN_SPEED_HZ, MAX_SPEED_HZ),
+            Selection::SpeedOffset(s) => Knob::F(&p.shapes[s].speed_offset, -1.0, 1.0),
+            Selection::Probability(s) => Knob::F(&p.shapes[s].probability, 0.0, 1.0),
+            Selection::VelMin(s) => Knob::F(&p.shapes[s].vel_min, 0.0, 1.0),
+            Selection::VelMax(s) => Knob::F(&p.shapes[s].vel_max, 0.0, 1.0),
+            Selection::Harmonics(s) => Knob::F(&p.shapes[s].harmonics, 0.0, 1.0),
+            Selection::Timbre(s) => Knob::F(&p.shapes[s].timbre, 0.0, 1.0),
+            Selection::Decay(s) => Knob::F(&p.shapes[s].decay, 0.0, 1.0),
+            Selection::Engine(s) => Knob::U(&p.shapes[s].engine, 24),
+            Selection::Scale(s) => Knob::U(&p.shapes[s].scale, SCALE_TYPES.len() as u32),
+            Selection::Root(s) => Knob::U(&p.shapes[s].root, 12),
+            Selection::Direction(s) => Knob::U(&p.shapes[s].direction, DIRECTION_NAMES.len() as u32),
+            _ => Knob::None,
+        }
+    }
+
+    /// Notes and Clock Mod live in `AtomicUsize`s, which `Knob` has no
+    /// variant for -- (atomic, min, max) handled by hand instead.
+    fn usize_knob(&self, sel: Selection) -> Option<(&AtomicUsize, usize, usize)> {
+        match sel {
+            Selection::Notes(s) => Some((&self.params.shapes[s].notes, MIN_NOTES, MAX_NOTES)),
+            Selection::ClockMod(s) => Some((&self.params.shapes[s].clock_mod, 0, CLOCK_MODS.len() - 1)),
+            _ => None,
+        }
+    }
+}
+
+impl PlayHost for MadnessApp {
+    fn kit_control_count(&self) -> usize {
+        KIT_CONTROLS
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match self.kit_sel(i) {
+            Some(sel) => self.leaf_name(sel),
+            None => "Shape".into(),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        match self.kit_sel(i) {
+            Some(sel) => self.leaf_value(sel),
+            None => format!("{} of {NUM_SHAPES}", self.focus_shape() + 1),
+        }
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        let sel = self.kit_sel(i)?;
+        if let Some((a, lo, hi)) = self.usize_knob(sel) {
+            return Some((a.load(Ordering::Relaxed).clamp(lo, hi) - lo) as f32 / (hi - lo) as f32);
+        }
+        self.knob(sel).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        match self.kit_sel(i) {
+            Some(sel) => self.usize_knob(sel).is_some() || self.knob(sel).stepped(),
+            None => true,
+        }
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        match self.kit_sel(i) {
+            Some(sel) => self.edit(sel, delta),
+            None if delta != 0 => {
+                let next = (self.focus_shape() as i32 + delta.signum()).rem_euclid(NUM_SHAPES as i32) as usize;
+                self.set_focus_shape(next);
+            }
+            None => {}
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(sel) = self.kit_sel(i) {
+            self.reset(sel);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let Some(sel) = self.kit_sel(i) else { return };
+        if let Some((a, lo, hi)) = self.usize_knob(sel) {
+            a.store(lo + (v.clamp(0.0, 1.0) * (hi - lo) as f32).round() as usize, Ordering::Relaxed);
+            return;
+        }
+        self.knob(sel).set(v);
+    }
+    fn kit_line(&self) -> String {
+        let s = self.focus_shape();
+        let running = self.params.shapes[s].running.load(Ordering::Relaxed);
+        format!("Shape {} {}", s + 1, if running { "running" } else { "stopped: F3" })
+    }
+}
+
 impl App for MadnessApp {
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
     }
@@ -670,6 +893,12 @@ impl App for MadnessApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -693,6 +922,7 @@ impl App for MadnessApp {
             params: Arc::clone(&self.params),
             shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)),
             mono_buf: Vec::new(),
+            notes: self.note_out.take().unwrap_or_else(NoteOut::detached),
         }))
     }
 
@@ -720,7 +950,13 @@ impl App for MadnessApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, MADNESS_BG, MADNESS_DIM, MADNESS_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, MADNESS_BG, MADNESS_DIM, MADNESS_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Ends at x=366, clear of the circle (its left edge is x=390).
+            let pal = kit::draw::Palette { bg: MADNESS_BG, ink: MADNESS_TITLE, accent: MADNESS_ACCENT, dim: MADNESS_DIM, faint: MADNESS_LINE };
+            kit::draw::column(fb, &col, 16, 40, 350, 280, pal);
+        }
 
         // --- Right: the circle -- note positions (each independently
         // drifting), the 8 fixed trigger-bar markers sitting on the
@@ -774,8 +1010,9 @@ impl App for MadnessApp {
         Text::new(&format!("Shape {} -- {}", shape + 1, status), Point::new(420, 300), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: speed/drift   U/D: shape   F2: pads   F3: run shape   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -815,6 +1052,7 @@ struct MadnessProcessor {
     params: Arc<Params>,
     shapes: [ShapeRuntime; NUM_SHAPES],
     mono_buf: Vec<f32>,
+    notes: NoteOut,
 }
 
 impl AudioProcessor for MadnessProcessor {
@@ -824,6 +1062,7 @@ impl AudioProcessor for MadnessProcessor {
         self.mono_buf.resize(frames, 0.0);
         let dt = frames as f32 / sample_rate;
         let master_bpm = self.params.master_bpm.get().max(1.0);
+        self.notes.advance(frames as u32);
 
         for s in 0..NUM_SHAPES {
             let sp = &self.params.shapes[s];
@@ -865,7 +1104,13 @@ impl AudioProcessor for MadnessProcessor {
                                 let vmin = sp.vel_min.get().min(sp.vel_max.get());
                                 let vmax = sp.vel_min.get().max(sp.vel_max.get());
                                 rt.velocity = vmin + rt.next_rand01() * (vmax - vmin);
-                                rt.trigger = true;
+                                // own voice, another app, or nothing
+                                if self.notes.internal() {
+                                    rt.trigger = true;
+                                } else if self.notes.external() {
+                                    let gate = (0.05 + sp.decay.get() * 0.95) * sample_rate;
+                                    self.notes.trigger(rt.current_note.clamp(0.0, 127.0) as u8, (rt.velocity * 127.0).clamp(1.0, 127.0) as u8, gate as u32);
+                                }
                                 sp.last_fired.store(i, Ordering::Relaxed);
                             }
                     }
@@ -933,4 +1178,46 @@ mod tests {
             assert!(!params.shapes[s].running.load(Ordering::Relaxed), "shape {s} must start stopped, not running");
         }
     }
+
+    fn app() -> MadnessApp {
+        MadnessApp::new(Arc::new(AtomicF32::new(1.0)), Arc::new(AtomicF32::new(1.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()))
+    }
+
+    #[test]
+    fn opens_playable_knob1_is_speed_and_the_d_pad_picks_the_shape_f3_runs() {
+        let mut a = app();
+        assert!(a.play_column().is_some(), "play view first");
+        let speed = a.params.shapes[0].speed_hz.get();
+        a.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(a.params.shapes[0].speed_hz.get() > speed, "knob 1 is shape 1's Speed on the play view");
+
+        a.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(a.focus_shape(), 1, "D-pad up = next shape");
+        a.toggle_running();
+        assert!(a.params.shapes[1].running.load(Ordering::Relaxed), "F3 runs the browsed shape");
+        assert!(!a.params.shapes[0].running.load(Ordering::Relaxed), "and leaves the others alone");
+
+        a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(a.play_column().is_none(), "R1 opens the full menu");
+        assert_eq!(a.focus_shape(), 1, "the menu opens on the shape the play view was on");
+    }
+
+    #[test]
+    fn throws_push_the_motion_and_spring_back() {
+        let mut a = app();
+        assert_eq!(a.grid_mode_label(), Some("THROWS"));
+        let speed = a.params.shapes[0].speed_hz.get();
+        let fast = Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0)), ..Default::default() };
+        a.tick(&fast);
+        assert!((a.params.shapes[0].speed_hz.get() - MAX_SPEED_HZ).abs() < 1e-4, "FAST holds Speed at max");
+        a.tick(&Input::default());
+        assert!((a.params.shapes[0].speed_hz.get() - speed).abs() < 1e-4, "released, Speed springs back");
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(MadnessApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }

@@ -1,0 +1,12 @@
+{
+  "name": "Audio 2x2",
+  "vendor": 1,
+  "product": 1,
+  "revision": 1,
+  "current_ma": 120,
+  "description": "Stereo line in and stereo line/headphone out on 3.5 mm jacks. The codec sits on the card and talks to the main board over the slot's SAI lane, so no analog audio crosses the connector.",
+  "resources": [
+    { "kind": "audio_in", "count": 2, "lane": "sai", "param": 48000 },
+    { "kind": "audio_out", "count": 2, "lane": "sai", "param": 48000 }
+  ]
+}

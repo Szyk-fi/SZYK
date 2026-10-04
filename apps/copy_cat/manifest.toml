@@ -1,0 +1,9 @@
+id = "copy_cat"
+name = "Copy Cat"
+category = "kids"
+description = "Ages 6-9. The cat plays a tune on four coloured mats; copy it to earn stars."
+audio_outputs = ["Copy Cat"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Copy Cat Level",
+]

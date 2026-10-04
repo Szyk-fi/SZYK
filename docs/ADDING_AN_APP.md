@@ -47,8 +47,17 @@ comes back.
    id = "<id>"
    name = "<Display Name>"
    ```
-   (See any existing `apps/*/manifest.toml` for the exact shape — it's
-   always just these two fields.)
+   If the app registers modulation inputs (`modbus.register("<Name>:
+   <Param>")`), list them in the manifest too, so every source can patch to
+   them before the app has ever been opened:
+   ```toml
+   mod_inputs = ["<Name>: <Param>", "Mixer: <Name> Level"]
+   ```
+   You don't have to write that list by hand: `PORTAMAX_WRITE_MANIFESTS=1
+   cargo test manifest_contract` fills it in from what the code registers,
+   and plain `cargo test` fails if the two drift apart. Name inputs
+   `"<App>: <Param>"` — the part before `: ` is the app a source's picker
+   files it under.
 4. **Register the constructor** in `src/registry.rs`:
    - Add the app's type to the big `use crate::apps::{...}` import list near
      the top of the file.
@@ -89,3 +98,68 @@ comes back.
   it doesn't pull in something that breaks the existing
   `[target.'cfg(target_os = "macos")'.dependencies]` split (see the
   README's "Platform support" section) before merging.
+
+## Play view
+
+Playable apps open on the shared play view. See [PLAY_KIT.md](PLAY_KIT.md) for
+the structure and the steps to give a new app one.
+
+## Building a synth on the shared engine
+
+If your app makes sounds from oscillators, filters and effects, consider
+not writing the DSP yourself. The synthesis platform (`src/synthesis/`, see
+[SYNTH_PLATFORM.md](SYNTH_PLATFORM.md)) compiles a JSON patch into a
+real-time engine with:
+
+- voices, macros, morph states and parameter smoothing;
+- a CPU budget;
+- telemetry.
+
+Atlas (`src/apps/atlas.rs`) is the smallest complete front end to it, and its
+engine handover (pending/retired slots plus a crossfade) is the pattern to
+copy. Often a new "synth" is just a new preset in
+`assets/atlas/presets/` rather than a new app.
+
+## Wrapping a Mutable Instruments module (or other C++ DSP)
+
+The eurorack repository is vendored in `vendor/eurorack`. To run another
+of its modules:
+
+1. Write `vendor/bridge/<name>_bridge.cc`: a small `extern "C"` wrapper
+   that sets the module's patch and performance structs the way its
+   firmware does (read `<module>/<module>.cc` and its `cv_scaler`/
+   `cv_reader`) and calls its `Process`. No DSP of your own.
+2. Write `vendor/bridge/<name>.sources`: the `.cc` files it needs, one
+   per line, relative to `vendor/eurorack`. The module's own
+   `test/makefile` lists them. `build.rs` compiles every `.sources` list
+   it finds into `lib<name>_bridge.a`, so there's nothing to register.
+3. Write the app in `src/apps/<name>.rs` with `src/apps/mi_kit.rs`:
+   describe the panel as `Spec`s, implement `Module`, and wrap it in
+   `MiApp`. That gives you the play view, the menu, pads as keys, note-bus
+   input, mod inputs for every knob, and `RateBridge` for running a
+   fixed-rate engine at the device's rate. `rings.rs` is the smallest
+   voice, `marbles.rs` a note source, `tides.rs` a modulation source.
+4. Check the license: the STM32 modules are MIT; the AVR ones (Grids,
+   Shruthi...) are GPL and can't be linked into Portamax.
+
+## A full-screen app (the Kids apps)
+
+An app that draws its whole screen itself returns `true` from
+`wants_fullscreen` and hands the same picture to the Slint GUI from
+`slint_extra`:
+
+```rust
+fn slint_extra(&mut self) -> SlintExtra {
+    let mut fb = FrameBuffer::new();
+    self.draw(&mut fb);
+    kids_kit::screen_extra(&fb)
+}
+```
+
+The GUI then shows it edge to edge, with no menu column and no chrome,
+so the device and the GUI show one design. `src/apps/kids_kit.rs` also has
+a small sound engine (`Sound`: tuned percussion, harp, organ, drums, a
+step clock that calls your `Song` on the audio thread, and an `Extra`
+hook for your own DSP) and drawing helpers (big text, stars, rounded
+boxes). `rainbow_bells.rs` is the smallest app built on it. Give the
+manifest `category = "kids"` to file it under the launcher's Kids section.

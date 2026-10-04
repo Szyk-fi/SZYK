@@ -1,0 +1,10 @@
+id = "ledger"
+name = "Ledger"
+category = "sequencer"
+description = "A tracker: 8 tracks, 64 rows, 16 patterns. Plays its own Plaits voices or any instrument."
+audio_outputs = ["Ledger"]
+note_outputs = ["Ledger T1", "Ledger T2", "Ledger T3", "Ledger T4", "Ledger T5", "Ledger T6", "Ledger T7", "Ledger T8"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Ledger Level",
+]

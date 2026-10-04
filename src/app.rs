@@ -4,6 +4,8 @@
 
 #[path = "music_scales.rs"]
 pub mod music_scales;
+#[path = "play_kit.rs"]
+pub mod play_kit;
 
 use crate::audio::AudioProcessor;
 use crate::controller::ControllerState;
@@ -36,6 +38,10 @@ pub struct Input {
     /// Discrete D-pad/joystick row steps, independent of encoder sensitivity.
     pub navigation_steps: i32,
     pub knob2: i32,
+    /// D-pad left/right steps. Portamax has no encoders: the shell adds
+    /// these into `knob2` too (so every menu edits with them), and the play
+    /// view uses them on its own to turn the focused dial (play_kit.rs).
+    pub nav_x: i32,
     /// Knobs are pushable (a clickable encoder) — real hardware knobs will
     /// be too. Edge-triggered like the other buttons.
     pub knob1_press: bool,
@@ -49,6 +55,41 @@ pub struct Input {
     pub nav_up: bool,
     pub nav_down: bool,
     pub nav_select: bool,
+    // --- Play surface: continuous controls an instrument can play with.
+    // They only reach an app that asks for them (`App::play_surface`);
+    // for every other app the shell keeps using the stick, shoulders and
+    // depth sensors for navigation, exactly as before. ---
+    /// Joystick, -1..1 each axis, +x right, +y up. Springs to 0.
+    pub stick: [f32; 2],
+    /// Joystick click (edge).
+    pub stick_click: bool,
+    /// Depth sensors (left, right): 0 = no hand, rising to 1 as a hand
+    /// comes closer. On hardware these are the two time-of-flight
+    /// sensors; in the sim, the frame's sensor strips or L2/R2.
+    pub hands: [f32; 2],
+    /// L1 / R1 held state.
+    pub shoulders: [bool; 2],
+    /// R1 press edge (L1's is reserved for the shell outside play apps).
+    pub shoulder_press: [bool; 2],
+    /// MIDI keyboard: held notes by MIDI number, velocity 1..127 (0 = up).
+    pub midi_keys: MidiKeys,
+    /// MIDI pitch bend, -1..1.
+    pub pitch_bend: f32,
+    /// MIDI mod wheel (CC1), 0..1.
+    pub mod_wheel: f32,
+    /// MIDI channel aftertouch, 0..1.
+    pub aftertouch: f32,
+}
+
+/// 128 MIDI note velocities -- a newtype only because `Default` isn't
+/// derived for arrays longer than 32.
+#[derive(Clone, Copy, PartialEq)]
+pub struct MidiKeys(pub [u8; 128]);
+
+impl Default for MidiKeys {
+    fn default() -> Self {
+        MidiKeys([0; 128])
+    }
 }
 
 impl Input {
@@ -90,7 +131,8 @@ impl Input {
         let mut grid = [false; 16];
         for (i, (slot, key)) in grid.iter_mut().zip(Self::GRID_KEYS).enumerate() {
             *slot = window.is_key_down(key)
-                || (midi_armed && controller.grid[i].load(std::sync::atomic::Ordering::Relaxed));
+                || (midi_armed && controller.grid[i].load(std::sync::atomic::Ordering::Relaxed))
+                || controller.gamepad_grid[i].load(std::sync::atomic::Ordering::Relaxed);
         }
         let mut top = [false; 4];
         for (i, (slot, key)) in top.iter_mut().zip(Self::TOP_KEYS).enumerate() {
@@ -102,16 +144,21 @@ impl Input {
         let repeating = |k| window.is_key_pressed(k, KeyRepeat::Yes);
         let knob1 = repeating(Key::RightBracket) as i32 - repeating(Key::LeftBracket) as i32
             + controller.take_knob1_delta();
-        let knob2 = repeating(Key::Period) as i32 - repeating(Key::Comma) as i32
-            + controller.take_knob2_delta();
+        // , and . are the D-pad's left/right (Portamax has no encoders):
+        // they edit values everywhere and turn the play view's focused dial.
+        let dpad_x = repeating(Key::Period) as i32 - repeating(Key::Comma) as i32;
+        let knob2 = dpad_x + controller.take_knob2_delta();
+        let nav_x = dpad_x + controller.take_nav_x();
         let knob1_press = pressed(Key::Backslash) || controller.take_knob1_press();
+        let navigation_steps = controller.take_nav_delta();
 
         Self {
             grid,
             top,
             knob1,
-            navigation_steps: 0,
+            navigation_steps,
             knob2,
+            nav_x,
             knob1_press,
             knob2_press: pressed(Key::Slash) || controller.take_knob2_press(),
             home: pressed(Key::Escape) || controller.take_home(),
@@ -121,9 +168,26 @@ impl Input {
             // select -- lets a MIDI controller (or the keyboard knob
             // keys) navigate the launcher too, not just arrow keys/
             // Enter, without needing its own separate mapping.
-            nav_up: pressed(Key::Up) || knob1 < 0,
-            nav_down: pressed(Key::Down) || knob1 > 0,
+            nav_up: pressed(Key::Up) || knob1 < 0 || navigation_steps < 0,
+            nav_down: pressed(Key::Down) || knob1 > 0 || navigation_steps > 0,
             nav_select: pressed(Key::Enter) || knob1_press,
+            ..controller.play_surface_input(Self::keyboard_play_surface(window))
+        }
+    }
+
+    /// Keyboard stand-ins for the play surface (framebuffer runtime):
+    /// arrow keys = joystick, O / P = left / right hand over the depth
+    /// sensors, K = stick click, 9 / 0 = L1 / R1 held.
+    fn keyboard_play_surface(window: &Window) -> Input {
+        let down = |k| window.is_key_down(k);
+        let axis = |neg, pos| (down(pos) as i32 - down(neg) as i32) as f32;
+        Input {
+            stick: [axis(Key::Left, Key::Right), axis(Key::Down, Key::Up)],
+            stick_click: window.is_key_pressed(Key::K, KeyRepeat::No),
+            hands: [if down(Key::O) { 0.7 } else { 0.0 }, if down(Key::P) { 0.7 } else { 0.0 }],
+            shoulders: [down(Key::Key9), down(Key::Key0)],
+            shoulder_press: [window.is_key_pressed(Key::Key9, KeyRepeat::No), window.is_key_pressed(Key::Key0, KeyRepeat::No)],
+            ..Default::default()
         }
     }
 }
@@ -139,6 +203,14 @@ pub trait App {
     fn system_role(&self) -> Option<SystemRole> { None }
     /// Only apps that meaningfully consume performance pads can own the pad lock.
     fn supports_pad_lock(&self) -> bool { false }
+    /// True for an instrument that plays the joystick, depth sensors,
+    /// L1/R1 and MIDI keyboard itself (see the `Input` play-surface
+    /// fields). The shell then stops using those for navigation while
+    /// this app is on screen.
+    fn play_surface(&self) -> bool { false }
+    /// The shared play column (see play_kit.rs) when the app is on its
+    /// play view; `None` shows the usual parameter list instead.
+    fn play_column(&self) -> Option<PlayColumn> { None }
     /// The action F3 will perform, supplied by the app rather than inferred by name.
     fn transport_action(&self) -> Option<&'static str> {
         self.running().map(|running| if running { "STOP" } else { "PLAY" })
@@ -272,10 +344,16 @@ pub trait App {
     /// `PlaitsApp::windowed_rows`). Returns `(window,
     /// selected_index_in_window, has_more_above, has_more_below)`.
     fn slint_windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
-        let _ = visible;
+        // Every app's menu is windowed around its selection, so a long
+        // list scrolls instead of running off the bottom of the screen
+        // (into the F-button bar). Same windowing as `ParamList`.
         let rows = self.slint_rows();
-        let selected = self.slint_selected();
-        (rows, selected, false, false)
+        let selected = self.slint_selected().min(rows.len().saturating_sub(1));
+        let mut list = crate::paramlist::ParamList::new();
+        list.selected = selected;
+        let (a, b) = list.centered_scroll_window(visible.max(1), rows.len());
+        let more_below = b < rows.len();
+        (rows[a..b].to_vec(), selected - a, a > 0, more_below)
     }
 
     /// Real fader-level fraction (0..1) per windowed row, aligned with
@@ -342,13 +420,13 @@ pub fn polyline_segments(samples: &[f32], width_px: f32, height_px: f32, centere
 pub enum SlintExtra {
     None,
     Plaits(PlaitsExtra),
+    Controller(ControllerExtra),
     Analyzer(AnalyzerExtra),
     Voltage(VoltageExtra),
     Cascade(CascadeExtra),
     Shape(ShapeVisual),
     Bloom(BloomVisual),
     Nebula(NebulaExtra),
-    Tape(TapeExtra),
     Pams(PamsExtra),
     Orbit(OrbitExtra),
     Prism(PrismExtra),
@@ -375,10 +453,58 @@ pub enum SlintExtra {
     Retro(RetroExtra),
     Collection(CollectionExtra),
     Portal(PortalExtra),
+    Oracle(OracleExtra),
+    Pulsar(PulsarExtra),
+    Tinkertone(TinkertoneExtra),
+    Norns(NornsExtra),
+    Grid(GridExtra),
+    Atlas(AtlasExtra),
+    Screen(ScreenExtra),
+}
+
+/// An app that draws its whole screen itself (the Kids apps): the GUI
+/// shows this picture full screen, with no menu column or chrome.
+#[allow(dead_code)] // Slint GUI only
+pub struct ScreenExtra {
+    /// `width * height` RGBA pixels.
+    pub frame_rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A text grid panel -- see `GridPanel` in the Slint GUI. Used by
+/// Ledger (the pattern), Mosaic (its step rows) and Squeeze (meters).
+#[allow(dead_code)] // Slint GUI only
+pub struct GridExtra {
+    pub caption: String,
+    pub title: String,
+    /// Row-major cells, `col_x.len()` per row.
+    pub cells: Vec<String>,
+    /// Each column's x position, px.
+    pub col_x: Vec<f32>,
+    /// Row to highlight, or -1.
+    pub highlight: i32,
+    pub footer: String,
+    /// A bar under the title (0..1), or negative for none.
+    pub meter: f32,
+}
+
+/// The norns cartridge's screen and status -- see `NornsApp::slint_extra`.
+#[allow(dead_code)] // Slint GUI only
+pub struct NornsExtra {
+    /// 128x64 RGBA: the script's screen, or the SELECT / PARAMS menus.
+    pub frame_rgba: Vec<u8>,
+    pub title: String,
+    /// "SELECT", "PLAY" or "PARAMS".
+    pub mode: String,
+    pub status: String,
+    pub peak: f32,
 }
 
 /// Retro's real per-frame telemetry -- see `RetroApp::slint_extra`.
 pub struct RetroExtra {
+    /// Every system Retro supports, in chip order.
+    pub consoles: Vec<String>,
     pub loaded_name: String,
     pub rom_count: i32,
     pub console_name: String,
@@ -457,6 +583,129 @@ pub struct TonestackExtra {
     pub waveform: Vec<f32>,
     pub output_peak: f32,
     pub gate_closed: bool,
+}
+
+// Read only by the Slint GUI (examples/slint_home_live.rs), which the
+// framebuffer binary doesn't build -- hence the allow.
+#[allow(dead_code)]
+/// One block of Oracle's live signal graph, already laid out in the
+/// side panel's own pixel space -- see `OracleApp::slint_extra`.
+pub struct OracleNode {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub label: String,
+    /// Real per-block output activity, 0..1.
+    pub activity: f32,
+    /// Per-voice block (instrument patches) vs. shared/global block.
+    pub voice: bool,
+}
+
+// Read only by the Slint GUI (examples/slint_home_live.rs), which the
+// framebuffer binary doesn't build -- hence the allow.
+#[allow(dead_code)]
+/// Oracle's live patch telemetry -- see `OracleApp::slint_extra`.
+pub struct OracleExtra {
+    pub patch_name: String,
+    pub kind_label: String,
+    /// 0 = signal graph, 1 = snapshot grid, 2 = AI thinking /
+    /// transcribing, 3 = the AI's explanation text, 4 = listening.
+    pub mode: u8,
+    pub nodes: Vec<OracleNode>,
+    /// Graph wiring as line segments, forward edges first; the first
+    /// `forward_edges` segments are forward, the rest feedback.
+    pub edges: CurveSegments,
+    pub forward_edges: usize,
+    /// Real output scope (oldest first), -1..1.
+    pub scope: Vec<f32>,
+    /// Per snapshot pad: 0 empty, 1 stored, 2 morph A, 3 morph B.
+    pub snaps: [u8; 16],
+    /// Morph position when two snapshots are being morphed.
+    pub morph: Option<f32>,
+    pub info: String,
+    pub status: String,
+    pub unstable: bool,
+    pub explain: String,
+    pub thinking: String,
+    /// Live voice-input level while listening, 0..1.
+    pub mic_level: f32,
+}
+
+// Read only by the Slint GUI (examples/slint_home_live.rs), which the
+// framebuffer binary doesn't build -- hence the allow.
+#[allow(dead_code)]
+/// Pulsar's live pattern state -- see `PulsarApp::slint_extra`.
+pub struct PulsarExtra {
+    pub genre_name: String,
+    pub bpm: f32,
+    pub slot: usize,
+    pub playing_slot: Option<usize>,
+    /// Per slot A-H: holds a pattern.
+    pub slot_filled: [bool; 8],
+    pub in_fill: bool,
+    pub bar: usize,
+    pub bars: usize,
+    pub pad_mode: String,
+    pub record: bool,
+    pub lane_names: [&'static str; 8],
+    pub lane: usize,
+    pub lane_locked: [bool; 8],
+    pub lane_muted: [bool; 8],
+    pub lane_flash: [f32; 8],
+    /// 8 lanes x 16 steps of the bar in view, row-major: velocity
+    /// 0..1 (0 = no hit).
+    pub cell_vel: Vec<f32>,
+    /// Same layout: 0 plain, 1 chance < 100 %, 2 roll/ratchet.
+    pub cell_mark: Vec<i32>,
+    /// Column of the playhead within the bar in view, if it's there.
+    pub playhead: Option<usize>,
+    /// Step-edit cursor (lane, column) when the pads are in Steps mode.
+    pub cursor: Option<(usize, usize)>,
+    pub swing_pct: f32,
+    pub peak: f32,
+    pub status: String,
+}
+
+// Read only by the Slint GUI (examples/slint_home_live.rs), which the
+// framebuffer binary doesn't build -- hence the allow.
+#[allow(dead_code)]
+/// Tinkertone's live state -- see `TinkertoneApp::panel_extra`.
+pub struct TinkertoneExtra {
+    /// 37 melody keys, held or not.
+    pub keys_held: Vec<bool>,
+    /// First key of the 16-pad window.
+    pub window: usize,
+    pub bass_layer: bool,
+    /// Bass key held / sounding (0..15), or -1.
+    pub bass_held: i32,
+    pub bass_sounding: i32,
+    pub preset: usize,
+    pub preset_tones: Vec<String>,
+    pub vibrato: bool,
+    pub sustain: bool,
+    pub rhythm: usize,
+    pub tempo: f32,
+    pub playing: bool,
+    pub synchro: bool,
+    pub fill: bool,
+    /// "Manual", "Auto" or "My Line".
+    pub bass_mode: String,
+    /// Recording your own line.
+    pub line_rec: bool,
+    /// Your line, one entry per step: bass key, -1 hold, -2 rest.
+    pub line: Vec<i32>,
+    /// Step of the line playing now, or -1.
+    pub line_pos: i32,
+    pub chord: String,
+    pub step: usize,
+    pub steps: usize,
+    pub steps_per_beat: usize,
+    pub bar: usize,
+    pub drum_flash: Vec<f32>,
+    pub volume: f32,
+    pub accomp: f32,
+    pub peak: f32,
 }
 
 /// Settings' live color-wheel state -- see `SettingsApp::slint_extra`.
@@ -715,6 +964,52 @@ pub struct SequencerExtra {
     pub pad_loaded: Vec<bool>,
 }
 
+/// One of the four dials on a play view. `knob` says which encoder
+/// turns it right now (0 = neither), so the screen can badge it.
+#[derive(Default, Clone)]
+pub struct PlayDial {
+    pub label: String,
+    pub value: String,
+    pub norm: f32,
+    pub knob: u8,
+}
+
+/// The shared play column (play_kit.rs): what the pads, knobs and
+/// expression surfaces are doing, in place of the parameter list.
+#[derive(Default, Clone)]
+pub struct PlayColumn {
+    pub layer: String,
+    pub dials: Vec<PlayDial>,
+    /// The control knob 2 turns when it isn't one of the dials.
+    pub knob2_extra: String,
+    /// Physical pad order (row 0 on top), like `Input::grid`.
+    pub pad_labels: Vec<String>,
+    /// 0 off, 1 marked, 2 available, 3 lit, 4 held.
+    pub pad_state: Vec<i32>,
+    pub stick: [f32; 2],
+    pub stick_label: String,
+    pub hands: [f32; 2],
+    pub hand_labels: [String; 2],
+    pub line: String,
+    pub status: String,
+}
+
+
+/// The Controller app's live view of the connected game controller.
+#[derive(Default)]
+#[allow(dead_code)] // read only by the Slint renderer
+pub struct ControllerExtra {
+    pub name: String,
+    pub connected: bool,
+    pub map: String,
+    /// The action being learned, or empty.
+    pub learning: String,
+    /// In controller_map::BUTTON_NAMES / AXIS_NAMES order.
+    pub buttons: Vec<bool>,
+    pub axes: Vec<f32>,
+    pub status: String,
+}
+
 pub struct PlaitsExtra {
     pub engine_name: String,
     pub engine_bank: usize,
@@ -759,6 +1054,8 @@ pub struct CurveSegments {
 /// `polyline_segments`) rather than raw samples, so the live screen
 /// draws genuine connected curves instead of a bar chart.
 pub struct VoltageExtra {
+    /// The loaded preset, "07 Neon Arp", with " *" once edited.
+    pub preset: String,
     pub oscillator: CurveSegments,
     pub filter: CurveSegments,
     pub filter_cutoff_frac: f32,
@@ -816,13 +1113,6 @@ pub struct NebulaExtra {
     /// `(x, y)` in -1..1, `brightness` 0..1 (scaled from real speed)
     /// -- one entry per live particle.
     pub particles: Vec<(f32, f32, f32)>,
-}
-
-/// Tape's real 4-track lane view -- see `TapeApp::track_lanes`.
-pub struct TapeExtra {
-    /// `(status_text, fill_kind, playhead_frac)` per track --
-    /// `fill_kind`: 0 = empty, 1 = has content, 2 = recording.
-    pub tracks: Vec<(String, u8, f32)>,
 }
 
 /// Pam's real CV monitor scope for the currently-browsed channel --
@@ -919,3 +1209,81 @@ pub struct PortalExtra {pub sources:Vec<String>,pub targets:Vec<String>,pub amou
 pub struct VectorFilterExtra {pub xyz:Vec<f32>,pub wave:Vec<f32>,pub source:String,pub mode:String,pub enabled:bool}
 
 pub struct ForgeExtra{pub wave:Vec<f32>,pub starts:Vec<f32>,pub ends:Vec<f32>,pub labels:Vec<String>,pub levels:Vec<f32>,pub name:String,pub status:String,pub mode:String,pub source:String,pub selected:i32,pub busy:bool,pub recording:bool,pub duration:f32}
+
+/// Atlas's panel in the Slint GUI -- see `AtlasPanel`.
+#[allow(dead_code)] // Slint GUI only
+pub struct AtlasExtra {
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub index: String,
+    pub macro_names: Vec<String>,
+    pub macro_values: Vec<f32>,
+    pub macro_used: Vec<bool>,
+    pub morph: f32,
+    pub states: usize,
+    pub morph_label: String,
+    /// 1 = spectrum bars, 0 = scope trace.
+    pub spectrum_view: bool,
+    pub spectrum: Vec<f32>,
+    pub scope: Vec<f32>,
+    pub voices: String,
+    pub load: f32,
+    pub depth: String,
+    pub status: String,
+}
+
+/// The shared services an app is built from: buses, settings, devices.
+///
+/// Type-erased on purpose, so a new service (a new bus, a new device
+/// manager) can be added without touching any app's constructor and an
+/// app asks only for what it uses -- `ctx.get::<ModBus>()` for a service
+/// there is one of, `ctx.named::<AtomicF32>("sensitivity")` for shared
+/// values that share a type. See `registry::Registry` for what the OS
+/// provides, and each app's `create` for what it takes.
+#[derive(Default, Clone)]
+pub struct AppContext {
+    typed: std::collections::HashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    named: std::collections::HashMap<String, std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+#[allow(dead_code)] // the preview binaries use a subset
+impl AppContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Provide the one instance of a service type.
+    pub fn provide<T: std::any::Any + Send + Sync>(&mut self, service: std::sync::Arc<T>) -> &mut Self {
+        self.typed.insert(std::any::TypeId::of::<T>(), service);
+        self
+    }
+
+    /// Provide a value by name (for shared values whose type isn't unique).
+    pub fn provide_named<T: std::any::Any + Send + Sync>(&mut self, name: &str, value: std::sync::Arc<T>) -> &mut Self {
+        self.named.insert(name.to_string(), value);
+        self
+    }
+
+    pub fn try_get<T: std::any::Any + Send + Sync>(&self) -> Option<std::sync::Arc<T>> {
+        self.typed.get(&std::any::TypeId::of::<T>()).and_then(|s| std::sync::Arc::clone(s).downcast::<T>().ok())
+    }
+
+    /// A service the OS provides. Missing services are a wiring bug in the
+    /// host, never in an app, so this names exactly what's missing.
+    pub fn get<T: std::any::Any + Send + Sync>(&self) -> std::sync::Arc<T> {
+        self.try_get().unwrap_or_else(|| panic!("AppContext: no {} provided", std::any::type_name::<T>()))
+    }
+
+    pub fn try_named<T: std::any::Any + Send + Sync>(&self, name: &str) -> Option<std::sync::Arc<T>> {
+        self.named.get(name).and_then(|s| std::sync::Arc::clone(s).downcast::<T>().ok())
+    }
+
+    pub fn named<T: std::any::Any + Send + Sync>(&self, name: &str) -> std::sync::Arc<T> {
+        self.try_named(name).unwrap_or_else(|| panic!("AppContext: no {} named {name:?} provided", std::any::type_name::<T>()))
+    }
+}
+
+/// How the registry builds an app: the shared services, and the manifest
+/// id (one module can implement several apps, e.g. the Collection).
+pub type AppFactory = fn(&AppContext, &str) -> Box<dyn App>;

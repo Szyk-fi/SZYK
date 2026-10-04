@@ -1,0 +1,9 @@
+id = "monster_mic"
+name = "Monster Mic"
+category = "kids"
+description = "Ages 6-9. Sing into the mic as a robot, chipmunk, monster or ghost, and make a parrot of your voice."
+audio_outputs = ["Monster Mic"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Monster Mic Level",
+]

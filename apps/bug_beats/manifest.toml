@@ -1,0 +1,9 @@
+id = "bug_beats"
+name = "Bug Beats"
+category = "kids"
+description = "Ages 6-9. A first drum machine: put bugs on the beat and they play."
+audio_outputs = ["Bug Beats"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Bug Beats Level",
+]

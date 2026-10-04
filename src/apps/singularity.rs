@@ -27,6 +27,7 @@
 //! input in this sim), and the same Mixer/AudioBus/ModBus
 //! registration every audio-producing app in this build uses.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -168,6 +169,52 @@ pub struct SingularityApp {
     audio_bus: Arc<AudioBus>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first. The per-source input
+/// levels stay menu-only: they're patching (which apps feed the
+/// effect), not playing.
+const CONTROLS: [Selection; 5] = [Selection::Amount, Selection::Rate, Selection::Feedback, Selection::Mix, Selection::Mode];
+const C_AMOUNT: usize = 0;
+const C_RATE: usize = 1;
+const C_FEEDBACK: usize = 2;
+const C_MIX: usize = 3;
+const C_MODE: usize = 4;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "singularity",
+        // The pads did nothing before, so there's no native layer to
+        // keep: an effect opens straight onto its Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_AMOUNT, C_RATE], [C_FEEDBACK, C_MIX]],
+        browse: Some(C_MODE),
+        // Rate is how fast the logistic map iterates (and how fast the
+        // Singularity collapse cycles), Amount how hard each process
+        // bites: together they're the stick. Hands feed the loop and
+        // blend it in.
+        routes: Routes { stick_x: Some(C_RATE), stick_y: Some(C_AMOUNT), hand_l: Some(C_FEEDBACK), hand_r: Some(C_MIX) },
+        // Bottom row pushes the four continuous controls; the row above
+        // jumps to one of the four processes for as long as it's held
+        // (a stepped throw: Mode is put back exactly on release).
+        // Mode positions are i/3 of the four-way choice.
+        throws: vec![
+            // 1.0 lands on MAX_FEEDBACK: the knob's range already stops
+            // short of runaway.
+            Throw { control: C_FEEDBACK, to: 1.0, label: "FEEDBACK" },
+            Throw { control: C_AMOUNT, to: 1.0, label: "AMOUNT" },
+            Throw { control: C_RATE, to: 1.0, label: "FAST" },
+            Throw { control: C_MIX, to: 1.0, label: "WET" },
+            Throw { control: C_MODE, to: 0.0, label: "SPIRAL" },
+            Throw { control: C_MODE, to: 1.0 / 3.0, label: "CHAOS" },
+            Throw { control: C_MODE, to: 2.0 / 3.0, label: "CORRUPT" },
+            Throw { control: C_MODE, to: 1.0, label: "COLLAPSE" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Singularity's own palette: near-black void with acid chartreuse,
@@ -183,7 +230,15 @@ const SINGULARITY_FLASH: Rgb565 = Rgb565::new(25, 63, 12);
 
 impl SingularityApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
-        Self { params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)), sensitivity, nav_speed, audio_bus, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
+        Self {
+            params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)),
+            sensitivity,
+            nav_speed,
+            audio_bus,
+            list: ParamList::new(),
+            expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+        }
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
@@ -319,7 +374,69 @@ impl SingularityApp {
     }
 }
 
+impl SingularityApp {
+    /// Same ranges edit() clamps to: Feedback stops at MAX_FEEDBACK.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS.get(i) {
+            Some(Selection::Amount) => Knob::F(&p.amount, 0.0, 1.0),
+            Some(Selection::Rate) => Knob::F(&p.rate, 0.0, 1.0),
+            Some(Selection::Feedback) => Knob::F(&p.feedback, 0.0, MAX_FEEDBACK),
+            Some(Selection::Mix) => Knob::F(&p.mix, 0.0, 1.0),
+            Some(Selection::Mode) => Knob::U(&p.mode, MODE_NAMES.len() as u32),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for SingularityApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or(String::new(), |s| self.leaf_name(*s))
+    }
+    fn kit_value(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or(String::new(), |s| self.leaf_value(*s))
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        if let Some(s) = CONTROLS.get(i) {
+            self.edit(*s, delta);
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(s) = CONTROLS.get(i) {
+            self.reset(*s);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    fn kit_line(&self) -> String {
+        format!("{}  {:.3}", self.leaf_value(Selection::Mode), self.params.chaos_value.get())
+    }
+}
+
 impl App for SingularityApp {
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn needs_background_audio(&self) -> bool { self.params.input_levels.iter().any(|v| v.get() > 0.0) || self.params.ext_input_level.iter().any(|v| v.get() > 0.0) }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
@@ -336,6 +453,12 @@ impl App for SingularityApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through to the list below.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -398,7 +521,13 @@ impl App for SingularityApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, SINGULARITY_BG, SINGULARITY_DIM, SINGULARITY_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, SINGULARITY_BG, SINGULARITY_DIM, SINGULARITY_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // 16..366 stays clear of the orbit ring, which starts at x=395.
+            let pal = kit::draw::Palette { bg: SINGULARITY_BG, ink: SINGULARITY_TITLE, accent: SINGULARITY_ACCENT, dim: SINGULARITY_DIM, faint: SINGULARITY_RING };
+            kit::draw::column(fb, &col, 16, 44, 350, 250, pal);
+        }
 
         // --- Right: the chaotic value, drawn as an orbiting point --
         // radius driven by the logistic map's current value, so its
@@ -413,8 +542,9 @@ impl App for SingularityApp {
         Text::new(&format!("chaos: {:.4}", x), Point::new(360, 300), accent).draw(fb).ok();
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: amount/rate, feedback/mix   U/D: mode   F2: pads   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -792,4 +922,55 @@ mod tests {
         let bus_peak = bus_out.iter().cloned().fold(0.0f32, |a, v| a.max(v.abs()));
         assert!(bus_peak > 0.0, "audio_bus publish should be unaffected by the Mixer channel fader");
     }
+
+    fn new_app() -> SingularityApp {
+        SingularityApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(6.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()))
+    }
+
+    #[test]
+    fn opens_on_throws_and_knob_one_turns_amount() {
+        let mut app = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        let amount = app.params.amount.get();
+        app.tick(&Input { knob1: 2, ..Default::default() });
+        assert!(app.params.amount.get() > amount, "knob 1 is Amount on the play view");
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.mode.load(Ordering::Relaxed), 1, "D-pad up = next mode");
+    }
+
+    #[test]
+    fn throws_push_feedback_and_jump_modes_then_spring_back() {
+        let mut app = new_app();
+        // FEEDBACK on rank 0 (bottom-left) goes to the knob's ceiling.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0)), ..Default::default() });
+        assert!((app.params.feedback.get() - MAX_FEEDBACK).abs() < 1e-5);
+        app.tick(&Input::default());
+        assert!((app.params.feedback.get() - DEFAULT_FEEDBACK).abs() < 1e-5, "released, back to the knob");
+        // CORRUPT (rank 6) holds Mode on Corrupt, then restores Spiral.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(6)), ..Default::default() });
+        assert_eq!(app.params.mode.load(Ordering::Relaxed), 2);
+        app.tick(&Input::default());
+        assert_eq!(app.params.mode.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn r1_opens_the_menu_and_the_menu_still_edits() {
+        let mut app = new_app();
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+        // Effect group (second row): expand it; its first leaf is Mode.
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        app.tick(&Input { knob1_press: true, ..Default::default() });
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        app.tick(&Input { knob2: 1, ..Default::default() });
+        assert_eq!(app.params.mode.load(Ordering::Relaxed), 1, "menu rows still edit");
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(SingularityApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

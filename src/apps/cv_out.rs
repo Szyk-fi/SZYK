@@ -396,8 +396,8 @@ impl App for CvOutApp {
         }
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -499,4 +499,11 @@ mod tests {
         let lit = fb.buffer().iter().filter(|&&p| p != 0).count();
         assert!(lit > 500, "expected the list + bar bank to draw something substantial, got {lit} lit pixels");
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(CvOutApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get()))
 }

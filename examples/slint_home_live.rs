@@ -37,6 +37,9 @@ mod app;
 mod arpeggiator;
 #[path = "../src/audio.rs"]
 mod audio;
+#[path = "../src/clock.rs"]
+#[allow(dead_code)]
+mod clock;
 #[path = "../src/audio_bus.rs"]
 mod audio_bus;
 #[path = "../src/audio_devices.rs"]
@@ -45,6 +48,10 @@ mod audio_devices;
 mod clouds_ffi;
 #[path = "../src/controller.rs"]
 mod controller;
+#[path = "../src/controller_map.rs"]
+mod controller_map;
+#[path = "../src/gamepad_gilrs.rs"]
+mod gamepad_gilrs;
 #[path = "../src/display.rs"]
 mod display;
 // Same real GameController.framework-based gamepad support the main
@@ -56,6 +63,8 @@ mod display;
 mod gamepad;
 #[path = "../src/led_output.rs"]
 mod led_output;
+#[path = "../src/pad_lights.rs"]
+mod pad_lights;
 #[path = "../src/manifest.rs"]
 mod manifest;
 #[path = "../src/midi_map.rs"]
@@ -68,6 +77,8 @@ mod modbus;
 mod paramlist;
 #[path = "../src/plaits_ffi.rs"]
 mod plaits_ffi;
+#[path = "../src/synthesis/mod.rs"]
+mod synthesis;
 #[path = "../src/registry.rs"]
 mod registry;
 #[path = "../src/spleen_fonts.rs"]
@@ -81,96 +92,16 @@ mod util;
 #[path = "slint_common/live_midi.rs"]
 mod live_midi;
 
-// Every real app, flat at this example's own crate root (no real
-// `examples/apps/` directory exists -- see slint_mixer_live.rs's doc
-// comment for the fuller "why `#[path]`, why flat" explanation).
-// `registry.rs` (and several apps themselves, e.g. Bloom/Madness/
-// Nebula/Pam's pulling in Plaits' engine tables) refer to these by
-// the real crate's `crate::apps::X` path, so `pub mod apps` below
-// re-exports the same flat modules under that path too.
-#[path = "../src/apps/analyzer.rs"]
-pub mod analyzer;
-#[path = "../src/apps/beads.rs"]
-pub mod beads;
-#[path = "../src/apps/black_hole.rs"]
-pub mod black_hole;
-#[path = "../src/apps/bloom.rs"]
-pub mod bloom;
-#[path = "../src/apps/cascade.rs"]
-pub mod cascade;
-#[path = "../src/apps/clouds.rs"]
-pub mod clouds;
-#[path = "../src/apps/cv_out.rs"]
-pub mod cv_out;
-#[path = "../src/apps/collection.rs"]
-pub mod collection;
-#[path = "../src/apps/forge.rs"]
-pub mod forge;
-#[path = "../src/apps/vector_filter.rs"]
-pub mod vector_filter;
-#[path = "../src/apps/morph.rs"]
-pub mod morph;
-#[path = "../src/apps/madness.rs"]
-pub mod madness;
-#[path = "../src/apps/magnito.rs"]
-pub mod magnito;
-#[path = "../src/apps/midi_learn.rs"]
-pub mod midi_learn;
-#[path = "../src/apps/mixer.rs"]
-pub mod mixer;
-#[path = "../src/apps/natural_gate.rs"]
-pub mod natural_gate;
-#[path = "../src/apps/nautilus.rs"]
-pub mod nautilus;
-#[path = "../src/apps/nebula.rs"]
-pub mod nebula;
-#[path = "../src/apps/pams.rs"]
-pub mod pams;
-#[path = "../src/apps/plaits.rs"]
-pub mod plaits;
-#[path = "../src/apps/plaits_layout.rs"]
-pub mod plaits_layout;
-#[path = "../src/apps/prism.rs"]
-pub mod prism;
-#[path = "../src/apps/queen_of_pentacles.rs"]
-pub mod queen_of_pentacles;
-#[path = "../src/apps/rainmaker.rs"]
-pub mod rainmaker;
-#[path = "../src/apps/neogeo_core.rs"]
-pub mod neogeo_core;
-#[path = "../src/apps/retro.rs"]
-pub mod retro;
-#[path = "../src/apps/sample_drum.rs"]
-pub mod sample_drum;
-#[path = "../src/apps/sequencer.rs"]
-pub mod sequencer;
-#[path = "../src/apps/settings.rs"]
-pub mod settings;
-#[path = "../src/apps/singularity.rs"]
-pub mod singularity;
-#[path = "../src/apps/starlab.rs"]
-pub mod starlab;
-#[path = "../src/apps/warps.rs"]
-pub mod warps;
-#[path = "../src/apps/synth.rs"]
-pub mod synth;
-#[path = "../src/apps/tape.rs"]
-pub mod tape;
-#[path = "../src/apps/tonestack.rs"]
-pub mod tonestack;
-#[path = "../src/apps/turing_machine.rs"]
-pub mod turing_machine;
-#[path = "../src/apps/voltage.rs"]
-pub mod voltage;
-#[path = "../src/apps/visualizer.rs"]
-pub mod visualizer;
-mod apps {
-    pub use super::{
-        analyzer, beads, black_hole, bloom, cascade, clouds, cv_out, madness, magnito, midi_learn, mixer, morph, collection, vector_filter, forge, natural_gate, nautilus,
-        nebula, pams, plaits, plaits_layout, prism, queen_of_pentacles, rainmaker, neogeo_core, retro, sample_drum, sequencer, settings, singularity,
-        starlab, synth, tape, tonestack, turing_machine, visualizer, voltage, warps,
-    };
-}
+// Every app, found by build.rs exactly as the device binary finds them
+// (see src/apps/mod.rs) -- adding an app needs no edit here.
+#[path = "../src/apps/mod.rs"]
+mod apps;
+#[path = "../src/note_bus.rs"]
+mod note_bus;
+#[path = "../src/midi_devices.rs"]
+mod midi_devices;
+#[path = "../src/io_cards.rs"]
+mod io_cards;
 
 /// Stand-in for the eventual STM32Cube.AI inference call -- same no-op
 /// `main.rs` defines at its own crate root.
@@ -207,10 +138,18 @@ const HOME_VISIBLE_ROWS: usize = 6;
 
 slint::slint! {
     import { ForgePanel } from "slint_common/forge_panel.slint";
+    import { OraclePanel } from "slint_common/oracle_panel.slint";
+    import { PulsarPanel } from "slint_common/pulsar_panel.slint";
+    import { TinkertonePanel } from "slint_common/tinkertone_panel.slint";
+    import { PlayColumn } from "slint_common/play_column.slint";
+    import { ControllerPanel } from "slint_common/controller_panel.slint";
     import { VectorFilterPanel } from "slint_common/vector_filter_panel.slint";
     import { SettingsPanel } from "slint_common/settings_panel.slint";
     import { LauncherPanel } from "slint_common/launcher_panel.slint";
     import { RetroPanel } from "slint_common/retro_panel.slint";
+    import { NornsPanel } from "slint_common/norns_panel.slint";
+    import { AtlasPanel } from "slint_common/atlas_panel.slint";
+    import { GridPanel } from "slint_common/grid_panel.slint";
     import { PortalPanel } from "slint_common/portal_panel.slint";
     import { ScalePanel } from "slint_common/scale_panel.slint";
     import { CollectionPanel } from "slint_common/collection_panel.slint";
@@ -248,7 +187,7 @@ slint::slint! {
         ] : [
             { label: root.on-home ? (root.has-settings ? "F1  SETTINGS" : "F1  —") : "F1  HOME", active: false },
             {
-                label: root.on-home ? "F2  CATEGORY" : root.grid-mode-label != "" ? (root.grid-mode-label == "STEP" ? "F2  PAD MODE" : "F2  STEP MODE") : (root.midi-target-label != "" ? "F2  UNLOCK" : root.pad-lock-available && !root.on-home ? "F2  PAD LOCK" : "F2  —"),
+                label: root.on-home ? "F2  CATEGORY" : root.grid-mode-label != "" ? "F2  PADS: " + root.grid-mode-label : (root.midi-target-label != "" ? "F2  UNLOCK" : root.pad-lock-available && !root.on-home ? "F2  PAD LOCK" : "F2  —"),
                 active: root.grid-mode-label != "" ? root.grid-mode-label == "PAD" : root.midi-target-label != "",
             },
             { label: root.on-home ? "F3  RECENT" : root.transport-action == "" ? "F3  —" : "F3  " + root.transport-action, active: !root.on-home && root.transport-label == "RUNNING" },
@@ -263,7 +202,7 @@ slint::slint! {
         screen-ink: root.live-ink;
         // Retro's full-screen game view -- see `DeviceFrame.hide-chrome`'s
         // own doc comment.
-        hide-chrome: !root.on-home && root.active-kind == 30 && !root.retro-menu-visible;
+        hide-chrome: !root.on-home && ((root.active-kind == 30 && !root.retro-menu-visible) || root.active-kind == 43);
         in-out property <color> live-accent: #5CF07A;
         in-out property <color> live-bg: #0B100C;
         // The active app's own text-ink color (white by default,
@@ -314,16 +253,30 @@ slint::slint! {
         navigation-pressed(direction) => {
             if direction == 0 { root.navigation-delta -= 1; }
             if direction == 2 { root.navigation-delta += 1; }
-            if direction == 1 { root.knob2-delta += 1; }
-            if direction == 3 { root.knob2-delta -= 1; }
+            if direction == 1 { root.knob2-delta += 1; root.nav-x-delta += 1; }
+            if direction == 3 { root.knob2-delta -= 1; root.nav-x-delta -= 1; }
             if direction == 4 { root.knob1-clicked(); }
         }
+        // While a play-surface app is up, the shoulders are its own held
+        // buttons (read from l1-held/r1-held); clicks are only counted.
         shoulder-pressed(side) => {
-            if side == 0 { root.f-clicked(0); }
+            if root.play-surface { if side == 0 { root.l1-presses += 1; } else { root.r1-presses += 1; } }
+            else if side == 0 { root.f-clicked(0); }
             else { root.knob1-clicked(); }
         }
+        in property <bool> play-surface: false;
+        stick-owned: root.play-surface;
+        in-out property <int> l1-presses: 0;
+        in-out property <int> r1-presses: 0;
+        in-out property <int> live-stick-clicks <=> self.stick-clicks;
+        in-out property <float> live-hand-l <=> self.hand-l;
+        in-out property <float> live-hand-r <=> self.hand-r;
+        in-out property <bool> live-l1-held <=> self.l1-held;
+        in-out property <bool> live-r1-held <=> self.r1-held;
         in-out property <float> knob1-delta: 0;
         in-out property <float> knob2-delta: 0;
+        // D-pad left/right, also counted into knob2-delta (see Input::nav_x)
+        in-out property <int> nav-x-delta: 0;
 
         // Which bespoke visual (if any) the active app gets, beyond
         // the generic list every app already has -- 0 = generic list
@@ -390,6 +343,7 @@ slint::slint! {
         in-out property <[float]> voltage-lfo-mid-y: [];
         in-out property <[float]> voltage-lfo-length: [];
         in-out property <[float]> voltage-lfo-angle: [];
+        in-out property <string> voltage-preset;
 
         // --- Cascade-specific state (active-kind == 4): the real FM
         // operator-routing graph. ---
@@ -762,6 +716,115 @@ slint::slint! {
         in property <bool> forge-busy;
         in property <bool> forge-recording;
         in property <float> forge-duration;
+
+        // --- Oracle (active-kind == 35): see `OracleExtra`. ---
+        in property <string> oracle-patch-name;
+        in property <string> oracle-kind-label;
+        in property <int> oracle-mode;
+        in property <[float]> oracle-node-x;
+        in property <[float]> oracle-node-y;
+        in property <[float]> oracle-node-w;
+        in property <float> oracle-node-h: 12;
+        in property <[string]> oracle-node-label;
+        in property <[float]> oracle-node-activity;
+        in property <[bool]> oracle-node-voice;
+        in property <[float]> oracle-edge-mid-x;
+        in property <[float]> oracle-edge-mid-y;
+        in property <[float]> oracle-edge-length;
+        in property <[float]> oracle-edge-angle;
+        in property <int> oracle-forward-edges;
+        in property <[float]> oracle-scope-mid-x;
+        in property <[float]> oracle-scope-mid-y;
+        in property <[float]> oracle-scope-length;
+        in property <[float]> oracle-scope-angle;
+        in property <[int]> oracle-snaps;
+        in property <bool> oracle-morph-on;
+        in property <float> oracle-morph;
+        in property <string> oracle-info;
+        in property <string> oracle-status;
+        in property <bool> oracle-unstable;
+        in property <string> oracle-explain;
+        in property <string> oracle-thinking;
+        in property <float> oracle-mic-level;
+        // --- Pulsar (active-kind == 36): see `PulsarExtra`. ---
+        in property <string> pulsar-genre;
+        in property <float> pulsar-bpm: 120;
+        in property <int> pulsar-slot;
+        in property <int> pulsar-playing-slot: -1;
+        in property <[bool]> pulsar-slot-filled;
+        in property <bool> pulsar-in-fill;
+        in property <int> pulsar-bar;
+        in property <int> pulsar-bars: 1;
+        in property <string> pulsar-pad-mode;
+        in property <bool> pulsar-record;
+        in property <[string]> pulsar-lane-names;
+        in property <int> pulsar-lane;
+        in property <[bool]> pulsar-lane-locked;
+        in property <[bool]> pulsar-lane-muted;
+        in property <[float]> pulsar-lane-flash;
+        in property <[float]> pulsar-cell-vel;
+        in property <[int]> pulsar-cell-mark;
+        in property <int> pulsar-playhead: -1;
+        in property <int> pulsar-cursor-lane: -1;
+        in property <int> pulsar-cursor-col: -1;
+        in property <float> pulsar-swing: 50;
+        in property <float> pulsar-peak;
+        in property <string> pulsar-status;
+        // --- Controller app (active-kind == 39): see `ControllerExtra`. ---
+        in property <string> ctl-name;
+        in property <bool> ctl-connected;
+        in property <string> ctl-map;
+        in property <string> ctl-learning;
+        in property <[bool]> ctl-buttons;
+        in property <[float]> ctl-axes;
+        in property <string> ctl-status;
+        // --- Shared play column (src/play_kit.rs), in place of the list. ---
+        in property <bool> pc-active;
+        in property <string> pc-layer;
+        in property <[string]> pc-dial-labels;
+        in property <[string]> pc-dial-values;
+        in property <[float]> pc-dial-norms;
+        in property <[int]> pc-dial-knobs;
+        in property <string> pc-knob2-extra;
+        in property <[string]> pc-pad-labels;
+        in property <[int]> pc-pad-state;
+        in property <float> pc-stick-x;
+        in property <float> pc-stick-y;
+        in property <string> pc-stick-label;
+        in property <float> pc-hand-l;
+        in property <float> pc-hand-r;
+        in property <string> pc-hand-l-label;
+        in property <string> pc-hand-r-label;
+        in property <string> pc-line;
+        in property <string> pc-status;
+        // --- Tinkertone (active-kind == 37): see `TinkertoneExtra`. ---
+        in property <[bool]> tt-keys-held;
+        in property <int> tt-window;
+        in property <bool> tt-bass-layer;
+        in property <int> tt-bass-held: -1;
+        in property <int> tt-bass-sounding: -1;
+        in property <int> tt-preset;
+        in property <[string]> tt-preset-tones;
+        in property <bool> tt-vibrato;
+        in property <bool> tt-sustain;
+        in property <string> tt-rhythm;
+        in property <float> tt-tempo: 120;
+        in property <bool> tt-playing;
+        in property <bool> tt-synchro;
+        in property <bool> tt-fill;
+        in property <string> tt-bass-mode;
+        in property <bool> tt-line-rec;
+        in property <[int]> tt-line;
+        in property <int> tt-line-pos: -1;
+        in property <string> tt-chord;
+        in property <int> tt-step;
+        in property <int> tt-steps: 16;
+        in property <int> tt-steps-per-beat: 4;
+        in property <int> tt-bar;
+        in property <[float]> tt-drum-flash;
+        in property <float> tt-volume;
+        in property <float> tt-accomp;
+        in property <float> tt-peak;
         in property <[float]> filter-xyz;
         in property <[float]> filter-wave;
         in property <string> filter-source;
@@ -800,12 +863,52 @@ slint::slint! {
         // --- Retro-specific state (active-kind == 30): the NES's own
         // real rendered frame, straight from `tetanes_core` -- see
         // `RetroExtra`. ---
+        // --- Atlas (active-kind == 42): see `AtlasExtra`. ---
+        in property <string> atlas-name;
+        in property <string> atlas-category;
+        in property <string> atlas-description;
+        in property <string> atlas-index;
+        in property <[string]> atlas-macro-names;
+        in property <[float]> atlas-macro-values;
+        in property <[bool]> atlas-macro-used;
+        in property <float> atlas-morph;
+        in property <int> atlas-states: 1;
+        in property <string> atlas-morph-label;
+        in property <bool> atlas-spectrum-view: true;
+        in property <[float]> atlas-spectrum;
+        in property <[float]> atlas-scope-mid-x;
+        in property <[float]> atlas-scope-mid-y;
+        in property <[float]> atlas-scope-length;
+        in property <[float]> atlas-scope-angle;
+        in property <string> atlas-voices;
+        in property <float> atlas-load;
+        in property <string> atlas-depth;
+        in property <string> atlas-status;
+        // --- Grid (active-kind == 41): a monospace text panel ---
+        in property <string> grid-caption;
+        in property <string> grid-title;
+        in property <[string]> grid-cells;
+        in property <[float]> grid-col-x;
+        in property <int> grid-cols: 1;
+        in property <int> grid-rows;
+        in property <int> grid-highlight: -1;
+        in property <string> grid-footer;
+        in property <float> grid-meter: -1;
+        // --- Norns (active-kind == 40): the script's own screen ---
+        in property <image> norns-frame;
+        in property <string> norns-title;
+        in property <string> norns-mode;
+        in property <string> norns-status;
+        in property <float> norns-peak;
         in-out property <string> retro-console-name: "NES";
+        in-out property <[string]> retro-consoles;
         in-out property <string> retro-rom-name: "";
         in-out property <bool> retro-running: false;
         in-out property <bool> retro-menu-visible: true;
         in-out property <string> retro-status: "";
         in-out property <image> retro-frame;
+        // A Kids app's own full screen (active-kind 43).
+        in-out property <image> screen-frame;
         in property <string> retro-loaded-name;
         in property <int> retro-rom-count;
         in property <bool> retro-has-frame;
@@ -865,7 +968,7 @@ slint::slint! {
             // Retro's full-screen game view needs the video edge to
             // edge, not just chrome-free -- see `hide-chrome`'s doc
             // comment for the rest of this same fullscreen path.
-            property <bool> retro-fullscreen: !root.on-home && root.active-kind == 30 && !root.retro-menu-visible;
+            property <bool> retro-fullscreen: !root.on-home && ((root.active-kind == 30 && !root.retro-menu-visible) || root.active-kind == 43);
             padding-left: self.retro-fullscreen ? 0px : 18px;
             padding-right: self.retro-fullscreen ? 0px : 18px;
             padding-top: self.retro-fullscreen ? 0px : 4px;
@@ -879,7 +982,7 @@ slint::slint! {
             }
             // Bloom keeps its dedicated orbital layout; all other apps use
             // the shared parameter rail with their own ink, paper, and accent.
-            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 : ParamListColumn {
+            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 43 && !root.pc-active : ParamListColumn {
                 width: 278px;
                 row-names: root.row-names;
                 row-values: root.row-values;
@@ -894,13 +997,91 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
+            if !root.on-home && root.pc-active && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 43 : PlayColumn {
+                width: 278px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                layer: root.pc-layer;
+                dial-labels: root.pc-dial-labels; dial-values: root.pc-dial-values; dial-norms: root.pc-dial-norms; dial-knobs: root.pc-dial-knobs;
+                knob2-extra: root.pc-knob2-extra;
+                pad-labels: root.pc-pad-labels; pad-state: root.pc-pad-state;
+                stick-x: root.pc-stick-x; stick-y: root.pc-stick-y; stick-label: root.pc-stick-label;
+                hand-l: root.pc-hand-l; hand-r: root.pc-hand-r; hand-l-label: root.pc-hand-l-label; hand-r-label: root.pc-hand-r-label;
+                line: root.pc-line; status: root.pc-status;
+            }
+            if !root.on-home && root.active-kind == 39 : ControllerPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                pad-name: root.ctl-name; connected: root.ctl-connected; map: root.ctl-map; learning: root.ctl-learning;
+                buttons: root.ctl-buttons; axes: root.ctl-axes; status: root.ctl-status;
+            }
+            if !root.on-home && root.active-kind == 42 : AtlasPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent;
+                caption: "ATLAS / META-SYNTH";
+                name: root.atlas-name; category: root.atlas-category; description: root.atlas-description; index: root.atlas-index;
+                macro-names: root.atlas-macro-names; macro-values: root.atlas-macro-values; macro-used: root.atlas-macro-used;
+                morph: root.atlas-morph; states: root.atlas-states; morph-label: root.atlas-morph-label;
+                spectrum-view: root.atlas-spectrum-view; spectrum: root.atlas-spectrum;
+                scope-mid-x: root.atlas-scope-mid-x; scope-mid-y: root.atlas-scope-mid-y; scope-length: root.atlas-scope-length; scope-angle: root.atlas-scope-angle;
+                voices: root.atlas-voices; load: root.atlas-load; depth: root.atlas-depth; status: root.atlas-status;
+            }
+            if !root.on-home && root.active-kind == 41 : GridPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent;
+                caption: root.grid-caption; title: root.grid-title; cells: root.grid-cells; cols: root.grid-cols; col-x: root.grid-col-x; rows: root.grid-rows;
+                highlight: root.grid-highlight; footer: root.grid-footer; meter: root.grid-meter;
+            }
+            if !root.on-home && root.active-kind == 40 : NornsPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                frame: root.norns-frame; title: root.norns-title; mode: root.norns-mode;
+                status: root.norns-status; peak: root.norns-peak;
+            }
+            if !root.on-home && root.active-kind == 37 : TinkertonePanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                keys-held: root.tt-keys-held; window: root.tt-window; bass-layer: root.tt-bass-layer;
+                bass-held: root.tt-bass-held; bass-sounding: root.tt-bass-sounding;
+                preset: root.tt-preset; preset-tones: root.tt-preset-tones; vibrato: root.tt-vibrato; sustain: root.tt-sustain;
+                rhythm: root.tt-rhythm; tempo: root.tt-tempo; playing: root.tt-playing; synchro: root.tt-synchro; fill: root.tt-fill;
+                bass-mode: root.tt-bass-mode; line-rec: root.tt-line-rec; line: root.tt-line; line-pos: root.tt-line-pos; chord: root.tt-chord;
+                step: root.tt-step; steps: root.tt-steps; steps-per-beat: root.tt-steps-per-beat; bar: root.tt-bar;
+                drum-flash: root.tt-drum-flash; volume: root.tt-volume; accomp: root.tt-accomp; peak: root.tt-peak;
+            }
+            if !root.on-home && root.active-kind == 35 : OraclePanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                patch-name: root.oracle-patch-name; kind-label: root.oracle-kind-label; mode: root.oracle-mode;
+                node-x: root.oracle-node-x; node-y: root.oracle-node-y; node-w: root.oracle-node-w; node-h: root.oracle-node-h;
+                node-label: root.oracle-node-label; node-activity: root.oracle-node-activity; node-voice: root.oracle-node-voice;
+                edge-mid-x: root.oracle-edge-mid-x; edge-mid-y: root.oracle-edge-mid-y; edge-length: root.oracle-edge-length; edge-angle: root.oracle-edge-angle;
+                forward-edges: root.oracle-forward-edges;
+                scope-mid-x: root.oracle-scope-mid-x; scope-mid-y: root.oracle-scope-mid-y; scope-length: root.oracle-scope-length; scope-angle: root.oracle-scope-angle;
+                snaps: root.oracle-snaps; morph-on: root.oracle-morph-on; morph: root.oracle-morph;
+                info: root.oracle-info; status: root.oracle-status; unstable: root.oracle-unstable;
+                explain: root.oracle-explain; thinking: root.oracle-thinking; mic-level: root.oracle-mic-level;
+            }
+            if !root.on-home && root.active-kind == 36 : PulsarPanel {
+                width: 306px;
+                ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+                genre: root.pulsar-genre; bpm: root.pulsar-bpm; slot: root.pulsar-slot; playing-slot: root.pulsar-playing-slot;
+                slot-filled: root.pulsar-slot-filled; in-fill: root.pulsar-in-fill; bar: root.pulsar-bar; bars: root.pulsar-bars;
+                pad-mode: root.pulsar-pad-mode; record: root.pulsar-record;
+                lane-names: root.pulsar-lane-names; lane: root.pulsar-lane; lane-locked: root.pulsar-lane-locked;
+                lane-muted: root.pulsar-lane-muted; lane-flash: root.pulsar-lane-flash;
+                cell-vel: root.pulsar-cell-vel; cell-mark: root.pulsar-cell-mark; playhead: root.pulsar-playhead;
+                cursor-lane: root.pulsar-cursor-lane; cursor-col: root.pulsar-cursor-col;
+                swing: root.pulsar-swing; peak: root.pulsar-peak; status: root.pulsar-status;
+            }
             if !root.on-home && root.active-kind == 34 : ForgePanel {
+                play: root.pc-active;
                 width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
                 names:root.row-names;values:root.row-values;selected:root.selected-row;more-above:root.more-above;more-below:root.more-below;
                 wave:root.forge-wave;starts:root.forge-starts;ends:root.forge-ends;levels:root.forge-levels;labels:root.forge-labels;clip-name:root.forge-name;status:root.forge-status;mode:root.forge-mode;source:root.forge-source;chunk:root.forge-chunk;busy:root.forge-busy;recording:root.forge-recording;duration:root.forge-duration;
                 action(x,y)=>{root.theme-wheel-picked(x,y);}
             }
             if !root.on-home && root.active-kind == 33 : VectorFilterPanel {
+                play: root.pc-active;
                 width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
                 names:root.row-names;values:root.row-values;selected:root.selected-row;
                 xyz:root.filter-xyz;wave:root.filter-wave;source:root.filter-source;mode:root.filter-mode;enabled:root.filter-enabled;
@@ -913,6 +1094,7 @@ slint::slint! {
                 choose(x,y)=>{root.theme-wheel-picked(x,y);}
             }
             if !root.on-home && root.active-kind == 31 : CollectionPanel {
+                play: root.pc-active;
                 width: 604px;
                 terrain: root.collection-terrain;
                 visual-lines:root.collection-visual-lines;
@@ -960,10 +1142,10 @@ slint::slint! {
                     }
                     Rectangle { vertical-stretch: 1; }
                     Text {
-                        text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : "MIDI 1: cutoff · MIDI 2: volume. Press MIDI 2 to change waveform.";
-                        color: root.live-ink.with-alpha(0.6); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap;
+                        text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : root.active-app-name == "Synth" ? "Pads play notes. Knobs: cutoff and volume; D-pad: waveform." : "Up/down picks a row; left/right changes it.";
+                        color: root.live-ink.with-alpha(0.72); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap;
                     }
-                    InstrumentLabel { text: root.active-app-name == "Synth" ? "PADS PLAY  ·  R1 RESET CUTOFF" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 9px; }
+                    InstrumentLabel { text: root.active-app-name == "Synth" ? "F2 PAD LAYER  ·  R1 MENU" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 12px; }
                 }
             }
 
@@ -992,7 +1174,7 @@ slint::slint! {
                             vertical-alignment: center;
                             font-family: "JetBrains Mono";
                             font-size: 12px;
-                            color: model == root.plaits-engine-led ? root.live-bg : root.live-ink.with-alpha(0.6);
+                            color: model == root.plaits-engine-led ? root.live-bg : root.live-ink.with-alpha(0.72);
                         }
                     }
                 }
@@ -1057,9 +1239,9 @@ slint::slint! {
                             }
                             Text {
                                 text: row.label;
-                                color: root.live-ink.with-alpha(0.65);
+                                color: root.live-ink.with-alpha(0.72);
                                 font-family: "JetBrains Mono";
-                                font-size: 11px;
+                                font-size: 12px;
                             }
                         }
                     }
@@ -1079,9 +1261,9 @@ slint::slint! {
                         Text {
                             horizontal-alignment: center;
                             text: "(autocorrelation)";
-                            color: root.live-ink.with-alpha(0.35);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 11px;
+                            font-size: 12px;
                         }
                     }
                 }
@@ -1104,6 +1286,9 @@ slint::slint! {
                 }
                 Rectangle {
                     vertical-stretch: 1;
+                    // the trace is laid out for a fixed canvas; clip so
+                    // it can never draw past the panel
+                    clip: true;
 
                     if root.analyzer-kind == 0 : HorizontalLayout {
                         x: 0px; y: 0px;
@@ -1144,16 +1329,16 @@ slint::slint! {
                         Text {
                             horizontal-alignment: center;
                             text: "Spectrogram";
-                            color: root.live-ink.with-alpha(0.35);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
                             font-size: 12px;
                         }
                         Text {
                             horizontal-alignment: center;
                             text: "(not rendered live -- see Spectrum)";
-                            color: root.live-ink.with-alpha(0.25);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 11px;
+                            font-size: 12px;
                         }
                     }
 
@@ -1177,9 +1362,9 @@ slint::slint! {
                             }
                             Text {
                                 text: row.label;
-                                color: root.live-ink.with-alpha(0.65);
+                                color: root.live-ink.with-alpha(0.72);
                                 font-family: "JetBrains Mono";
-                                font-size: 11px;
+                                font-size: 12px;
                             }
                         }
                     }
@@ -1199,9 +1384,9 @@ slint::slint! {
                         Text {
                             horizontal-alignment: center;
                             text: "(autocorrelation)";
-                            color: root.live-ink.with-alpha(0.35);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 11px;
+                            font-size: 12px;
                         }
                     }
                 }
@@ -1215,7 +1400,7 @@ slint::slint! {
             // current knobs (see `VoltageApp::voltage_panels`). ---
             if !root.on-home && root.active-kind == 2 : InstrumentPanel {
                 width: 306px;
-                caption: "SUBTRACTIVE / VOICE";
+                caption: root.voltage-preset != "" ? root.voltage-preset : "SUBTRACTIVE / VOICE";
                 ink: root.live-ink; accent: root.accent;
                 VerticalLayout {
                 spacing: 10px;
@@ -1236,7 +1421,7 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.12);
                         VerticalLayout {
                             padding: 4px;
-                            Text { text: "Oscillators"; color: root.accent; font-family: "JetBrains Mono"; font-size: 10px; }
+                            Text { text: "Oscillators"; color: root.accent; font-family: "JetBrains Mono"; font-size: 12px; }
                             Rectangle {
                                 vertical-stretch: 1;
                                 for i in root.voltage-oscillator-mid-x.length : VectorSegment {
@@ -1255,7 +1440,7 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.12);
                         VerticalLayout {
                             padding: 4px;
-                            Text { text: "Filter"; color: root.accent; font-family: "JetBrains Mono"; font-size: 10px; }
+                            Text { text: "Filter"; color: root.accent; font-family: "JetBrains Mono"; font-size: 12px; }
                             Rectangle {
                                 vertical-stretch: 1;
                                 for i in root.voltage-filter-mid-x.length : VectorSegment {
@@ -1287,7 +1472,7 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.12);
                         VerticalLayout {
                             padding: 4px;
-                            Text { text: "Amp Envelope"; color: root.accent; font-family: "JetBrains Mono"; font-size: 10px; }
+                            Text { text: "Amp Envelope"; color: root.accent; font-family: "JetBrains Mono"; font-size: 12px; }
                             Rectangle {
                                 vertical-stretch: 1;
                                 for i in root.voltage-amp-env-mid-x.length : VectorSegment {
@@ -1306,7 +1491,7 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.12);
                         VerticalLayout {
                             padding: 4px;
-                            Text { text: "LFO"; color: root.accent; font-family: "JetBrains Mono"; font-size: 10px; }
+                            Text { text: "LFO"; color: root.accent; font-family: "JetBrains Mono"; font-size: 12px; }
                             Rectangle {
                                 vertical-stretch: 1;
                                 for i in root.voltage-lfo-mid-x.length : VectorSegment {
@@ -1379,7 +1564,7 @@ slint::slint! {
                             text: "Op" + (op + 1) + (op == root.cascade-feedback-op ? " FB" : "");
                             color: parent.carrier ? root.accent : rgba(140, 190, 230, 0.9);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%; height: 100%;
@@ -1525,7 +1710,7 @@ slint::slint! {
                     border-width: 1px;
                     border-color: root.live-ink.with-alpha(0.12);
                     background: self.kind == 2 ? rgba(180, 30, 30, 0.25) : self.kind == 1 ? root.accent.with-alpha(0.15) : root.live-ink.with-alpha(0.03);
-                    Text { x: 8px; y: 5px; text: "0" + (t + 1); color: root.live-ink.with-alpha(0.6); font-family: "JetBrains Mono"; font-size: 10px; }
+                    Text { x: 8px; y: 5px; text: "0" + (t + 1); color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     if self.kind != 0 : Rectangle {
                         x: root.tape-playhead-frac * (parent.width - 2px);
                         y: 0px; width: 2px; height: 100%;
@@ -1560,8 +1745,8 @@ slint::slint! {
                         background: channel == root.pams-channel-index ? root.accent : root.accent.with-alpha(0.07);
                         Text {
                             text: channel + 1; horizontal-alignment: center;
-                            vertical-alignment: center; font-size: 11px;
-                            color: channel == root.pams-channel-index ? root.live-bg : root.accent.with-alpha(0.65);
+                            vertical-alignment: center; font-size: 12px;
+                            color: channel == root.pams-channel-index ? root.live-bg : root.accent.with-alpha(0.72);
                         }
                     }
                 }
@@ -1592,7 +1777,7 @@ slint::slint! {
                     text: "value: " + Math.round(root.pams-value * 100) / 100;
                     color: rgba(255, 255, 255, 0.4);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                 }
             }
 
@@ -1690,16 +1875,16 @@ slint::slint! {
                 }
                 Text {
                     text: "chroma: " + root.nautilus-chroma-name;
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                 }
                 Rectangle { height: 4px; }
                 Text {
                     text: "DELAY LINES";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -1707,8 +1892,8 @@ slint::slint! {
                     for i in root.nautilus-line-level.length : Rectangle {
                         Text {
                             x: 6px; y: 4px; text: i + 1;
-                            color: root.live-ink.with-alpha(0.65);
-                            font-family: "JetBrains Mono"; font-size: 9px;
+                            color: root.live-ink.with-alpha(0.72);
+                            font-family: "JetBrains Mono"; font-size: 12px;
                         }
 
                         property <bool> active: i < root.nautilus-line-active.length && root.nautilus-line-active[i];
@@ -1727,7 +1912,7 @@ slint::slint! {
                     }
                 }
                 Rectangle { height: 2px; }
-                Text { text: "feedback " + Math.round(root.nautilus-feedback-amount * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                Text { text: "feedback " + Math.round(root.nautilus-feedback-amount * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
 
                 }
             }
@@ -1750,9 +1935,9 @@ slint::slint! {
                         background: p == root.sequencer-current-pattern ? root.accent : root.live-ink.with-alpha(0.12);
                         Text {
                             text: p + 1;
-                            color: p == root.sequencer-current-pattern ? #0a0a0a : root.live-ink.with-alpha(0.5);
+                            color: p == root.sequencer-current-pattern ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 8px;
+                            font-size: 12px;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%; height: 100%;
@@ -1772,9 +1957,9 @@ slint::slint! {
                         border-color: root.live-ink.with-alpha(0.15);
                         Text {
                             text: (pat + 1) + "x" + (i < root.sequencer-song-slot-repeats.length ? root.sequencer-song-slot-repeats[i] : 1);
-                            color: parent.playing ? #0a0a0a : root.live-ink.with-alpha(0.5);
+                            color: parent.playing ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 8px;
+                            font-size: 12px;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%; height: 100%;
@@ -1785,7 +1970,7 @@ slint::slint! {
                     text: root.sequencer-header;
                     color: root.accent;
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     wrap: word-wrap;
                 }
                 if !root.sequencer-pad-perform : Rectangle {
@@ -1806,9 +1991,9 @@ slint::slint! {
                         border-color: self.focused ? #ffffff : (self.playhead ? root.accent : root.live-ink.with-alpha(0.15));
                         Text {
                             text: label;
-                            color: parent.active ? #0a0a0a : root.live-ink.with-alpha(0.5);
+                            color: parent.active ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                             horizontal-alignment: right;
                             vertical-alignment: top;
                             x: 0px; y: 2px;
@@ -1830,9 +2015,9 @@ slint::slint! {
                         border-color: self.focused ? #ffffff : root.live-ink.with-alpha(0.15);
                         Text {
                             text: i + 1;
-                            color: loaded ? #0a0a0a : root.live-ink.with-alpha(0.5);
+                            color: loaded ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                             horizontal-alignment: right;
                             vertical-alignment: top;
                             x: 0px; y: 2px;
@@ -1855,9 +2040,9 @@ slint::slint! {
                 spacing: 6px;
                 Text {
                     text: "MODE";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -1882,9 +2067,9 @@ slint::slint! {
                 Rectangle { height: 6px; }
                 Text {
                     text: "OUTPUT";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -1973,7 +2158,7 @@ slint::slint! {
                     text: "MULTI EFFECT / CATEGORY";
                     color: rgba(255, 255, 255, 0.4);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2003,7 +2188,7 @@ slint::slint! {
                         text: "CLIP";
                         color: root.black-hole-clip ? #FF4D4D : rgba(255, 255, 255, 0.3);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Text {
@@ -2019,7 +2204,7 @@ slint::slint! {
                     text: "OUTPUT";
                     color: rgba(255, 255, 255, 0.4);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 ScopeSurface {
@@ -2049,7 +2234,7 @@ slint::slint! {
                     text: "PARAMETERS";
                     color: rgba(255, 255, 255, 0.4);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2073,9 +2258,9 @@ slint::slint! {
                 spacing: 6px;
                 Text {
                     text: "MAP";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Text {
@@ -2090,9 +2275,9 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 Text {
                     text: "TRAJECTORY";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2124,9 +2309,9 @@ slint::slint! {
                         background: root.qop-gate ? root.accent : root.live-ink.with-alpha(0.12);
                     }
                     VerticalLayout {
-                        Text { text: root.qop-gate-mode-name; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
-                        Text { text: "CV " + Math.round(root.qop-cv * 100) + "%  smooth " + Math.round(root.qop-smooth-cv * 100) + "%"; color: root.live-ink.with-alpha(0.6); font-family: "JetBrains Mono"; font-size: 10px; }
-                        Text { text: "delta " + Math.round(root.qop-delta * 100) + "%"; color: root.live-ink.with-alpha(0.6); font-family: "JetBrains Mono"; font-size: 10px; }
+                        Text { text: root.qop-gate-mode-name; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
+                        Text { text: "CV " + Math.round(root.qop-cv * 100) + "%  smooth " + Math.round(root.qop-smooth-cv * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
+                        Text { text: "delta " + Math.round(root.qop-delta * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     }
                 }
 
@@ -2144,9 +2329,9 @@ slint::slint! {
                 spacing: 6px;
                 Text {
                     text: "ENVELOPES";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2157,7 +2342,7 @@ slint::slint! {
                         HorizontalLayout {
                             spacing: 6px;
                             height: 16px;
-                            Text { text: "CH1"; color: root.accent; font-family: "JetBrains Mono"; font-weight: 700; font-size: 11px; }
+                            Text { text: "CH1"; color: root.accent; font-family: "JetBrains Mono"; font-weight: 700; font-size: 12px; }
                             Rectangle { horizontal-stretch: 1; }
                             Rectangle {
                                 width: 8px; height: 8px; y: 2px;
@@ -2179,14 +2364,14 @@ slint::slint! {
                         trace: root.accent.with-alpha(0.8); line-width: 2px;
                     }
                         }
-                        Text { text: "open " + Math.round(root.ng-ch1-open * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                        Text { text: "open " + Math.round(root.ng-ch1-open * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     }
                     VerticalLayout {
                         spacing: 4px;
                         HorizontalLayout {
                             spacing: 6px;
                             height: 16px;
-                            Text { text: "CH2"; color: root.accent; font-family: "JetBrains Mono"; font-weight: 700; font-size: 11px; }
+                            Text { text: "CH2"; color: root.accent; font-family: "JetBrains Mono"; font-weight: 700; font-size: 12px; }
                             Rectangle { horizontal-stretch: 1; }
                             Rectangle {
                                 width: 8px; height: 8px; y: 2px;
@@ -2208,7 +2393,7 @@ slint::slint! {
                         trace: root.accent.with-alpha(0.8); line-width: 2px;
                     }
                         }
-                        Text { text: "open " + Math.round(root.ng-ch2-open * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                        Text { text: "open " + Math.round(root.ng-ch2-open * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     }
                 }
 
@@ -2226,9 +2411,9 @@ slint::slint! {
                 spacing: 6px;
                 Text {
                     text: "REGISTER";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2236,8 +2421,8 @@ slint::slint! {
                     for i in root.tm-bits.length : Rectangle {
                         Text {
                             x: 6px; y: 4px; text: i + 1;
-                            color: root.live-ink.with-alpha(0.65);
-                            font-family: "JetBrains Mono"; font-size: 9px;
+                            color: root.live-ink.with-alpha(0.72);
+                            font-family: "JetBrains Mono"; font-size: 12px;
                         }
 
                         property <bool> active: i < root.tm-active-len;
@@ -2264,14 +2449,14 @@ slint::slint! {
                         border-radius: 5px;
                         background: root.tm-pulse ? root.accent : root.live-ink.with-alpha(0.12);
                     }
-                    Text { text: "pulse"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
-                    Text { text: "cv " + Math.round(root.tm-cv * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                    Text { text: "pulse"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
+                    Text { text: "cv " + Math.round(root.tm-cv * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.tm-double-locked ? "dbl lock" : (root.tm-inverted-feedback ? "locking" : "");
-                        color: root.tm-double-locked ? #FFA040 : root.live-ink.with-alpha(0.4);
+                        color: root.tm-double-locked ? #FFA040 : root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Rectangle {
@@ -2287,7 +2472,7 @@ slint::slint! {
                         animate width { duration: 80ms; }
                     }
                 }
-                Text { text: "keep probability " + Math.round(root.tm-keep-probability * 100) + "%"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; }
+                Text { text: "keep probability " + Math.round(root.tm-keep-probability * 100) + "%"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; }
 
                 }
             }
@@ -2314,9 +2499,9 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 Text {
                     text: "TAP MAP";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2407,7 +2592,7 @@ slint::slint! {
                     }
                 }
                 Rectangle { height: 2px; }
-                Text { text: "TANK ENERGY"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 11px; letter-spacing: 0.5px; }
+                Text { text: "TANK ENERGY"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 0.5px; }
                 Rectangle {
                     height: 8px;
                     border-radius: 4px;
@@ -2447,7 +2632,7 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 if !root.warps-is-vocoder : VerticalLayout {
                     spacing: 3px;
-                    Text { text: "CARRIER / MODULATOR / OUTPUT"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; letter-spacing: 0.5px; }
+                    Text { text: "CARRIER / MODULATOR / OUTPUT"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 0.5px; }
                     Rectangle {
                         vertical-stretch: 1;
                         border-width: 1px;
@@ -2483,7 +2668,7 @@ slint::slint! {
                 }
                 if root.warps-is-vocoder : VerticalLayout {
                     spacing: 3px;
-                    Text { text: "VOCODER BANDS"; color: root.live-ink.with-alpha(0.65); font-family: "JetBrains Mono"; font-size: 10px; letter-spacing: 0.5px; }
+                    Text { text: "VOCODER BANDS"; color: root.live-ink.with-alpha(0.72); font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 0.5px; }
                     HorizontalLayout {
                         vertical-stretch: 1;
                         spacing: 3px;
@@ -2523,9 +2708,9 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 Text {
                     text: "CHANNELS";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 HorizontalLayout {
@@ -2579,9 +2764,9 @@ slint::slint! {
                 Rectangle { height: 4px; }
                 Text {
                     text: "32 OUTPUTS";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 11px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2599,9 +2784,9 @@ slint::slint! {
                         animate background { duration: 60ms; }
                         Text {
                             text: i + 1;
-                            color: parent.lvl > 0.5 ? #0a0a0a : root.live-ink.with-alpha(0.4);
+                            color: parent.lvl > 0.5 ? #0a0a0a : root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%; height: 100%;
@@ -2626,17 +2811,17 @@ slint::slint! {
                     height: 16px;
                     Text {
                         text: "HYSTERESIS LOOP";
-                        color: root.live-ink.with-alpha(0.65);
+                        color: root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 11px;
+                        font-size: 12px;
                         letter-spacing: 0.5px;
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.magnito-unlimited ? "UNLIMITED" : "bias " + Math.round(root.magnito-bias * 100) + "%";
-                        color: root.magnito-unlimited ? #FF4D4D : root.live-ink.with-alpha(0.4);
+                        color: root.magnito-unlimited ? #FF4D4D : root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 HorizontalLayout {
@@ -2665,9 +2850,9 @@ slint::slint! {
                 Rectangle { height: 2px; }
                 Text {
                     text: "WOW / FLUTTER";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2714,9 +2899,9 @@ slint::slint! {
                         }
                         Text {
                             text: m.label;
-                            color: root.live-ink.with-alpha(0.65);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                         }
                     }
                     Rectangle {
@@ -2769,9 +2954,9 @@ slint::slint! {
                     }
                     Text {
                         text: root.tonestack-gate-closed ? "GATED" : "open";
-                        color: root.tonestack-gate-closed ? #FF4D4D : root.live-ink.with-alpha(0.4);
+                        color: root.tonestack-gate-closed ? #FF4D4D : root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Rectangle {
@@ -2795,9 +2980,9 @@ slint::slint! {
                 Rectangle { height: 2px; }
                 Text {
                     text: "OUTPUT";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                     letter-spacing: 0.5px;
                 }
                 Rectangle {
@@ -2837,17 +3022,17 @@ slint::slint! {
                     }
                     Text {
                         text: root.sample-drum-sample-name;
-                        color: root.live-ink.with-alpha(0.6);
+                        color: root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 11px;
+                        font-size: 12px;
                         vertical-alignment: center;
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: "slice " + (root.sample-drum-step-index + 1) + "/" + root.sample-drum-num-slices;
-                        color: root.live-ink.with-alpha(0.65);
+                        color: root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Rectangle {
@@ -2870,9 +3055,9 @@ slint::slint! {
                 }
                 Text {
                     text: "SOURCE / SLICE BOUNDARIES";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                 }
 
                 // The source sample with its slice cut points marked
@@ -2912,9 +3097,9 @@ slint::slint! {
                 }
                 Text {
                     text: "PAD 1 / CH1  ·  PAD 2 / CH2";
-                    color: root.live-ink.with-alpha(0.65);
+                    color: root.live-ink.with-alpha(0.72);
                     font-family: "JetBrains Mono";
-                    font-size: 10px;
+                    font-size: 12px;
                 }
 
                 }
@@ -2947,9 +3132,9 @@ slint::slint! {
                     }
                     Text {
                         text: root.visualizer-monitor-on ? "MON" : "muted";
-                        color: root.visualizer-monitor-on ? root.accent : root.live-ink.with-alpha(0.3);
+                        color: root.visualizer-monitor-on ? root.accent : root.live-ink.with-alpha(0.72);
                         font-family: "JetBrains Mono";
-                        font-size: 10px;
+                        font-size: 12px;
                     }
                 }
                 Rectangle {
@@ -2997,9 +3182,9 @@ slint::slint! {
                             spacing: 4px;
                             Text {
                                 text: row.label;
-                                color: root.live-ink.with-alpha(0.65);
+                                color: root.live-ink.with-alpha(0.72);
                                 font-family: "JetBrains Mono";
-                                font-size: 10px;
+                                font-size: 12px;
                             }
                             Rectangle {
                                 height: 16px;
@@ -3032,9 +3217,9 @@ slint::slint! {
                         Text {
                             horizontal-alignment: center;
                             text: "(spectrogram not rendered here)";
-                            color: root.live-ink.with-alpha(0.65);
+                            color: root.live-ink.with-alpha(0.72);
                             font-family: "JetBrains Mono";
-                            font-size: 10px;
+                            font-size: 12px;
                         }
                     }
 
@@ -3211,7 +3396,7 @@ slint::slint! {
             if !root.on-home && root.active-kind == 30 && root.retro-menu-visible : RetroPanel {
                 width:604px;paper:root.live-bg;ink:root.live-ink;accent:root.accent;
                 names:root.row-names;values:root.row-values;selected:root.selected-row;
-                console:root.retro-console-name;rom:root.retro-rom-name;loaded:root.retro-loaded-name;count:root.retro-rom-count;
+                console:root.retro-console-name;consoles:root.retro-consoles;rom:root.retro-rom-name;loaded:root.retro-loaded-name;count:root.retro-rom-count;
                 status:root.retro-status;running:root.retro-running;frame:root.retro-frame;has-frame:root.retro-has-frame;
                 action(x,y)=>{root.theme-wheel-picked(x,y);}
             }
@@ -3229,7 +3414,18 @@ slint::slint! {
                 }
             }
 
+            // A Kids app: its own picture, the whole screen.
+            if !root.on-home && root.active-kind == 43 : Rectangle {
+                background: black;
+                Image {
+                    source: root.screen-frame;
+                    image-fit: contain;
+                    width: 100%; height: 100%;
+                }
+            }
+
             if !root.on-home && root.active-kind == 29 : BloomPanel {
+                play: root.pc-active;
                 row-names: root.row-names;
                 row-values: root.row-values;
                 row-is-group: root.row-is-group;
@@ -3254,6 +3450,22 @@ slint::slint! {
                 line-angle: root.bloom-line-angle;
                 toggle-running => { root.f-clicked(2); }
             }
+        }
+        // Full-width panels (Bloom, Collection, Vector Filter, Forge) keep
+        // their own layout; on the play view their list steps aside and the
+        // shared play column sits in its place.
+        if !root.on-home && root.pc-active && (root.active-kind == 29 || root.active-kind == 31 || root.active-kind == 33 || root.active-kind == 34) : PlayColumn {
+            x: 18px; y: 4px;
+            width: root.active-kind == 29 ? 244px : 220px;
+            height: 280px;
+            ink: root.live-ink; accent: root.accent; paper: root.live-bg;
+            layer: root.pc-layer;
+            dial-labels: root.pc-dial-labels; dial-values: root.pc-dial-values; dial-norms: root.pc-dial-norms; dial-knobs: root.pc-dial-knobs;
+            knob2-extra: root.pc-knob2-extra;
+            pad-labels: root.pc-pad-labels; pad-state: root.pc-pad-state;
+            stick-x: root.pc-stick-x; stick-y: root.pc-stick-y; stick-label: root.pc-stick-label;
+            hand-l: root.pc-hand-l; hand-r: root.pc-hand-r; hand-l-label: root.pc-hand-l-label; hand-r-label: root.pc-hand-r-label;
+            line: root.pc-line; status: root.pc-status;
         }
 
         }
@@ -3365,6 +3577,10 @@ fn app_palette(name: &str) -> Option<(slint::Color, slint::Color, slint::Color, 
         "Analyzer" => (0x101b22, 0xe5eff3, 0x75dcd3, 0x81959e),
         "Synth" => (0x151c21, 0xe5eff3, 0x8adbc4, 0x81959e),
         "Forge" => (0x211b18, 0xeee5d9, 0xf0ac70, 0x967d6a),
+        "Oracle" => (0x13122a, 0xece8fb, 0xe7c46e, 0x8a84ad),
+        "Pulsar" => (0x1c1014, 0xf6e7ea, 0xff5d73, 0x9a6f78),
+        "Tinkertone" => (0xece4d0, 0x2b2620, 0xd2532c, 0x8a7f6c),
+        "Controller" => (0x0f1611, 0xdcefe0, 0x5fe07a, 0x6f8a74),
         "Vector Filter" => (0x101e25, 0xe4f0e8, 0x79e2cf, 0x729d9e),
         "Settings" => (0x14191f, 0xe7edf4, 0xa5bce9, 0x8994aa),
         "Bloom" => (0x0c1918, 0xe7edda, 0xd8f580, 0x203b33),
@@ -3431,6 +3647,37 @@ fn apply_scale_visual(ui: &LiveHomeScreen, info: Option<app::music_scales::Scale
     }
 }
 
+/// The shared play column (play_kit.rs) when the app is on its play
+/// view; otherwise the parameter list shows.
+fn apply_play_column(ui: &LiveHomeScreen, col: Option<app::PlayColumn>) {
+    let Some(c) = col else {
+        ui.set_pc_active(false);
+        return;
+    };
+    let strings = |v: Vec<String>| -> slint::ModelRc<slint::SharedString> {
+        Rc::new(slint::VecModel::from(v.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into()
+    };
+    ui.set_pc_active(true);
+    ui.set_pc_layer(c.layer.into());
+    ui.set_pc_dial_labels(strings(c.dials.iter().map(|d| d.label.clone()).collect()));
+    ui.set_pc_dial_values(strings(c.dials.iter().map(|d| d.value.clone()).collect()));
+    ui.set_pc_dial_norms(Rc::new(slint::VecModel::from(c.dials.iter().map(|d| d.norm).collect::<Vec<_>>())).into());
+    ui.set_pc_dial_knobs(Rc::new(slint::VecModel::from(c.dials.iter().map(|d| d.knob as i32).collect::<Vec<_>>())).into());
+    ui.set_pc_knob2_extra(c.knob2_extra.into());
+    ui.set_pc_pad_labels(strings(c.pad_labels));
+    ui.set_pc_pad_state(Rc::new(slint::VecModel::from(c.pad_state)).into());
+    ui.set_pc_stick_x(c.stick[0]);
+    ui.set_pc_stick_y(c.stick[1]);
+    ui.set_pc_stick_label(c.stick_label.into());
+    ui.set_pc_hand_l(c.hands[0]);
+    ui.set_pc_hand_r(c.hands[1]);
+    let [l, r] = c.hand_labels;
+    ui.set_pc_hand_l_label(l.into());
+    ui.set_pc_hand_r_label(r.into());
+    ui.set_pc_line(c.line.into());
+    ui.set_pc_status(c.status.into());
+}
+
 fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
             match extra {
                 app::SlintExtra::Plaits(p) => {
@@ -3451,6 +3698,7 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                 }
                 app::SlintExtra::Voltage(v) => {
                     ui.set_active_kind(2);
+                    ui.set_voltage_preset(v.preset.into());
                     ui.set_voltage_oscillator_mid_x(Rc::new(slint::VecModel::from(v.oscillator.mid_x)).into());
                     ui.set_voltage_oscillator_mid_y(Rc::new(slint::VecModel::from(v.oscillator.mid_y)).into());
                     ui.set_voltage_oscillator_length(Rc::new(slint::VecModel::from(v.oscillator.length)).into());
@@ -3617,15 +3865,6 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_nebula_particle_x(Rc::new(slint::VecModel::from(px)).into());
                     ui.set_nebula_particle_y(Rc::new(slint::VecModel::from(py)).into());
                     ui.set_nebula_particle_brightness(Rc::new(slint::VecModel::from(pb)).into());
-                }
-                app::SlintExtra::Tape(t) => {
-                    ui.set_active_kind(7);
-                    let status: Vec<slint::SharedString> = t.tracks.iter().map(|(s, _, _)| s.as_str().into()).collect();
-                    let kind: Vec<i32> = t.tracks.iter().map(|(_, k, _)| *k as i32).collect();
-                    let playhead = t.tracks.first().map(|(_, _, p)| *p).unwrap_or(0.0);
-                    ui.set_tape_track_status(Rc::new(slint::VecModel::from(status)).into());
-                    ui.set_tape_track_kind(Rc::new(slint::VecModel::from(kind)).into());
-                    ui.set_tape_playhead_frac(playhead);
                 }
                 app::SlintExtra::Pams(p) => {
                     ui.set_active_kind(8);
@@ -3956,9 +4195,57 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_portal_amounts(Rc::new(slint::VecModel::from(p.amounts)).into());ui.set_portal_levels(Rc::new(slint::VecModel::from(p.levels)).into());ui.set_portal_enabled(Rc::new(slint::VecModel::from(p.enabled)).into());
                     ui.set_portal_cable(p.selected);ui.set_portal_active(p.active);ui.set_portal_status(p.status.into());
                 }
+                app::SlintExtra::Atlas(a) => {
+                    ui.set_active_kind(42);
+                    ui.set_atlas_name(a.name.into());
+                    ui.set_atlas_category(a.category.into());
+                    ui.set_atlas_description(a.description.into());
+                    ui.set_atlas_index(a.index.into());
+                    ui.set_atlas_macro_names(Rc::new(slint::VecModel::from(a.macro_names.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_atlas_macro_values(Rc::new(slint::VecModel::from(a.macro_values)).into());
+                    ui.set_atlas_macro_used(Rc::new(slint::VecModel::from(a.macro_used)).into());
+                    ui.set_atlas_morph(a.morph);
+                    ui.set_atlas_states(a.states as i32);
+                    ui.set_atlas_morph_label(a.morph_label.into());
+                    ui.set_atlas_spectrum_view(a.spectrum_view);
+                    ui.set_atlas_spectrum(Rc::new(slint::VecModel::from(a.spectrum)).into());
+                    let (mid_x, mid_y, length, angle_deg) = app::polyline_segments(&a.scope, 290.0, 40.0, true);
+                    ui.set_atlas_scope_mid_x(Rc::new(slint::VecModel::from(mid_x)).into());
+                    ui.set_atlas_scope_mid_y(Rc::new(slint::VecModel::from(mid_y)).into());
+                    ui.set_atlas_scope_length(Rc::new(slint::VecModel::from(length)).into());
+                    ui.set_atlas_scope_angle(Rc::new(slint::VecModel::from(angle_deg)).into());
+                    ui.set_atlas_voices(a.voices.into());
+                    ui.set_atlas_load(a.load);
+                    ui.set_atlas_depth(a.depth.into());
+                    ui.set_atlas_status(a.status.into());
+                }
+                app::SlintExtra::Grid(g) => {
+                    ui.set_active_kind(41);
+                    ui.set_grid_caption(g.caption.into());
+                    ui.set_grid_title(g.title.into());
+                    let cols = g.col_x.len().max(1);
+                    ui.set_grid_cols(cols as i32);
+                    ui.set_grid_rows(g.cells.len().div_ceil(cols) as i32);
+                    ui.set_grid_col_x(Rc::new(slint::VecModel::from(g.col_x)).into());
+                    ui.set_grid_cells(Rc::new(slint::VecModel::from(g.cells.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_grid_highlight(g.highlight);
+                    ui.set_grid_footer(g.footer.into());
+                    ui.set_grid_meter(g.meter);
+                }
+                app::SlintExtra::Norns(n) => {
+                    ui.set_active_kind(40);
+                    ui.set_norns_title(n.title.into());
+                    ui.set_norns_mode(n.mode.into());
+                    ui.set_norns_status(n.status.into());
+                    ui.set_norns_peak(n.peak);
+                    if let Some(image) = rgba_frame_to_slint_image(&n.frame_rgba, 128, 64) {
+                        ui.set_norns_frame(image);
+                    }
+                }
                 app::SlintExtra::Retro(r) => {
                     ui.set_active_kind(30);
                     ui.set_retro_console_name(r.console_name.into());
+                    ui.set_retro_consoles(Rc::new(slint::VecModel::from(r.consoles.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
                     ui.set_retro_loaded_name(r.loaded_name.into());ui.set_retro_rom_count(r.rom_count);ui.set_retro_has_frame(!r.frame_rgba.is_empty());
                     ui.set_retro_rom_name(r.rom_name.into());
                     ui.set_retro_running(r.running);
@@ -3968,7 +4255,112 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                         ui.set_retro_frame(image);
                     }
                 }
+                app::SlintExtra::Oracle(o) => {
+                    ui.set_active_kind(35);
+                    ui.set_oracle_patch_name(o.patch_name.into());
+                    ui.set_oracle_kind_label(o.kind_label.into());
+                    ui.set_oracle_mode(o.mode as i32);
+                    ui.set_oracle_node_h(o.nodes.first().map_or(12.0, |n| n.h));
+                    ui.set_oracle_node_x(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.x).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_y(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.y).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_w(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.w).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_activity(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.activity).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_voice(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| n.voice).collect::<Vec<_>>())).into());
+                    ui.set_oracle_node_label(Rc::new(slint::VecModel::from(o.nodes.iter().map(|n| slint::SharedString::from(n.label.as_str())).collect::<Vec<_>>())).into());
+                    ui.set_oracle_edge_mid_x(Rc::new(slint::VecModel::from(o.edges.mid_x)).into());
+                    ui.set_oracle_edge_mid_y(Rc::new(slint::VecModel::from(o.edges.mid_y)).into());
+                    ui.set_oracle_edge_length(Rc::new(slint::VecModel::from(o.edges.length)).into());
+                    ui.set_oracle_edge_angle(Rc::new(slint::VecModel::from(o.edges.angle_deg)).into());
+                    ui.set_oracle_forward_edges(o.forward_edges as i32);
+                    let (mid_x, mid_y, length, angle_deg) = app::polyline_segments(&o.scope, 290.0, 28.0, true);
+                    ui.set_oracle_scope_mid_x(Rc::new(slint::VecModel::from(mid_x)).into());
+                    ui.set_oracle_scope_mid_y(Rc::new(slint::VecModel::from(mid_y)).into());
+                    ui.set_oracle_scope_length(Rc::new(slint::VecModel::from(length)).into());
+                    ui.set_oracle_scope_angle(Rc::new(slint::VecModel::from(angle_deg)).into());
+                    ui.set_oracle_snaps(Rc::new(slint::VecModel::from(o.snaps.iter().map(|s| *s as i32).collect::<Vec<_>>())).into());
+                    ui.set_oracle_morph_on(o.morph.is_some());
+                    ui.set_oracle_morph(o.morph.unwrap_or(0.0));
+                    ui.set_oracle_info(o.info.into());
+                    ui.set_oracle_status(o.status.into());
+                    ui.set_oracle_unstable(o.unstable);
+                    ui.set_oracle_explain(o.explain.into());
+                    ui.set_oracle_thinking(o.thinking.into());
+                    ui.set_oracle_mic_level(o.mic_level);
+                }
+                app::SlintExtra::Pulsar(p) => {
+                    ui.set_active_kind(36);
+                    ui.set_pulsar_genre(p.genre_name.into());
+                    ui.set_pulsar_bpm(p.bpm);
+                    ui.set_pulsar_slot(p.slot as i32);
+                    ui.set_pulsar_playing_slot(p.playing_slot.map_or(-1, |s| s as i32));
+                    ui.set_pulsar_slot_filled(Rc::new(slint::VecModel::from(p.slot_filled.to_vec())).into());
+                    ui.set_pulsar_in_fill(p.in_fill);
+                    ui.set_pulsar_bar(p.bar as i32);
+                    ui.set_pulsar_bars(p.bars as i32);
+                    ui.set_pulsar_pad_mode(p.pad_mode.into());
+                    ui.set_pulsar_record(p.record);
+                    ui.set_pulsar_lane_names(Rc::new(slint::VecModel::from(p.lane_names.iter().map(|n| slint::SharedString::from(*n)).collect::<Vec<_>>())).into());
+                    ui.set_pulsar_lane(p.lane as i32);
+                    ui.set_pulsar_lane_locked(Rc::new(slint::VecModel::from(p.lane_locked.to_vec())).into());
+                    ui.set_pulsar_lane_muted(Rc::new(slint::VecModel::from(p.lane_muted.to_vec())).into());
+                    ui.set_pulsar_lane_flash(Rc::new(slint::VecModel::from(p.lane_flash.to_vec())).into());
+                    ui.set_pulsar_cell_vel(Rc::new(slint::VecModel::from(p.cell_vel)).into());
+                    ui.set_pulsar_cell_mark(Rc::new(slint::VecModel::from(p.cell_mark)).into());
+                    ui.set_pulsar_playhead(p.playhead.map_or(-1, |c| c as i32));
+                    let (cl, cc) = p.cursor.map_or((-1, -1), |(l, c)| (l as i32, c as i32));
+                    ui.set_pulsar_cursor_lane(cl);
+                    ui.set_pulsar_cursor_col(cc);
+                    ui.set_pulsar_swing(p.swing_pct);
+                    ui.set_pulsar_peak(p.peak);
+                    ui.set_pulsar_status(p.status.into());
+                }
+                app::SlintExtra::Controller(c) => {
+                    ui.set_active_kind(39);
+                    ui.set_ctl_name(c.name.into());
+                    ui.set_ctl_connected(c.connected);
+                    ui.set_ctl_map(c.map.to_uppercase().into());
+                    ui.set_ctl_learning(c.learning.into());
+                    ui.set_ctl_buttons(Rc::new(slint::VecModel::from(c.buttons)).into());
+                    ui.set_ctl_axes(Rc::new(slint::VecModel::from(c.axes)).into());
+                    ui.set_ctl_status(c.status.into());
+                }
+                app::SlintExtra::Tinkertone(t) => {
+                    ui.set_active_kind(37);
+                    ui.set_tt_keys_held(Rc::new(slint::VecModel::from(t.keys_held)).into());
+                    ui.set_tt_window(t.window as i32);
+                    ui.set_tt_bass_layer(t.bass_layer);
+                    ui.set_tt_bass_held(t.bass_held);
+                    ui.set_tt_bass_sounding(t.bass_sounding);
+                    ui.set_tt_preset(t.preset as i32);
+                    ui.set_tt_preset_tones(Rc::new(slint::VecModel::from(t.preset_tones.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_tt_vibrato(t.vibrato);
+                    ui.set_tt_sustain(t.sustain);
+                    ui.set_tt_rhythm(apps::tinkertone::RHYTHM_NAMES[t.rhythm.min(5)].into());
+                    ui.set_tt_tempo(t.tempo);
+                    ui.set_tt_playing(t.playing);
+                    ui.set_tt_synchro(t.synchro);
+                    ui.set_tt_fill(t.fill);
+                    ui.set_tt_bass_mode(t.bass_mode.into());
+                    ui.set_tt_line_rec(t.line_rec);
+                    ui.set_tt_line(Rc::new(slint::VecModel::from(t.line)).into());
+                    ui.set_tt_line_pos(t.line_pos);
+                    ui.set_tt_chord(t.chord.into());
+                    ui.set_tt_step(t.step as i32);
+                    ui.set_tt_steps(t.steps as i32);
+                    ui.set_tt_steps_per_beat(t.steps_per_beat as i32);
+                    ui.set_tt_bar(t.bar as i32);
+                    ui.set_tt_drum_flash(Rc::new(slint::VecModel::from(t.drum_flash)).into());
+                    ui.set_tt_volume(t.volume);
+                    ui.set_tt_accomp(t.accomp);
+                    ui.set_tt_peak(t.peak);
+                }
                 app::SlintExtra::None => ui.set_active_kind(0),
+                app::SlintExtra::Screen(sc) => {
+                    ui.set_active_kind(43);
+                    if let Some(image) = rgba_frame_to_slint_image(&sc.frame_rgba, sc.width, sc.height) {
+                        ui.set_screen_frame(image);
+                    }
+                }
             }
 }
 
@@ -3999,14 +4391,22 @@ fn main() {
 
     let engine = audio::new_engine(Arc::clone(&master_volume));
     let (mut audio_host, device_state) = AudioHost::open_resilient(Arc::clone(&engine));
-    audio_host.attach_input(audio_bus.register("Hardware input"));
     println!("Live Home prototype -- output device: {}", device_state.current_output());
     let device_state = Arc::new(device_state);
 
 
-    let manifests = manifest::discover(std::path::Path::new(APPS_DIR));
+    let sd_apps = manifest::sd_apps_dir();
+    let manifests = manifest::discover_all(&[std::path::Path::new(APPS_DIR), sd_apps.as_path()]);
     println!("Found {} app manifest(s) in {APPS_DIR}", manifests.len());
-    let registry = Registry::new(
+    let note_bus = Arc::new(note_bus::NoteBus::new());
+    // MIDI output ports become instruments any app can play.
+    midi_devices::spawn(Arc::clone(&note_bus));
+    // The I/O cards in the slots: read their EEPROMs and put their
+    // inputs and outputs on the buses (see io_cards.rs). The first audio
+    // card's input carries the computer's audio input in the sim.
+    let io_cards = Arc::new(io_cards::IoCards::boot(&audio_bus, &modbus, Some(&note_bus)));
+    audio_host.attach_input(io_cards.host_input.clone().unwrap_or_else(|| audio_bus.register("Hardware input")));
+    let mut context = registry::standard_context(
         Arc::clone(&cutoff),
         Arc::clone(&device_state),
         Arc::clone(&sensitivity),
@@ -4020,7 +4420,11 @@ fn main() {
         Arc::clone(&midi_map),
         Arc::clone(&accent),
         Arc::clone(&background),
+        Arc::clone(&note_bus),
     );
+    context.provide(Arc::clone(&io_cards));
+    let registry = Registry::new(context);
+    launcher::install_catalog(manifests.iter().filter(|m| registry.implements(m)).map(|m| (m.name.clone(), m.category.clone(), m.description.clone())));
     let mut apps = registry.build(&manifests);
 
     // Every app's processor goes into the one shared engine exactly
@@ -4078,6 +4482,11 @@ fn main() {
         let gamepad_controller = Arc::clone(&controller);
         std::thread::spawn(move || gamepad::run_gamepad_listener(gamepad_controller));
     }
+    // Every other controller, on every OS (gamepad_gilrs.rs).
+    {
+        let gamepad_controller = Arc::clone(&controller);
+        std::thread::spawn(move || gamepad_gilrs::run_gilrs_listener(gamepad_controller));
+    }
 
     let grid_held: Rc<RefCell<[bool; 16]>> = Rc::new(RefCell::new([false; 16]));
     let grid_for_pad = Rc::clone(&grid_held);
@@ -4112,7 +4521,7 @@ fn main() {
     let active_for_f = Rc::clone(&active);
     let midi_target_for_f = Rc::clone(&midi_target);
     let launcher_for_category=launcher.clone();let list_for_category=home_list.clone();
-    ui.on_home_category_picked(move |i|{launcher_for_category.borrow_mut().category=(i as usize).min(6);list_for_category.borrow_mut().selected=0;});
+    ui.on_home_category_picked(move |i|{launcher_for_category.borrow_mut().category=(i as usize).min(launcher::RECENT);list_for_category.borrow_mut().selected=0;});
     let apps_for_open=apps.clone();let active_for_open=active.clone();let launcher_for_open=launcher.clone();
     ui.on_home_open(move |i|{if active_for_open.borrow().is_none() && i>=0 && (i as usize)<apps_for_open.borrow().len() {let i=i as usize;apps_for_open.borrow_mut()[i].1.on_enter();*active_for_open.borrow_mut()=Some(i);launcher_for_open.borrow_mut().visit(i);}});
     let launcher_for_f=launcher.clone();let list_for_f=home_list.clone();
@@ -4146,7 +4555,7 @@ fn main() {
         2 => {
             if let Some(idx) = *active_for_f.borrow() {
                 apps_for_f.borrow_mut()[idx].1.toggle_running();
-            } else {launcher_for_f.borrow_mut().category=6;list_for_f.borrow_mut().selected=0;}
+            } else {launcher_for_f.borrow_mut().category=launcher::RECENT;list_for_f.borrow_mut().selected=0;}
         }
         3 => {
             let mixer_idx = apps_for_f.borrow().iter().position(|(_, app)| app.system_role() == Some(app::SystemRole::Mixer));
@@ -4168,6 +4577,8 @@ fn main() {
     let apps_for_timer = Rc::clone(&apps);
     let active_for_timer = Rc::clone(&active);
     let grid_for_timer = Rc::clone(&grid_held);
+    // A connected Push's pad and button LEDs, kept equal to the screen.
+    let lights_for_timer = Rc::new(RefCell::new(pad_lights::LightSync::new(led_output::LedOutput::open_all())));
     let home_list_for_timer = Rc::clone(&home_list);
     let launcher_for_timer=launcher.clone();
     let mut previous_visit=None;
@@ -4208,10 +4619,16 @@ fn main() {
 
         let midi_k1 = controller.take_knob1_delta();
         let midi_k2 = controller.take_knob2_delta();
+        // A play-surface app on screen takes the stick, shoulders, depth
+        // sensors and MIDI keyboard as instrument controls (see
+        // App::play_surface); otherwise they keep navigating as before.
+        let play_surface = active_for_timer.borrow().is_some_and(|i| apps_for_timer.borrow()[i].1.play_surface());
+        controller.set_play_surface(play_surface);
+        ui.set_play_surface(play_surface);
         // The spring-return stick repeats on its dominant axis after a dead zone.
         // Discrete navigation bypasses the encoder ticks-per-row setting.
-        let x = ui.get_live_stick_x();
-        let y = ui.get_live_stick_y();
+        let x = if play_surface { 0.0 } else { ui.get_live_stick_x() };
+        let y = if play_surface { 0.0 } else { ui.get_live_stick_y() };
         let mut stick_nav = 0;
         let mut stick_edit = 0;
         if x.abs().max(y.abs()) <= 0.35 {
@@ -4221,10 +4638,12 @@ fn main() {
             else { stick_nav = if y > 0.0 { 1 } else { -1 }; }
             last_stick_step = std::time::Instant::now();
         }
-        let navigation = ui.get_navigation_delta() + stick_nav;
+        let navigation = ui.get_navigation_delta() + stick_nav + controller.take_nav_delta();
         ui.set_navigation_delta(0);
         let k1 = ui.get_knob1_delta().round() as i32 + midi_k1;
         let k2 = ui.get_knob2_delta().round() as i32 + midi_k2 + stick_edit;
+        let nav_x = ui.get_nav_x_delta() + stick_edit + controller.take_nav_x();
+        ui.set_nav_x_delta(0);
         ui.set_knob1_delta(0.0);
         ui.set_knob2_delta(0.0);
         // Retain encoder state for MIDI/API compatibility; the new shell has no knobs.
@@ -4237,7 +4656,7 @@ fn main() {
         }
         let press1 = std::mem::take(&mut *knob1_press.borrow_mut()) || controller.take_knob1_press();
         let press2 = std::mem::take(&mut *knob2_press.borrow_mut()) || controller.take_knob2_press();
-        let grid: [bool; 16] = std::array::from_fn(|i| grid_for_timer.borrow()[i] || controller.grid[i].load(Ordering::Relaxed));
+        let grid: [bool; 16] = std::array::from_fn(|i| grid_for_timer.borrow()[i] || controller.pad_down(i));
 
         // Boot sequence: any input at all dismisses it outright (not
         // just advancing to the next stage), same as the real
@@ -4317,20 +4736,9 @@ fn main() {
                 let play_input = Input { grid, ..Default::default() };
                 apps_ref[play_idx].1.tick(&play_input);
                 let overlay = apps_ref[play_idx].1.grid_led_overlay();
-                let colors: Vec<slint::Color> = (0..16)
-                    .map(|i| match overlay[i] {
-                        led_output::PadColor::Off if grid[i] => slint::Color::from_rgb_u8(0x2E, 0xCC, 0x55),
-                        led_output::PadColor::Off => slint::Color::from_rgb_u8(0x23, 0x23, 0x23),
-                        led_output::PadColor::Green => slint::Color::from_rgb_u8(0x2E, 0xCC, 0x55),
-                        led_output::PadColor::Red => slint::Color::from_rgb_u8(0xFF, 0x4D, 0x4D),
-                        led_output::PadColor::Yellow => slint::Color::from_rgb_u8(0xE0, 0xC0, 0x30),
-                        led_output::PadColor::Blue => slint::Color::from_rgb_u8(0x40, 0x90, 0xE0),
-                    })
-                    .collect();
-                ui.set_live_pad_colors(Rc::new(slint::VecModel::from(colors)).into());
+                show_pads(&ui, &mut lights_for_timer.borrow_mut(), pad_lights::compose(overlay, grid));
             } else {
-                let default_colors: Vec<slint::Color> = (0..16).map(|_| slint::Color::from_rgb_u8(0x23, 0x23, 0x23)).collect();
-                ui.set_live_pad_colors(Rc::new(slint::VecModel::from(default_colors)).into());
+                show_pads(&ui, &mut lights_for_timer.borrow_mut(), pad_lights::compose([led_output::PadColor::Off; 16], grid));
             }
 
             ui.set_live_bg(slint::Color::from_rgb_u8(18,27,27));ui.set_live_ink(slint::Color::from_rgb_u8(241,240,230));ui.set_live_accent(slint::Color::from_rgb_u8(183,214,197));
@@ -4348,7 +4756,7 @@ fn main() {
             ui.set_home_running(Rc::new(slint::VecModel::from(indices[start..end].iter().map(|i|apps_ref[*i].1.running()==Some(true)).collect::<Vec<_>>())).into());
             ui.set_home_category(browser.category as i32);ui.set_home_total(names_all.len() as i32);ui.set_home_count(indices.len() as i32);
             let name=indices.get(list.selected).map(|i|names_all[*i].as_str()).unwrap_or("");
-            ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list."}else{launcher::description(name)}.into());ui.set_home_family(if name.is_empty(){"WELCOME"}else{launcher::CATEGORIES[launcher::category(name)]}.into());
+            ui.set_home_title(name.into());ui.set_home_description(if name.is_empty(){"Open an app to add it to your recent list.".to_string()}else{launcher::description(name)}.into());ui.set_home_family(if name.is_empty(){"WELCOME"}else{launcher::CATEGORIES[launcher::category(name)]}.into());
         } else {
             let idx = active_for_timer.borrow().unwrap();
             if previous_visit!=Some(idx){launcher_for_timer.borrow_mut().visit(idx);previous_visit=Some(idx);}
@@ -4379,10 +4787,29 @@ fn main() {
                 let play_input = Input { grid, ..Default::default() };
                 apps_ref[play_idx].1.tick(&play_input);
             }
-            let pad_overlay = apps_ref[play_idx].1.grid_led_overlay();
             let play_name_upper = apps_ref[play_idx].0.to_uppercase();
             let screen_grid: [bool; 16] = if play_idx == idx { grid } else { [false; 16] };
-            let input = Input { grid: screen_grid, navigation_steps: navigation, knob1: k1, knob2: k2, knob1_press: press1, knob2_press: press2, ..Default::default() };
+            let mut input = Input { grid: screen_grid, navigation_steps: navigation, knob1: k1, knob2: k2, nav_x, knob1_press: press1, knob2_press: press2, ..Default::default() };
+            if play_surface {
+                let clicks = ui.get_live_stick_clicks();
+                let (l1p, r1p) = (ui.get_l1_presses(), ui.get_r1_presses());
+                ui.set_live_stick_clicks(0);
+                ui.set_l1_presses(0);
+                ui.set_r1_presses(0);
+                let frame = Input {
+                    // the frame's y grows downward; the play surface's +y is up
+                    stick: [ui.get_live_stick_x(), -ui.get_live_stick_y()],
+                    stick_click: clicks > 0,
+                    hands: [ui.get_live_hand_l(), ui.get_live_hand_r()],
+                    shoulders: [ui.get_live_l1_held(), ui.get_live_r1_held()],
+                    shoulder_press: [l1p > 0, r1p > 0],
+                    ..Default::default()
+                };
+                let surface = controller.play_surface_input(frame);
+                input = Input { grid: input.grid, navigation_steps: input.navigation_steps, knob1: input.knob1, knob2: input.knob2, nav_x: input.nav_x, knob1_press: input.knob1_press, knob2_press: input.knob2_press, ..surface };
+            }
+            // A pinned app (F2) was ticked above; read its pads now.
+            let pinned_overlay = (play_idx != idx).then(|| apps_ref[play_idx].1.grid_led_overlay());
             let app = &mut apps_ref[idx].1;
             app.tick(&input);
 
@@ -4420,17 +4847,10 @@ fn main() {
             // Plaits/Cascade/Voltage/Starlab all read `Input.grid` as
             // a keyboard, but until now nothing on this shared screen
             // ever reflected that back visually.
-            let colors: Vec<slint::Color> = (0..16)
-                .map(|i| match pad_overlay[i] {
-                    led_output::PadColor::Off if grid[i] => slint::Color::from_rgb_u8(0x2E, 0xCC, 0x55),
-                    led_output::PadColor::Off => slint::Color::from_rgb_u8(0x23, 0x23, 0x23),
-                    led_output::PadColor::Green => slint::Color::from_rgb_u8(0x2E, 0xCC, 0x55),
-                    led_output::PadColor::Red => slint::Color::from_rgb_u8(0xFF, 0x4D, 0x4D),
-                    led_output::PadColor::Yellow => slint::Color::from_rgb_u8(0xE0, 0xC0, 0x30),
-                    led_output::PadColor::Blue => slint::Color::from_rgb_u8(0x40, 0x90, 0xE0),
-                })
-                .collect();
-            ui.set_live_pad_colors(Rc::new(slint::VecModel::from(colors)).into());
+            // Read after this frame's tick, so the screen and the Push
+            // show the pads as they are now, not a frame ago.
+            let pad_overlay = pinned_overlay.unwrap_or_else(|| app.grid_led_overlay());
+            show_pads(&ui, &mut lights_for_timer.borrow_mut(), pad_lights::compose(pad_overlay, grid));
 
             let midi_pinned = midi_target_for_timer.borrow().is_some();
 
@@ -4438,6 +4858,7 @@ fn main() {
             // Plaits' bespoke visual (engine dots + real analyzer) --
             // every other app just gets `active_kind = 0` (the
             // generic full-width list).
+            apply_play_column(&ui, app.play_column());
             apply_instrument_visual(&ui, app.slint_extra());
         }
     });
@@ -4445,4 +4866,18 @@ fn main() {
     ui.show().unwrap();
     println!("Portamax window shown; starting UI event loop");
     ui.run().unwrap();
+}
+
+/// Shows the pads on screen and sends the same colours to a connected
+/// controller's LEDs (see pad_lights.rs), so the two always match.
+fn show_pads(ui: &LiveHomeScreen, lights: &mut pad_lights::LightSync, pads: [led_output::PadColor; 16]) {
+    let colors: Vec<slint::Color> = pads
+        .iter()
+        .map(|&c| {
+            let (r, g, b) = pad_lights::rgb(c);
+            slint::Color::from_rgb_u8(r, g, b)
+        })
+        .collect();
+    ui.set_live_pad_colors(Rc::new(slint::VecModel::from(colors)).into());
+    lights.update(pads);
 }

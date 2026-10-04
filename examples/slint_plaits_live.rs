@@ -21,6 +21,9 @@ mod app;
 mod arpeggiator;
 #[path = "../src/audio.rs"]
 mod audio;
+#[path = "../src/clock.rs"]
+#[allow(dead_code)]
+mod clock;
 #[path = "../src/audio_bus.rs"]
 mod audio_bus;
 #[path = "../src/audio_devices.rs"]
@@ -47,6 +50,8 @@ mod util;
 mod plaits;
 #[path = "../src/apps/plaits_layout.rs"]
 mod plaits_layout;
+#[path = "../src/apps/plaits_play.rs"]
+mod plaits_play;
 /// Same no-op stand-in as `main.rs`'s own copy -- see its doc comment.
 pub fn run_inference(block: &mut [f32]) {
     let _ = block;

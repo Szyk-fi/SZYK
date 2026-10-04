@@ -1,2 +1,13 @@
 id = "warps"
 name = "Warps"
+category = "effect"
+description = "Cross-modulate two live sources."
+audio_outputs = ["Warps", "Warps (Aux)"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Warps Level",
+    "Warps: Algorithm",
+    "Warps: Timbre",
+    "Warps: Level 1",
+    "Warps: Level 2",
+]

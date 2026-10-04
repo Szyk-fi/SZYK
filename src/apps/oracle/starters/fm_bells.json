@@ -1,0 +1,33 @@
+{
+  "name": "FM Bells",
+  "kind": "instrument",
+  "description": "Two-operator FM bells and tines with a decaying index and chorus shimmer.",
+  "voices": 8,
+  "amp_env": true,
+  "params": [
+    {"id": "ratio", "name": "Ratio", "min": 0.5, "max": 9, "default": 3.5, "page": 1},
+    {"id": "index", "name": "Index", "min": 0, "max": 10, "default": 3, "page": 1},
+    {"id": "idecay", "name": "Index Decay", "min": 0.05, "max": 5, "default": 1.2, "curve": "exp", "unit": "s", "page": 1},
+    {"id": "fbk", "name": "Mod Feedback", "min": 0, "max": 0.6, "default": 0.1, "page": 1},
+    {"id": "chorus", "name": "Chorus", "min": 0, "max": 1, "default": 0.4, "page": 2},
+    {"id": "space", "name": "Space", "min": 0, "max": 1, "default": 0.3, "page": 2}
+  ],
+  "macros": [
+    {"name": "Metal", "targets": [{"param": "index", "amount": 0.5}, {"param": "fbk", "amount": 0.4}]},
+    {"name": "Glass", "targets": [{"param": "ratio", "amount": 0.3}, {"param": "idecay", "amount": -0.3}]},
+    {"name": "Shimmer", "targets": [{"param": "chorus", "amount": 0.6}, {"param": "space", "amount": 0.4}]},
+    {"name": "Soft", "targets": [{"param": "index", "amount": -0.5}, {"param": "fbk", "amount": -0.5}]}
+  ],
+  "voice": [
+    {"id": "ienv", "type": "ad", "in": {"a": 0.001, "d": "idecay"}},
+    {"id": "modr", "type": "osc", "wave": "sine", "in": {"freq": "pitch * ratio", "pm": "modr * fbk"}},
+    {"id": "car", "type": "osc", "wave": "sine", "in": {"freq": "pitch", "pm": "modr * index * (0.15 + ienv) * 0.16"}}
+  ],
+  "voice_out": "car * 0.5",
+  "global": [
+    {"id": "wob", "type": "lfo", "shape": "sine", "in": {"rate": 0.7}},
+    {"id": "cho", "type": "delay", "max": 0.1, "in": {"in": "voices", "time": "0.012 + wob * 0.004 * chorus", "fb": 0.1}},
+    {"id": "rev", "type": "reverb", "in": {"in": "voices + cho * chorus", "size": 0.8, "damp": 0.3}}
+  ],
+  "out": {"left": "voices + cho * chorus * 0.7 + rev * space", "right": "voices - cho * chorus * 0.7 + rev * space"}
+}

@@ -1,0 +1,6 @@
+id = "controller"
+name = "Controller"
+module = "controller_setup"
+category = "system"
+description = "Map a PS5, Xbox or any gamepad onto Portamax."
+audio_outputs = []

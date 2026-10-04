@@ -1,0 +1,25 @@
+id = "elements"
+name = "Elements"
+category = "instrument"
+description = "The real Mutable Instruments Elements: bowed, blown and struck physical models."
+audio_outputs = ["Elements"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Elements Level",
+    "Elements: Contour",
+    "Elements: Bow",
+    "Elements: Bow Timbre",
+    "Elements: Blow",
+    "Elements: Flow",
+    "Elements: Blow Timbre",
+    "Elements: Strike",
+    "Elements: Mallet",
+    "Elements: Strike Timbre",
+    "Elements: Geometry",
+    "Elements: Brightness",
+    "Elements: Damping",
+    "Elements: Position",
+    "Elements: Space",
+    "Elements: FM",
+]

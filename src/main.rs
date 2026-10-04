@@ -22,22 +22,30 @@ mod arpeggiator;
 mod audio;
 mod audio_bus;
 mod audio_devices;
+mod clock;
 mod clouds_ffi;
 mod controller;
+mod controller_map;
 mod display;
 #[cfg(target_os = "macos")]
 mod gamepad;
+mod gamepad_gilrs;
 mod led_output;
+mod pad_lights;
 mod manifest;
 mod midi_map;
 mod mixer_bus;
 mod modbus;
+mod note_bus;
+mod midi_devices;
+mod io_cards;
 mod os;
 mod paramlist;
 mod plaits_ffi;
 mod registry;
 mod spleen_fonts;
 mod startup_logo;
+mod synthesis;
 mod theme;
 mod util;
 
@@ -193,6 +201,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let gamepad_controller = Arc::clone(&controller);
         thread::spawn(move || gamepad::run_gamepad_listener(gamepad_controller));
     }
+    // Every other controller (and every OS): gilrs. On macOS it steps
+    // aside whenever the native backend has a pad -- see gamepad_gilrs.rs.
+    {
+        let gamepad_controller = Arc::clone(&controller);
+        thread::spawn(move || gamepad_gilrs::run_gilrs_listener(gamepad_controller));
+    }
 
     // The mixing bus every app's audio processor renders into -- see
     // audio.rs. Every app gets one registered below, once, at startup;
@@ -214,7 +228,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // device and Os::run's loop (main thread) applies it — see
     // audio_devices.rs for why that has to happen there.
     let (mut audio_host, device_state) = AudioHost::open_resilient(Arc::clone(&engine));
-    audio_host.attach_input(audio_bus.register("Hardware input"));
     let device_state = Arc::new(device_state);
 
     println!("Running. Send MIDI CC1 on any connected port to sweep the synth cutoff.");
@@ -222,9 +235,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Menu: arrows to navigate, Enter to select. Esc: home.");
     println!("In an app: 1234/qwer/asdf/zxcv = grid, F1-F4 = top buttons, [ ] , . = knobs.");
 
-    let manifests = manifest::discover(Path::new(APPS_DIR));
+    let sd_apps = manifest::sd_apps_dir();
+    let manifests = manifest::discover_all(&[Path::new(APPS_DIR), sd_apps.as_path()]);
     println!("Found {} app manifest(s) in {APPS_DIR}", manifests.len());
-    let registry = Registry::new(
+    let note_bus = Arc::new(note_bus::NoteBus::new());
+    // MIDI output ports become instruments any app can play.
+    midi_devices::spawn(Arc::clone(&note_bus));
+    // The I/O cards in the slots: read their EEPROMs and put their
+    // inputs and outputs on the buses (see io_cards.rs). The first audio
+    // card's input carries the computer's audio input in the sim.
+    let io_cards = Arc::new(io_cards::IoCards::boot(&audio_bus, &modbus, Some(&note_bus)));
+    audio_host.attach_input(io_cards.host_input.clone().unwrap_or_else(|| audio_bus.register("Hardware input")));
+    let mut context = registry::standard_context(
         Arc::clone(&cutoff),
         Arc::clone(&device_state),
         Arc::clone(&sensitivity),
@@ -238,7 +260,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&midi_map),
         Arc::clone(&accent),
         Arc::clone(&background),
+        Arc::clone(&note_bus),
     );
+    context.provide(Arc::clone(&io_cards));
+    let registry = Registry::new(context);
     let mut apps = registry.build(&manifests);
 
     // Register every app's processor into the mix bus exactly once,
@@ -435,6 +460,10 @@ fn handle_midi_message(
     midi_map: &Arc<midi_map::MidiMap>,
     modbus: &Arc<ModBus>,
 ) {
+    // Clock, Start/Stop and Song Position go to the shared transport.
+    if crate::clock::Clock::shared().midi_message(message) {
+        return;
+    }
     if message.len() < 2 {
         return;
     }
@@ -452,6 +481,9 @@ fn handle_midi_message(
                 if is_on {
                     controller.set_top(i);
                 }
+            } else if controller.play_surface_midi(message[0], data1, data2) {
+                // A play-surface app (see App::play_surface) gets the
+                // real note and velocity instead of the 16-pad fold.
             } else if let Some(i) = fallback_grid_pad(data1) {
                 // Not one of the Push 2 pads/top buttons `GRID_NOTES`/
                 // `TOP_NOTES` were hand-tuned for -- still play it
@@ -468,8 +500,13 @@ fn handle_midi_message(
                 eprintln!("midi: unmapped note {data1} (on={is_on})");
             }
         }
+        0xD0 | 0xE0 => {
+            controller.play_surface_midi(message[0], data1, data2);
+        }
         0xB0 => {
             if data1 == 1 {
+                // Also the play-surface app's mod wheel, when one is on screen.
+                controller.play_surface_midi(message[0], data1, data2);
                 // Mod wheel -- map 0-127 to a 100 Hz - 8000 Hz cutoff range, log scale
                 let cc_value = data2 as f32 / 127.0;
                 let hz = 100.0 * (80.0f32).powf(cc_value);

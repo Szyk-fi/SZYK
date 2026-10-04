@@ -1,2 +1,10 @@
 id = "forge"
 name = "Forge"
+category = "instrument"
+description = "Turn recorded sounds into playable, editable instruments."
+audio_outputs = ["Forge"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Forge Level",
+]

@@ -1,0 +1,9 @@
+id = "tempo"
+name = "Tempo"
+category = "utility"
+description = "The device clock: tempo, tap tempo, play/stop for everything that follows it, a metronome, and MIDI clock in and out."
+audio_outputs = ["Tempo"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Tempo Level",
+]

@@ -38,7 +38,7 @@ slint::slint! {
         in-out property <[string]> apps: [
             "Bloom", "Cascade", "Clouds", "CV Out", "Madness", "Mixer", "Nebula",
             "Pam's Workout", "Plaits", "Prism", "Sequencer", "Settings",
-            "Singularity", "Tape", "Voltage",
+            "Singularity", "Studio", "Voltage",
         ];
         in-out property <int> selected: 0;
 

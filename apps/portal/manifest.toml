@@ -1,2 +1,12 @@
 id = "portal"
 name = "Portal"
+module = "collection"
+category = "utility"
+description = "Patch audio, modulation and notes between your apps and devices."
+audio_outputs = ["Portal", "Portal Aux 1", "Portal Aux 2", "Portal Aux 3", "Portal Aux 4"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Portal Level",
+    "Portal: LFO 1 rate",
+    "Portal: LFO 2 rate",
+]

@@ -1,0 +1,34 @@
+{
+  "name": "Karplus Harp",
+  "kind": "instrument",
+  "description": "Plucked strings from noise bursts in a tuned resonator, with a wooden body and hall.",
+  "voices": 10,
+  "amp_env": false,
+  "params": [
+    {"id": "bright", "name": "Brightness", "min": 0, "max": 1, "default": 0.6, "page": 1},
+    {"id": "sustain", "name": "Ring", "min": 0.9, "max": 0.999, "default": 0.985, "page": 1},
+    {"id": "pick", "name": "Pick", "min": 0.0005, "max": 0.03, "default": 0.004, "curve": "exp", "unit": "s", "page": 1},
+    {"id": "body", "name": "Body", "min": 300, "max": 12000, "default": 3500, "curve": "exp", "unit": "Hz", "page": 1},
+    {"id": "space", "name": "Space", "min": 0, "max": 1, "default": 0.35, "page": 2},
+    {"id": "roomsize", "name": "Room", "min": 0.3, "max": 0.97, "default": 0.75, "page": 2},
+    {"id": "width", "name": "Width", "min": 0, "max": 1, "default": 0.5, "page": 2}
+  ],
+  "macros": [
+    {"name": "Nylon", "targets": [{"param": "bright", "amount": -0.4}, {"param": "body", "amount": -0.3}]},
+    {"name": "Steel", "targets": [{"param": "bright", "amount": 0.4}, {"param": "sustain", "amount": 0.3}]},
+    {"name": "Hall", "targets": [{"param": "space", "amount": 0.5}, {"param": "roomsize", "amount": 0.3}]},
+    {"name": "Strum", "targets": [{"param": "pick", "amount": 0.5}, {"param": "width", "amount": 0.4}]}
+  ],
+  "voice": [
+    {"id": "burst", "type": "ad", "in": {"a": 0.0005, "d": "pick"}},
+    {"id": "exc", "type": "noise", "color": "white"},
+    {"id": "str", "type": "comb", "in": {"in": "exc * burst", "freq": "pitch", "fb": "sustain", "damp": "1 - bright"}},
+    {"id": "bod", "type": "filter", "mode": "lp", "in": {"in": "str", "cutoff": "body", "res": 0.3}}
+  ],
+  "voice_out": "bod * 0.5",
+  "global": [
+    {"id": "rev", "type": "reverb", "in": {"in": "voices", "size": "roomsize", "damp": 0.5, "mod": 0.2}},
+    {"id": "haas", "type": "delay", "max": 0.1, "in": {"in": "voices", "time": "0.001 + width * 0.018", "fb": 0}}
+  ],
+  "out": {"left": "voices + rev * space", "right": "haas + rev * space * 0.95"}
+}

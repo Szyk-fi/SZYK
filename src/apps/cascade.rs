@@ -35,6 +35,7 @@
 //! the module-level `dx7_presets/README.md` for exactly what that
 //! import can and can't carry over given the simplifications above.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes};
 use crate::app::{App, Input};
 use crate::arpeggiator::{Arpeggiator, PATTERN_NAMES as ARP_PATTERN_NAMES};
 use crate::audio::AudioProcessor;
@@ -43,7 +44,7 @@ use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
-use crate::util::{accelerate, AtomicF32};
+use crate::util::{accelerate, note_name, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -404,6 +405,71 @@ pub struct CascadeApp {
     /// apply it (same "press to act" idiom as every other load/action
     /// leaf in this build).
     preset_browse: usize,
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// One play-view control: either a menu leaf (label/value/edit/reset come
+/// from the menu's own code) or the play view's preset stepper.
+#[derive(Clone, Copy, PartialEq)]
+enum Control {
+    Leaf(Selection),
+    /// Steps through every imported patch across banks *and loads it* --
+    /// on the play view a D-pad press should be heard, not previewed the
+    /// way the menu's Preset row (turn to browse, press to load) works.
+    Preset,
+}
+
+/// The play view's controls, most important first. Op 2's level is the
+/// modulation index into Op 1 in the default Stack and in DX7 algorithms
+/// 1-2 (and most others route Op 2 into a carrier), so it's the closest
+/// single "brightness" a 6-op patch has; feedback is the other timbre
+/// move. The envelope, the LFO (the DX7's mod wheel drives LFO depth),
+/// then deeper operator edits and the patch-level choices.
+const CONTROLS: [(Control, &str); 16] = [
+    (Control::Leaf(Selection::OpLevel(1)), "Op2 Level"),
+    (Control::Leaf(Selection::Feedback), "Feedback"),
+    (Control::Leaf(Selection::Attack), "Attack"),
+    (Control::Leaf(Selection::Release), "Release"),
+    (Control::Leaf(Selection::Decay), "Decay"),
+    (Control::Leaf(Selection::Sustain), "Sustain"),
+    (Control::Leaf(Selection::LfoDepth), "LFO Depth"),
+    (Control::Leaf(Selection::LfoRate), "LFO Rate"),
+    (Control::Leaf(Selection::OpRatio(1)), "Op2 Ratio"),
+    (Control::Leaf(Selection::OpLevel(2)), "Op3 Level"),
+    (Control::Leaf(Selection::OpRatio(2)), "Op3 Ratio"),
+    (Control::Leaf(Selection::OpRatio(0)), "Op1 Ratio"),
+    (Control::Leaf(Selection::Algorithm), "Algorithm"),
+    (Control::Leaf(Selection::Octave), "Octave"),
+    (Control::Leaf(Selection::ArpOn), "Arp"),
+    (Control::Preset, "Preset"),
+];
+const C_OP2_LEVEL: usize = 0;
+const C_FEEDBACK: usize = 1;
+const C_LFO_DEPTH: usize = 6;
+const C_OP3_LEVEL: usize = 9;
+const C_PRESET: usize = 15;
+/// Octave range the play view's dial and moments use; the menu's own
+/// Octave row is unbounded (note_for clamps), so this only bounds the
+/// dial's position.
+const OCTAVE_SPAN: i32 = 4;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "cascade",
+        layers: vec![Layer::Native(0, "KEYS"), Layer::Controls, Layer::Moments],
+        hero: vec![[C_OP2_LEVEL, C_FEEDBACK], [2, 3], [4, 5], [C_LFO_DEPTH, 7]],
+        // D-pad steps (and loads) the imported DX7 patches; with no
+        // patches on disk it steps the algorithm instead (see Control::Preset).
+        browse: Some(C_PRESET),
+        // Stick X sweeps the modulation index (the FM "wah"), Y is the
+        // DX7's own mod-wheel job, LFO depth; hands add feedback grit and
+        // Op 3's level.
+        routes: Routes { stick_x: Some(C_OP2_LEVEL), stick_y: Some(C_LFO_DEPTH), hand_l: Some(C_FEEDBACK), hand_r: Some(C_OP3_LEVEL) },
+        throws: Vec::new(),
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Cascade's own palette: icy glass-blue on deep navy, not a
@@ -430,6 +496,7 @@ impl CascadeApp {
             banks,
             bank_browse: 0,
             preset_browse: 0,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -720,8 +787,164 @@ impl CascadeApp {
     }
 }
 
+impl CascadeApp {
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        // Ranges are exactly what `edit` clamps each one to.
+        match CONTROLS[i % 16].0 {
+            Control::Leaf(Selection::OpLevel(op)) => Knob::F(&p.ops[op].level, 0.0, 1.0),
+            Control::Leaf(Selection::OpRatio(op)) => Knob::F(&p.ops[op].ratio, MIN_RATIO, MAX_RATIO),
+            Control::Leaf(Selection::Feedback) => Knob::F(&p.feedback, 0.0, 1.0),
+            Control::Leaf(Selection::Attack) => Knob::F(&p.attack, 0.0, 1.0),
+            Control::Leaf(Selection::Decay) => Knob::F(&p.decay, 0.0, 1.0),
+            Control::Leaf(Selection::Sustain) => Knob::F(&p.sustain, 0.0, 1.0),
+            Control::Leaf(Selection::Release) => Knob::F(&p.release, 0.0, 1.0),
+            Control::Leaf(Selection::LfoDepth) => Knob::F(&p.lfo_depth, 0.0, 1.0),
+            Control::Leaf(Selection::LfoRate) => Knob::F(&p.lfo_rate, MIN_LFO_RATE, MAX_LFO_RATE),
+            Control::Leaf(Selection::Algorithm) => Knob::U(&p.algorithm, ALGORITHMS.len() as u32),
+            Control::Leaf(Selection::Octave) => Knob::I(&p.octave, -OCTAVE_SPAN, OCTAVE_SPAN),
+            Control::Leaf(Selection::ArpOn) => Knob::B(&p.arp.enabled),
+            // The preset is an action (load a whole patch), not a
+            // position: moments capture the patch's values instead.
+            _ => Knob::None,
+        }
+    }
+
+    fn octave(&self) -> i32 {
+        self.params.octave.load(Ordering::Relaxed)
+    }
+
+    fn pad_note(&self, pad: usize) -> i32 {
+        note_for(pad_rank(pad as i32), self.octave())
+    }
+
+    /// Steps the browse position through every patch, rolling over into
+    /// the next/previous bank at either end, and loads where it lands.
+    fn step_and_load_preset(&mut self, delta: i32) {
+        if self.banks.is_empty() {
+            return;
+        }
+        for _ in 0..delta.unsigned_abs() {
+            let len = self.banks[self.bank_browse].preset_indices.len() as i32;
+            let next = self.preset_browse as i32 + delta.signum();
+            if (0..len).contains(&next) {
+                self.preset_browse = next as usize;
+            } else {
+                // Skip empty banks so a step always lands on a patch.
+                for _ in 0..self.banks.len() {
+                    self.bank_browse = (self.bank_browse as i32 + delta.signum()).rem_euclid(self.banks.len() as i32) as usize;
+                    if !self.banks[self.bank_browse].preset_indices.is_empty() {
+                        break;
+                    }
+                }
+                let len = self.banks[self.bank_browse].preset_indices.len();
+                self.preset_browse = if delta > 0 { 0 } else { len.saturating_sub(1) };
+            }
+        }
+        if let Some(idx) = self.selected_preset_index() {
+            self.load_preset(idx);
+        }
+    }
+}
+
+impl PlayHost for CascadeApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match CONTROLS[i % 16] {
+            (Control::Preset, _) if self.presets.is_empty() => "Algorithm".into(),
+            (_, label) => label.into(),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        match CONTROLS[i % 16].0 {
+            Control::Leaf(sel) => self.leaf_value(sel),
+            Control::Preset if self.presets.is_empty() => self.leaf_value(Selection::Algorithm),
+            Control::Preset => self.leaf_value(Selection::Preset),
+        }
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        match CONTROLS[i % 16].0 {
+            Control::Leaf(sel) => self.edit(sel, delta),
+            // No patches on disk: the algorithm is the next most useful
+            // thing to flick through.
+            Control::Preset if self.presets.is_empty() => self.edit(Selection::Algorithm, delta),
+            Control::Preset => self.step_and_load_preset(delta),
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        match CONTROLS[i % 16].0 {
+            Control::Leaf(sel) => self.reset(sel),
+            // The menu's own meaning: reload the selected patch.
+            Control::Preset => self.reset(Selection::Preset),
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    /// A key plays the pad with its pitch; keys outside the pads'
+    /// 16-semitone window fold into it by octaves (each pad is one fixed
+    /// voice, so the window itself can't move per key).
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        let d = note as i32 - note_for(0, self.octave());
+        let rank = if (0..16).contains(&d) { d } else { d.rem_euclid(12) };
+        Some(pad_rank(rank) as usize)
+    }
+    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+        note_name(self.pad_note(pad))
+    }
+    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if held {
+            PadColor::Green
+        } else if self.pad_note(pad).rem_euclid(12) == 0 {
+            PadColor::Blue
+        } else {
+            PadColor::Off
+        }
+    }
+    fn kit_line(&self) -> String {
+        let held = *self.params.held.lock().unwrap();
+        let notes: Vec<String> = (0..16).filter(|&i| held[i]).take(4).map(|i| note_name(self.pad_note(i))).collect();
+        if notes.is_empty() { self.kit_value(C_PRESET) } else { notes.join(" ") }
+    }
+}
+
 impl App for CascadeApp {
     fn supports_pad_lock(&self) -> bool { true }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+    /// F3 runs the arpeggiator over the held pads (it was only reachable
+    /// from the menu's Arp group before).
+    fn running(&self) -> Option<bool> {
+        Some(self.params.arp.enabled.load(Ordering::Relaxed))
+    }
+    fn transport_action(&self) -> Option<&'static str> {
+        Some(if self.params.arp.enabled.load(Ordering::Relaxed) { "ARP OFF" } else { "ARP" })
+    }
+    fn toggle_running(&mut self) {
+        let on = !self.params.arp.enabled.load(Ordering::Relaxed);
+        self.params.arp.enabled.store(on, Ordering::Relaxed);
+        self.kit.flash(if on { "Arp on: hold some pads" } else { "Arp off" });
+    }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
@@ -746,6 +969,13 @@ impl App for CascadeApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach the voices only on KEYS (kit
+        // layers hand back an empty grid).
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -806,7 +1036,15 @@ impl App for CascadeApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, CASCADE_BG, CASCADE_DIM, CASCADE_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, CASCADE_BG, CASCADE_DIM, CASCADE_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Ends at x=352, left of the operator graph (text from x=360)
+            // -- the same boundary `list_text_never_reaches_the_operator_graph`
+            // holds the menu list to.
+            let pal = kit::draw::Palette { bg: CASCADE_BG, ink: CASCADE_TITLE, accent: CASCADE_ACCENT, dim: CASCADE_DIM, faint: CASCADE_LINE };
+            kit::draw::column(fb, &col, 16, 40, 336, 290, pal);
+        }
 
         // --- Right: the current algorithm's operator routing, drawn
         // as a small node graph -- carriers on the bottom row, higher
@@ -833,13 +1071,14 @@ impl App for CascadeApp {
         }
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
+            _ if !self.kit.menu => "L/R: dial (SELECT: next)   U/D: preset   F2: pads   F3: arp   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
             Some(Row::Leaf(Selection::Bank)) => format!("knob2: browse banks ({}/{})", self.bank_browse + 1, self.banks.len().max(1)),
             Some(Row::Leaf(Selection::Preset)) => {
                 let count = self.banks.get(self.bank_browse).map(|b| b.preset_indices.len()).unwrap_or(0).max(1);
                 format!("knob2: browse presets ({}/{count})   press knob2: load", self.preset_browse + 1)
             }
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -1771,6 +2010,62 @@ mod tests {
         }
         assert!(checked > 0);
     }
+
+    fn app() -> CascadeApp {
+        CascadeApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(6.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()))
+    }
+
+    #[test]
+    fn opens_playable_knob1_is_the_modulation_index_and_pads_still_play() {
+        let mut a = app();
+        assert!(a.play_column().is_some(), "play view first");
+        let level = a.params.ops[1].level.get();
+        a.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(a.params.ops[1].level.get() > level, "knob 1 is Op 2's level on the play view");
+        a.tick(&Input { grid: std::array::from_fn(|i| i == 12), ..Default::default() });
+        assert!(a.params.held.lock().unwrap()[12], "KEYS layer plays the pads");
+        let mut proc = a.audio_processor().unwrap();
+        let mut buffer = vec![0.0f32; 512 * 2];
+        let mut peak = 0.0f32;
+        for _ in 0..10 {
+            proc.process(&mut buffer, 2, 48000.0);
+            peak = peak.max(buffer.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+        }
+        assert!(peak > 0.01, "a pad held through tick() is audible, got {peak}");
+        a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(a.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    /// D-pad up loads the next patch outright (or steps the algorithm
+    /// when this checkout has no patches).
+    #[test]
+    fn d_pad_steps_and_loads_presets() {
+        let mut a = app();
+        if a.presets.is_empty() {
+            let algo = a.params.algorithm.load(Ordering::Relaxed);
+            a.tick(&Input { navigation_steps: -1, ..Default::default() });
+            assert_eq!(a.params.algorithm.load(Ordering::Relaxed), algo + 1);
+            return;
+        }
+        a.tick(&Input { navigation_steps: -1, ..Default::default() });
+        let idx = a.selected_preset_index().unwrap();
+        let want = a.presets[idx].clone();
+        assert_eq!(a.params.algorithm.load(Ordering::Relaxed), want.algorithm, "the stepped-to patch is loaded");
+        assert!((a.params.ops[0].ratio.get() - want.op_ratio[0]).abs() < 1e-6);
+        // Stepping back from the very first patch wraps instead of sticking.
+        a.bank_browse = 0;
+        a.preset_browse = 0;
+        a.tick(&Input { navigation_steps: 1, ..Default::default() });
+        assert!(a.selected_preset_index().is_some());
+    }
+
+    #[test]
+    fn f3_runs_the_arp() {
+        let mut a = app();
+        a.toggle_running();
+        assert_eq!(a.running(), Some(true));
+        assert!(a.params.arp.enabled.load(Ordering::Relaxed));
+    }
 }
 
 #[cfg(test)]
@@ -1832,4 +2127,11 @@ mod review_audio {
             report.push_str(&format!("{actual},{variant},{peak:.6},{rms:.6},{},48000,0.6\n",samples.len()));
         }}std::fs::write(dir.join("measurements.csv"),report).unwrap();
     }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(CascadeApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

@@ -33,6 +33,7 @@
 //! ModBus exactly like every other audio-producing app -- Clouds or
 //! Prism can granulate this generative texture same as anything else.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, ROOT_NAMES, SCALE_TYPES};
 use crate::audio::AudioProcessor;
@@ -40,6 +41,7 @@ use crate::audio_bus::AudioBus;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
+use crate::note_bus::{NoteBus, NoteOut, NoteRoute};
 use crate::paramlist::ParamList;
 use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
@@ -176,6 +178,8 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
+    /// Where captures play: Nebula's own voices, another app, or nothing.
+    Plays,
     Running,
     ParticleCount,
     Gravity,
@@ -291,6 +295,72 @@ pub struct NebulaApp {
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
     rng: u32,
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+    note_route: NoteRoute,
+    note_out: Option<NoteOut>,
+}
+
+/// The play view's controls, most important first: the three physics
+/// knobs that decide how the dust moves and how often it falls into a
+/// well, then the voice, then the note mapping and wells on the upper
+/// pads of the Controls layer. (Randomize stays a menu action: it's a
+/// reseed, not a setting a pad or moment could hold.)
+const CONTROLS: [Selection; 16] = [
+    Selection::Gravity,
+    Selection::Damping,
+    Selection::CaptureRadius,
+    Selection::Timbre,
+    Selection::Harmonics,
+    Selection::Decay,
+    Selection::VelMin,
+    Selection::VelMax,
+    Selection::ParticleCount,
+    Selection::Engine,
+    Selection::Scale,
+    Selection::Root,
+    Selection::OctaveRange,
+    Selection::WellActive(0),
+    Selection::WellActive(1),
+    Selection::WellActive(2),
+];
+const C_GRAVITY: usize = 0;
+const C_DAMPING: usize = 1;
+const C_CAPTURE: usize = 2;
+const C_TIMBRE: usize = 3;
+const C_DECAY: usize = 5;
+const C_PARTICLES: usize = 8;
+const C_ENGINE: usize = 9;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "nebula",
+        // Nebula never used the pads, so there's no native layer to keep;
+        // Throws lets them grab the physics for a moment and let go.
+        // Throws first: on Controls, knob 2 follows the grabbed pad
+        // instead of the hero pair, which is the wrong default.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_GRAVITY, C_DAMPING], [C_CAPTURE, C_TIMBRE], [4, C_DECAY], [6, 7]],
+        // The engine is the one choice that changes what every capture
+        // sounds like.
+        browse: Some(C_ENGINE),
+        // Stick: gravity on X (how hard the wells pull), damping on Y
+        // (wild and orbiting vs. settling down). Hands: capture radius
+        // (how often a pass becomes a note -- the density) and timbre.
+        routes: Routes { stick_x: Some(C_GRAVITY), stick_y: Some(C_DAMPING), hand_l: Some(C_CAPTURE), hand_r: Some(C_TIMBRE) },
+        throws: vec![
+            Throw { control: C_GRAVITY, to: 1.0, label: "PULL" },
+            Throw { control: C_GRAVITY, to: 0.0, label: "FLOAT" },
+            Throw { control: C_DAMPING, to: 0.0, label: "WILD" },
+            Throw { control: C_DAMPING, to: 1.0, label: "SETTLE" },
+            Throw { control: C_CAPTURE, to: 1.0, label: "CATCH" },
+            Throw { control: C_CAPTURE, to: 0.0, label: "MISS" },
+            Throw { control: C_TIMBRE, to: 1.0, label: "BRIGHT" },
+            Throw { control: C_DECAY, to: 1.0, label: "LONG" },
+        ],
+        midi_to_pads: false,
+        own_expression: false,
+    }
 }
 
 impl NebulaApp {
@@ -306,7 +376,18 @@ impl NebulaApp {
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
             rng: seed | 1,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+            note_route: NoteRoute::new(None, "Nebula", "nebula", true).0,
+            note_out: None,
         }
+    }
+
+    /// Lets Nebula play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
+        let (route, out) = NoteRoute::new(bus, "Nebula", "nebula", true);
+        self.note_route = route;
+        self.note_out = Some(out);
+        self
     }
 
     fn next_rand01(&mut self) -> f32 {
@@ -339,7 +420,7 @@ impl NebulaApp {
                 }
                 v
             }
-            1 => vec![Selection::Scale, Selection::Root, Selection::OctaveRange, Selection::VelMin, Selection::VelMax],
+            1 => vec![Selection::Plays, Selection::Scale, Selection::Root, Selection::OctaveRange, Selection::VelMin, Selection::VelMax],
             _ => vec![Selection::Engine, Selection::Harmonics, Selection::Timbre, Selection::Decay, Selection::Randomize],
         }
     }
@@ -381,6 +462,7 @@ impl NebulaApp {
 
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
+            Selection::Plays => "Plays".into(),
             Selection::Running => "Running".into(),
             Selection::ParticleCount => "Particles".into(),
             Selection::Gravity => "Gravity".into(),
@@ -402,6 +484,7 @@ impl NebulaApp {
 
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
+            Selection::Plays => self.note_route.label(),
             Selection::Running => {
                 if self.params.running.load(Ordering::Relaxed) { "running".into() } else { "stopped".into() }
             }
@@ -424,7 +507,7 @@ impl NebulaApp {
             Selection::Harmonics => format!("{:.2}", self.params.harmonics.get()),
             Selection::Timbre => format!("{:.2}", self.params.timbre.get()),
             Selection::Decay => format!("{:.2}", self.params.decay.get()),
-            Selection::Randomize => "press knob2".into(),
+            Selection::Randomize => "hold SELECT".into(),
         }
     }
 
@@ -435,6 +518,7 @@ impl NebulaApp {
         let sensitivity = self.sensitivity.get();
         let step = delta.signum();
         match sel {
+            Selection::Plays => self.note_route.step(step),
             Selection::Running => self.params.running.store(delta > 0, Ordering::Relaxed),
             Selection::ParticleCount => {
                 let cur = self.params.particle_count.load(Ordering::Relaxed) as i32;
@@ -476,6 +560,7 @@ impl NebulaApp {
 
     fn reset(&mut self, sel: Selection) {
         match sel {
+            Selection::Plays => self.note_route.reset(),
             Selection::Running => self.params.running.store(false, Ordering::Relaxed),
             Selection::ParticleCount => self.params.particle_count.store(DEFAULT_PARTICLES, Ordering::Relaxed),
             Selection::Gravity => self.params.gravity.set(DEFAULT_GRAVITY),
@@ -556,7 +641,92 @@ impl NebulaApp {
     }
 }
 
+impl NebulaApp {
+    /// Ranges match `edit()`'s clamps exactly. Particles is an
+    /// `AtomicUsize` (no `Knob` variant), handled by hand in `PlayHost`.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % 16] {
+            Selection::Gravity => Knob::F(&p.gravity, MIN_GRAVITY, MAX_GRAVITY),
+            Selection::Damping => Knob::F(&p.damping, MIN_DAMPING, MAX_DAMPING),
+            Selection::CaptureRadius => Knob::F(&p.capture_radius, MIN_CAPTURE_RADIUS, MAX_CAPTURE_RADIUS),
+            Selection::Timbre => Knob::F(&p.timbre, 0.0, 1.0),
+            Selection::Harmonics => Knob::F(&p.harmonics, 0.0, 1.0),
+            Selection::Decay => Knob::F(&p.decay, 0.0, 1.0),
+            Selection::VelMin => Knob::F(&p.vel_min, 0.0, 1.0),
+            Selection::VelMax => Knob::F(&p.vel_max, 0.0, 1.0),
+            Selection::Engine => Knob::U(&p.engine, ENGINE_NAMES.len() as u32),
+            Selection::Scale => Knob::U(&p.scale, SCALE_TYPES.len() as u32),
+            Selection::Root => Knob::U(&p.root, 12),
+            Selection::OctaveRange => Knob::UR(&p.octave_range, MIN_OCTAVE_RANGE, MAX_OCTAVE_RANGE),
+            Selection::WellActive(w) => Knob::B(&p.well_active[w]),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for NebulaApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match CONTROLS[i % 16] {
+            Selection::WellActive(w) => format!("Well {}", w + 1),
+            sel => self.leaf_name(sel),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % 16])
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        if i == C_PARTICLES {
+            let n = self.params.particle_count.load(Ordering::Relaxed).clamp(MIN_PARTICLES, MAX_PARTICLES);
+            return Some((n - MIN_PARTICLES) as f32 / (MAX_PARTICLES - MIN_PARTICLES) as f32);
+        }
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        i == C_PARTICLES || self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % 16], delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % 16]);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        if i == C_PARTICLES {
+            let n = MIN_PARTICLES + (v.clamp(0.0, 1.0) * (MAX_PARTICLES - MIN_PARTICLES) as f32).round() as usize;
+            self.params.particle_count.store(n, Ordering::Relaxed);
+            return;
+        }
+        self.knob(i).set(v);
+    }
+    fn kit_line(&self) -> String {
+        let n = self.params.particle_count.load(Ordering::Relaxed);
+        let wells = (0..NUM_WELLS).filter(|&w| self.params.well_active[w].load(Ordering::Relaxed)).count();
+        let running = self.params.running.load(Ordering::Relaxed);
+        format!("{n} dust, {wells} wells{}", if running { "" } else { "  F3: run" })
+    }
+}
+
 impl App for NebulaApp {
+    fn play_surface(&self) -> bool {
+        true
+    }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
     }
@@ -584,6 +754,12 @@ impl App for NebulaApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -610,6 +786,8 @@ impl App for NebulaApp {
             vy: [0.0; MAX_PARTICLES],
             cooldown: [0.0; MAX_PARTICLES],
             mono_buf: Vec::new(),
+            notes: self.note_out.take().unwrap_or_else(NoteOut::detached),
+            sample_rate: 48_000.0,
         }))
     }
 
@@ -636,7 +814,13 @@ impl App for NebulaApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, NEBULA_ACCENT, NEBULA_DIM, NEBULA_CHIP_BG);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, NEBULA_ACCENT, NEBULA_DIM, NEBULA_CHIP_BG);
+        } else if let Some(col) = self.play_column() {
+            // Ends at x=366, clear of the arena (its left edge is x=395).
+            let pal = kit::draw::Palette { bg: NEBULA_BG, ink: NEBULA_TITLE, accent: NEBULA_ACCENT, dim: NEBULA_DIM, faint: NEBULA_CHIP_BG };
+            kit::draw::column(fb, &col, 16, 40, 350, 280, pal);
+        }
 
         // --- Right: the arena -- boundary circle, wells, particles. ---
         let center = Point::new(500, 175);
@@ -689,8 +873,9 @@ impl App for NebulaApp {
             .ok();
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: gravity/damping   U/D: engine   F2: pads   F3: run   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -727,9 +912,22 @@ struct NebulaProcessor {
     /// well's capture radius would fire every single sample.
     cooldown: [f32; MAX_PARTICLES],
     mono_buf: Vec<f32>,
+    notes: NoteOut,
+    sample_rate: f32,
 }
 
 impl NebulaProcessor {
+    /// A capture's note: on Nebula's own voices, or sent to another app
+    /// (held for the Decay time), or nowhere.
+    fn play(&mut self, note: f32, velocity: f32) {
+        if self.notes.internal() {
+            self.trigger_note(note, velocity);
+        } else if self.notes.external() {
+            let gate = (0.05 + self.params.decay.get() * 0.95) * self.sample_rate;
+            self.notes.trigger(note.clamp(0.0, 127.0) as u8, (velocity * 127.0).clamp(1.0, 127.0) as u8, gate as u32);
+        }
+    }
+
     fn trigger_note(&mut self, note: f32, velocity: f32) {
         self.voice_gen += 1;
         let idx = self.voices.iter().enumerate().min_by_key(|(_, v)| v.last_used).map(|(i, _)| i).unwrap_or(0);
@@ -747,6 +945,8 @@ impl AudioProcessor for NebulaProcessor {
         self.mono_buf.clear();
         self.mono_buf.resize(frames, 0.0);
         let dt = 1.0 / sample_rate;
+        self.sample_rate = sample_rate;
+        self.notes.advance(frames as u32);
 
         if self.params.running.load(Ordering::Relaxed) {
             let n = self.params.particle_count.load(Ordering::Relaxed).clamp(MIN_PARTICLES, MAX_PARTICLES);
@@ -811,7 +1011,7 @@ impl AudioProcessor for NebulaProcessor {
                         let degree_pos = ((w as f32 / NUM_WELLS as f32) * total_positions as f32) as usize % total_positions;
                         let note = note_for_position(degree_pos, scale_idx, root) as f32 + (norm_speed * 4.0).round();
                         let velocity = vmin + norm_speed * (vmax - vmin);
-                        self.trigger_note(note, velocity);
+                        self.play(note, velocity);
                         self.params.last_fired_well.store(w, Ordering::Relaxed);
                     } else {
                         vx += ax * dt;
@@ -935,6 +1135,8 @@ mod tests {
             vy: [0.0; MAX_PARTICLES],
             cooldown: [0.0; MAX_PARTICLES],
             mono_buf: Vec::new(),
+            notes: NoteOut::detached(),
+            sample_rate: 48_000.0,
         }
     }
 
@@ -1090,4 +1292,37 @@ mod tests {
         let params = Params::new(&modbus, &audio_bus, &mixer_bus);
         assert!(!params.running.load(Ordering::Relaxed), "Nebula must start stopped, not running");
     }
+
+    #[test]
+    fn opens_playable_knob1_is_gravity_and_r1_opens_the_menu() {
+        let mut app = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let gravity = app.params.gravity.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.gravity.get() > gravity, "knob 1 is Gravity on the play view");
+        let engine = app.params.engine.load(Ordering::Relaxed);
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.params.engine.load(Ordering::Relaxed), (engine + 1) % ENGINE_NAMES.len() as u32, "D-pad up = next engine");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn throws_grab_the_physics_and_spring_back() {
+        let mut app = new_app();
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        let gravity = app.params.gravity.get();
+        let pull = Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0)), ..Default::default() };
+        app.tick(&pull);
+        assert!((app.params.gravity.get() - MAX_GRAVITY).abs() < 1e-5, "PULL holds Gravity at max");
+        app.tick(&Input::default());
+        assert!((app.params.gravity.get() - gravity).abs() < 1e-5, "released, Gravity springs back");
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(NebulaApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }

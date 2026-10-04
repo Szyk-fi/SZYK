@@ -72,6 +72,10 @@ fn fallback_grid_pad(note: u8) -> Option<usize> {
 }
 
 fn handle_midi_message(message: &[u8], controller: &Arc<ControllerState>, midi_map: &Arc<crate::midi_map::MidiMap>, modbus: &Arc<crate::modbus::ModBus>) {
+    // Clock, Start/Stop and Song Position go to the shared transport.
+    if crate::clock::Clock::shared().midi_message(message) {
+        return;
+    }
     if message.len() < 2 {
         return;
     }
@@ -88,12 +92,15 @@ fn handle_midi_message(message: &[u8], controller: &Arc<ControllerState>, midi_m
                 if is_on {
                     controller.set_top(i);
                 }
+            } else if controller.play_surface_midi(message[0], data1, data2) {
+                // a play-surface app gets the real note + velocity
             } else if let Some(i) = fallback_grid_pad(data1) {
                 controller.grid[i].store(is_on, Ordering::Relaxed);
             } else {
                 eprintln!("midi: unmapped note {data1} (on={is_on})");
             }
         }
+        0xB0 | 0xD0 | 0xE0 if controller.play_surface_midi(message[0], data1, data2) => {}
         0xB0 => {
             if data1 == KNOB1_CC {
                 controller.add_knob1_delta(decode_relative(data2));

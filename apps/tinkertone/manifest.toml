@@ -1,0 +1,13 @@
+id = "tinkertone"
+name = "Tinkertone"
+category = "instrument"
+description = "An early-80s home keyboard with bass, rhythms and your own bass line."
+audio_outputs = ["Tinkertone"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Tinkertone Level",
+    "Tinkertone: Volume",
+    "Tinkertone: Accomp Volume",
+    "Tinkertone: Tempo",
+]

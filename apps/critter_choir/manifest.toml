@@ -1,0 +1,9 @@
+id = "critter_choir"
+name = "Critter Choir"
+category = "kids"
+description = "Ages 6-9. A farm choir and a pond choir: each column of pads is an animal that sings."
+audio_outputs = ["Critter Choir"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Critter Choir Level",
+]

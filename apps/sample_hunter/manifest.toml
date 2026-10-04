@@ -1,2 +1,10 @@
 id = "sample_hunter"
 name = "Sample Hunter"
+module = "collection"
+category = "library"
+description = "Capture a sound and turn it into an instrument."
+audio_outputs = ["Sample Hunter"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Sample Hunter Level",
+]

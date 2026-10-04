@@ -1,2 +1,16 @@
 id = "fracture"
 name = "Fracture"
+module = "collection"
+category = "effect"
+description = "Break a source into rhythmic fragments."
+audio_outputs = ["Fracture"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Fracture Level",
+    "Fracture: Slice seconds",
+    "Fracture: Repeats",
+    "Fracture: Reverse",
+    "Fracture: Pitch semitones",
+    "Fracture: Scatter",
+    "Fracture: Wet",
+]

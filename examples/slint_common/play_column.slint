@@ -1,0 +1,217 @@
+// The shared play column (src/play_kit.rs): it stands where the
+// parameter list normally is, for every app on its play view. Same
+// layout in every app -- layer, four dials with knob badges, the 16 pads
+// labelled for the current layer and coloured like the controller LEDs,
+// then the stick and both hands -- so moving between apps never means
+// relearning where things are. Colours come from each app's palette.
+
+component MiniDial inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <float> norm;
+    in property <int> knob;
+    in property <color> ink;
+    in property <color> accent;
+    in property <color> paper;
+    property <float> n: max(0.002, min(1, root.norm));
+    property <angle> a1: 135deg + 270deg * self.n;
+    HorizontalLayout {
+        spacing: 5px;
+        Rectangle {
+            width: 34px;
+            Path {
+                width: 34px; height: 34px;
+                viewbox-width: 34; viewbox-height: 34;
+                stroke: root.ink.with-alpha(0.14);
+                stroke-width: 4px;
+                MoveTo { x: 17 + 13 * Math.cos(135deg); y: 17 + 13 * Math.sin(135deg); }
+                ArcTo { radius-x: 13; radius-y: 13; x: 17 + 13 * Math.cos(45deg); y: 17 + 13 * Math.sin(45deg); large-arc: true; sweep: true; }
+            }
+            Path {
+                width: 34px; height: 34px;
+                viewbox-width: 34; viewbox-height: 34;
+                stroke: root.knob == 2 ? root.accent : root.knob == 1 ? root.accent.with-alpha(0.55) : root.ink.with-alpha(0.45);
+                stroke-width: 4px;
+                MoveTo { x: 17 + 13 * Math.cos(135deg); y: 17 + 13 * Math.sin(135deg); }
+                ArcTo { radius-x: 13; radius-y: 13; x: 17 + 13 * Math.cos(root.a1); y: 17 + 13 * Math.sin(root.a1); large-arc: root.n > 0.6667; sweep: true; }
+            }
+            // The focused dial (the D-pad's left/right turns it) wears a
+            // dot; SELECT moves the focus, holding SELECT resets it.
+            if root.knob == 2 : Rectangle {
+                x: 11px; y: 11px; width: 12px; height: 12px; border-radius: 6px;
+                background: root.accent;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.label;
+                color: root.ink;
+                font-family: "JetBrains Mono"; font-size: 12px; font-weight: 700;
+                overflow: elide;
+            }
+            Text {
+                text: root.value;
+                color: root.ink.with-alpha(0.72);
+                font-family: "JetBrains Mono"; font-size: 12px;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+export component PlayColumn inherits Rectangle {
+    in property <color> ink;
+    in property <color> accent;
+    in property <color> paper;
+    in property <string> layer;
+    in property <[string]> dial-labels;
+    in property <[string]> dial-values;
+    in property <[float]> dial-norms;
+    in property <[int]> dial-knobs;
+    in property <string> knob2-extra;
+    in property <[string]> pad-labels;
+    in property <[int]> pad-state;
+    in property <float> stick-x;
+    in property <float> stick-y;
+    in property <string> stick-label;
+    in property <float> hand-l;
+    in property <float> hand-r;
+    in property <string> hand-l-label;
+    in property <string> hand-r-label;
+    in property <string> line;
+    in property <string> status;
+
+    VerticalLayout {
+        spacing: 5px;
+
+        HorizontalLayout {
+            height: 16px;
+            spacing: 6px;
+            Rectangle {
+                width: 128px;
+                border-radius: 3px;
+                background: root.accent;
+                Text {
+                    text: "PADS · " + root.layer;
+                    color: root.paper;
+                    font-family: "JetBrains Mono"; font-weight: 700; font-size: 12px;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+            Text {
+                text: "F2 LAYER · R1 MENU";
+                color: root.ink.with-alpha(0.72);
+                font-family: "JetBrains Mono"; font-size: 12px;
+                horizontal-alignment: right; vertical-alignment: center;
+            }
+        }
+
+        // Four dials, 2 x 2.
+        for r in 2 : HorizontalLayout {
+            height: 34px;
+            spacing: 6px;
+            for c in 2 : MiniDial {
+                property <int> i: r * 2 + c;
+                visible: self.i < root.dial-labels.length;
+                label: self.i < root.dial-labels.length ? root.dial-labels[self.i] : "";
+                value: self.i < root.dial-values.length ? root.dial-values[self.i] : "";
+                norm: self.i < root.dial-norms.length ? root.dial-norms[self.i] : 0;
+                knob: self.i < root.dial-knobs.length ? root.dial-knobs[self.i] : 0;
+                ink: root.ink; accent: root.accent; paper: root.paper;
+            }
+        }
+        if root.knob2-extra != "" : Text {
+            height: 15px;
+            text: "→ " + root.knob2-extra;
+            color: root.accent;
+            font-family: "JetBrains Mono"; font-size: 12px; font-weight: 700;
+            overflow: elide;
+        }
+
+        // The pads in physical layout.
+        VerticalLayout {
+            spacing: 3px;
+            for r in 4 : HorizontalLayout {
+                height: 24px;
+                spacing: 3px;
+                for c in 4 : Rectangle {
+                    property <int> i: r * 4 + c;
+                    property <int> st: self.i < root.pad-state.length ? root.pad-state[self.i] : 0;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: self.st == 4 ? root.ink : root.ink.with-alpha(0.18);
+                    background: self.st >= 3 ? root.accent
+                        : self.st == 1 ? root.accent.with-alpha(0.22)
+                        : self.st == 2 ? #e0a030.with-alpha(0.28)
+                        : root.ink.with-alpha(0.03);
+                    Text {
+                        x: 4px; width: parent.width - 8px;
+                        text: parent.i < root.pad-labels.length ? root.pad-labels[parent.i] : "";
+                        color: parent.st >= 3 ? root.paper : root.ink;
+                        font-family: "JetBrains Mono"; font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        // Stick and hands.
+        HorizontalLayout {
+            height: 44px;
+            spacing: 6px;
+            Rectangle {
+                width: 44px;
+                border-width: 1px;
+                border-radius: 3px;
+                border-color: root.ink.with-alpha(0.2);
+                Rectangle { x: parent.width / 2; width: 1px; background: root.ink.with-alpha(0.1); }
+                Rectangle { y: parent.height / 2; height: 1px; background: root.ink.with-alpha(0.1); }
+                Rectangle {
+                    width: 8px; height: 8px; border-radius: 4px;
+                    x: parent.width / 2 + max(-1, min(1, root.stick-x)) * (parent.width / 2 - 5px) - 4px;
+                    y: parent.height / 2 - max(-1, min(1, root.stick-y)) * (parent.height / 2 - 5px) - 4px;
+                    background: root.accent;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: "STICK " + root.stick-label;
+                    color: root.ink.with-alpha(0.72);
+                    font-family: "JetBrains Mono"; font-size: 12px;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.status != "" ? root.status : root.line;
+                    color: root.status != "" ? root.ink : root.accent;
+                    font-family: "JetBrains Mono"; font-size: 12px; font-weight: 700;
+                    overflow: elide;
+                }
+            }
+            for h[i] in [root.hand-l, root.hand-r] : VerticalLayout {
+                width: 34px;
+                spacing: 2px;
+                Rectangle {
+                    border-radius: 3px;
+                    background: root.ink.with-alpha(0.08);
+                    Rectangle {
+                        y: parent.height * (1 - max(0, min(1, h)));
+                        height: parent.height * max(0, min(1, h));
+                        border-radius: 3px;
+                        background: root.accent;
+                    }
+                }
+                Text {
+                    text: (i == 0 ? "L " : "R ") + (i == 0 ? root.hand-l-label : root.hand-r-label);
+                    color: root.ink;
+                    font-family: "JetBrains Mono"; font-size: 12px;
+                    horizontal-alignment: center; overflow: elide;
+                }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}

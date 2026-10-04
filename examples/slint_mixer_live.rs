@@ -31,6 +31,9 @@ mod app;
 mod arpeggiator;
 #[path = "../src/audio.rs"]
 mod audio;
+#[path = "../src/clock.rs"]
+#[allow(dead_code)]
+mod clock;
 #[path = "../src/audio_bus.rs"]
 mod audio_bus;
 #[path = "../src/audio_devices.rs"]
@@ -69,6 +72,8 @@ mod mixer;
 mod plaits;
 #[path = "../src/apps/plaits_layout.rs"]
 mod plaits_layout;
+#[path = "../src/apps/plaits_play.rs"]
+mod plaits_play;
 #[path = "slint_common/live_midi.rs"]
 mod live_midi;
 /// `audio_devices.rs` calls `crate::run_inference` -- same no-op

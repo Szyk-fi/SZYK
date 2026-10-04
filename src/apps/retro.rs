@@ -883,7 +883,7 @@ impl RetroApp {
         if roms.is_empty() {
             format!("no {} ROMs found in {}", console.name(), console.roms_dir())
         } else {
-            "select a ROM, press knob2 to load".into()
+            "select a ROM, hold SELECT to load".into()
         }
     }
 
@@ -1157,7 +1157,7 @@ impl RetroApp {
             Selection::Console => self.console.name().to_string(),
             Selection::Rom => self.rom_name().to_string(),
             Selection::SaveSlot => format!("{}", self.save_slot.load(Ordering::Relaxed) + 1),
-            Selection::SaveState | Selection::LoadState | Selection::Reset => "press knob2".into(),
+            Selection::SaveState | Selection::LoadState | Selection::Reset => "hold SELECT".into(),
             Selection::VideoScale => VIDEO_SCALE_NAMES[self.video_scale.load(Ordering::Relaxed) % VIDEO_SCALE_NAMES.len()].into(),
             Selection::Volume => format!("{:.0}%", self.volume.get() * 100.0),
         }
@@ -1505,7 +1505,7 @@ impl App for RetroApp {
         }
 
         let dim = MonoTextStyle::new(&SPLEEN_6X12, RETRO_DIM);
-        let hint = if self.loaded_rom_name.is_some() { format!("{} -- press knob1 for fullscreen", self.status) } else { self.status.clone() };
+        let hint = if self.loaded_rom_name.is_some() { format!("{} -- SELECT for fullscreen", self.status) } else { self.status.clone() };
         Text::new(&hint, Point::new(16, HEIGHT as i32 - 12), dim).draw(fb).ok();
     }
 
@@ -1515,7 +1515,7 @@ impl App for RetroApp {
     fn slint_pointer_pick(&mut self,x:f32,_:f32) {
         if !self.menu_visible{return;}
         match x as i32 {
-            0..=3=>{self.console=CONSOLES[x as usize];self.rescan_roms();self.list.selected=1;},
+            0..=4=>{self.console=CONSOLES[(x as usize).min(CONSOLES.len()-1)];self.rescan_roms();self.list.selected=1;},
             20=>{if self.loaded_rom_name.is_some(){self.menu_visible=false;}else{self.load_selected_rom();}},
             21=>self.load_selected_rom(),_=>{},
         }
@@ -1562,6 +1562,7 @@ impl App for RetroApp {
             None => (0, 0, Vec::new()),
         };
         crate::app::SlintExtra::Retro(crate::app::RetroExtra {
+            consoles: CONSOLE_NAMES.iter().map(|c| c.to_string()).collect(),
             loaded_name: self.loaded_rom_name.clone().unwrap_or_default(),
             rom_count: self.roms.len() as i32,
             console_name: self.console.name().to_string(),
@@ -2281,3 +2282,9 @@ mod tests {
     }
 }
 
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(crate::apps::retro::RetroApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
+}

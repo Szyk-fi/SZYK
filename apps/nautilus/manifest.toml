@@ -1,2 +1,9 @@
 id = "nautilus"
 name = "Nautilus"
+category = "effect"
+description = "An eight-line codependent stereo delay network."
+audio_outputs = ["Nautilus"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Nautilus Level",
+]

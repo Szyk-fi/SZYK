@@ -15,6 +15,7 @@
 //! "16 fixed voices, no stealing needed" convention Plaits' Poly mode
 //! and Cascade both use.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes};
 use crate::app::{App, Input};
 use crate::arpeggiator::{Arpeggiator, PATTERN_NAMES as ARP_PATTERN_NAMES};
 use crate::audio::AudioProcessor;
@@ -23,7 +24,7 @@ use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
-use crate::util::{accelerate, AtomicF32};
+use crate::util::{accelerate, note_name, AtomicF32};
 use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -31,7 +32,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
 use std::f32::consts::{PI, TAU};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use super::voltage_fx::{FxSettings, StereoFx, MAX_DELAY_S, MIN_DELAY_S};
 use std::sync::{Arc, Mutex};
 
 const BASE_NOTE: i32 = 48;
@@ -46,6 +48,7 @@ const MAX_CUTOFF_HZ: f32 = 12000.0;
 const MIN_LFO_RATE: f32 = 0.05;
 const MAX_LFO_RATE: f32 = 15.0;
 const LFO_DEST_NAMES: [&str; 2] = ["Pitch", "Filter"];
+const MAX_DELAY_FEEDBACK: f32 = 0.9;
 
 fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     let next = (value.get() + accelerate(delta) * sensitivity * (max - min) * 0.05).clamp(min, max);
@@ -83,6 +86,8 @@ fn note_for(rank: i32, octave: i32) -> i32 {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
+    PresetSlot,
+    PresetSave,
     Osc1Wave,
     Octave,
     Osc2Wave,
@@ -92,6 +97,8 @@ enum Selection {
     NoiseLevel,
     Unison,
     UnisonDetune,
+    Mono,
+    Glide,
     FilterCutoff,
     FilterResonance,
     FilterEnvAmount,
@@ -106,7 +113,12 @@ enum Selection {
     LfoRate,
     LfoDepth,
     LfoDest,
-    UserPreset(usize),
+    Chorus,
+    DelayTime,
+    DelayFeedback,
+    DelayMix,
+    ReverbSize,
+    ReverbMix,
     ArpOn,
     ArpPattern,
     ArpRate,
@@ -118,38 +130,228 @@ enum Row {
     Leaf(Selection),
 }
 
-const NUM_GROUPS: usize = 6;
-const ARP_GROUP: usize = 5;
-const NUM_USER_PRESETS: usize = 8;
+const NUM_GROUPS: usize = 7;
+const PRESET_GROUP: usize = 0;
+const FX_GROUP: usize = 5;
+/// How many preset slots there are. The factory presets fill the first
+/// ones (`assets/voltage/factory.json`); the rest start empty.
+pub(crate) const NUM_PRESETS: usize = 100;
+/// Longest glide, in seconds, at the Glide knob's maximum.
+const MAX_GLIDE_S: f32 = 1.0;
 
-/// One saved snapshot of every Voltage knob -- see
-/// `Selection::UserPreset`. Session-only, same as Prism's own user
-/// presets: nothing in this whole sim persists to disk, so slots reset
-/// when the program restarts.
-#[derive(Clone, Copy, Default)]
-struct UserPresetData {
-    osc1_wave: u32,
-    osc2_wave: u32,
-    osc2_detune: f32,
-    osc_mix: f32,
-    sub_level: f32,
-    noise_level: f32,
-    unison: u32,
-    unison_detune: f32,
-    filter_cutoff: f32,
-    filter_resonance: f32,
-    filter_env_amount: f32,
-    filter_attack: f32,
-    filter_decay: f32,
-    filter_sustain: f32,
-    filter_release: f32,
-    amp_attack: f32,
-    amp_decay: f32,
-    amp_sustain: f32,
-    amp_release: f32,
-    lfo_rate: f32,
-    lfo_depth: f32,
-    lfo_dest: u32,
+/// One complete Voltage sound: every knob, the arp, and the effects.
+///
+/// Every field has a default (the init patch, see `Default`), so a
+/// preset file only needs the fields that differ from it. That keeps
+/// `assets/voltage/factory.json` readable and lets older files keep
+/// loading after new parameters are added.
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct PresetData {
+    pub name: String,
+    pub osc1_wave: u32,
+    pub osc2_wave: u32,
+    pub octave: i32,
+    pub osc2_detune: f32,
+    pub osc_mix: f32,
+    pub sub_level: f32,
+    pub noise_level: f32,
+    pub unison: u32,
+    pub unison_detune: f32,
+    pub mono: bool,
+    pub glide: f32,
+    pub filter_cutoff: f32,
+    pub filter_resonance: f32,
+    pub filter_env_amount: f32,
+    pub filter_attack: f32,
+    pub filter_decay: f32,
+    pub filter_sustain: f32,
+    pub filter_release: f32,
+    pub amp_attack: f32,
+    pub amp_decay: f32,
+    pub amp_sustain: f32,
+    pub amp_release: f32,
+    pub lfo_rate: f32,
+    pub lfo_depth: f32,
+    pub lfo_dest: u32,
+    pub chorus: f32,
+    pub delay_time: f32,
+    pub delay_feedback: f32,
+    pub delay_mix: f32,
+    pub reverb_size: f32,
+    pub reverb_mix: f32,
+    pub arp_on: bool,
+    pub arp_pattern: u32,
+    pub arp_rate: f32,
+}
+
+impl Default for PresetData {
+    /// The init patch: what Voltage sounds like with nothing loaded.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            osc1_wave: 0,
+            osc2_wave: 0,
+            octave: 0,
+            osc2_detune: 0.15,
+            osc_mix: 0.5,
+            sub_level: 0.3,
+            noise_level: 0.0,
+            unison: 1,
+            unison_detune: 0.15,
+            mono: false,
+            glide: 0.0,
+            filter_cutoff: 0.6,
+            filter_resonance: 0.3,
+            // Defaults to no sweep at all -- a nonzero amount makes the
+            // filter cutoff sweep with every note's envelope, which
+            // (especially with resonance emphasizing the moving peak)
+            // reads as a pitch "glide" rather than a plain tone. Real
+            // portamento is the separate Glide knob (mono mode only).
+            filter_env_amount: 0.0,
+            filter_attack: 0.0,
+            filter_decay: 0.4,
+            filter_sustain: 0.3,
+            filter_release: 0.25,
+            amp_attack: 0.02,
+            amp_decay: 0.3,
+            amp_sustain: 0.8,
+            amp_release: 0.3,
+            lfo_rate: 4.0,
+            lfo_depth: 0.0,
+            lfo_dest: 0,
+            chorus: 0.0,
+            delay_time: 0.375,
+            delay_feedback: 0.35,
+            delay_mix: 0.0,
+            reverb_size: 0.5,
+            reverb_mix: 0.0,
+            arp_on: false,
+            arp_pattern: 0,
+            arp_rate: 8.0,
+        }
+    }
+}
+
+/// The factory presets, compiled in so they are always there. They
+/// are original patches written for this synth "in the style of" the
+/// synthwave and retrowave records they're named after in the file's
+/// comments -- not transcriptions of anyone's actual patch.
+const FACTORY_JSON: &str = include_str!("../../assets/voltage/factory.json");
+
+pub(crate) fn factory_presets() -> Vec<PresetData> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        presets: Vec<PresetData>,
+    }
+    serde_json::from_str::<File>(FACTORY_JSON).map(|f| f.presets).unwrap_or_default()
+}
+
+/// The 100 slots. Factory presets occupy the first slots; anything the
+/// player saves -- into an empty slot or over a factory one -- is
+/// written to `saves/voltage/presets.json` on the SD card. Clearing a
+/// factory slot brings its factory preset back; clearing any other slot
+/// empties it.
+struct PresetBank {
+    slots: Vec<Option<PresetData>>,
+    factory: Vec<PresetData>,
+    path: Option<std::path::PathBuf>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct UserFile {
+    version: u32,
+    slots: Vec<UserSlot>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct UserSlot {
+    /// 1-based, as shown on screen.
+    slot: usize,
+    preset: PresetData,
+}
+
+impl PresetBank {
+    fn new(path: Option<std::path::PathBuf>) -> Self {
+        let factory = factory_presets();
+        let mut slots: Vec<Option<PresetData>> = vec![None; NUM_PRESETS];
+        for (i, p) in factory.iter().take(NUM_PRESETS).enumerate() {
+            slots[i] = Some(p.clone());
+        }
+        let mut bank = Self { slots, factory, path };
+        bank.load();
+        bank
+    }
+
+    fn load(&mut self) {
+        let Some(path) = &self.path else { return };
+        let Ok(text) = std::fs::read_to_string(path) else { return };
+        let Ok(file) = serde_json::from_str::<UserFile>(&text) else {
+            eprintln!("voltage: couldn't parse {}", path.display());
+            return;
+        };
+        for s in file.slots {
+            if (1..=NUM_PRESETS).contains(&s.slot) {
+                self.slots[s.slot - 1] = Some(s.preset);
+            }
+        }
+    }
+
+    /// Writes every slot that differs from its factory state.
+    fn persist(&self) {
+        let Some(path) = &self.path else { return };
+        let slots: Vec<UserSlot> = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                let p = s.as_ref()?;
+                (self.factory.get(i) != Some(p)).then(|| UserSlot { slot: i + 1, preset: p.clone() })
+            })
+            .collect();
+        let file = UserFile { version: 1, slots };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match serde_json::to_string_pretty(&file) {
+            Ok(text) => {
+                if let Err(e) = std::fs::write(path, text) {
+                    eprintln!("voltage: couldn't save presets: {e}");
+                }
+            }
+            Err(e) => eprintln!("voltage: couldn't encode presets: {e}"),
+        }
+    }
+
+    fn get(&self, i: usize) -> Option<&PresetData> {
+        self.slots.get(i).and_then(|s| s.as_ref())
+    }
+
+    fn store(&mut self, i: usize, preset: PresetData) {
+        if i < NUM_PRESETS {
+            self.slots[i] = Some(preset);
+            self.persist();
+        }
+    }
+
+    fn clear(&mut self, i: usize) {
+        if i < NUM_PRESETS {
+            self.slots[i] = self.factory.get(i).cloned();
+            self.persist();
+        }
+    }
+
+    fn is_factory(&self, i: usize) -> bool {
+        i < self.factory.len()
+    }
+
+    fn first_empty(&self) -> Option<usize> {
+        self.slots.iter().position(|s| s.is_none())
+    }
+
+    fn filled(&self) -> usize {
+        self.slots.iter().filter(|s| s.is_some()).count()
+    }
 }
 
 struct Params {
@@ -179,14 +381,20 @@ struct Params {
     lfo_rate: AtomicF32,
     lfo_depth: AtomicF32,
     lfo_dest: AtomicU32,
+    /// One voice, last-note priority, legato envelopes -- the mode
+    /// synthwave leads and basses are played in. Glide only applies here.
+    mono: AtomicBool,
+    glide: AtomicF32,
+    chorus: AtomicF32,
+    delay_time: AtomicF32,
+    delay_feedback: AtomicF32,
+    delay_mix: AtomicF32,
+    reverb_size: AtomicF32,
+    reverb_mix: AtomicF32,
     held: Mutex<[bool; 16]>,
     bus_out: Arc<Mutex<Vec<f32>>>,
     mix_level: Arc<AtomicF32>,
     ext_mix_level: Arc<AtomicF32>,
-    /// Session-only saved knob snapshots -- see `Selection::UserPreset`
-    /// and `UserPresetData`. UI-thread-only; the audio thread never
-    /// touches this.
-    user_presets: [Mutex<Option<UserPresetData>>; NUM_USER_PRESETS],
     /// See arpeggiator.rs -- stepped once per audio block in `process`.
     arp: Arpeggiator,
 }
@@ -194,46 +402,128 @@ struct Params {
 impl Params {
     fn new(modbus: &ModBus, audio_bus: &AudioBus, mixer_bus: &MixerBus) -> Self {
         let (mix_level, ext_mix_level) = mixer_bus.register("Voltage", modbus);
-        Self {
+        let params = Self {
             osc1_wave: AtomicU32::new(0),
             octave: AtomicI32::new(0),
             osc2_wave: AtomicU32::new(0),
-            osc2_detune: AtomicF32::new(0.15),
-            osc_mix: AtomicF32::new(0.5),
-            sub_level: AtomicF32::new(0.3),
+            osc2_detune: AtomicF32::new(0.0),
+            osc_mix: AtomicF32::new(0.0),
+            sub_level: AtomicF32::new(0.0),
             noise_level: AtomicF32::new(0.0),
             unison: AtomicU32::new(1),
-            unison_detune: AtomicF32::new(0.15),
-            filter_cutoff: AtomicF32::new(0.6),
+            unison_detune: AtomicF32::new(0.0),
+            filter_cutoff: AtomicF32::new(0.0),
             ext_filter_cutoff: modbus.register("Voltage: Filter Cutoff".to_string()),
-            filter_resonance: AtomicF32::new(0.3),
-            // Defaults to no sweep at all -- a nonzero amount makes the
-            // filter cutoff sweep with every note's envelope, which
-            // (especially with resonance emphasizing the moving peak)
-            // reads as a pitch "glide" rather than a plain tone. Real
-            // portamento would need its own explicit oscillator-pitch
-            // slew, which nothing here implements; this is the closest
-            // thing to it, so it stays fully available as a knob, just
-            // opt-in instead of baked into the default patch.
+            filter_resonance: AtomicF32::new(0.0),
             filter_env_amount: AtomicF32::new(0.0),
             filter_attack: AtomicF32::new(0.0),
-            filter_decay: AtomicF32::new(0.4),
-            filter_sustain: AtomicF32::new(0.3),
-            filter_release: AtomicF32::new(0.25),
-            amp_attack: AtomicF32::new(0.02),
-            amp_decay: AtomicF32::new(0.3),
-            amp_sustain: AtomicF32::new(0.8),
-            amp_release: AtomicF32::new(0.3),
-            lfo_rate: AtomicF32::new(4.0),
+            filter_decay: AtomicF32::new(0.0),
+            filter_sustain: AtomicF32::new(0.0),
+            filter_release: AtomicF32::new(0.0),
+            amp_attack: AtomicF32::new(0.0),
+            amp_decay: AtomicF32::new(0.0),
+            amp_sustain: AtomicF32::new(0.0),
+            amp_release: AtomicF32::new(0.0),
+            lfo_rate: AtomicF32::new(0.0),
             lfo_depth: AtomicF32::new(0.0),
             lfo_dest: AtomicU32::new(0),
+            mono: AtomicBool::new(false),
+            glide: AtomicF32::new(0.0),
+            chorus: AtomicF32::new(0.0),
+            delay_time: AtomicF32::new(0.0),
+            delay_feedback: AtomicF32::new(0.0),
+            delay_mix: AtomicF32::new(0.0),
+            reverb_size: AtomicF32::new(0.0),
+            reverb_mix: AtomicF32::new(0.0),
             held: Mutex::new([false; 16]),
             bus_out: audio_bus.register("Voltage"),
             mix_level,
             ext_mix_level,
-            user_presets: std::array::from_fn(|_| Mutex::new(None)),
             arp: Arpeggiator::new(),
+        };
+        params.apply(&PresetData::default());
+        params
+    }
+
+    /// Everything that makes up the current sound, as a preset.
+    fn snapshot(&self, name: &str) -> PresetData {
+        PresetData {
+            name: name.to_string(),
+            osc1_wave: self.osc1_wave.load(Ordering::Relaxed),
+            osc2_wave: self.osc2_wave.load(Ordering::Relaxed),
+            octave: self.octave.load(Ordering::Relaxed),
+            osc2_detune: self.osc2_detune.get(),
+            osc_mix: self.osc_mix.get(),
+            sub_level: self.sub_level.get(),
+            noise_level: self.noise_level.get(),
+            unison: self.unison.load(Ordering::Relaxed),
+            unison_detune: self.unison_detune.get(),
+            mono: self.mono.load(Ordering::Relaxed),
+            glide: self.glide.get(),
+            filter_cutoff: self.filter_cutoff.get(),
+            filter_resonance: self.filter_resonance.get(),
+            filter_env_amount: self.filter_env_amount.get(),
+            filter_attack: self.filter_attack.get(),
+            filter_decay: self.filter_decay.get(),
+            filter_sustain: self.filter_sustain.get(),
+            filter_release: self.filter_release.get(),
+            amp_attack: self.amp_attack.get(),
+            amp_decay: self.amp_decay.get(),
+            amp_sustain: self.amp_sustain.get(),
+            amp_release: self.amp_release.get(),
+            lfo_rate: self.lfo_rate.get(),
+            lfo_depth: self.lfo_depth.get(),
+            lfo_dest: self.lfo_dest.load(Ordering::Relaxed),
+            chorus: self.chorus.get(),
+            delay_time: self.delay_time.get(),
+            delay_feedback: self.delay_feedback.get(),
+            delay_mix: self.delay_mix.get(),
+            reverb_size: self.reverb_size.get(),
+            reverb_mix: self.reverb_mix.get(),
+            arp_on: self.arp.enabled.load(Ordering::Relaxed),
+            arp_pattern: self.arp.pattern.load(Ordering::Relaxed),
+            arp_rate: self.arp.rate_hz.get(),
         }
+    }
+
+    /// Loads a preset into the knobs. Every value is clamped to its
+    /// knob's range, so a hand-edited file can't push the DSP outside
+    /// the ranges it was designed for.
+    fn apply(&self, p: &PresetData) {
+        self.osc1_wave.store(p.osc1_wave % 4, Ordering::Relaxed);
+        self.osc2_wave.store(p.osc2_wave % 4, Ordering::Relaxed);
+        self.octave.store(p.octave.clamp(-OCTAVE_SPAN, OCTAVE_SPAN), Ordering::Relaxed);
+        self.osc2_detune.set(p.osc2_detune.clamp(-12.0, 12.0));
+        self.osc_mix.set(p.osc_mix.clamp(0.0, 1.0));
+        self.sub_level.set(p.sub_level.clamp(0.0, 1.0));
+        self.noise_level.set(p.noise_level.clamp(0.0, 1.0));
+        self.unison.store(p.unison.clamp(MIN_UNISON, MAX_UNISON), Ordering::Relaxed);
+        self.unison_detune.set(p.unison_detune.clamp(0.0, 1.0));
+        self.mono.store(p.mono, Ordering::Relaxed);
+        self.glide.set(p.glide.clamp(0.0, 1.0));
+        self.filter_cutoff.set(p.filter_cutoff.clamp(0.0, 1.0));
+        self.filter_resonance.set(p.filter_resonance.clamp(0.0, 1.0));
+        self.filter_env_amount.set(p.filter_env_amount.clamp(-1.0, 1.0));
+        self.filter_attack.set(p.filter_attack.clamp(0.0, 1.0));
+        self.filter_decay.set(p.filter_decay.clamp(0.0, 1.0));
+        self.filter_sustain.set(p.filter_sustain.clamp(0.0, 1.0));
+        self.filter_release.set(p.filter_release.clamp(0.0, 1.0));
+        self.amp_attack.set(p.amp_attack.clamp(0.0, 1.0));
+        self.amp_decay.set(p.amp_decay.clamp(0.0, 1.0));
+        self.amp_sustain.set(p.amp_sustain.clamp(0.0, 1.0));
+        self.amp_release.set(p.amp_release.clamp(0.0, 1.0));
+        self.lfo_rate.set(p.lfo_rate.clamp(MIN_LFO_RATE, MAX_LFO_RATE));
+        self.lfo_depth.set(p.lfo_depth.clamp(0.0, 1.0));
+        self.lfo_dest.store(p.lfo_dest % 2, Ordering::Relaxed);
+        self.chorus.set(p.chorus.clamp(0.0, 1.0));
+        self.delay_time.set(p.delay_time.clamp(MIN_DELAY_S, MAX_DELAY_S));
+        self.delay_feedback.set(p.delay_feedback.clamp(0.0, MAX_DELAY_FEEDBACK));
+        self.delay_mix.set(p.delay_mix.clamp(0.0, 1.0));
+        self.reverb_size.set(p.reverb_size.clamp(0.0, 1.0));
+        self.reverb_mix.set(p.reverb_mix.clamp(0.0, 1.0));
+        self.arp.enabled.store(p.arp_on, Ordering::Relaxed);
+        self.arp.pattern.store(p.arp_pattern % ARP_PATTERN_NAMES.len() as u32, Ordering::Relaxed);
+        self.arp.rate_hz.set(p.arp_rate.clamp(0.5, 30.0));
     }
 }
 
@@ -243,6 +533,60 @@ pub struct VoltageApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+    presets: PresetBank,
+    /// The slot the Preset row shows and steps through.
+    preset_cursor: usize,
+    /// What was last loaded or saved, to mark the sound as edited ("*")
+    /// once a knob moves away from it.
+    loaded: Option<PresetData>,
+    /// The slot SELECT on the Save row writes to.
+    save_target: usize,
+}
+
+/// The play view's controls, most important first: the filter and the
+/// oscillator blend on the knobs, the envelope and LFO next, the
+/// patch-shaping choices on the upper pads of the Controls layer.
+const CONTROLS: [(Selection, &str); 16] = [
+    (Selection::FilterCutoff, "Cutoff"),
+    (Selection::FilterResonance, "Resonance"),
+    (Selection::FilterEnvAmount, "Env Amount"),
+    (Selection::OscMix, "Osc Mix"),
+    (Selection::AmpAttack, "Attack"),
+    (Selection::AmpRelease, "Release"),
+    (Selection::LfoDepth, "LFO Depth"),
+    (Selection::LfoRate, "LFO Rate"),
+    (Selection::Osc1Wave, "Osc 1 Wave"),
+    (Selection::Osc2Wave, "Osc 2 Wave"),
+    (Selection::Osc2Detune, "Detune"),
+    (Selection::SubLevel, "Sub"),
+    (Selection::NoiseLevel, "Noise"),
+    (Selection::Unison, "Unison"),
+    (Selection::Octave, "Octave"),
+    (Selection::PresetSlot, "Preset"),
+];
+const C_OCTAVE: usize = 14;
+/// Octave range the play view's D-pad and moments use; the menu's own
+/// Octave row is unbounded, so this only bounds the dial's position.
+const OCTAVE_SPAN: i32 = 4;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "voltage",
+        layers: vec![Layer::Native(0, "KEYS"), Layer::Controls, Layer::Moments],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // D-pad up/down shifts the octave: 16 pads only span 16
+        // semitones, so this is the move a player makes most.
+        browse: Some(C_OCTAVE),
+        // Stick: cutoff sweeps on X, LFO depth (vibrato / wobble) on Y,
+        // like a pitch-and-mod-wheel joystick. Hands: resonance, and the
+        // blend between the two oscillators.
+        routes: Routes { stick_x: Some(0), stick_y: Some(6), hand_l: Some(1), hand_r: Some(3) },
+        throws: Vec::new(),
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Voltage's own palette: vintage teal on charcoal, not a
@@ -260,12 +604,74 @@ const VOLTAGE_OUTLINE: Rgb565 = Rgb565::new(5, 10, 6);
 
 impl VoltageApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
-        Self { params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)), sensitivity, nav_speed, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
+        let mut app = Self {
+            params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)),
+            sensitivity,
+            nav_speed,
+            list: ParamList::new(),
+            expanded: std::array::from_fn(|g| g == PRESET_GROUP),
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+            presets: PresetBank::new((!cfg!(test)).then(|| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/saves/voltage/presets.json")))),
+            preset_cursor: 0,
+            loaded: None,
+            save_target: 0,
+        };
+        app.save_target = app.presets.first_empty().unwrap_or(0);
+        // Open on the first preset, so the synth sounds like something
+        // straight away.
+        app.load_preset(0);
+        app
+    }
+
+    /// Loads slot `i` if it holds a preset; returns whether it did.
+    fn load_preset(&mut self, i: usize) -> bool {
+        self.preset_cursor = i.min(NUM_PRESETS - 1);
+        let Some(p) = self.presets.get(self.preset_cursor).cloned() else { return false };
+        self.params.apply(&p);
+        self.loaded = Some(p);
+        true
+    }
+
+    /// Saves the current sound into `save_target`. A slot that already
+    /// has a preset keeps its name; an empty one gets "User NN".
+    fn save_preset(&mut self) {
+        let i = self.save_target;
+        let name = match self.presets.get(i) {
+            Some(p) if !p.name.is_empty() => p.name.clone(),
+            _ => format!("User {:02}", i + 1),
+        };
+        let data = self.params.snapshot(&name);
+        self.presets.store(i, data.clone());
+        self.preset_cursor = i;
+        self.loaded = Some(data);
+        self.kit.flash(format!("Saved to {:02} {name}", i + 1));
+    }
+
+    /// Whether the knobs have moved since the last load or save.
+    fn edited(&self) -> bool {
+        match &self.loaded {
+            Some(p) => self.params.snapshot(&p.name) != *p,
+            None => true,
+        }
+    }
+
+    fn slot_label(&self, i: usize) -> String {
+        match self.presets.get(i) {
+            Some(p) => format!("{:02} {}", i + 1, p.name),
+            None => format!("{:02} (empty)", i + 1),
+        }
+    }
+
+    /// The current preset's name for titles: "07 Neon Arp", with a "*"
+    /// once the sound has been edited.
+    pub(crate) fn preset_title(&self) -> String {
+        format!("{}{}", self.slot_label(self.preset_cursor), if self.edited() { " *" } else { "" })
     }
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         match g {
-            0 => vec![
+            PRESET_GROUP => vec![Selection::PresetSlot, Selection::PresetSave],
+            1 => vec![
                 Selection::Osc1Wave,
                 Selection::Octave,
                 Selection::Osc2Wave,
@@ -275,8 +681,10 @@ impl VoltageApp {
                 Selection::NoiseLevel,
                 Selection::Unison,
                 Selection::UnisonDetune,
+                Selection::Mono,
+                Selection::Glide,
             ],
-            1 => vec![
+            2 => vec![
                 Selection::FilterCutoff,
                 Selection::FilterResonance,
                 Selection::FilterEnvAmount,
@@ -285,10 +693,10 @@ impl VoltageApp {
                 Selection::FilterSustain,
                 Selection::FilterRelease,
             ],
-            2 => vec![Selection::AmpAttack, Selection::AmpDecay, Selection::AmpSustain, Selection::AmpRelease],
-            3 => vec![Selection::LfoRate, Selection::LfoDepth, Selection::LfoDest],
-            g if g == ARP_GROUP => vec![Selection::ArpOn, Selection::ArpPattern, Selection::ArpRate],
-            _ => (0..NUM_USER_PRESETS).map(Selection::UserPreset).collect(),
+            3 => vec![Selection::AmpAttack, Selection::AmpDecay, Selection::AmpSustain, Selection::AmpRelease],
+            4 => vec![Selection::LfoRate, Selection::LfoDepth, Selection::LfoDest],
+            FX_GROUP => vec![Selection::Chorus, Selection::DelayTime, Selection::DelayFeedback, Selection::DelayMix, Selection::ReverbSize, Selection::ReverbMix],
+            _ => vec![Selection::ArpOn, Selection::ArpPattern, Selection::ArpRate],
         }
     }
 
@@ -307,36 +715,44 @@ impl VoltageApp {
 
     fn group_name(&self, g: usize) -> &'static str {
         match g {
-            0 => "Oscillators",
-            1 => "Filter",
-            2 => "Amp Envelope",
-            3 => "LFO",
-            g if g == ARP_GROUP => "Arp",
-            _ => "Presets",
+            PRESET_GROUP => "Presets",
+            1 => "Oscillators",
+            2 => "Filter",
+            3 => "Amp Envelope",
+            4 => "LFO",
+            FX_GROUP => "Effects",
+            _ => "Arp",
         }
     }
 
     fn group_summary(&self, g: usize) -> String {
         match g {
-            0 => format!(
-                "{} + {}, unison x{}",
+            PRESET_GROUP => format!("{}/{NUM_PRESETS} used", self.presets.filled()),
+            1 => format!(
+                "{} + {}, {}",
                 WAVE_NAMES[self.params.osc1_wave.load(Ordering::Relaxed) as usize % 4],
                 WAVE_NAMES[self.params.osc2_wave.load(Ordering::Relaxed) as usize % 4],
-                self.params.unison.load(Ordering::Relaxed)
+                if self.params.mono.load(Ordering::Relaxed) { "mono".to_string() } else { format!("x{}", self.params.unison.load(Ordering::Relaxed)) }
             ),
-            1 => format!("cutoff {:.2}, res {:.2}", self.params.filter_cutoff.get(), self.params.filter_resonance.get()),
-            2 => format!("A{:.2} D{:.2} S{:.2} R{:.2}", self.params.amp_attack.get(), self.params.amp_decay.get(), self.params.amp_sustain.get(), self.params.amp_release.get()),
-            3 => LFO_DEST_NAMES[self.params.lfo_dest.load(Ordering::Relaxed) as usize % 2].to_string(),
-            g if g == ARP_GROUP => self.leaf_value(Selection::ArpOn),
-            _ => {
-                let saved = self.params.user_presets.iter().filter(|s| s.lock().unwrap().is_some()).count();
-                format!("{saved}/{NUM_USER_PRESETS} saved")
+            2 => format!("cutoff {:.2}, res {:.2}", self.params.filter_cutoff.get(), self.params.filter_resonance.get()),
+            3 => format!("A{:.2} D{:.2} S{:.2} R{:.2}", self.params.amp_attack.get(), self.params.amp_decay.get(), self.params.amp_sustain.get(), self.params.amp_release.get()),
+            4 => LFO_DEST_NAMES[self.params.lfo_dest.load(Ordering::Relaxed) as usize % 2].to_string(),
+            FX_GROUP => {
+                let on: Vec<&str> = [("cho", self.params.chorus.get()), ("dly", self.params.delay_mix.get()), ("rev", self.params.reverb_mix.get())]
+                    .iter()
+                    .filter(|(_, v)| *v > 0.0)
+                    .map(|(n, _)| *n)
+                    .collect();
+                if on.is_empty() { "dry".into() } else { on.join(" ") }
             }
+            _ => self.leaf_value(Selection::ArpOn),
         }
     }
 
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
+            Selection::PresetSlot => "Preset".into(),
+            Selection::PresetSave => "Save to".into(),
             Selection::Osc1Wave => "Osc 1 Wave".into(),
             Selection::Octave => "Octave".into(),
             Selection::Osc2Wave => "Osc 2 Wave".into(),
@@ -346,6 +762,8 @@ impl VoltageApp {
             Selection::NoiseLevel => "Noise Level".into(),
             Selection::Unison => "Unison".into(),
             Selection::UnisonDetune => "Unison Detune".into(),
+            Selection::Mono => "Mono".into(),
+            Selection::Glide => "Glide".into(),
             Selection::FilterCutoff => "Cutoff".into(),
             Selection::FilterResonance => "Resonance".into(),
             Selection::FilterEnvAmount => "Env Amount".into(),
@@ -360,7 +778,12 @@ impl VoltageApp {
             Selection::LfoRate => "Rate".into(),
             Selection::LfoDepth => "Depth".into(),
             Selection::LfoDest => "Destination".into(),
-            Selection::UserPreset(i) => format!("Slot {}", i + 1),
+            Selection::Chorus => "Chorus".into(),
+            Selection::DelayTime => "Delay Time".into(),
+            Selection::DelayFeedback => "Feedback".into(),
+            Selection::DelayMix => "Delay Mix".into(),
+            Selection::ReverbSize => "Reverb Size".into(),
+            Selection::ReverbMix => "Reverb Mix".into(),
             Selection::ArpOn => "On/Off".into(),
             Selection::ArpPattern => "Pattern".into(),
             Selection::ArpRate => "Rate".into(),
@@ -392,9 +815,16 @@ impl VoltageApp {
             Selection::LfoRate => format!("{:.1} Hz", self.params.lfo_rate.get()),
             Selection::LfoDepth => format!("{:.2}", self.params.lfo_depth.get()),
             Selection::LfoDest => LFO_DEST_NAMES[self.params.lfo_dest.load(Ordering::Relaxed) as usize % 2].to_string(),
-            Selection::UserPreset(i) => {
-                if self.params.user_presets[i].lock().unwrap().is_some() { "saved".into() } else { "empty".into() }
-            }
+            Selection::PresetSlot => self.preset_title(),
+            Selection::PresetSave => self.slot_label(self.save_target),
+            Selection::Mono => if self.params.mono.load(Ordering::Relaxed) { "On".into() } else { "Off (poly)".into() },
+            Selection::Glide => format!("{:.0} ms", glide_seconds(self.params.glide.get()) * 1000.0),
+            Selection::Chorus => pct(self.params.chorus.get()),
+            Selection::DelayTime => format!("{:.0} ms", self.params.delay_time.get() * 1000.0),
+            Selection::DelayFeedback => pct(self.params.delay_feedback.get()),
+            Selection::DelayMix => pct(self.params.delay_mix.get()),
+            Selection::ReverbSize => pct(self.params.reverb_size.get()),
+            Selection::ReverbMix => pct(self.params.reverb_mix.get()),
             Selection::ArpOn => {
                 if self.params.arp.enabled.load(Ordering::Relaxed) { "On".into() } else { "Off".into() }
             }
@@ -452,13 +882,23 @@ impl VoltageApp {
                 let cur = self.params.lfo_dest.load(Ordering::Relaxed) as i32;
                 self.params.lfo_dest.store((cur + step).rem_euclid(2) as u32, Ordering::Relaxed);
             }
-            Selection::UserPreset(i) => {
-                if step > 0 {
-                    self.save_user_preset(i);
-                } else {
-                    self.load_user_preset(i);
+            Selection::PresetSlot => {
+                let next = (self.preset_cursor as i32 + step).rem_euclid(NUM_PRESETS as i32) as usize;
+                if !self.load_preset(next) {
+                    self.loaded = None;
                 }
             }
+            Selection::PresetSave => {
+                self.save_target = (self.save_target as i32 + step).rem_euclid(NUM_PRESETS as i32) as usize;
+            }
+            Selection::Mono => self.params.mono.store(step > 0, Ordering::Relaxed),
+            Selection::Glide => bump(&self.params.glide, delta, sensitivity, 0.0, 1.0),
+            Selection::Chorus => bump(&self.params.chorus, delta, sensitivity, 0.0, 1.0),
+            Selection::DelayTime => bump(&self.params.delay_time, delta, sensitivity, MIN_DELAY_S, MAX_DELAY_S),
+            Selection::DelayFeedback => bump(&self.params.delay_feedback, delta, sensitivity, 0.0, MAX_DELAY_FEEDBACK),
+            Selection::DelayMix => bump(&self.params.delay_mix, delta, sensitivity, 0.0, 1.0),
+            Selection::ReverbSize => bump(&self.params.reverb_size, delta, sensitivity, 0.0, 1.0),
+            Selection::ReverbMix => bump(&self.params.reverb_mix, delta, sensitivity, 0.0, 1.0),
             Selection::ArpOn => self.params.arp.enabled.store(delta > 0, Ordering::Relaxed),
             Selection::ArpPattern => {
                 let cur = self.params.arp.pattern.load(Ordering::Relaxed) as i32;
@@ -471,64 +911,6 @@ impl VoltageApp {
                 self.params.arp.rate_hz.set(next);
             }
         }
-    }
-
-    /// Saves every current knob into user preset slot `i`.
-    fn save_user_preset(&self, i: usize) {
-        let p = &self.params;
-        let data = UserPresetData {
-            osc1_wave: p.osc1_wave.load(Ordering::Relaxed),
-            osc2_wave: p.osc2_wave.load(Ordering::Relaxed),
-            osc2_detune: p.osc2_detune.get(),
-            osc_mix: p.osc_mix.get(),
-            sub_level: p.sub_level.get(),
-            noise_level: p.noise_level.get(),
-            unison: p.unison.load(Ordering::Relaxed),
-            unison_detune: p.unison_detune.get(),
-            filter_cutoff: p.filter_cutoff.get(),
-            filter_resonance: p.filter_resonance.get(),
-            filter_env_amount: p.filter_env_amount.get(),
-            filter_attack: p.filter_attack.get(),
-            filter_decay: p.filter_decay.get(),
-            filter_sustain: p.filter_sustain.get(),
-            filter_release: p.filter_release.get(),
-            amp_attack: p.amp_attack.get(),
-            amp_decay: p.amp_decay.get(),
-            amp_sustain: p.amp_sustain.get(),
-            amp_release: p.amp_release.get(),
-            lfo_rate: p.lfo_rate.get(),
-            lfo_depth: p.lfo_depth.get(),
-            lfo_dest: p.lfo_dest.load(Ordering::Relaxed),
-        };
-        *self.params.user_presets[i].lock().unwrap() = Some(data);
-    }
-
-    /// Recalls user preset slot `i`'s knob state, if it has one saved.
-    fn load_user_preset(&self, i: usize) {
-        let Some(data) = *self.params.user_presets[i].lock().unwrap() else { return };
-        let p = &self.params;
-        p.osc1_wave.store(data.osc1_wave, Ordering::Relaxed);
-        p.osc2_wave.store(data.osc2_wave, Ordering::Relaxed);
-        p.osc2_detune.set(data.osc2_detune);
-        p.osc_mix.set(data.osc_mix);
-        p.sub_level.set(data.sub_level);
-        p.noise_level.set(data.noise_level);
-        p.unison.store(data.unison, Ordering::Relaxed);
-        p.unison_detune.set(data.unison_detune);
-        p.filter_cutoff.set(data.filter_cutoff);
-        p.filter_resonance.set(data.filter_resonance);
-        p.filter_env_amount.set(data.filter_env_amount);
-        p.filter_attack.set(data.filter_attack);
-        p.filter_decay.set(data.filter_decay);
-        p.filter_sustain.set(data.filter_sustain);
-        p.filter_release.set(data.filter_release);
-        p.amp_attack.set(data.amp_attack);
-        p.amp_decay.set(data.amp_decay);
-        p.amp_sustain.set(data.amp_sustain);
-        p.amp_release.set(data.amp_release);
-        p.lfo_rate.set(data.lfo_rate);
-        p.lfo_depth.set(data.lfo_depth);
-        p.lfo_dest.store(data.lfo_dest, Ordering::Relaxed);
     }
 
     fn reset(&mut self, sel: Selection) {
@@ -553,7 +935,24 @@ impl VoltageApp {
             Selection::AmpRelease => self.params.amp_release.set(0.3),
             Selection::LfoRate => self.params.lfo_rate.set(4.0),
             Selection::LfoDepth => self.params.lfo_depth.set(0.0),
-            Selection::UserPreset(i) => *self.params.user_presets[i].lock().unwrap() = None,
+            // Holding SELECT on Save clears the target slot (a factory
+            // slot goes back to its factory preset).
+            Selection::PresetSave => {
+                self.presets.clear(self.save_target);
+                self.kit.flash(if self.presets.is_factory(self.save_target) { "Factory preset restored" } else { "Slot cleared" });
+            }
+            // Reloads the preset, undoing edits.
+            Selection::PresetSlot => {
+                self.load_preset(self.preset_cursor);
+            }
+            Selection::Mono => self.params.mono.store(false, Ordering::Relaxed),
+            Selection::Glide => self.params.glide.set(0.0),
+            Selection::Chorus => self.params.chorus.set(0.0),
+            Selection::DelayTime => self.params.delay_time.set(0.375),
+            Selection::DelayFeedback => self.params.delay_feedback.set(0.35),
+            Selection::DelayMix => self.params.delay_mix.set(0.0),
+            Selection::ReverbSize => self.params.reverb_size.set(0.5),
+            Selection::ReverbMix => self.params.reverb_mix.set(0.0),
             Selection::Osc1Wave | Selection::Osc2Wave | Selection::LfoDest => {} // no single sensible default
             Selection::ArpOn => self.params.arp.enabled.store(false, Ordering::Relaxed),
             Selection::ArpPattern => self.params.arp.pattern.store(0, Ordering::Relaxed), // Up
@@ -710,6 +1109,16 @@ impl VoltageApp {
 }
 
 /// 0..1 knob mapped exponentially across the audible cutoff range.
+fn pct(v: f32) -> String {
+    format!("{:.0}%", v * 100.0)
+}
+
+/// The Glide knob's time: squared, so the short glides used most get
+/// most of the knob's travel.
+fn glide_seconds(knob: f32) -> f32 {
+    knob.clamp(0.0, 1.0).powi(2) * MAX_GLIDE_S
+}
+
 fn cutoff_hz(knob: f32) -> f32 {
     MIN_CUTOFF_HZ * (MAX_CUTOFF_HZ / MIN_CUTOFF_HZ).powf(knob.clamp(0.0, 1.0))
 }
@@ -818,6 +1227,88 @@ impl VoltageApp {
     }
 }
 
+impl VoltageApp {
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % 16].0 {
+            Selection::FilterCutoff => Knob::F(&p.filter_cutoff, 0.0, 1.0),
+            Selection::FilterResonance => Knob::F(&p.filter_resonance, 0.0, 1.0),
+            Selection::FilterEnvAmount => Knob::F(&p.filter_env_amount, -1.0, 1.0),
+            Selection::OscMix => Knob::F(&p.osc_mix, 0.0, 1.0),
+            Selection::AmpAttack => Knob::F(&p.amp_attack, 0.0, 1.0),
+            Selection::AmpRelease => Knob::F(&p.amp_release, 0.0, 1.0),
+            Selection::LfoDepth => Knob::F(&p.lfo_depth, 0.0, 1.0),
+            Selection::LfoRate => Knob::F(&p.lfo_rate, MIN_LFO_RATE, MAX_LFO_RATE),
+            Selection::Osc1Wave => Knob::U(&p.osc1_wave, 4),
+            Selection::Osc2Wave => Knob::U(&p.osc2_wave, 4),
+            Selection::Osc2Detune => Knob::F(&p.osc2_detune, -12.0, 12.0),
+            Selection::SubLevel => Knob::F(&p.sub_level, 0.0, 1.0),
+            Selection::NoiseLevel => Knob::F(&p.noise_level, 0.0, 1.0),
+            Selection::Unison => Knob::UR(&p.unison, MIN_UNISON, MAX_UNISON),
+            Selection::Octave => Knob::I(&p.octave, -OCTAVE_SPAN, OCTAVE_SPAN),
+            _ => Knob::None,
+        }
+    }
+
+    fn octave(&self) -> i32 {
+        self.params.octave.load(Ordering::Relaxed)
+    }
+}
+
+impl PlayHost for VoltageApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS[i % 16].1.to_string()
+    }
+    fn kit_value(&self, i: usize) -> String {
+        self.leaf_value(CONTROLS[i % 16].0)
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        self.edit(CONTROLS[i % 16].0, delta);
+    }
+    fn kit_reset(&mut self, i: usize) {
+        self.reset(CONTROLS[i % 16].0);
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    /// A key plays the pad with its pitch; keys outside the pads'
+    /// 16-semitone window fold into it by octaves (each pad is one fixed
+    /// voice, so the window itself can't move per key).
+    fn kit_midi_pad(&self, note: u8) -> Option<usize> {
+        let d = note as i32 - note_for(0, self.octave());
+        let rank = if (0..16).contains(&d) { d } else { d.rem_euclid(12) };
+        Some(pad_rank(rank) as usize)
+    }
+    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+        note_name(note_for(pad_rank(pad as i32), self.octave()))
+    }
+    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if held {
+            PadColor::Green
+        } else if note_for(pad_rank(pad as i32), self.octave()).rem_euclid(12) == 0 {
+            PadColor::Blue
+        } else {
+            PadColor::Off
+        }
+    }
+    fn kit_line(&self) -> String {
+        let held = *self.params.held.lock().unwrap();
+        let notes: Vec<String> = (0..16).filter(|&i| held[i]).take(4).map(|i| note_name(note_for(pad_rank(i as i32), self.octave()))).collect();
+        // Nothing held: show which preset is loaded instead.
+        if notes.is_empty() { self.preset_title() } else { notes.join(" ") }
+    }
+}
+
 /// See `VoltageApp::voltage_panels`.
 pub(crate) struct VoltagePanels {
     pub oscillator: Vec<f32>,
@@ -830,6 +1321,31 @@ pub(crate) struct VoltagePanels {
 
 impl App for VoltageApp {
     fn supports_pad_lock(&self) -> bool { true }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
+    /// F3 runs the arpeggiator over the held pads.
+    fn running(&self) -> Option<bool> {
+        Some(self.params.arp.enabled.load(Ordering::Relaxed))
+    }
+    fn transport_action(&self) -> Option<&'static str> {
+        Some(if self.params.arp.enabled.load(Ordering::Relaxed) { "ARP OFF" } else { "ARP" })
+    }
+    fn toggle_running(&mut self) {
+        let on = !self.params.arp.enabled.load(Ordering::Relaxed);
+        self.params.arp.enabled.store(on, Ordering::Relaxed);
+        self.kit.flash(if on { "Arp on: hold some pads" } else { "Arp off" });
+    }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
@@ -857,6 +1373,7 @@ impl App for VoltageApp {
             crate::app::CurveSegments { mid_x, mid_y, length, angle_deg }
         };
         crate::app::SlintExtra::Voltage(crate::app::VoltageExtra {
+            preset: self.preset_title(),
             oscillator: seg(&p.oscillator, true),
             filter: seg(&p.filter, false),
             filter_cutoff_frac: p.filter_cutoff_frac,
@@ -867,13 +1384,21 @@ impl App for VoltageApp {
     }
 
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach the voices only on KEYS.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
 
         if input.knob1_press {
-            if let Some(Row::Group(g)) = current {
-                self.expanded[g] = !self.expanded[g];
+            match current {
+                Some(Row::Group(g)) => self.expanded[g] = !self.expanded[g],
+                Some(Row::Leaf(Selection::PresetSave)) => self.save_preset(),
+                _ => {}
             }
         }
         if let Some(Row::Leaf(sel)) = current {
@@ -890,7 +1415,7 @@ impl App for VoltageApp {
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
-        Some(Box::new(VoltageProcessor { params: Arc::clone(&self.params), voices: std::array::from_fn(|i| AnalogVoice::new(i as u32)), mono_buf: Vec::new(), smoothed_headroom: 1.0 }))
+        Some(Box::new(VoltageProcessor::new(Arc::clone(&self.params))))
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
@@ -901,6 +1426,7 @@ impl App for VoltageApp {
 
         let title = MonoTextStyle::new(&SPLEEN_16X32, VOLTAGE_TITLE);
         Text::new("Voltage", Point::new(16, 30), title).draw(fb).ok();
+        Text::new(&self.preset_title(), Point::new(150, 28), MonoTextStyle::new(&SPLEEN_6X12, VOLTAGE_ACCENT)).draw(fb).ok();
 
         let accent = MonoTextStyle::new(&SPLEEN_6X12, VOLTAGE_ACCENT);
         let dim = MonoTextStyle::new(&SPLEEN_6X12, VOLTAGE_DIM);
@@ -916,7 +1442,12 @@ impl App for VoltageApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, VOLTAGE_BG, VOLTAGE_DIM, VOLTAGE_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, VOLTAGE_BG, VOLTAGE_DIM, VOLTAGE_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: VOLTAGE_BG, ink: VOLTAGE_TITLE, accent: VOLTAGE_ACCENT, dim: VOLTAGE_DIM, faint: VOLTAGE_OUTLINE };
+            kit::draw::column(fb, &col, 16, 40, 350, 280, pal);
+        }
 
         // --- Right: one small illustrative panel per menu group --
         // oscillators, filter, amp envelope, LFO -- each a live sketch
@@ -949,9 +1480,11 @@ impl App for VoltageApp {
         self.draw_lfo_panel(fb, panels[3].0, panels[3].1, panel_w, panel_h, accent, dim);
 
         let hint = match rows.get(self.list.selected) {
-            Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-            Some(Row::Leaf(Selection::UserPreset(_))) => "knob2: turn one way to save, the other to load   press knob2: clear".to_string(),
-            Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+            _ if !self.kit.menu => "L/R: dial (SELECT: next)   U/D: octave   F2: pads   F3: arp   R1: menu".to_string(),
+            Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+            Some(Row::Leaf(Selection::PresetSlot)) => "left/right: browse and load   hold SELECT: undo edits".to_string(),
+            Some(Row::Leaf(Selection::PresetSave)) => "left/right: pick slot   SELECT: save   hold SELECT: clear".to_string(),
+            Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
             None => String::new(),
         };
         Text::new(&hint, Point::new(16, 337), dim).draw(fb).ok();
@@ -1016,6 +1549,10 @@ struct AnalogVoice {
     svf_bp: f32,
     rng: u32,
     buf: Vec<f32>,
+    /// The note (MIDI number, fractional while gliding) this voice is
+    /// sounding.
+    pitch: f32,
+    gate: bool,
 }
 
 impl AnalogVoice {
@@ -1031,6 +1568,8 @@ impl AnalogVoice {
             svf_bp: 0.0,
             rng: 0x9E3779B9 ^ ((seed + 1).wrapping_mul(0x85EBCA6B) | 1),
             buf: Vec::new(),
+            pitch: 60.0,
+            gate: false,
         }
     }
 
@@ -1049,6 +1588,26 @@ struct VoltageProcessor {
     /// Slews toward the actual active-voice count instead of jumping
     /// straight to it -- see where it's used in `process()` for why.
     smoothed_headroom: f32,
+    fx: Box<StereoFx>,
+    /// Mono mode's last-note priority: when each pad was pressed.
+    press_stamp: [u64; 16],
+    stamp: u64,
+    prev_held: [bool; 16],
+}
+
+impl VoltageProcessor {
+    fn new(params: Arc<Params>) -> Self {
+        Self {
+            params,
+            voices: std::array::from_fn(|i| AnalogVoice::new(i as u32)),
+            mono_buf: Vec::new(),
+            smoothed_headroom: 1.0,
+            fx: Box::new(StereoFx::new()),
+            press_stamp: [0; 16],
+            stamp: 0,
+            prev_held: [false; 16],
+        }
+    }
 }
 
 impl AudioProcessor for VoltageProcessor {
@@ -1095,19 +1654,79 @@ impl AudioProcessor for VoltageProcessor {
             }
             None => held_raw,
         };
-        let q = 0.5 + (1.0 - resonance) * 9.5; // higher Q value = *less* resonant in this recurrence
+        // `svf_lowpass_step` damps by 1/q, so q is the filter's Q: 0.7
+        // (flat, Butterworth-like) at zero resonance up to about 10 (a
+        // sharp, ringing peak) at full, on a square law so the musical
+        // middle of the knob isn't all squeal. This used to run backwards -- Q 10 at
+        // zero resonance -- so the Resonance knob did the opposite of
+        // its label.
+        let q = 0.7 * (1.0 + resonance * resonance * 13.0);
         let octave = self.params.octave.load(Ordering::Relaxed);
+        let mono = self.params.mono.load(Ordering::Relaxed);
+        let glide_s = glide_seconds(self.params.glide.get());
+
+        for i in 0..16 {
+            if held[i] && !self.prev_held[i] {
+                self.stamp += 1;
+                self.press_stamp[i] = self.stamp;
+            }
+        }
+        self.prev_held = held;
+
+        // Each voice's gate and target note. Poly: one voice per pad at
+        // that pad's pitch. Mono: voice 0 plays the most recently pressed
+        // held pad; the others are released.
+        let mut gates = [false; 16];
+        let mut targets = [0.0f32; 16];
+        if mono {
+            let newest = (0..16).filter(|&i| held[i]).max_by_key(|&i| self.press_stamp[i]);
+            gates[0] = newest.is_some();
+            targets[0] = match newest {
+                Some(i) => note_for(pad_rank(i as i32), octave) as f32,
+                None => self.voices[0].pitch,
+            };
+        } else {
+            for i in 0..16 {
+                gates[i] = held[i];
+                targets[i] = note_for(pad_rank(i as i32), octave) as f32;
+            }
+        }
+        // Glide is a one-pole slew on the note number, so it moves at a
+        // constant musical speed whatever the interval.
+        let glide_coef = if mono && glide_s > 0.001 { 1.0 - (-dt / (glide_s / 3.0)).exp() } else { 1.0 };
+
+        let source_gain = 1.0 / (1.0 + sub_level + noise_level);
 
         let mut active_voices: usize = 0;
         for i in 0..16 {
-            let gate = held[i];
-            let note = note_for(pad_rank(i as i32), octave) as f32;
-            let base_freq = 440.0 * 2f32.powf((note - 69.0) / 12.0);
+            let gate = gates[i];
+            let target = targets[i];
             let voice = &mut self.voices[i];
             voice.buf.clear();
             voice.buf.resize(frames, 0.0);
+            // A new note with nothing sounding starts at its pitch; glide
+            // only connects notes played legato.
+            if gate && (!voice.gate || !mono) && (voice.amp_env.stage == 0 || !mono) {
+                voice.pitch = target;
+            }
+            voice.gate = gate;
+            // An idle voice makes no sound: skip it (most of the 16, most
+            // of the time).
+            if !gate && voice.amp_env.stage == 0 && !voice.amp_env.prev_gate {
+                voice.svf_lp = 0.0;
+                voice.svf_bp = 0.0;
+                continue;
+            }
 
+            let mut base_freq = 440.0 * 2f32.powf((voice.pitch - 69.0) / 12.0);
             for n in 0..frames {
+                if voice.pitch != target {
+                    voice.pitch += (target - voice.pitch) * glide_coef;
+                    if (target - voice.pitch).abs() < 1e-3 {
+                        voice.pitch = target;
+                    }
+                    base_freq = 440.0 * 2f32.powf((voice.pitch - 69.0) / 12.0);
+                }
                 voice.lfo_phase = (voice.lfo_phase + lfo_rate * dt).rem_euclid(1.0);
                 let lfo = (voice.lfo_phase * TAU).sin() * lfo_depth;
                 let pitch_mult = if lfo_dest == 0 { 2f32.powf(lfo * 0.5 / 12.0) } else { 1.0 };
@@ -1132,7 +1751,10 @@ impl AudioProcessor for VoltageProcessor {
                 voice.sub_phase = (voice.sub_phase + base_freq * 0.5 * pitch_mult * dt).rem_euclid(1.0);
                 let noise = voice.next_rand() * noise_level;
 
-                let pre_filter = osc_sum + sub + noise;
+                // Scaled so the three sources together never exceed full
+                // scale -- a single held note with the sub up used to
+                // reach 1.5x before the filter's own overshoot.
+                let pre_filter = (osc_sum + sub + noise) * source_gain;
 
                 let filter_lfo = if lfo_dest == 1 { lfo } else { 0.0 };
                 let cutoff = cutoff_hz((cutoff_knob + filter_env * filter_env_amount + filter_lfo * 0.5).clamp(0.0, 1.0));
@@ -1186,16 +1808,33 @@ impl AudioProcessor for VoltageProcessor {
             *m /= headroom;
         }
 
-        {
-            let mut bus_out = self.params.bus_out.lock().unwrap();
-            bus_out.clear();
-            bus_out.extend_from_slice(&self.mono_buf);
-        }
-
+        // Effects, then publish (so effect apps reading Voltage from the
+        // audio bus hear the whole sound) and write the device output.
+        let fx = FxSettings {
+            chorus: self.params.chorus.get(),
+            delay_time: self.params.delay_time.get(),
+            delay_feedback: self.params.delay_feedback.get(),
+            delay_mix: self.params.delay_mix.get(),
+            reverb_size: self.params.reverb_size.get(),
+            reverb_mix: self.params.reverb_mix.get(),
+        };
+        let wet = !StereoFx::bypassed(&fx);
         let mix_level = (self.params.mix_level.get() + self.params.ext_mix_level.get()).clamp(0.0, 2.0);
-        for (frame, sample) in buffer.chunks_mut(channels).zip(self.mono_buf.iter()) {
-            for out in frame.iter_mut() {
-                *out = *sample * mix_level;
+        let mut bus_out = self.params.bus_out.lock().unwrap();
+        bus_out.clear();
+        for (frame, m) in buffer.chunks_mut(channels).zip(self.mono_buf.iter()) {
+            let (l, r) = if wet { self.fx.tick(*m, &fx, sample_rate) } else { (*m, *m) };
+            bus_out.push((l + r) * 0.5);
+            match frame {
+                [] => {}
+                [only] => *only = (l + r) * 0.5 * mix_level,
+                [a, b, rest @ ..] => {
+                    *a = l * mix_level;
+                    *b = r * mix_level;
+                    for out in rest.iter_mut() {
+                        *out = (l + r) * 0.5 * mix_level;
+                    }
+                }
             }
         }
     }
@@ -1206,7 +1845,7 @@ mod tests {
     use super::*;
 
     fn new_processor(params: Arc<Params>) -> VoltageProcessor {
-        VoltageProcessor { params, voices: std::array::from_fn(|i| AnalogVoice::new(i as u32)), mono_buf: Vec::new(), smoothed_headroom: 1.0 }
+        VoltageProcessor::new(params)
     }
 
     fn hold_pad(params: &Params, i: usize, down: bool) {
@@ -1378,95 +2017,211 @@ mod tests {
         assert!(bus_peak > 0.0, "audio_bus publish should be unaffected by the Mixer channel fader");
     }
 
-    /// A user preset must round-trip every knob it saves, and must not
-    /// clobber a slot until explicitly saved into.
+    fn bank_in(dir: &std::path::Path) -> PresetBank {
+        PresetBank::new(Some(dir.join("presets.json")))
+    }
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("voltage-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    /// A preset must round-trip every parameter it holds.
     #[test]
-    fn user_preset_saves_and_loads_knob_state() {
-        let sensitivity = Arc::new(AtomicF32::new(0.1));
-        let nav_speed = Arc::new(AtomicF32::new(6.0));
-        let modbus = Arc::new(ModBus::new());
-        let audio_bus = Arc::new(AudioBus::new());
-        let mixer_bus = Arc::new(MixerBus::new());
-        let mut app = VoltageApp::new(sensitivity, nav_speed, modbus, audio_bus, mixer_bus);
+    fn snapshot_and_apply_round_trip_every_parameter() {
+        let a = app();
+        let mut p = PresetData {
+            name: "Test".into(),
+            osc1_wave: 2,
+            osc2_wave: 3,
+            octave: -1,
+            osc2_detune: 4.0,
+            osc_mix: 0.7,
+            sub_level: 0.6,
+            noise_level: 0.2,
+            unison: 3,
+            unison_detune: 0.4,
+            mono: true,
+            glide: 0.3,
+            filter_cutoff: 0.8,
+            filter_resonance: 0.5,
+            filter_env_amount: 0.9,
+            filter_attack: 0.1,
+            filter_decay: 0.2,
+            filter_sustain: 0.3,
+            filter_release: 0.4,
+            amp_attack: 0.05,
+            amp_decay: 0.6,
+            amp_sustain: 0.7,
+            amp_release: 0.8,
+            lfo_rate: 9.0,
+            lfo_depth: 0.6,
+            lfo_dest: 1,
+            chorus: 0.5,
+            delay_time: 0.3,
+            delay_feedback: 0.6,
+            delay_mix: 0.4,
+            reverb_size: 0.9,
+            reverb_mix: 0.2,
+            arp_on: true,
+            arp_pattern: 2,
+            arp_rate: 5.0,
+        };
+        a.params.apply(&p);
+        assert_eq!(a.params.snapshot("Test"), p);
+        // Out-of-range values in a hand-edited file are clamped.
+        p.filter_cutoff = 7.0;
+        p.unison = 99;
+        a.params.apply(&p);
+        assert_eq!(a.params.filter_cutoff.get(), 1.0);
+        assert_eq!(a.params.unison.load(Ordering::Relaxed), MAX_UNISON);
+    }
 
-        app.params.osc1_wave.store(2, Ordering::Relaxed);
-        app.params.osc2_wave.store(3, Ordering::Relaxed);
-        app.params.osc2_detune.set(4.0);
-        app.params.osc_mix.set(0.7);
-        app.params.sub_level.set(0.6);
-        app.params.noise_level.set(0.2);
-        app.params.unison.store(3, Ordering::Relaxed);
-        app.params.unison_detune.set(0.4);
-        app.params.filter_cutoff.set(0.8);
-        app.params.filter_resonance.set(0.5);
-        app.params.filter_env_amount.set(0.9);
-        app.params.filter_attack.set(0.1);
-        app.params.filter_decay.set(0.2);
-        app.params.filter_sustain.set(0.3);
-        app.params.filter_release.set(0.4);
-        app.params.amp_attack.set(0.05);
-        app.params.amp_decay.set(0.6);
-        app.params.amp_sustain.set(0.7);
-        app.params.amp_release.set(0.8);
-        app.params.lfo_rate.set(9.0);
-        app.params.lfo_depth.set(0.6);
-        app.params.lfo_dest.store(1, Ordering::Relaxed);
+    #[test]
+    fn there_are_100_slots_and_20_named_factory_presets_first() {
+        let f = factory_presets();
+        assert_eq!(f.len(), 20, "the factory file parses to 20 presets");
+        let names: std::collections::HashSet<_> = f.iter().map(|p| p.name.clone()).collect();
+        assert_eq!(names.len(), 20, "names are unique");
+        assert!(f.iter().all(|p| !p.name.is_empty() && p.name.len() <= 18), "names fit the row");
+        let bank = PresetBank::new(None);
+        assert_eq!(bank.slots.len(), NUM_PRESETS);
+        assert_eq!(bank.filled(), 20);
+        assert_eq!(bank.first_empty(), Some(20));
+    }
 
-        assert!(app.params.user_presets[0].lock().unwrap().is_none(), "slot 0 should start empty");
-        app.save_user_preset(0);
-        assert!(app.params.user_presets[0].lock().unwrap().is_some(), "save should fill the slot");
+    /// Every factory preset must make real, bounded sound: held for a
+    /// second (the arp presets arpeggiate it), then released.
+    #[test]
+    fn every_factory_preset_plays_and_stays_bounded() {
+        for p in factory_presets() {
+            let a = app();
+            a.params.apply(&p);
+            for i in [0, 5, 10] {
+                hold_pad(&a.params, i, true);
+            }
+            let mut proc = new_processor(Arc::clone(&a.params));
+            let mut buffer = vec![0.0f32; 512 * 2];
+            let (mut peak, mut energy) = (0.0f32, 0.0f32);
+            for _ in 0..94 {
+                proc.process(&mut buffer, 2, 48000.0);
+                for v in &buffer {
+                    assert!(v.is_finite(), "{}: non-finite sample", p.name);
+                    peak = peak.max(v.abs());
+                    energy += v * v;
+                }
+            }
+            assert!(energy > 1.0, "{}: too quiet ({energy})", p.name);
+            assert!(peak < 1.6, "{}: peak {peak}", p.name);
+        }
+    }
 
-        // Change everything, then load the slot back.
-        app.params.osc1_wave.store(0, Ordering::Relaxed);
-        app.params.osc2_wave.store(0, Ordering::Relaxed);
-        app.params.osc2_detune.set(0.0);
-        app.params.osc_mix.set(0.0);
-        app.params.sub_level.set(0.0);
-        app.params.noise_level.set(0.0);
-        app.params.unison.store(1, Ordering::Relaxed);
-        app.params.unison_detune.set(0.0);
-        app.params.filter_cutoff.set(0.0);
-        app.params.filter_resonance.set(0.0);
-        app.params.filter_env_amount.set(0.0);
-        app.params.filter_attack.set(0.0);
-        app.params.filter_decay.set(0.0);
-        app.params.filter_sustain.set(0.0);
-        app.params.filter_release.set(0.0);
-        app.params.amp_attack.set(0.0);
-        app.params.amp_decay.set(0.0);
-        app.params.amp_sustain.set(0.0);
-        app.params.amp_release.set(0.0);
-        app.params.lfo_rate.set(1.0);
-        app.params.lfo_depth.set(0.0);
-        app.params.lfo_dest.store(0, Ordering::Relaxed);
+    #[test]
+    fn browsing_loads_presets_and_marks_edits() {
+        let mut a = app();
+        assert_eq!(a.preset_cursor, 0);
+        assert!(a.preset_title().starts_with("01 "), "opens on preset 1: {}", a.preset_title());
+        assert!(!a.preset_title().ends_with('*'));
+        a.edit(Selection::PresetSlot, 1);
+        let second = factory_presets()[1].clone();
+        assert_eq!(a.params.snapshot(&second.name), second, "stepping right loads preset 2");
+        a.edit(Selection::FilterCutoff, 3);
+        assert!(a.preset_title().ends_with('*'), "an edited sound is marked");
+        a.reset(Selection::PresetSlot);
+        assert!(!a.preset_title().ends_with('*'), "hold SELECT reloads it");
+        a.edit(Selection::PresetSlot, -1);
+        a.edit(Selection::PresetSlot, -1);
+        assert_eq!(a.preset_cursor, NUM_PRESETS - 1, "browsing wraps");
+        assert!(a.preset_title().contains("(empty)"));
+    }
 
-        app.load_user_preset(0);
-        assert_eq!(app.params.osc1_wave.load(Ordering::Relaxed), 2);
-        assert_eq!(app.params.osc2_wave.load(Ordering::Relaxed), 3);
-        assert_eq!(app.params.osc2_detune.get(), 4.0);
-        assert_eq!(app.params.osc_mix.get(), 0.7);
-        assert_eq!(app.params.sub_level.get(), 0.6);
-        assert_eq!(app.params.noise_level.get(), 0.2);
-        assert_eq!(app.params.unison.load(Ordering::Relaxed), 3);
-        assert_eq!(app.params.unison_detune.get(), 0.4);
-        assert_eq!(app.params.filter_cutoff.get(), 0.8);
-        assert_eq!(app.params.filter_resonance.get(), 0.5);
-        assert_eq!(app.params.filter_env_amount.get(), 0.9);
-        assert_eq!(app.params.filter_attack.get(), 0.1);
-        assert_eq!(app.params.filter_decay.get(), 0.2);
-        assert_eq!(app.params.filter_sustain.get(), 0.3);
-        assert_eq!(app.params.filter_release.get(), 0.4);
-        assert_eq!(app.params.amp_attack.get(), 0.05);
-        assert_eq!(app.params.amp_decay.get(), 0.6);
-        assert_eq!(app.params.amp_sustain.get(), 0.7);
-        assert_eq!(app.params.amp_release.get(), 0.8);
-        assert_eq!(app.params.lfo_rate.get(), 9.0);
-        assert_eq!(app.params.lfo_depth.get(), 0.6);
-        assert_eq!(app.params.lfo_dest.load(Ordering::Relaxed), 1);
+    /// Saved presets go to the SD card and come back after a restart;
+    /// clearing a factory slot brings the factory preset back.
+    #[test]
+    fn saves_persist_and_clearing_restores_the_factory_preset() {
+        let dir = scratch_dir("persist");
+        let mut a = app();
+        a.presets = bank_in(&dir);
+        a.params.filter_cutoff.set(0.123);
+        a.save_target = 41;
+        a.save_preset();
+        a.params.filter_cutoff.set(0.456);
+        a.save_target = 2;
+        a.save_preset(); // over a factory preset, keeping its name
+        let factory3 = factory_presets()[2].name.clone();
 
-        // Clearing (press on an occupied slot) empties it again.
-        app.reset(Selection::UserPreset(0));
-        assert!(app.params.user_presets[0].lock().unwrap().is_none(), "reset should clear the slot");
+        let mut reopened = bank_in(&dir);
+        assert_eq!(reopened.get(41).map(|p| (p.name.as_str(), p.filter_cutoff)), Some(("User 42", 0.123)));
+        assert_eq!(reopened.get(2).map(|p| (p.name.clone(), p.filter_cutoff)), Some((factory3.clone(), 0.456)));
+        reopened.clear(2);
+        reopened.clear(41);
+        let again = bank_in(&dir);
+        assert_eq!(again.get(2), factory_presets().get(2), "factory preset restored");
+        assert!(again.get(41).is_none(), "user slot emptied");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn select_on_the_save_row_saves() {
+        let dir = scratch_dir("select");
+        let mut a = app();
+        a.presets = bank_in(&dir);
+        a.kit.menu = true;
+        a.save_target = 30;
+        let rows = a.visible_rows();
+        let save_row = rows.iter().position(|r| matches!(r, Row::Leaf(Selection::PresetSave))).expect("Presets is open by default");
+        a.list.selected = save_row;
+        a.tick(&Input { knob1_press: true, ..Default::default() });
+        assert!(a.presets.get(30).is_some(), "SELECT saved into slot 31");
+        assert_eq!(a.preset_cursor, 30);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Mono plays one voice at the newest held pad's pitch and glides
+    /// to the next note when played legato.
+    #[test]
+    fn mono_mode_glides_between_legato_notes() {
+        let a = app();
+        a.params.apply(&PresetData { mono: true, glide: 0.5, ..Default::default() });
+        let mut proc = new_processor(Arc::clone(&a.params));
+        let mut buffer = vec![0.0f32; 512 * 2];
+        let low = pad_rank(0) as usize; // rank 0 sits on physical pad 12
+        let high = pad_rank(12) as usize;
+        hold_pad(&a.params, low, true);
+        for _ in 0..10 {
+            proc.process(&mut buffer, 2, 48000.0);
+        }
+        assert_eq!(proc.voices[0].pitch, note_for(0, 0) as f32, "the first note starts at its pitch");
+        hold_pad(&a.params, high, true);
+        proc.process(&mut buffer, 2, 48000.0);
+        let mid = proc.voices[0].pitch;
+        assert!(mid > note_for(0, 0) as f32 && mid < note_for(12, 0) as f32, "glides, doesn't jump: {mid}");
+        for _ in 0..100 {
+            proc.process(&mut buffer, 2, 48000.0);
+        }
+        assert!((proc.voices[0].pitch - note_for(12, 0) as f32).abs() < 0.01, "arrives at the new note");
+        assert!(proc.voices[1..].iter().all(|v| v.amp_env.stage == 0), "only one voice sounds");
+        hold_pad(&a.params, high, false);
+        for _ in 0..100 {
+            proc.process(&mut buffer, 2, 48000.0);
+        }
+        assert!((proc.voices[0].pitch - note_for(0, 0) as f32).abs() < 0.01, "releasing returns to the still-held note");
+    }
+
+    #[test]
+    fn effects_make_the_output_stereo() {
+        let a = app();
+        a.params.apply(&PresetData { chorus: 1.0, ..Default::default() });
+        hold_pad(&a.params, 0, true);
+        let mut proc = new_processor(Arc::clone(&a.params));
+        let mut buffer = vec![0.0f32; 512 * 2];
+        let mut diff = 0.0;
+        for _ in 0..20 {
+            proc.process(&mut buffer, 2, 48000.0);
+            diff += buffer.chunks(2).map(|f| (f[0] - f[1]).abs()).sum::<f32>();
+        }
+        assert!(diff > 1.0, "chorus spreads left and right apart: {diff}");
     }
 
     /// The list column's text must never reach the visualizer panel
@@ -1483,9 +2238,6 @@ mod tests {
         let mixer_bus = Arc::new(MixerBus::new());
         let mut app = VoltageApp::new(sensitivity, nav_speed, modbus, audio_bus, mixer_bus);
         app.expanded = [true; NUM_GROUPS];
-        for i in 0..NUM_USER_PRESETS {
-            app.save_user_preset(i);
-        }
 
         let rows = app.visible_rows();
         let display_rows: Vec<(String, String)> = rows
@@ -1562,4 +2314,52 @@ mod tests {
         let mut fb3 = FrameBuffer::new();
         app.draw(&mut fb3); // must not panic
     }
+
+    fn app() -> VoltageApp {
+        VoltageApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(1.0)), Arc::new(ModBus::new()), Arc::new(AudioBus::new()), Arc::new(MixerBus::new()))
+    }
+
+    #[test]
+    fn opens_playable_knobs_shape_the_filter_and_pads_still_play() {
+        let mut a = app();
+        assert!(a.play_column().is_some(), "play view first");
+        let cutoff = a.params.filter_cutoff.get();
+        a.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(a.params.filter_cutoff.get() > cutoff, "knob 1 is cutoff on the play view");
+        a.tick(&Input { grid: std::array::from_fn(|i| i == 12), ..Default::default() });
+        assert!(a.params.held.lock().unwrap()[12], "KEYS layer plays the pads");
+        a.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(a.params.octave.load(Ordering::Relaxed), 1, "D-pad up = octave up");
+        a.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(a.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn the_stick_sweeps_cutoff_and_returns_and_midi_keys_play_their_pitch() {
+        let mut a = app();
+        let cutoff = a.params.filter_cutoff.get();
+        a.tick(&Input { stick: [1.0, 0.0], ..Default::default() });
+        assert!((a.params.filter_cutoff.get() - (cutoff + 0.5).min(1.0)).abs() < 1e-4, "full right = half the range up");
+        a.tick(&Input::default());
+        assert!((a.params.filter_cutoff.get() - cutoff).abs() < 1e-5, "back to the knob");
+        let mut keys = crate::app::MidiKeys::default();
+        keys.0[note_for(4, 0) as usize] = 100; // E3: rank 4
+        a.tick(&Input { midi_keys: keys, ..Default::default() });
+        assert!(a.params.held.lock().unwrap()[pad_rank(4) as usize], "a key presses the pad with its pitch");
+    }
+
+    #[test]
+    fn f3_runs_the_arp() {
+        let mut a = app();
+        let was = a.running() == Some(true);
+        a.toggle_running();
+        assert_eq!(a.running(), Some(!was));
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(VoltageApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

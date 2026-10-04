@@ -1,0 +1,56 @@
+{
+  "version": 2,
+  "name": "Sub Pressure",
+  "category": "Bass",
+  "tags": ["mono", "ladder", "drive"],
+  "author": "Portamax",
+  "description": "A mono bass: saw and sub through a saturating ladder, with glide. ENERGY pushes it into distortion.",
+  "kind": "instrument",
+  "voices": 1,
+  "amp_env": true,
+  "visual": "scope",
+  "page_names": ["Source", "Filter", "Motion", "Drive"],
+  "params": [
+    {"id": "pw", "name": "Shape", "min": 0, "max": 1, "default": 0.0, "page": 1},
+    {"id": "sub", "name": "Sub", "min": 0, "max": 1, "default": 0.6, "page": 1},
+    {"id": "gritamt", "name": "Grit", "min": 0, "max": 0.5, "default": 0.0, "page": 1},
+    {"id": "cutoff", "name": "Cutoff", "min": 40, "max": 6000, "default": 380, "curve": "exp", "unit": "Hz", "page": 2},
+    {"id": "res", "name": "Resonance", "min": 0, "max": 1, "default": 0.35, "page": 2},
+    {"id": "envamt", "name": "Filter Env", "min": 0, "max": 6, "default": 2.5, "page": 2},
+    {"id": "fdecay", "name": "Filter Decay", "min": 0.02, "max": 1.5, "default": 0.18, "curve": "exp", "unit": "s", "page": 2},
+    {"id": "rate", "name": "Wobble Rate", "min": 0.1, "max": 12, "default": 2, "curve": "exp", "unit": "Hz", "page": 3},
+    {"id": "wob", "name": "Wobble", "min": 0, "max": 1, "default": 0, "page": 3},
+    {"id": "drive", "name": "Drive", "min": 1, "max": 10, "default": 1.6, "page": 4},
+    {"id": "dist", "name": "Distortion", "min": 1, "max": 30, "default": 1.5, "page": 4},
+    {"id": "chorus", "name": "Width", "min": 0, "max": 1, "default": 0.1, "page": 4}
+  ],
+  "macros": [
+    {"name": "CHARACTER", "targets": [{"param": "pw", "amount": 0.8}]},
+    {"name": "COLOR", "targets": [{"param": "cutoff", "amount": 0.45}, {"param": "res", "amount": 0.25}]},
+    {"name": "MOTION", "targets": [{"param": "wob", "amount": 0.8}]},
+    {"name": "TEXTURE", "targets": [{"param": "gritamt", "amount": 0.6}, {"param": "sub", "amount": -0.3}]},
+    {"name": "SPACE", "targets": [{"param": "chorus", "amount": 0.7}]},
+    {"name": "SHAPE", "targets": [{"param": "fdecay", "amount": 0.6}, {"param": "envamt", "amount": 0.3}]},
+    {"name": "ENERGY", "targets": [{"param": "drive", "amount": 0.5}, {"param": "dist", "amount": 0.6}]}
+  ],
+  "voice": [
+    {"id": "saw", "type": "osc", "wave": "saw", "in": {"freq": "pitch"}},
+    {"id": "sq", "type": "osc", "wave": "pulse", "in": {"freq": "pitch", "pw": "0.5 - pw * 0.4"}},
+    {"id": "low", "type": "osc", "wave": "sine", "in": {"freq": "pitch / 2"}},
+    {"id": "grit", "type": "noise", "color": "brown"},
+    {"id": "fenv", "type": "ad", "in": {"a": 0.002, "d": "fdecay"}},
+    {"id": "wobble", "type": "lfo", "shape": "tri", "retrig": "true", "in": {"rate": "rate"}},
+    {"id": "lad", "type": "ladder", "in": {"in": "mix(saw, sq, pw) * 0.6 + grit * gritamt", "cutoff": "clamp(cutoff * (1 + fenv * envamt) * (1 + wobble * wob), 30, 14000)", "res": "res", "drive": "drive"}},
+    {"id": "hot", "type": "drive", "mode": "tube", "in": {"in": "lad", "gain": "dist", "tone": 0.6}}
+  ],
+  "voice_out": "hot * 0.45 + low * sub * 0.45",
+  "global": [
+    {"id": "wide", "type": "chorus", "in": {"in": "voices", "rate": 0.25, "depth": 0.4, "mix": "chorus"}}
+  ],
+  "out": "wide",
+  "settings": {"attack": 0.002, "decay": 0.4, "sustain": 0.9, "release": 0.12, "glide": 0.06, "root": 36, "scale": 2},
+  "states": [
+    {"params": {}},
+    {"params": {"pw": 0.7, "cutoff": 160, "res": 0.8, "envamt": 5, "fdecay": 0.08, "drive": 4, "dist": 8}}
+  ]
+}

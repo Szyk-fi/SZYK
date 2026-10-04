@@ -1,0 +1,6 @@
+# Sources for tides_bridge.cc, relative to vendor/eurorack -- the same
+# list as tides2/test/makefile's CC_FILES, minus its test harness.
+tides2/poly_slope_generator.cc
+tides2/ramp/ramp_extractor.cc
+tides2/resources.cc
+stmlib/dsp/units.cc

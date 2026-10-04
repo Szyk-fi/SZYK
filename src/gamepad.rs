@@ -27,66 +27,25 @@
 //! thread already writes into (see controller.rs) -- `Input::poll`
 //! doesn't need to know or care where a press came from.
 //!
-//! Button layout mirrors what `gamepad_probe`/the original `gilrs`
-//! version aimed for: RetroArch's standard SNES remap (B=Cross,
-//! A=Circle, Y=Square, X=Triangle) so the Retro app's own D-Pad/face-
-//! button/shoulder/Select-Start pad mapping (see apps/retro.rs) lines
-//! up with a real gamepad directly. `GCExtendedGamepad`'s own
-//! `buttonA`/`B`/`X`/`Y` naming already follows Xbox-style physical
-//! positions (A=bottom, B=right, X=left, Y=top) regardless of brand,
-//! which is exactly Cross/Circle/Square/Triangle on a PlayStation pad.
-//!
-//! Menu navigation (browsing the OS/app list up and down, and diving
-//! into the highlighted row) deliberately does *not* use the left
-//! stick at all -- this controller's left stick has real drift, so it
-//! was dropped entirely rather than fighting spurious ticks. The right
-//! stick still browses up/down (reversed from the original mapping, per
-//! an earlier explicit request); D-Pad Up/Down duplicate that same
-//! browsing action (not reversed -- a real button has no drift to work
-//! around, so it gets the plain, intuitive polarity), and D-Pad
-//! Left/Right edit the highlighted row's value. The face buttons and
-//! shoulders double as the OS's own F1-F4/Home/select controls
-//! alongside their existing Retro pad-input role -- see
-//! `apply_gamepad_state`'s own comments for the full, current layout.
+//! What each button *does* is no longer decided here: this file only
+//! reads the controller into a `controller_map::Snapshot`, and
+//! `controller_map.rs` applies the user's mapping (editable in the
+//! Controller app, saved to the SD card). Its defaults reproduce the
+//! layout this file used to hard-code.
 //!
 //! macOS-only, deliberately (`GameController.framework` doesn't exist
 //! elsewhere) -- `main.rs` only spawns this listener under `#[cfg(target_os
 //! = "macos")]`.
 
 use crate::controller::ControllerState;
+use crate::controller_map::{self, b, ax, Mapper, Snapshot};
 use objc2::rc::Retained;
 use objc2::Message;
 use objc2_foundation::NSArray;
-use objc2_game_controller::{GCController, GCControllerButtonInput, GCControllerDirectionPad, GCDualSenseGamepad, GCExtendedGamepad};
+use objc2_game_controller::{GCController, GCControllerButtonInput, GCDevice, GCDualSenseGamepad, GCExtendedGamepad};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-
-/// Below this, stick deflection is treated as centered -- DualSense
-/// sticks report nonzero noise near rest.
-const STICK_DEADZONE: f32 = 0.35;
-const STICK_REPEAT: Duration = Duration::from_millis(60);
-
-/// Tracks which edge-triggered buttons were already down last poll,
-/// so a held button fires its action once, not every ~8ms it stays
-/// pressed -- polling has no built-in press/release edge the way
-/// `gilrs`'s event stream did, so this app tracks it by hand.
-#[derive(Default)]
-struct EdgeState {
-    menu: bool,
-    options: bool,
-    left_trigger: bool,
-    right_trigger: bool,
-    cross: bool,
-    circle: bool,
-    square: bool,
-    triangle: bool,
-    left_shoulder: bool,
-    right_shoulder: bool,
-    touchpad: bool,
-    last_knob1_tick: Option<std::time::Instant>,
-    last_knob2_tick: Option<std::time::Instant>,
-}
 
 /// Runs forever on its own thread (spawned once from `main.rs`,
 /// exactly like `run_midi_listener`). Panics anywhere in here are
@@ -102,6 +61,7 @@ pub fn run_gamepad_listener(controller: Arc<ControllerState>) {
         if let Err(payload) = outcome {
             let message = payload.downcast_ref::<&str>().copied().map(String::from).or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_else(|| "(no panic message)".into());
             eprintln!("gamepad: listener panicked ({message}) -- restarting in 1s rather than leaving controller input dead for the rest of the run");
+            controller_map::shared().native_active.store(false, Ordering::Relaxed);
             std::thread::sleep(Duration::from_secs(1));
         }
     }
@@ -109,35 +69,41 @@ pub fn run_gamepad_listener(controller: Arc<ControllerState>) {
 
 fn run_gamepad_session(controller: &Arc<ControllerState>) {
     println!("gamepad: polling GameController.framework (macOS native) for a connected controller");
+    let pad = controller_map::shared();
     let mut was_connected = false;
-    let mut edges = EdgeState::default();
-    let (mut stick2_x, mut stick2_y) = (0.0f32, 0.0f32);
+    let mut mapper = Mapper::default();
 
     loop {
-        let gamepad = unsafe { current_extended_gamepad() };
-        let connected = gamepad.is_some();
+        let found = unsafe { current_extended_gamepad() };
+        let connected = found.is_some();
         if connected != was_connected {
             was_connected = connected;
             println!("gamepad: {}", if connected { "controller connected" } else { "no controller (waiting -- plug in any time)" });
+            pad.native_active.store(connected, Ordering::Relaxed);
+            if !connected {
+                pad.disconnected(&mut mapper, controller);
+            }
         }
 
-        if let Some(gamepad) = gamepad {
-            unsafe { apply_gamepad_state(controller, &gamepad, &mut edges, &mut stick2_x, &mut stick2_y) };
+        if let Some((gamepad, name)) = found {
+            let snap = unsafe { read_snapshot(&gamepad) };
+            pad.feed(&name, snap, &mut mapper, controller);
         }
 
         std::thread::sleep(Duration::from_millis(8));
     }
 }
 
-/// The first connected controller's extended-gamepad profile, if any
-/// is both attached and actually supports it (a DualSense always
-/// does; a bare joystick/wheel might not).
-unsafe fn current_extended_gamepad() -> Option<Retained<GCExtendedGamepad>> {
+/// The first connected controller's extended-gamepad profile and its
+/// name, if any is both attached and actually supports it (a DualSense
+/// always does; a bare joystick/wheel might not).
+unsafe fn current_extended_gamepad() -> Option<(Retained<GCExtendedGamepad>, String)> {
     let controllers: Retained<NSArray<GCController>> = GCController::controllers();
     for i in 0..controllers.count() {
         let c = controllers.objectAtIndex(i);
         if let Some(gamepad) = c.extendedGamepad() {
-            return Some(gamepad);
+            let name = c.vendorName().map(|n| n.to_string()).unwrap_or_else(|| "Game controller".into());
+            return Some((gamepad, name));
         }
     }
     None
@@ -147,162 +113,45 @@ unsafe fn is_down(button: &GCControllerButtonInput) -> bool {
     button.isPressed()
 }
 
-unsafe fn apply_gamepad_state(controller: &ControllerState, gamepad: &GCExtendedGamepad, edges: &mut EdgeState, stick2_x: &mut f32, stick2_y: &mut f32) {
-    // Grid pads: level state, mirrors real held-down semantics (same
-    // as the keyboard's own grid keys) -- this is what makes the
-    // D-Pad/face-buttons/shoulders line up with `apps/retro.rs`'s own
-    // NES/SNES pad mapping (grid 0-3 = D-Pad, 4-7 = B/A/Y/X, 8-9 =
-    // L/R, 10-11 = Select/Start).
-    let dpad: Retained<GCControllerDirectionPad> = gamepad.dpad();
-    let dpad_up_down = is_down(&dpad.up());
-    let dpad_down_down = is_down(&dpad.down());
-    let dpad_left_down = is_down(&dpad.left());
-    let dpad_right_down = is_down(&dpad.right());
-    controller.grid[0].store(dpad_up_down, Ordering::Relaxed);
-    controller.grid[1].store(dpad_down_down, Ordering::Relaxed);
-    controller.grid[2].store(dpad_left_down, Ordering::Relaxed);
-    controller.grid[3].store(dpad_right_down, Ordering::Relaxed);
-    controller.grid[4].store(is_down(&gamepad.buttonA()), Ordering::Relaxed); // Cross -> B
-    controller.grid[5].store(is_down(&gamepad.buttonB()), Ordering::Relaxed); // Circle -> A
-    controller.grid[6].store(is_down(&gamepad.buttonX()), Ordering::Relaxed); // Square -> Y
-    controller.grid[7].store(is_down(&gamepad.buttonY()), Ordering::Relaxed); // Triangle -> X
-    controller.grid[8].store(is_down(&gamepad.leftShoulder()), Ordering::Relaxed); // L1 -> L
-    controller.grid[9].store(is_down(&gamepad.rightShoulder()), Ordering::Relaxed); // R1 -> R
-    // `buttonOptions`/`buttonMenu` (Share/Options on a DualSense) also
-    // double as this app's Select/Start grid pads -- Retro wants both
-    // a level-state Select/Start (for held-during-boot combos some
-    // games expect) and an edge-triggered Home/F-button meaning
-    // elsewhere (see below); reading `isPressed()` twice per button is
-    // cheap and keeps both meanings genuinely independent.
-    if let Some(options) = gamepad.buttonOptions() {
-        controller.grid[10].store(is_down(&options), Ordering::Relaxed);
-    }
-    controller.grid[11].store(is_down(&gamepad.buttonMenu()), Ordering::Relaxed);
-
-    // Everything past here is edge-triggered (only a fresh press
-    // matters, same as the MIDI listener's own latches) -- polling has
-    // no built-in edge, so `edges` tracks last-frame state by hand.
-    let menu_down = is_down(&gamepad.buttonMenu());
-    if menu_down && !edges.menu {
-        controller.set_home(); // PS button convention: Menu = Home
-    }
-    edges.menu = menu_down;
-
-    if let Some(options) = gamepad.buttonOptions() {
-        let options_down = is_down(&options);
-        edges.options = options_down;
-    }
-
-    let left_trigger_down = is_down(&gamepad.leftTrigger());
-    if left_trigger_down && !edges.left_trigger {
-        controller.set_top(1); // L2 -> F2
-    }
-    edges.left_trigger = left_trigger_down;
-
-    let right_trigger_down = is_down(&gamepad.rightTrigger());
-    if right_trigger_down && !edges.right_trigger {
-        controller.set_top(2); // R2 -> F3
-    }
-    edges.right_trigger = right_trigger_down;
-
-    // The OS-level control layout: X = select (dive into the
-    // highlighted row), Circle = back (F1 -- the OS's own "return to
-    // the home list" button, which also jumps into Settings when
-    // already there), Square = F2, Triangle = F3, R1 = jump straight to
-    // the Mixer (F4), L1 and the DualSense's own touchpad click = Home.
-    // These are real, explicit per-button assignments, not derived from
-    // the RetroArch-style face-button remap above -- that remap is only
-    // about lining up with a game's own face buttons while playing,
-    // and coexists fine with these OS-level meanings since apps only
-    // ever look at one or the other depending on what's focused.
-    let cross_down = is_down(&gamepad.buttonA());
-    if cross_down && !edges.cross {
-        controller.set_knob1_press();
-    }
-    edges.cross = cross_down;
-
-    let circle_down = is_down(&gamepad.buttonB());
-    if circle_down && !edges.circle {
-        controller.set_top(0);
-    }
-    edges.circle = circle_down;
-
-    let square_down = is_down(&gamepad.buttonX());
-    if square_down && !edges.square {
-        controller.set_top(1);
-    }
-    edges.square = square_down;
-
-    let triangle_down = is_down(&gamepad.buttonY());
-    if triangle_down && !edges.triangle {
-        controller.set_top(2);
-    }
-    edges.triangle = triangle_down;
-
-    let left_shoulder_down = is_down(&gamepad.leftShoulder());
-    if left_shoulder_down && !edges.left_shoulder {
-        controller.set_home();
-    }
-    edges.left_shoulder = left_shoulder_down;
-
-    let right_shoulder_down = is_down(&gamepad.rightShoulder());
-    if right_shoulder_down && !edges.right_shoulder {
-        controller.set_top(3);
-    }
-    edges.right_shoulder = right_shoulder_down;
-
-    // The DualSense's own touchpad-click button isn't part of the
-    // generic `GCExtendedGamepad` profile at all (Apple exposes it only
-    // on the DualSense-specific subclass) -- retaining+downcasting the
-    // same underlying object is how objc2 gets from one to the other;
-    // this is a no-op (touchpad simply never presses) on any other
-    // controller, not a crash.
+/// Everything on the controller, in `controller_map`'s neutral layout.
+/// `GCExtendedGamepad`'s `buttonA`/`B`/`X`/`Y` follow Xbox-style physical
+/// positions (A = bottom) regardless of brand, which is exactly
+/// Cross/Circle/Square/Triangle on a PlayStation pad.
+unsafe fn read_snapshot(gamepad: &GCExtendedGamepad) -> Snapshot {
+    let mut s = Snapshot::default();
+    let mut set = |i: u8, v: bool| s.buttons[i as usize] = v;
+    let dpad = gamepad.dpad();
+    set(b::UP, is_down(&dpad.up()));
+    set(b::DOWN, is_down(&dpad.down()));
+    set(b::LEFT, is_down(&dpad.left()));
+    set(b::RIGHT, is_down(&dpad.right()));
+    set(b::SOUTH, is_down(&gamepad.buttonA()));
+    set(b::EAST, is_down(&gamepad.buttonB()));
+    set(b::WEST, is_down(&gamepad.buttonX()));
+    set(b::NORTH, is_down(&gamepad.buttonY()));
+    set(b::L1, is_down(&gamepad.leftShoulder()));
+    set(b::R1, is_down(&gamepad.rightShoulder()));
+    set(b::L2, is_down(&gamepad.leftTrigger()));
+    set(b::R2, is_down(&gamepad.rightTrigger()));
+    set(b::L3, gamepad.leftThumbstickButton().is_some_and(|x| is_down(&x)));
+    set(b::R3, gamepad.rightThumbstickButton().is_some_and(|x| is_down(&x)));
+    // On a DualSense, Apple's `buttonMenu` is Options and `buttonOptions`
+    // is Create/Share.
+    set(b::START, is_down(&gamepad.buttonMenu()));
+    set(b::SELECT, gamepad.buttonOptions().is_some_and(|x| is_down(&x)));
+    set(b::HOME, gamepad.buttonHome().is_some_and(|x| is_down(&x)));
+    // The touchpad click isn't in the generic profile; Apple exposes it
+    // only on the DualSense subclass. Any other controller: never pressed.
     if let Ok(dualsense) = gamepad.retain().downcast::<GCDualSenseGamepad>() {
-        let touchpad_down = is_down(&dualsense.touchpadButton());
-        if touchpad_down && !edges.touchpad {
-            controller.set_home();
-        }
-        edges.touchpad = touchpad_down;
+        set(b::TOUCHPAD, is_down(&dualsense.touchpadButton()));
     }
-
-    let now = std::time::Instant::now();
-
-    // D-Pad Up/Down duplicate the right stick's own browsing action
-    // (see below) -- reversed per explicit request (pushing Up now
-    // navigates down, and vice versa), same as the right stick's own
-    // reversed polarity below.
-    let ready_dpad_nav = edges.last_knob1_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
-    if (dpad_up_down || dpad_down_down) && ready_dpad_nav {
-        controller.add_knob1_delta(if dpad_up_down { 1 } else { -1 });
-        edges.last_knob1_tick = Some(now);
-    }
-
-    // D-Pad Left/Right edit the highlighted row's own value (knob2),
-    // repeating at the same rate while held as every other repeating
-    // control here -- also reversed per the same request.
-    let ready_dpad_edit = edges.last_knob2_tick.is_none_or(|t| now.duration_since(t) >= STICK_REPEAT);
-    if (dpad_left_down || dpad_right_down) && ready_dpad_edit {
-        controller.add_knob2_delta(if dpad_left_down { 1 } else { -1 });
-        edges.last_knob2_tick = Some(now);
-    }
-
-    // The left stick is deliberately not read at all -- disabled due to
-    // real drift on this controller (spurious nav ticks with the stick
-    // sitting still). The right stick still browses the menu (knob1);
-    // there's no second stick left to also carry knob2 (editing a
-    // value), which the D-Pad's own Left/Right now covers instead.
-    let right_stick = gamepad.rightThumbstick();
-    *stick2_x = right_stick.xAxis().value();
-    *stick2_y = right_stick.yAxis().value();
-
-    if (stick2_x.abs() > STICK_DEADZONE || stick2_y.abs() > STICK_DEADZONE) && ready_dpad_nav {
-        // Reversed from the original mapping (`-y.signum()`) per
-        // explicit request: pushing the stick the way that used to
-        // navigate up now navigates down, and vice versa. (D-Pad
-        // Up/Down above is intentionally the other polarity -- see its
-        // own comment.)
-        let delta = if stick2_y.abs() > stick2_x.abs() { stick2_y.signum() as i32 } else { stick2_x.signum() as i32 };
-        controller.add_knob1_delta(delta);
-        edges.last_knob1_tick = Some(now);
-    }
+    let left = gamepad.leftThumbstick();
+    let right = gamepad.rightThumbstick();
+    s.axes[ax::LX as usize] = left.xAxis().value();
+    s.axes[ax::LY as usize] = left.yAxis().value();
+    s.axes[ax::RX as usize] = right.xAxis().value();
+    s.axes[ax::RY as usize] = right.yAxis().value();
+    s.axes[ax::L2 as usize] = gamepad.leftTrigger().value().clamp(0.0, 1.0);
+    s.axes[ax::R2 as usize] = gamepad.rightTrigger().value().clamp(0.0, 1.0);
+    s
 }

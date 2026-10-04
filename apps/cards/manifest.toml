@@ -1,0 +1,5 @@
+id = "cards"
+name = "Cards"
+category = "system"
+description = "The I/O cards in the slots and every input and output they add."
+audio_outputs = []

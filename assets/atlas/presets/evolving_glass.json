@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "name": "Evolving Glass",
+  "category": "Texture",
+  "tags": ["wavetable", "granular", "resonator", "demo"],
+  "author": "Portamax",
+  "description": "Glass wavetable and breath noise, folded, filtered and rung through a modal resonator, then smeared into a granular cloud. MORPH turns clean glass into folded dust.",
+  "kind": "instrument",
+  "voices": 6,
+  "amp_env": true,
+  "visual": "spectrum",
+  "page_names": ["Sources", "Shape", "Motion", "Space"],
+  "params": [
+    {"id": "pos", "name": "Table Position", "min": 0, "max": 1, "default": 0.3, "page": 1},
+    {"id": "blend", "name": "Breath", "min": 0, "max": 1, "default": 0.15, "page": 1},
+    {"id": "fold", "name": "Fold", "min": 1, "max": 6, "default": 1.5, "page": 1},
+    {"id": "gain", "name": "Level", "min": 0.3, "max": 1.5, "default": 0.8, "page": 1},
+    {"id": "cutoff", "name": "Cutoff", "min": 100, "max": 12000, "default": 2500, "curve": "exp", "unit": "Hz", "page": 2},
+    {"id": "res", "name": "Resonance", "min": 0, "max": 0.9, "default": 0.2, "page": 2},
+    {"id": "envamt", "name": "Filter Env", "min": 0, "max": 3, "default": 1.2, "page": 2},
+    {"id": "structure", "name": "Body", "min": 0, "max": 1, "default": 0.8, "page": 2},
+    {"id": "damp", "name": "Damping", "min": 0, "max": 1, "default": 0.5, "page": 2},
+    {"id": "bright", "name": "Ring Brightness", "min": 0, "max": 1, "default": 0.6, "page": 2},
+    {"id": "resmix", "name": "Resonator", "min": 0, "max": 1, "default": 0.4, "page": 2},
+    {"id": "lfo1rate", "name": "Table Drift Rate", "min": 0.02, "max": 4, "default": 0.15, "curve": "exp", "unit": "Hz", "page": 3},
+    {"id": "lfo1amt", "name": "Table Drift", "min": 0, "max": 0.5, "default": 0.2, "page": 3},
+    {"id": "lfo2rate", "name": "Grain Drift Rate", "min": 0.02, "max": 2, "default": 0.07, "curve": "exp", "unit": "Hz", "page": 3},
+    {"id": "lfo2amt", "name": "Grain Drift", "min": 0, "max": 0.5, "default": 0.25, "page": 3},
+    {"id": "density", "name": "Grain Density", "min": 0, "max": 60, "default": 10, "page": 4},
+    {"id": "grains", "name": "Grain Level", "min": 0, "max": 1, "default": 0.3, "page": 4},
+    {"id": "chorus", "name": "Chorus", "min": 0, "max": 1, "default": 0.4, "page": 4},
+    {"id": "delay", "name": "Delay", "min": 0, "max": 1, "default": 0.25, "page": 4},
+    {"id": "dtime", "name": "Delay Time", "min": 0.05, "max": 1, "default": 0.375, "unit": "s", "page": 4},
+    {"id": "fb", "name": "Feedback", "min": 0, "max": 0.9, "default": 0.45, "page": 4},
+    {"id": "verb", "name": "Reverb", "min": 0, "max": 1, "default": 0.35, "page": 4},
+    {"id": "size", "name": "Size", "min": 0.3, "max": 0.97, "default": 0.8, "page": 4}
+  ],
+  "macros": [
+    {"name": "CHARACTER", "targets": [{"param": "blend", "amount": 0.5}, {"param": "fold", "amount": 0.5}, {"param": "pos", "amount": 0.3}]},
+    {"name": "COLOR", "targets": [{"param": "cutoff", "amount": 0.4}, {"param": "bright", "amount": 0.3}, {"param": "res", "amount": 0.2}]},
+    {"name": "MOTION", "targets": [{"param": "lfo1amt", "amount": 0.6}, {"param": "lfo2amt", "amount": 0.6}, {"param": "lfo1rate", "amount": 0.3}]},
+    {"name": "TEXTURE", "targets": [{"param": "density", "amount": 0.5}, {"param": "grains", "amount": 0.6}, {"param": "blend", "amount": 0.2}]},
+    {"name": "SPACE", "targets": [{"param": "verb", "amount": 0.5}, {"param": "delay", "amount": 0.5}, {"param": "size", "amount": 0.15}]},
+    {"name": "SHAPE", "targets": [{"param": "structure", "amount": -0.6}, {"param": "damp", "amount": -0.3}, {"param": "resmix", "amount": 0.4}]},
+    {"name": "ENERGY", "targets": [{"param": "gain", "amount": 0.4}, {"param": "envamt", "amount": 0.4}, {"param": "fold", "amount": 0.2}]}
+  ],
+  "voice": [
+    {"id": "drift", "type": "lfo", "shape": "smooth", "in": {"rate": "lfo1rate"}},
+    {"id": "wt", "type": "wavetable", "table": "glass", "in": {"freq": "pitch", "pos": "clamp(pos + drift * lfo1amt, 0, 1)", "warp": 0.15}},
+    {"id": "breath", "type": "noise", "color": "pink"},
+    {"id": "folded", "type": "fold", "in": {"in": "mix(wt, breath, blend * 0.6) * 0.8", "amount": "fold * (0.6 + vel * 0.8)"}},
+    {"id": "fenv", "type": "adsr", "in": {"a": 0.01, "d": 1.5, "s": 0.4, "r": 2}},
+    {"id": "filt", "type": "filter", "mode": "lp", "in": {"in": "folded", "cutoff": "clamp(cutoff * (1 + fenv * envamt), 40, 16000)", "res": "res"}},
+    {"id": "jitter", "type": "lfo", "shape": "random", "in": {"rate": 3}},
+    {"id": "body", "type": "modal", "in": {"in": "filt * 0.3", "freq": "pitch", "structure": "structure", "damp": "clamp(damp + jitter * 0.15, 0, 1)", "bright": "bright"}}
+  ],
+  "voice_out": "mix(filt, body, resmix) * gain * 0.16",
+  "global": [
+    {"id": "gdrift", "type": "lfo", "in": {"rate": "lfo2rate"}},
+    {"id": "cloud", "type": "grain", "in": {"in": "voices", "pos": "clamp(0.2 + gdrift * lfo2amt, 0, 1)", "size": 0.12, "density": "density", "pitch": 12, "spread": 0.35}},
+    {"id": "wide", "type": "chorus", "in": {"in": "voices + cloud * grains", "rate": 0.3, "depth": 0.6, "mix": "chorus"}},
+    {"id": "echo", "type": "delay", "max": 1.2, "in": {"in": "wide", "time": "dtime", "fb": "fb", "damp": 0.4}},
+    {"id": "room", "type": "reverb", "in": {"in": "wide + echo * 0.5", "size": "size", "damp": 0.4, "mod": 0.4}}
+  ],
+  "out": {
+    "left": "wide + echo * delay + room * verb",
+    "right": "wide + echo * delay * 0.9 + room * verb * 1.05"
+  },
+  "settings": {"attack": 0.02, "decay": 0.6, "sustain": 0.8, "release": 1.6, "glide": 0, "root": 57, "scale": 2},
+  "states": [
+    {"params": {}},
+    {"params": {"pos": 0.85, "blend": 0.45, "fold": 3.5, "cutoff": 900, "res": 0.5, "structure": 0.3, "damp": 0.25, "resmix": 0.65, "density": 35, "grains": 0.6, "verb": 0.55, "size": 0.93, "lfo1amt": 0.4}}
+  ]
+}

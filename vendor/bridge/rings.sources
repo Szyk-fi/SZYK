@@ -1,0 +1,10 @@
+# Sources for rings_bridge.cc, relative to vendor/eurorack -- the same
+# list as rings/test/makefile's CC_FILES, minus its test harness.
+rings/dsp/fm_voice.cc
+rings/dsp/part.cc
+rings/dsp/resonator.cc
+rings/dsp/string.cc
+rings/dsp/string_synth_part.cc
+rings/resources.cc
+stmlib/utils/random.cc
+stmlib/dsp/units.cc

@@ -1,2 +1,11 @@
 id = "cascade"
 name = "Cascade"
+category = "instrument"
+description = "Six-operator FM synthesis. Loads real .syx banks."
+audio_outputs = ["Cascade"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Cascade Level",
+    "Cascade: Feedback",
+]

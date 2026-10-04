@@ -68,6 +68,7 @@
 //! fake stub, but it does not literally solve the JA differential
 //! equations the way Kaseta/ChowTape do.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -287,6 +288,65 @@ pub struct MagnitoApp {
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
     expanded: [bool; NUM_GROUPS],
+    /// The shared play view (play_kit.rs).
+    kit: PlayKit,
+}
+
+/// The play view's controls, most important first: the saturation
+/// itself on the first knob pair, then the tone filter and the tape
+/// transport's wobble, then age and hiss. Source stays menu-only:
+/// it's patching, not playing.
+const CONTROLS: [Selection; 9] = [
+    Selection::Drive,
+    Selection::Bias,
+    Selection::Tone,
+    Selection::Wow,
+    Selection::Flutter,
+    Selection::Wear,
+    Selection::Noise,
+    Selection::DryWet,
+    Selection::Level,
+];
+const C_DRIVE: usize = 0;
+const C_BIAS: usize = 1;
+const C_TONE: usize = 2;
+const C_WOW: usize = 3;
+const C_FLUTTER: usize = 4;
+const C_WEAR: usize = 5;
+const C_NOISE: usize = 6;
+const C_DRY_WET: usize = 7;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "magnito",
+        // The pads did nothing before, so there's no native layer to
+        // keep: an effect opens straight onto its Throws.
+        layers: vec![Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[C_DRIVE, C_BIAS], [C_TONE, C_WOW], [C_FLUTTER, C_WEAR], [C_NOISE, C_DRY_WET]],
+        // Every Magnito control is continuous; there is no preset,
+        // mode or algorithm for the D-pad to step through.
+        browse: None,
+        // Stick: the DJ tone filter on X (centre = off, so a resting
+        // stick changes nothing) and drive on Y. Hands are the tape
+        // transport: wow on one, flutter on the other -- a hand in the
+        // beam is a thumb on the reel.
+        routes: Routes { stick_x: Some(C_TONE), stick_y: Some(C_DRIVE), hand_l: Some(C_WOW), hand_r: Some(C_FLUTTER) },
+        throws: vec![
+            // Fully clockwise is the "unlimited hysteresis" range.
+            Throw { control: C_DRIVE, to: 1.0, label: "UNLIMIT" },
+            Throw { control: C_WOW, to: 1.0, label: "WOW" },
+            Throw { control: C_FLUTTER, to: 1.0, label: "FLUTTER" },
+            Throw { control: C_TONE, to: 0.0, label: "MUFFLE" },
+            Throw { control: C_TONE, to: 1.0, label: "THIN" },
+            Throw { control: C_WEAR, to: 1.0, label: "WORN" },
+            // Lowest bias mutes weak material and roughens the rest
+            // (Kaseta's manual), a gated, choked tape.
+            Throw { control: C_BIAS, to: 0.0, label: "CHOKE" },
+            Throw { control: C_DRY_WET, to: 0.0, label: "DRY" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Magnito's own palette: flat solid colors, not a
@@ -296,6 +356,8 @@ const MAGNITO_BG: Rgb565 = Rgb565::new(4, 6, 2);
 const MAGNITO_TITLE: Rgb565 = Rgb565::new(31, 60, 28);
 const MAGNITO_ACCENT: Rgb565 = Rgb565::new(22, 20, 6);
 const MAGNITO_DIM: Rgb565 = Rgb565::new(17, 26, 10);
+/// Just above the shell brown -- unlit pads and dial tracks.
+const MAGNITO_FAINT: Rgb565 = Rgb565::new(8, 12, 4);
 
 impl MagnitoApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
@@ -306,6 +368,7 @@ impl MagnitoApp {
             nav_speed,
             list: ParamList::new(),
             expanded: [false; NUM_GROUPS],
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
         }
     }
 
@@ -496,6 +559,68 @@ impl MagnitoApp {
     }
 }
 
+impl MagnitoApp {
+    /// Every row edit() touches is a raw 0..1 value.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS.get(i) {
+            Some(Selection::Drive) => Knob::F(&p.drive, 0.0, 1.0),
+            Some(Selection::Bias) => Knob::F(&p.bias, 0.0, 1.0),
+            Some(Selection::Tone) => Knob::F(&p.tone, 0.0, 1.0),
+            Some(Selection::Wow) => Knob::F(&p.wow, 0.0, 1.0),
+            Some(Selection::Flutter) => Knob::F(&p.flutter, 0.0, 1.0),
+            Some(Selection::Wear) => Knob::F(&p.wear, 0.0, 1.0),
+            Some(Selection::Noise) => Knob::F(&p.noise, 0.0, 1.0),
+            Some(Selection::DryWet) => Knob::F(&p.dry_wet, 0.0, 1.0),
+            Some(Selection::Level) => Knob::F(&p.level, 0.0, 1.0),
+            _ => Knob::None,
+        }
+    }
+}
+
+impl PlayHost for MagnitoApp {
+    fn kit_control_count(&self) -> usize {
+        CONTROLS.len()
+    }
+    fn kit_label(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or(String::new(), |s| self.leaf_name(*s))
+    }
+    fn kit_value(&self, i: usize) -> String {
+        CONTROLS.get(i).map_or(String::new(), |s| self.leaf_value(*s))
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        self.knob(i).norm()
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        if let Some(s) = CONTROLS.get(i) {
+            self.edit(*s, delta);
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(s) = CONTROLS.get(i) {
+            self.reset(*s);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        self.knob(i).set(v);
+    }
+    /// The audio thread's own telemetry: output peak, and the two states
+    /// worth seeing while playing (unlimited range, a dropout happening).
+    fn kit_line(&self) -> String {
+        let mut line = format!("out {:.0}%", self.params.output_peak.get().clamp(0.0, 1.0) * 100.0);
+        if self.params.drive.get() >= UNLIMITED_DRIVE_THRESHOLD {
+            line.push_str("  UNLIMITED");
+        }
+        if self.params.dropout_active.load(Ordering::Relaxed) {
+            line.push_str("  DROPOUT");
+        }
+        line
+    }
+}
+
 fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
     let next = (value.get() + accelerate(delta) * sensitivity * 0.01).clamp(min, max);
     value.set(next);
@@ -535,7 +660,26 @@ fn xy_segments(points: &[(f32, f32)], width_px: f32, height_px: f32) -> crate::a
 
 impl App for MagnitoApp {
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
+    fn play_surface(&self) -> bool { true }
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+    fn grid_mode_label(&self) -> Option<&'static str> {
+        Some(self.kit.layer_label())
+    }
+    fn toggle_grid_mode(&mut self) {
+        self.kit.next_layer();
+    }
+    fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
+        self.kit.led_overlay(self)
+    }
     fn tick(&mut self, input: &Input) {
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through to the list below.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        let input = &step.input;
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
@@ -619,8 +763,13 @@ impl App for MagnitoApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, MAGNITO_BG, MAGNITO_DIM, MAGNITO_ACCENT);
-        let _ = dim;
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, MAGNITO_BG, MAGNITO_DIM, MAGNITO_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            let pal = kit::draw::Palette { bg: MAGNITO_BG, ink: MAGNITO_TITLE, accent: MAGNITO_ACCENT, dim: MAGNITO_DIM, faint: MAGNITO_FAINT };
+            kit::draw::column(fb, &col, 16, 44, 350, 290, pal);
+            Text::new("L/R: drive/bias (SELECT: next)   F2: pads   R1: menu", Point::new(16, HEIGHT as i32 - 10), dim).draw(fb).ok();
+        }
     }
 
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
@@ -1168,4 +1317,50 @@ mod tests {
         }
         assert!(saw_dropout, "expected at least one real dropout to be reported over a long run at max WEAR");
     }
+
+    #[test]
+    fn opens_on_throws_and_knob_one_turns_drive() {
+        let (mut app, _audio_bus) = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        assert_eq!(app.grid_mode_label(), Some("THROWS"));
+        let drive = app.params.drive.get();
+        app.tick(&Input { knob1: 5, ..Default::default() });
+        assert!(app.params.drive.get() > drive, "knob 1 is Drive on the play view");
+    }
+
+    #[test]
+    fn throws_push_real_controls_and_spring_back() {
+        let (mut app, _audio_bus) = new_app();
+        // UNLIMIT sits on rank 0, the bottom-left pad.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(0)), ..Default::default() });
+        assert!(app.params.drive.get() >= UNLIMITED_DRIVE_THRESHOLD, "held throw reaches the unlimited range");
+        app.tick(&Input::default());
+        assert!((app.params.drive.get() - 0.4).abs() < 1e-5, "released, back to the knob");
+        // MUFFLE (rank 3) is the tone filter's full low-pass end.
+        app.tick(&Input { grid: std::array::from_fn(|i| i == kit::rank_pad(3)), ..Default::default() });
+        assert_eq!(app.params.tone.get(), 0.0);
+        app.tick(&Input::default());
+        assert!((app.params.tone.get() - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn r1_opens_the_menu_and_the_menu_still_edits() {
+        let (mut app, _audio_bus) = new_app();
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+        // Second group (Saturation): expand it and turn its Drive row.
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        app.tick(&Input { knob1_press: true, ..Default::default() });
+        app.tick(&Input { navigation_steps: 1, ..Default::default() });
+        let drive = app.params.drive.get();
+        app.tick(&Input { knob2: 3, ..Default::default() });
+        assert!(app.params.drive.get() > drive, "menu rows still edit");
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(MagnitoApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

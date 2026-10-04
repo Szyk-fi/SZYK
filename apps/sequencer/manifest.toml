@@ -1,2 +1,18 @@
 id = "sequencer"
 name = "Sequencer"
+category = "sequencer"
+description = "A multi-track step sequencer. Tracks play drums, Plaits, samples or any instrument."
+audio_outputs = ["Sequencer"]
+note_outputs = ["Sequencer T1", "Sequencer T2", "Sequencer T3", "Sequencer T4", "Sequencer T5", "Sequencer T6", "Sequencer T7", "Sequencer T8"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Sequencer Level",
+    "Sequencer: Track 1 Volume",
+    "Sequencer: Track 2 Volume",
+    "Sequencer: Track 3 Volume",
+    "Sequencer: Track 4 Volume",
+    "Sequencer: Track 5 Volume",
+    "Sequencer: Track 6 Volume",
+    "Sequencer: Track 7 Volume",
+    "Sequencer: Track 8 Volume",
+]

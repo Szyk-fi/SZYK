@@ -46,6 +46,7 @@
 //! than tied to the UI frame rate -- the same technique Plaits' LFOs
 //! and the original single-track version of this app already used.
 
+use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes};
 use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, NUM_ENGINES};
 use crate::audio::AudioProcessor;
@@ -53,6 +54,7 @@ use crate::audio_bus::AudioBus;
 use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
+use crate::note_bus::{NoteBus, NoteOut, NoteRoute};
 use crate::paramlist::ParamList;
 use crate::plaits_ffi::{PlaitsParams, PlaitsVoice};
 use crate::util::{accelerate, AtomicF32};
@@ -122,7 +124,10 @@ const MAX_STEP_DELAY_FRAC: f32 = 0.4;
 const MAX_HUMANIZE_TIME_FRAC: f32 = 0.15;
 const MAX_HUMANIZE_VELOCITY_FRAC: f32 = 0.2;
 
-const INSTRUMENT_NAMES: [&str; 3] = ["Drum", "Plaits", "Sample"];
+/// A track's sound. "Other app" plays any instrument on the note bus
+/// (see note_bus.rs), chosen by the track's Plays row.
+const INSTRUMENT_NAMES: [&str; 4] = ["Drum", "Plaits", "Sample", "Other app"];
+const INSTRUMENT_EXTERNAL: u32 = 3;
 const DRUM_KIND_NAMES: [&str; 4] = ["Kick", "Snare", "Hat", "Clap"];
 const SAMPLES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/samples");
 
@@ -370,6 +375,8 @@ enum Selection {
     /// pushed -- same "last touched pad" convention as StepPitch.
     StepDelay(usize),
     Decay(usize),
+    /// An "Other app" track's instrument.
+    Plays(usize),
     Volume(usize),
     Probability(usize),
     Mute(usize),
@@ -384,7 +391,7 @@ enum Selection {
     /// `TrackParams::rate_div`'s doc comment.
     TrackRate(usize),
     /// Refills this track's whole 16-step pattern with a fresh random
-    /// on/off pattern -- press-only action, same "press knob2" idiom
+    /// on/off pattern -- press-only action, same "hold SELECT" idiom
     /// as Bloom/Madness's Randomize.
     RandomizePattern(usize),
     /// Turns every one of this track's 16 steps off -- press-only
@@ -474,6 +481,7 @@ impl Selection {
             | Selection::StepRolls(t)
             | Selection::StepDelay(t)
             | Selection::Decay(t)
+            | Selection::Plays(t)
             | Selection::Volume(t)
             | Selection::Probability(t)
             | Selection::Mute(t)
@@ -844,6 +852,69 @@ pub struct SequencerApp {
     /// The pad a grid press most recently focused -- what
     /// `Selection::PadFile/Start/End/Volume` all edit.
     last_touched_pad: usize,
+    /// The shared play view (play_kit.rs). Its two native layers are
+    /// this app's own Step and Pad Perform grid modes, kept in step with
+    /// `pad_perform` (see `sync_pad_layer`).
+    kit: PlayKit,
+    /// Per track: where an "Other app" track's notes go; the sending ends
+    /// go to the audio thread with the processor.
+    track_routes: Vec<NoteRoute>,
+    track_outs: Vec<NoteOut>,
+}
+
+/// The Sequencer's own pad layers: the step grid, and the Pad Perform
+/// bank. Labels match what F2 always showed for these two modes.
+const LAYER_STEP: u8 = 0;
+const LAYER_PAD: u8 = 1;
+const STEP_LAYER: &str = "STEP";
+const PAD_LAYER: &str = "PAD";
+
+/// The play view's controls, most important first. Per-track ones act
+/// on the selected track (`last_track`, which D-pad up/down picks on the
+/// play view); step-level ones on that track's last touched step.
+/// Tempo/swing and the selected track's level/decay are what you ride
+/// while a pattern plays, so they get the first knob pairs.
+const C_TEMPO: usize = 0;
+const C_SWING: usize = 1;
+const C_LEVEL: usize = 2;
+const C_DECAY: usize = 3;
+const C_PROBABILITY: usize = 4;
+const C_HUMANIZE: usize = 5;
+const C_HARMONICS: usize = 6;
+const C_TIMBRE: usize = 7;
+const C_TRACK: usize = 8;
+const C_PATTERN: usize = 9;
+const C_STEP_PITCH: usize = 10;
+const C_STEP_ROLLS: usize = 11;
+const C_PITCH: usize = 12;
+const C_LENGTH: usize = 13;
+const C_MUTE: usize = 14;
+const C_SOLO: usize = 15;
+const NUM_CONTROLS: usize = 16;
+/// The menu's Pitch/Step Pitch rows are unbounded; this only bounds where
+/// the dial (and a moment) can put them. Two octaves each way covers any
+/// drum retune or melodic step a 16-pad pattern realistically uses.
+const PITCH_SPAN: i32 = 24;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "sequencer",
+        layers: vec![Layer::Native(LAYER_STEP, STEP_LAYER), Layer::Native(LAYER_PAD, PAD_LAYER), Layer::Controls, Layer::Moments],
+        hero: vec![[C_TEMPO, C_SWING], [C_LEVEL, C_DECAY], [C_PROBABILITY, C_HUMANIZE], [C_HARMONICS, C_TIMBRE]],
+        // D-pad up/down picks the track the pads and per-track knobs
+        // act on -- the move a drum-machine player makes constantly,
+        // and without it the play view would be stuck on one track.
+        browse: Some(C_TRACK),
+        // Stick: decay (tight to boomy) on X, swing on Y -- both reshape
+        // the groove live without touching the programmed steps. Hands:
+        // humanize (loosen the timing), and tempo (rush the groove;
+        // springs back to the set BPM on letting go). All four work
+        // whatever instrument the track uses, unlike Plaits' timbre.
+        routes: Routes { stick_x: Some(C_DECAY), stick_y: Some(C_SWING), hand_l: Some(C_HUMANIZE), hand_r: Some(C_TEMPO) },
+        throws: Vec::new(),
+        midi_to_pads: true,
+        own_expression: false,
+    }
 }
 
 // --- Sequencer's own palette: punchy hot red on near-black, not a
@@ -877,7 +948,19 @@ impl SequencerApp {
             rng: 0x9E3779B9,
             pad_perform: false,
             last_touched_pad: 0,
+            kit: PlayKit::new(kit_config(), !cfg!(test)),
+            track_routes: Vec::new(),
+            track_outs: Vec::new(),
         }
+        .with_notes(None)
+    }
+
+    /// Lets "Other app" tracks play other apps (see note_bus.rs).
+    pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
+        let (routes, outs): (Vec<_>, Vec<_>) = (0..NUM_TRACKS).map(|t| NoteRoute::new(bus.clone(), &format!("Sequencer T{}", t + 1), "sequencer", false)).unzip();
+        self.track_routes = routes;
+        self.track_outs = outs;
+        self
     }
 
     fn next_rand01(&mut self) -> f32 {
@@ -959,6 +1042,14 @@ impl SequencerApp {
                 leaves.push(Selection::StepRolls(t));
                 leaves.push(Selection::StepDelay(t));
             }
+            3 => {
+                leaves.push(Selection::Plays(t));
+                leaves.push(Selection::Pitch(t));
+                leaves.push(Selection::StepPitch(t));
+                leaves.push(Selection::StepRolls(t));
+                leaves.push(Selection::StepDelay(t));
+                leaves.push(Selection::Decay(t));
+            }
             _ => {
                 leaves.push(Selection::DrumKind(t));
                 leaves.push(Selection::Pitch(t));
@@ -993,6 +1084,12 @@ impl SequencerApp {
     }
 
     fn current_track(&self, rows: &[Row]) -> usize {
+        // On the play view the menu isn't being browsed, so its cursor
+        // can't be what picks the track: D-pad up/down sets `last_track`
+        // directly (see `C_TRACK`).
+        if !self.kit.menu {
+            return self.last_track;
+        }
         match rows.get(self.list.selected) {
             Some(Row::Group(g)) if *g >= 4 => *g - 4,
             Some(Row::Leaf(sel)) => sel.track().unwrap_or(self.last_track),
@@ -1020,7 +1117,8 @@ impl SequencerApp {
             Selection::StepPitch(t) => format!("Step {} Pitch", self.last_touched_step[t] + 1),
             Selection::StepRolls(t) => format!("Step {} Rolls", self.last_touched_step[t] + 1),
             Selection::StepDelay(t) => format!("Step {} Delay", self.last_touched_step[t] + 1),
-            Selection::Decay(_) => "Decay".into(),
+            Selection::Decay(t) => if self.params.tracks[t].instrument.load(Ordering::Relaxed) == INSTRUMENT_EXTERNAL { "Gate".into() } else { "Decay".into() },
+            Selection::Plays(_) => "Plays".into(),
             Selection::Volume(_) => "Volume".into(),
             Selection::Probability(_) => "Probability".into(),
             Selection::Mute(_) => "Mute".into(),
@@ -1064,7 +1162,7 @@ impl SequencerApp {
                 INSTRUMENT_NAMES[idx].to_string()
             }
             Selection::GridEdit(t) => {
-                if self.grid_edit_track == Some(t) { "ON -- press knob1 to exit".into() } else { "off".into() }
+                if self.grid_edit_track == Some(t) { "ON -- SELECT to exit".into() } else { "off".into() }
             }
             Selection::DrumKind(t) => {
                 let idx = self.params.tracks[t].drum_kind.load(Ordering::Relaxed) as usize % DRUM_KIND_NAMES.len();
@@ -1113,6 +1211,7 @@ impl SequencerApp {
                 format!("{:.0}%", self.params.tracks[t].step_delay[self.last_touched_step[t]].get() * 100.0)
             }
             Selection::Decay(t) => format!("{:.2}", self.params.tracks[t].decay.get()),
+            Selection::Plays(t) => self.track_routes[t].label(),
             Selection::Volume(t) => format!("{:.2}", self.params.tracks[t].volume.get()),
             Selection::Probability(t) => format!("{:.0}%", self.params.tracks[t].probability.get() * 100.0),
             Selection::Mute(t) => {
@@ -1126,8 +1225,8 @@ impl SequencerApp {
                 let div = self.params.tracks[t].rate_div.load(Ordering::Relaxed);
                 TRACK_RATES.iter().find(|(_, d)| *d == div).map(|(name, _)| name.to_string()).unwrap_or_else(|| format!("{div}x"))
             }
-            Selection::RandomizePattern(_) => "press knob2".into(),
-            Selection::ClearPattern(_) => "press knob2".into(),
+            Selection::RandomizePattern(_) => "hold SELECT".into(),
+            Selection::ClearPattern(_) => "hold SELECT".into(),
             Selection::Pattern => format!("{}", self.params.current_pattern.load(Ordering::Relaxed) + 1),
             Selection::SongMode => {
                 if self.params.song_mode.load(Ordering::Relaxed) { "ON".into() } else { "off".into() }
@@ -1136,7 +1235,7 @@ impl SequencerApp {
             Selection::SongSlotPattern(s) => format!("Pattern {}", self.params.song_slot_pattern[s].load(Ordering::Relaxed) + 1),
             Selection::SongSlotRepeats(s) => format!("{}x", self.params.song_slot_repeats[s].load(Ordering::Relaxed)),
             Selection::PadPerform => {
-                if self.pad_perform { "ON -- press knob1 to exit".into() } else { "off".into() }
+                if self.pad_perform { "ON -- SELECT to exit".into() } else { "off".into() }
             }
             Selection::PadFile => match self.resolved_pad_sample(self.last_touched_pad).and_then(|i| self.params.samples.get(i)) {
                 Some(slot) => truncate_display(&slot.name, 18),
@@ -1145,11 +1244,11 @@ impl SequencerApp {
             Selection::PadStart => format!("{:.0}%", self.params.pad_start[self.last_touched_pad].get() * 100.0),
             Selection::PadEnd => format!("{:.0}%", self.params.pad_end[self.last_touched_pad].get() * 100.0),
             Selection::PadVolume => format!("{:.2}", self.params.pad_volume[self.last_touched_pad].get()),
-            Selection::AutoChopToPads => "press knob2".into(),
-            Selection::FillBankFromHere => "press knob2".into(),
+            Selection::AutoChopToPads => "hold SELECT".into(),
+            Selection::FillBankFromHere => "hold SELECT".into(),
             Selection::KitSlot => format!("{}", self.params.kit_slot.load(Ordering::Relaxed) + 1),
-            Selection::SaveKit => "press knob2".into(),
-            Selection::LoadKit => "press knob2".into(),
+            Selection::SaveKit => "hold SELECT".into(),
+            Selection::LoadKit => "hold SELECT".into(),
         }
     }
 
@@ -1174,6 +1273,7 @@ impl SequencerApp {
         let t = g - 4;
         let inst_idx = self.params.tracks[t].instrument.load(Ordering::Relaxed) as usize % INSTRUMENT_NAMES.len();
         let detail = match inst_idx {
+            3 => self.track_routes[t].label(),
             1 => self.leaf_value(Selection::PlaitsEngine(t)),
             2 => self.leaf_value(Selection::SampleFile(t)),
             _ => self.leaf_value(Selection::DrumKind(t)),
@@ -1355,6 +1455,7 @@ impl SequencerApp {
                 self.params.tracks[t].step_delay[s].set(next);
             }
             Selection::Decay(t) => bump(&self.params.tracks[t].decay, delta, sensitivity),
+            Selection::Plays(t) => self.track_routes[t].step(step),
             Selection::Volume(t) => bump(&self.params.tracks[t].volume, delta, sensitivity),
             Selection::Probability(t) => bump(&self.params.tracks[t].probability, delta, sensitivity),
             Selection::Mute(t) => self.params.tracks[t].mute.store(delta > 0, Ordering::Relaxed),
@@ -1539,6 +1640,7 @@ impl SequencerApp {
             Selection::StepRolls(t) => self.params.tracks[t].step_rolls[self.last_touched_step[t]].store(DEFAULT_ROLLS, Ordering::Relaxed),
             Selection::StepDelay(t) => self.params.tracks[t].step_delay[self.last_touched_step[t]].set(0.0),
             Selection::Decay(t) => self.params.tracks[t].decay.set(0.5),
+            Selection::Plays(t) => self.track_routes[t].reset(),
             Selection::Volume(t) => self.params.tracks[t].volume.set(0.8),
             Selection::Probability(t) => self.params.tracks[t].probability.set(1.0),
             Selection::Mute(t) => self.params.tracks[t].mute.store(false, Ordering::Relaxed),
@@ -1732,7 +1834,7 @@ impl SequencerApp {
         let header = if self.pad_perform {
             format!("PAD PERFORM -- pad {} focused", self.last_touched_pad + 1)
         } else if self.grid_edit_track == Some(track) {
-            format!("Track {} -- GRID EDIT: knob1 pad, knob2 note{rate_tag}", track + 1)
+            format!("Track {} -- GRID EDIT: up/down pad, left/right note{rate_tag}", track + 1)
         } else {
             format!("Track {} -- grid edits this{rate_tag}", track + 1)
         };
@@ -1781,6 +1883,224 @@ impl SequencerApp {
     }
 }
 
+impl SequencerApp {
+    /// `pad_perform` and the kit's layer are one state seen two ways:
+    /// the menu's Pad Perform row (or knob1 press leaving it) can change
+    /// the flag, F2 changes the layer. On a kit layer (Controls/Moments)
+    /// the pads aren't performing, so the flag is off there; turning it
+    /// on from the menu jumps the pads to PAD.
+    fn sync_pad_layer(&mut self) {
+        let on_pad = self.kit.layer_label() == PAD_LAYER;
+        if self.pad_perform && !on_pad {
+            self.kit.set_native(LAYER_PAD);
+        } else if !self.pad_perform && on_pad {
+            self.kit.set_native(LAYER_STEP);
+        }
+    }
+
+    /// The menu row behind a play-view control, for label/value/edit/
+    /// reset -- the exact same code paths the menu uses. `None` for the
+    /// track picker, which has no menu row (the menu picks the track by
+    /// where its cursor is).
+    fn kit_selection(&self, i: usize) -> Option<Selection> {
+        let t = self.last_track;
+        Some(match i {
+            C_TEMPO => Selection::Bpm,
+            C_SWING => Selection::Swing,
+            C_LEVEL => Selection::Volume(t),
+            C_DECAY => Selection::Decay(t),
+            C_PROBABILITY => Selection::Probability(t),
+            C_HUMANIZE => Selection::Humanize,
+            C_HARMONICS => Selection::PlaitsHarmonics(t),
+            C_TIMBRE => Selection::PlaitsTimbre(t),
+            C_PATTERN => Selection::Pattern,
+            C_STEP_PITCH => Selection::StepPitch(t),
+            C_STEP_ROLLS => Selection::StepRolls(t),
+            C_PITCH => Selection::Pitch(t),
+            C_LENGTH => Selection::Length(t),
+            C_MUTE => Selection::Mute(t),
+            C_SOLO => Selection::Solo(t),
+            _ => return None,
+        })
+    }
+
+    /// Storage behind each control. Track, pattern and length live in
+    /// `usize`s (no `Knob` variant), so `kit_norm`/`kit_set_norm` handle
+    /// those three by hand.
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        let tr = &p.tracks[self.last_track];
+        let s = self.last_touched_step[self.last_track];
+        match i {
+            C_TEMPO => Knob::F(&p.bpm, MIN_BPM, MAX_BPM),
+            C_SWING => Knob::F(&p.swing, 0.0, MAX_SWING),
+            C_LEVEL => Knob::F(&tr.volume, 0.0, 1.0),
+            C_DECAY => Knob::F(&tr.decay, 0.0, 1.0),
+            C_PROBABILITY => Knob::F(&tr.probability, 0.0, 1.0),
+            C_HUMANIZE => Knob::F(&p.humanize, 0.0, 1.0),
+            C_HARMONICS => Knob::F(&tr.plaits_harmonics, 0.0, 1.0),
+            C_TIMBRE => Knob::F(&tr.plaits_timbre, 0.0, 1.0),
+            C_STEP_PITCH => Knob::I(&tr.step_pitch[s], -PITCH_SPAN, PITCH_SPAN),
+            C_STEP_ROLLS => Knob::UR(&tr.step_rolls[s], MIN_ROLLS, MAX_ROLLS),
+            C_PITCH => Knob::I(&tr.pitch, -PITCH_SPAN, PITCH_SPAN),
+            C_MUTE => Knob::B(&tr.mute),
+            C_SOLO => Knob::B(&tr.solo),
+            _ => Knob::None,
+        }
+    }
+
+    /// The step-grid LED colours `grid_led_overlay` has always shown:
+    /// green for a programmed step, red for the one actually sounding
+    /// (playhead on an active step while running), off otherwise.
+    fn step_pad_color(&self, i: usize) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        let rows = self.visible_rows();
+        let track = self.current_track(&rows);
+        let track_len = self.params.tracks[track].length.load(Ordering::Relaxed).clamp(1, NUM_STEPS);
+        let running = self.params.running.load(Ordering::Relaxed);
+        let rate_div = self.params.tracks[track].rate_div.load(Ordering::Relaxed).max(1);
+        let playhead_step = (self.params.pulse.load(Ordering::Relaxed) / rate_div) % track_len;
+        let active = self.params.tracks[track].steps[i].load(Ordering::Relaxed);
+        if !active {
+            PadColor::Off
+        } else if running && i == playhead_step {
+            PadColor::Red
+        } else {
+            PadColor::Green
+        }
+    }
+
+    /// The instrument detail a track's group row shows (kind, engine or
+    /// sample name).
+    fn instrument_detail(&self, t: usize) -> String {
+        match self.params.tracks[t].instrument.load(Ordering::Relaxed) as usize % INSTRUMENT_NAMES.len() {
+            3 => self.track_routes[t].label(),
+            1 => self.leaf_value(Selection::PlaitsEngine(t)),
+            2 => self.leaf_value(Selection::SampleFile(t)),
+            _ => self.leaf_value(Selection::DrumKind(t)),
+        }
+    }
+}
+
+impl PlayHost for SequencerApp {
+    fn kit_control_count(&self) -> usize {
+        NUM_CONTROLS
+    }
+    fn kit_label(&self, i: usize) -> String {
+        match i {
+            C_TEMPO => "Tempo".into(),
+            C_LEVEL => "Level".into(),
+            C_TRACK => "Track".into(),
+            C_HARMONICS => "Harmonics".into(),
+            C_TIMBRE => "Timbre".into(),
+            _ => self.kit_selection(i).map(|s| self.leaf_name(s)).unwrap_or_default(),
+        }
+    }
+    fn kit_value(&self, i: usize) -> String {
+        if i == C_TRACK {
+            return format!("{} {}", self.last_track + 1, truncate_display(&self.instrument_detail(self.last_track), 10));
+        }
+        self.kit_selection(i).map(|s| self.leaf_value(s)).unwrap_or_default()
+    }
+    fn kit_norm(&self, i: usize) -> Option<f32> {
+        match i {
+            // Deliberately no position: a moment shouldn't change which
+            // track the pads are editing when it's recalled.
+            C_TRACK => None,
+            C_PATTERN => Some(self.params.current_pattern.load(Ordering::Relaxed).min(NUM_PATTERNS - 1) as f32 / (NUM_PATTERNS - 1) as f32),
+            C_LENGTH => {
+                let len = self.params.tracks[self.last_track].length.load(Ordering::Relaxed).clamp(1, NUM_STEPS);
+                Some((len - 1) as f32 / (NUM_STEPS - 1) as f32)
+            }
+            _ => self.knob(i).norm(),
+        }
+    }
+    fn kit_stepped(&self, i: usize) -> bool {
+        matches!(i, C_TRACK | C_PATTERN | C_LENGTH) || self.knob(i).stepped()
+    }
+    fn kit_edit(&mut self, i: usize, delta: i32) {
+        if i == C_TRACK {
+            if delta != 0 {
+                self.last_track = (self.last_track as i32 + delta.signum()).rem_euclid(NUM_TRACKS as i32) as usize;
+            }
+            return;
+        }
+        if let Some(sel) = self.kit_selection(i) {
+            self.edit(sel, delta);
+        }
+    }
+    fn kit_reset(&mut self, i: usize) {
+        if let Some(sel) = self.kit_selection(i) {
+            self.reset(sel);
+        }
+    }
+    fn kit_set_norm(&mut self, i: usize, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        match i {
+            C_TRACK => {}
+            // Through `switch_pattern`, so the outgoing pattern's live
+            // steps are saved exactly as a menu change would.
+            C_PATTERN => switch_pattern(&self.params, (v * (NUM_PATTERNS - 1) as f32).round() as usize),
+            C_LENGTH => self.params.tracks[self.last_track].length.store(1 + (v * (NUM_STEPS - 1) as f32).round() as usize, Ordering::Relaxed),
+            _ => self.knob(i).set(v),
+        }
+    }
+    /// Moments keep the sound and the groove, not the pattern edits: a
+    /// step's pitch/rolls belong to that step, and recalling them onto
+    /// whichever step happens to be focused would scribble on the
+    /// pattern.
+    fn kit_snapshot(&self) -> serde_json::Value {
+        serde_json::Value::Array(
+            (0..NUM_CONTROLS)
+                .map(|i| match (i, self.kit_norm(i)) {
+                    (C_STEP_PITCH | C_STEP_ROLLS, _) | (_, None) => serde_json::Value::Null,
+                    (_, Some(v)) => serde_json::json!(v),
+                })
+                .collect(),
+        )
+    }
+    fn kit_line(&self) -> String {
+        let t = self.last_track;
+        if let Some(g) = self.grid_edit_track {
+            return format!("T{} edit step {}", g + 1, self.last_touched_step[g] + 1);
+        }
+        if self.pad_perform {
+            return format!("pad {}", self.last_touched_pad + 1);
+        }
+        let play = if self.params.running.load(Ordering::Relaxed) { ">" } else { "-" };
+        format!("{play} T{} {}", t + 1, truncate_display(&self.instrument_detail(t), 8))
+    }
+    fn kit_pad_label(&self, layer: u8, pad: usize) -> String {
+        if layer == LAYER_PAD {
+            return match self.resolved_pad_sample(pad).and_then(|i| self.params.samples.get(i)) {
+                Some(slot) => truncate_display(&slot.name, 6),
+                None => format!("{}", pad + 1),
+            };
+        }
+        // Steps are row-major on the pads, exactly like the on-screen
+        // grid (step order has no low/high sense to flip for).
+        let rows = self.visible_rows();
+        let t = self.current_track(&rows);
+        let sp = self.params.tracks[t].step_pitch[pad].load(Ordering::Relaxed);
+        if sp != 0 { format!("{} {sp:+}", pad + 1) } else { format!("{}", pad + 1) }
+    }
+    fn kit_pad_color(&self, layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+        use crate::led_output::PadColor;
+        if layer == LAYER_PAD {
+            return if held {
+                PadColor::Green
+            } else if pad == self.last_touched_pad {
+                PadColor::Yellow
+            } else if self.pad_resolves(pad) {
+                PadColor::Blue
+            } else {
+                PadColor::Off
+            };
+        }
+        self.step_pad_color(pad)
+    }
+}
+
 impl App for SequencerApp {
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()
@@ -1807,49 +2127,75 @@ impl App for SequencerApp {
         self.params.running.store(!cur, Ordering::Relaxed);
     }
 
-    /// F2 flips the whole grid between Step-sequencing (the default)
-    /// and Pad Perform -- the same two states `Selection::PadPerform`
-    /// already toggles from the menu, just reachable in one press
-    /// instead of browsing into the Pads group first.
+    fn play_surface(&self) -> bool {
+        true
+    }
+
+    fn play_column(&self) -> Option<crate::app::PlayColumn> {
+        (!self.kit.menu).then(|| self.kit.column(self))
+    }
+
+    /// F2 cycles STEP (step-sequencing, the default) -> PAD (Pad
+    /// Perform, the same state `Selection::PadPerform` toggles from the
+    /// menu) -> the kit's Controls and Moments -> back to STEP. One
+    /// state, not a separate flag: `pad_perform` follows the layer.
     fn grid_mode_label(&self) -> Option<&'static str> {
-        Some(if self.pad_perform { "PAD" } else { "STEP" })
+        Some(self.kit.layer_label())
     }
 
     fn toggle_grid_mode(&mut self) {
-        self.pad_perform = !self.pad_perform;
+        self.kit.next_layer();
+        self.pad_perform = self.kit.layer_label() == PAD_LAYER;
     }
 
-    /// Mirrors the currently-browsed track's step grid on a physical
-    /// controller: green for a step that's programmed on ("activated"
-    /// -- same steady color regardless of playhead position), red for
-    /// the one step actually sounding right now (the playhead, but
-    /// only while it's sitting on an active step *and* the transport
-    /// is running -- a frozen "phantom" pad with no sound behind it
-    /// would be misleading). Off for everything else, same as the
-    /// on-screen grid's own active/playhead treatment (`draw()`).
+    /// Mirrors the pads on a physical controller. On STEP it's the
+    /// currently-browsed track's step grid: green for a step that's
+    /// programmed on ("activated" -- same steady color regardless of
+    /// playhead position), red for the one step actually sounding right
+    /// now (the playhead, but only while it's sitting on an active step
+    /// *and* the transport is running -- a frozen "phantom" pad with no
+    /// sound behind it would be misleading), off for everything else
+    /// (see `step_pad_color`). PAD and the kit layers colour their own.
     fn grid_led_overlay(&self) -> [crate::led_output::PadColor; 16] {
-        use crate::led_output::PadColor;
-
-        let rows = self.visible_rows();
-        let track = self.current_track(&rows);
-        let track_len = self.params.tracks[track].length.load(Ordering::Relaxed).clamp(1, NUM_STEPS);
-        let running = self.params.running.load(Ordering::Relaxed);
-        let rate_div = self.params.tracks[track].rate_div.load(Ordering::Relaxed).max(1);
-        let playhead_step = (self.params.pulse.load(Ordering::Relaxed) / rate_div) % track_len;
-
-        std::array::from_fn(|i| {
-            let active = self.params.tracks[track].steps[i].load(Ordering::Relaxed);
-            if !active {
-                PadColor::Off
-            } else if running && i == playhead_step {
-                PadColor::Red
-            } else {
-                PadColor::Green
-            }
-        })
+        self.kit.led_overlay(self)
     }
 
     fn tick(&mut self, input: &Input) {
+        // A menu edit of Pad Perform since last frame moves the pads.
+        self.sync_pad_layer();
+        // The play view takes the knobs and D-pad first; in the menu they
+        // pass straight through. Pads reach the app only on STEP / PAD.
+        let mut play = std::mem::take(&mut self.kit);
+        let step = play.tick(self, input);
+        self.kit = play;
+        self.tick_app(&step.input);
+        self.sync_pad_layer();
+    }
+
+    fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
+        Some(Box::new(SequencerProcessor {
+            params: Arc::clone(&self.params),
+            step_timer: 0.0,
+            voices: std::array::from_fn(|i| TrackVoice::new(i as u32)),
+            mono_buf: Vec::new(),
+            pending_fires: std::array::from_fn(|_| Vec::new()),
+            pad_voices: std::array::from_fn(|_| SamplePlayer::default()),
+            song_active: false,
+            song_pos: 0,
+            song_reps_done: 0,
+            notes: std::mem::take(&mut self.track_outs),
+        }))
+    }
+
+    fn draw(&mut self, fb: &mut FrameBuffer) {
+        self.draw_screen(fb);
+    }
+}
+
+impl SequencerApp {
+    /// The app's own per-frame handling, after the play kit has taken
+    /// its share of the input (see `App::tick`).
+    fn tick_app(&mut self, input: &Input) {
         if let Some(track) = self.grid_edit_track {
             self.tick_grid_edit(track, input);
             return;
@@ -1892,21 +2238,7 @@ impl App for SequencerApp {
         self.prev_grid = input.grid;
     }
 
-    fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
-        Some(Box::new(SequencerProcessor {
-            params: Arc::clone(&self.params),
-            step_timer: 0.0,
-            voices: std::array::from_fn(|i| TrackVoice::new(i as u32)),
-            mono_buf: Vec::new(),
-            pending_fires: std::array::from_fn(|_| Vec::new()),
-            pad_voices: std::array::from_fn(|_| SamplePlayer::default()),
-            song_active: false,
-            song_pos: 0,
-            song_reps_done: 0,
-        }))
-    }
-
-    fn draw(&mut self, fb: &mut FrameBuffer) {
+    fn draw_screen(&mut self, fb: &mut FrameBuffer) {
         Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
             .into_styled(PrimitiveStyle::with_fill(SEQUENCER_BG))
             .draw(fb)
@@ -1930,7 +2262,13 @@ impl App for SequencerApp {
                 Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
             })
             .collect();
-        self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, SEQUENCER_BG, SEQUENCER_DIM, SEQUENCER_ACCENT);
+        if self.kit.menu {
+            self.list.draw_themed(fb, 16, 44, 24, 10, &display_rows, SEQUENCER_BG, SEQUENCER_DIM, SEQUENCER_ACCENT);
+        } else if let Some(col) = self.play_column() {
+            // Stops short of the step grid's header at x=360.
+            let pal = kit::draw::Palette { bg: SEQUENCER_BG, ink: SEQUENCER_TITLE, accent: SEQUENCER_ACCENT, dim: SEQUENCER_DIM, faint: SEQUENCER_STEP_OFF };
+            kit::draw::column(fb, &col, 16, 40, 330, 285, pal);
+        }
 
         // --- Right: the current track's 16 steps, as a 4x4 grid
         // matching the physical pad layout 1:1 (row-major, no flip --
@@ -1940,7 +2278,7 @@ impl App for SequencerApp {
         let rate_div = self.params.tracks[track].rate_div.load(Ordering::Relaxed).max(1);
         let rate_tag = if rate_div != 1 { format!(" ({rate_div}x rate)") } else { String::new() };
         let header = if self.grid_edit_track == Some(track) {
-            format!("Track {} -- GRID EDIT: knob1 pad, knob2 note{rate_tag}", track + 1)
+            format!("Track {} -- GRID EDIT: up/down pad, left/right note{rate_tag}", track + 1)
         } else {
             format!("Track {} -- grid edits this{rate_tag}", track + 1)
         };
@@ -2015,15 +2353,20 @@ impl App for SequencerApp {
             }
         }
 
-        let hint = if self.grid_edit_track == Some(track) {
+        let hint = if !self.kit.menu {
+            // Grid Edit's knob moves live in the menu; on the play view
+            // its pads still jump+preview, so say where the rest went.
+            let pads = if self.grid_edit_track.is_some() { "pads: grid edit (R1 to exit)" } else { "F2: pads" };
+            format!("L/R: dial (SELECT: next)   U/D: track   {pads}   F3: play/stop   R1: menu")
+        } else if self.grid_edit_track == Some(track) {
             format!(
                 "knob1: scroll pad (Step {})   knob2: set note   pad: jump+preview   press knob1: exit",
                 self.last_touched_step[track] + 1
             )
         } else {
             match rows.get(self.list.selected) {
-                Some(Row::Group(_)) => "knob1: browse   press knob1: expand/collapse".to_string(),
-                Some(Row::Leaf(sel)) => format!("knob2: change {}   press knob2: reset", self.leaf_name(*sel)),
+                Some(Row::Group(_)) => "up/down: browse   SELECT: expand/collapse".to_string(),
+                Some(Row::Leaf(sel)) => format!("left/right: change {}   hold SELECT: reset", self.leaf_name(*sel)),
                 None => String::new(),
             }
         };
@@ -2240,6 +2583,8 @@ struct SequencerProcessor {
     /// played so far -- compared against that slot's own Repeats to
     /// decide when to advance.
     song_reps_done: usize,
+    /// "Other app" tracks' note outputs.
+    notes: Vec<NoteOut>,
 }
 
 impl AudioProcessor for SequencerProcessor {
@@ -2415,6 +2760,14 @@ impl AudioProcessor for SequencerProcessor {
                 if self.pending_fires[t][i].0 <= 0.0 {
                     self.voices[t].current_gain = self.pending_fires[t][i].1;
                     match self.params.tracks[t].instrument.load(Ordering::Relaxed) {
+                        INSTRUMENT_EXTERNAL => {
+                            if let Some(out) = self.notes.get_mut(t) {
+                                let note = (60 + self.voices[t].current_pitch).clamp(0, 127) as u8;
+                                let vel = (self.voices[t].current_gain * 100.0).clamp(1.0, 127.0) as u8;
+                                let gate = (0.03 + self.params.tracks[t].decay.get() * 0.97) * sample_rate;
+                                out.trigger(note, vel, gate as u32);
+                            }
+                        }
                         1 => plaits_trigger[t] = true,
                         2 => self.voices[t].sample.trigger(),
                         _ => self.voices[t].drum.trigger(),
@@ -2424,6 +2777,10 @@ impl AudioProcessor for SequencerProcessor {
                     i += 1;
                 }
             }
+        }
+
+        for out in self.notes.iter_mut() {
+            out.advance(frames as u32);
         }
 
         // If any track is soloed, only soloed tracks reach the
@@ -2682,6 +3039,7 @@ mod tests {
             song_active: false,
             song_pos: 0,
             song_reps_done: 0,
+            notes: Vec::new(),
         };
         (params, proc)
     }
@@ -2951,6 +3309,7 @@ mod tests {
     #[test]
     fn grid_edit_knob1_scrolls_focused_step_and_wraps() {
         let mut app = new_app();
+        app.kit.menu = true; // Grid Edit's knob moves are a menu-side mode
         app.edit(Selection::GridEdit(0), 1);
         assert_eq!(app.last_touched_step[0], 0);
 
@@ -2970,6 +3329,7 @@ mod tests {
     #[test]
     fn grid_edit_knob2_changes_focused_step_note() {
         let mut app = new_app();
+        app.kit.menu = true;
         app.edit(Selection::GridEdit(1), 1);
         app.tick(&grid_press(3)); // focus step 3 on track 1
 
@@ -2988,6 +3348,7 @@ mod tests {
     #[test]
     fn grid_edit_knob1_press_exits_and_restores_normal_toggling() {
         let mut app = new_app();
+        app.kit.menu = true;
         app.edit(Selection::GridEdit(2), 1);
         assert_eq!(app.grid_edit_track, Some(2));
 
@@ -3377,8 +3738,24 @@ mod tests {
         assert!(app.pad_perform, "toggling the grid mode must turn Pad Perform on");
         assert_eq!(app.grid_mode_label(), Some("PAD"));
 
+        // The kit's Controls and Moments layers follow PAD in the F2
+        // ring; the pads aren't performing there.
         app.toggle_grid_mode();
         assert!(!app.pad_perform, "toggling again must turn it back off");
+        assert_eq!(app.grid_mode_label(), Some("CONTROLS"));
+        app.toggle_grid_mode();
+        assert_eq!(app.grid_mode_label(), Some("MOMENTS"));
+        app.toggle_grid_mode();
+        assert!(!app.pad_perform);
+        assert_eq!(app.grid_mode_label(), Some("STEP"), "round the ring and back to Step mode");
+
+        // And the menu's Pad Perform row moves the pads too, so the two
+        // can't drift apart.
+        app.edit(Selection::PadPerform, 1);
+        app.tick(&Input::default());
+        assert_eq!(app.grid_mode_label(), Some("PAD"));
+        app.edit(Selection::PadPerform, -1);
+        app.tick(&Input::default());
         assert_eq!(app.grid_mode_label(), Some("STEP"));
     }
 
@@ -3477,4 +3854,71 @@ mod tests {
 
         assert_eq!(app.params.pad_sample[0].load(Ordering::Relaxed), 0, "a missing kit file must leave the live pad bank untouched");
     }
+
+    #[test]
+    fn opens_on_the_play_view_with_tempo_on_knob_1() {
+        let mut app = new_app();
+        assert!(app.play_column().is_some(), "play view first");
+        let bpm = app.params.bpm.get();
+        app.tick(&Input { knob1: 3, ..Default::default() });
+        assert!(app.params.bpm.get() > bpm, "knob 1 is tempo on the play view");
+        let swing = app.params.swing.get();
+        app.tick(&Input { knob2: 3, ..Default::default() });
+        assert!(app.params.swing.get() > swing, "knob 2 is swing");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        assert!(app.play_column().is_none(), "R1 opens the full menu");
+    }
+
+    #[test]
+    fn step_pads_still_program_the_selected_track_and_the_d_pad_picks_it() {
+        let mut app = new_app();
+        app.tick(&grid_press(6));
+        assert!(app.params.tracks[0].steps[6].load(Ordering::Relaxed), "STEP pads toggle steps as before");
+        app.tick(&Input::default());
+        app.tick(&Input { navigation_steps: -1, ..Default::default() });
+        assert_eq!(app.last_track, 1, "D-pad up = next track");
+        app.tick(&grid_press(2));
+        assert!(app.params.tracks[1].steps[2].load(Ordering::Relaxed), "the pads now program track 2");
+        assert!(!app.params.tracks[0].steps[2].load(Ordering::Relaxed));
+        // Per-track knobs follow the selection: knob 1 on the second
+        // pair is that track's level.
+        let level = app.params.tracks[1].volume.get();
+        // SELECT twice: the first pair's second dial, then the second pair
+        app.tick(&Input { knob1_press: true, ..Default::default() });
+        app.tick(&Input { knob1_press: true, ..Default::default() });
+        app.tick(&Input { knob1: -3, ..Default::default() });
+        assert!(app.params.tracks[1].volume.get() < level);
+        assert_eq!(app.params.tracks[0].volume.get(), 0.8, "other tracks untouched");
+        assert_eq!(app.grid_led_overlay()[2], crate::led_output::PadColor::Green, "the LEDs show the selected track's steps");
+    }
+
+    #[test]
+    fn pad_layer_still_performs_the_pad_bank() {
+        let mut app = new_app();
+        app.toggle_grid_mode();
+        assert!(app.pad_perform);
+        app.tick(&grid_press(9));
+        assert!(app.params.pad_pending[9].load(Ordering::Relaxed), "a PAD press triggers that pad");
+        assert_eq!(app.last_touched_pad, 9);
+        assert!(!app.params.tracks[0].steps[9].load(Ordering::Relaxed), "and never touches the steps");
+        app.tick(&Input::default());
+        assert_eq!(app.grid_led_overlay()[9], crate::led_output::PadColor::Yellow, "the focused pad is marked");
+    }
+
+    #[test]
+    fn kit_layers_keep_the_pads_off_the_pattern() {
+        let mut app = new_app();
+        app.toggle_grid_mode();
+        app.toggle_grid_mode(); // Controls
+        app.tick(&grid_press(5));
+        assert!(!app.params.tracks[0].steps[5].load(Ordering::Relaxed));
+        assert!(!app.params.pad_pending[5].load(Ordering::Relaxed));
+    }
+}
+
+/// Builds the app from the shared services (see `AppContext` and
+/// registry.rs) -- the one entry point the app registry needs, so this
+/// file can be dropped in or removed without editing anything else.
+pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+    Box::new(SequencerApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }

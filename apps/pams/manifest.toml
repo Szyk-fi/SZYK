@@ -1,2 +1,5 @@
 id = "pams"
 name = "Pam's Workout"
+category = "sequencer"
+description = "A multi-channel clock and gate generator with logic between channels."
+audio_outputs = []

@@ -35,3 +35,9 @@ media/
 # here. Save states/SRAM are per-user runtime data, not source, either.
 roms/
 saves/
+
+# Oracle / Pulsar runtime output: renders, exported MIDI/WAV/stems, the
+# manual-mode prompt Oracle writes, and voice takes -- all per-user data.
+exports/
+apps/oracle/prompt.txt
+apps/oracle/voice/

@@ -1,0 +1,124 @@
+// The Controller app's right panel: the connected game controller, live,
+// so you can see what the backend reads before you map it -- every button
+// lamp, both sticks and both trigger pressures, plus the learn prompt.
+import { InstrumentPanel } from "instrument_widgets.slint";
+
+component StickView inherits Rectangle {
+    in property <float> sx;
+    in property <float> sy;
+    in property <string> label;
+    in property <color> ink;
+    in property <color> accent;
+    border-width: 1px;
+    border-radius: 4px;
+    border-color: root.ink.with-alpha(0.2);
+    Rectangle { x: parent.width / 2; width: 1px; background: root.ink.with-alpha(0.1); }
+    Rectangle { y: parent.height / 2; height: 1px; background: root.ink.with-alpha(0.1); }
+    Rectangle {
+        width: 9px; height: 9px; border-radius: 4.5px;
+        x: parent.width / 2 + max(-1, min(1, root.sx)) * (parent.width / 2 - 6px) - 4.5px;
+        y: parent.height / 2 - max(-1, min(1, root.sy)) * (parent.height / 2 - 6px) - 4.5px;
+        background: root.accent;
+    }
+    Text {
+        x: 3px; y: 2px;
+        text: root.label;
+        color: root.ink.with-alpha(0.72);
+        font-family: "JetBrains Mono"; font-size: 12px;
+    }
+}
+
+export component ControllerPanel inherits InstrumentPanel {
+    in property <color> paper;
+    in property <string> pad-name;
+    in property <bool> connected;
+    in property <string> map;
+    in property <string> learning;
+    in property <[bool]> buttons;
+    in property <[float]> axes;
+    in property <string> status;
+    property <[string]> names: ["CROSS/A", "CIRCLE/B", "SQUARE/X", "TRIANGLE/Y", "L1", "R1", "L2", "R2", "L3", "R3", "UP", "DOWN", "LEFT", "RIGHT", "OPTIONS", "CREATE", "PS/HOME", "TOUCHPAD"];
+
+    caption: "GAME CONTROLLER / " + root.map + " MAP";
+
+    VerticalLayout {
+        spacing: 6px;
+        Text {
+            height: 20px;
+            text: root.pad-name;
+            color: root.connected ? root.accent : root.ink.with-alpha(0.72);
+            font-family: "Space Grotesk"; font-weight: 700; font-size: 16px;
+            overflow: elide;
+        }
+        if root.learning != "" : Rectangle {
+            height: 30px;
+            border-radius: 4px;
+            background: root.accent;
+            Text {
+                text: "LEARN " + root.learning + ": press a button or move a stick";
+                color: root.paper;
+                font-family: "JetBrains Mono"; font-weight: 700; font-size: 12px;
+                horizontal-alignment: center; vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+        // Button lamps, three columns.
+        VerticalLayout {
+            spacing: 3px;
+            for r in 6 : HorizontalLayout {
+                height: 14px;
+                spacing: 4px;
+                for c in 3 : Rectangle {
+                    property <int> i: r * 3 + c;
+                    property <bool> on: self.i < root.buttons.length && root.buttons[self.i];
+                    border-radius: 3px;
+                    background: self.on ? root.accent : root.ink.with-alpha(0.05);
+                    Text {
+                        text: parent.i < root.names.length ? root.names[parent.i] : "";
+                        color: parent.on ? root.paper : root.ink.with-alpha(0.72);
+                        font-family: "JetBrains Mono"; font-size: 12px;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            height: 64px;
+            spacing: 8px;
+            StickView {
+                width: 64px; label: "LEFT"; ink: root.ink; accent: root.accent;
+                sx: root.axes.length > 1 ? root.axes[0] : 0; sy: root.axes.length > 1 ? root.axes[1] : 0;
+            }
+            StickView {
+                width: 64px; label: "RIGHT"; ink: root.ink; accent: root.accent;
+                sx: root.axes.length > 3 ? root.axes[2] : 0; sy: root.axes.length > 3 ? root.axes[3] : 0;
+            }
+            for t[i] in [root.axes.length > 4 ? root.axes[4] : 0, root.axes.length > 5 ? root.axes[5] : 0] : VerticalLayout {
+                spacing: 2px;
+                Rectangle {
+                    border-radius: 3px;
+                    background: root.ink.with-alpha(0.08);
+                    Rectangle {
+                        y: parent.height * (1 - max(0, min(1, t)));
+                        height: parent.height * max(0, min(1, t));
+                        border-radius: 3px;
+                        background: root.accent;
+                    }
+                }
+                Text {
+                    text: i == 0 ? "L2" : "R2";
+                    color: root.ink.with-alpha(0.72);
+                    font-family: "JetBrains Mono"; font-size: 12px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+        Text {
+            text: root.status != "" ? root.status : "Knob 2 press: learn  ·  turn left: clear";
+            color: root.ink.with-alpha(0.75);
+            font-family: "JetBrains Mono"; font-size: 12px;
+            wrap: word-wrap;
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}

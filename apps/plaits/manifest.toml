@@ -1,2 +1,14 @@
 id = "plaits"
 name = "Plaits"
+category = "instrument"
+description = "The real Mutable Instruments Plaits voice: 24 engines."
+audio_outputs = ["Plaits"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Plaits Level",
+    "Plaits: Harmonics",
+    "Plaits: Timbre",
+    "Plaits: Morph",
+    "Plaits: Decay",
+]
