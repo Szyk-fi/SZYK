@@ -64,6 +64,9 @@
 //! `SampleDrumApp::play_notes`), the envelope's Relative range and A/D curve
 //! shapes, and a short fade on a retriggered voice so hits don't click.
 
+#[path = "sample_drum_stretch.rs"]
+mod stretch;
+
 use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
@@ -103,6 +106,8 @@ const NOTE_TARGET_NAMES: [&str; 3] = ["Ch 1", "Ch 2", "Both"];
 const ROOT_NOTE: i32 = 60;
 /// Loop lengths, in bars, the Loop Bars row steps through.
 const LOOP_BARS: [u32; 4] = [1, 2, 4, 8];
+/// Tempo Match modes: off, time-stretch (pitch stays), or plain speed change (pitch follows).
+const TEMPO_MODE_NAMES: [&str; 3] = ["off", "Stretch", "Speed"];
 
 /// A tempo written into a sample's name ("..._174_AmenBreak"), if any.
 fn tempo_in_name(name: &str) -> Option<f32> {
@@ -337,6 +342,7 @@ const RETRIGGER_FADE: f32 = 96.0;
 #[derive(Default)]
 struct DrumVoice {
     head: Head,
+    stretch: stretch::Stretcher,
     ghost: Head,
     ghost_gain: f32,
     ghost_env: f32,
@@ -357,6 +363,7 @@ impl DrumVoice {
     /// makes it wrap between `loop_frac` and the far end instead of
     /// stopping there.
     fn trigger(&mut self, lower_frac: f32, upper_frac: f32, loop_frac: f32, backward: bool, looping: bool, len: usize) {
+        self.stretch.reset();
         self.onset = 1.0;
         if self.playing {
             self.onset = 0.0;
@@ -389,14 +396,18 @@ impl DrumVoice {
 
     /// `rel_len_s`, when set, is what the envelope's times are fractions of
     /// (its Relative range); otherwise they're the seconds in `env`.
-    fn render(&mut self, data: &[f32], native_rate: f32, device_rate: f32, semitones: f32, env: EnvSettings, sample_rate: f32) -> f32 {
+    fn render(&mut self, data: &[f32], native_rate: f32, device_rate: f32, semitones: f32, speed: f32, env: EnvSettings, sample_rate: f32) -> f32 {
         if (!self.playing && self.ghost_gain <= 0.0) || data.len() < 2 {
             return 0.0;
         }
-        let rate = (native_rate / device_rate) * 2f32.powf(semitones / 12.0);
+        let pitch_rate = (native_rate / device_rate) * 2f32.powf(semitones / 12.0);
+        // `speed` != 1 time-stretches: the playhead moves through the sample at
+        // `speed` times its natural pace while the grains keep `pitch_rate`.
+        let stretching = (speed - 1.0).abs() > 0.002;
+        let rate = if stretching { (native_rate / device_rate) * speed } else { pitch_rate };
         let mut out = 0.0;
         if self.ghost_gain > 0.0 {
-            out += self.head_ghost(data, rate);
+            out += self.head_ghost(data, pitch_rate);
         }
         if self.playing {
             let (attack, hold, decay) = match env.relative {
@@ -407,7 +418,8 @@ impl DrumVoice {
                 false => (env.attack, env.hold, env.decay),
             };
             let gain = self.env.tick(attack, hold, decay, env.a_shape, env.d_shape, 1.0 / sample_rate);
-            out += self.head.read(data) * gain * self.onset;
+            let heard = if stretching { self.stretch.render(data, self.head.pos, pitch_rate, self.head.dir, self.head.lower, self.head.upper) } else { self.head.read(data) };
+            out += heard * gain * self.onset;
             self.onset = (self.onset + 1.0 / RETRIGGER_FADE).min(1.0);
             if !self.env.active() || !self.head.advance(rate) {
                 self.playing = false;
@@ -687,7 +699,7 @@ struct DrumPreset {
     #[serde(default)]
     fine: i32,
     #[serde(default)]
-    tempo_match: bool,
+    tempo_mode: u32,
     #[serde(default = "default_one")]
     loop_bars: u32,
     start: f32,
@@ -799,7 +811,7 @@ struct ChannelParams {
     /// Plays the sample faster or slower so its loop (`loop_bars` long) fits the
     /// project tempo: speed-matching, like turning a record's pitch control, so
     /// pitch moves with it. Auto Clock then fires on the project's bar grid.
-    tempo_match: AtomicBool,
+    tempo_match: AtomicU32,
     loop_bars: AtomicU32,
     /// A note-off arrived: looping voices fade out.
     release_pending: AtomicBool,
@@ -884,7 +896,7 @@ impl ChannelParams {
             fine: AtomicI32::new(0),
             note_semi: AtomicF32::new(0.0),
             note_gain: AtomicF32::new(1.0),
-            tempo_match: AtomicBool::new(false),
+            tempo_match: AtomicU32::new(0),
             loop_bars: AtomicU32::new(1),
             release_pending: AtomicBool::new(false),
             start: AtomicF32::new(0.0),
@@ -1152,7 +1164,7 @@ impl SampleDrumApp {
             // Only a sample that says its tempo is assumed to be a loop; a one-shot
             // (a piano note, a kick) must not be sped up to fit the bar. Either way
             // the row can be switched.
-            self.params.channels[ch].tempo_match.store(tempo_in_name(&slot.name).is_some(), Ordering::Relaxed);
+            self.params.channels[ch].tempo_match.store(tempo_in_name(&slot.name).is_some() as u32, Ordering::Relaxed);
         }
     }
 
@@ -1257,7 +1269,10 @@ impl SampleDrumApp {
             Selection::Mode => PLAY_MODE_NAMES[c.mode.load(Ordering::Relaxed) as usize % 4].to_string(),
             Selection::Tune => format!("{:+} st", c.tune.load(Ordering::Relaxed)),
             Selection::FineTune => format!("{:+} ct", c.fine.load(Ordering::Relaxed)),
-            Selection::TempoMatch => if c.tempo_match.load(Ordering::Relaxed) { format!("to {:.0} BPM", self.params.clock.bpm()) } else { "off".into() },
+            Selection::TempoMatch => match c.tempo_match.load(Ordering::Relaxed) % 3 {
+                0 => "off".into(),
+                m => format!("{} to {:.0} BPM", TEMPO_MODE_NAMES[m as usize], self.params.clock.bpm()),
+            },
             Selection::LoopBars => format!("{}", c.loop_bars.load(Ordering::Relaxed)),
             Selection::NotesTo => NOTE_TARGET_NAMES[self.params.note_target.load(Ordering::Relaxed) as usize % 3].to_string(),
             Selection::EnvAShape => format!("{:+.0}", c.env_ashape.get() * 50.0),
@@ -1326,7 +1341,10 @@ impl SampleDrumApp {
                 let cur = c.tune.load(Ordering::Relaxed);
                 c.tune.store(cur + step, Ordering::Relaxed);
             }
-            Selection::TempoMatch => c.tempo_match.store(delta > 0, Ordering::Relaxed),
+            Selection::TempoMatch => {
+                let cur = c.tempo_match.load(Ordering::Relaxed) as i32;
+                c.tempo_match.store((cur + step).clamp(0, 2) as u32, Ordering::Relaxed);
+            }
             Selection::LoopBars => {
                 let cur = LOOP_BARS.iter().position(|b| *b == c.loop_bars.load(Ordering::Relaxed)).unwrap_or(0) as i32;
                 c.loop_bars.store(LOOP_BARS[(cur + step).clamp(0, LOOP_BARS.len() as i32 - 1) as usize], Ordering::Relaxed);
@@ -1394,7 +1412,7 @@ impl SampleDrumApp {
             Selection::Sample | Selection::Mode | Selection::SliceMode | Selection::FxType => {} // no sensible single default
             Selection::Tune => c.tune.store(0, Ordering::Relaxed),
             Selection::FineTune => c.fine.store(0, Ordering::Relaxed),
-            Selection::TempoMatch => c.tempo_match.store(false, Ordering::Relaxed),
+            Selection::TempoMatch => c.tempo_match.store(0, Ordering::Relaxed),
             Selection::LoopBars => self.guess_bars(ch),
             Selection::NotesTo => self.params.note_target.store(0, Ordering::Relaxed),
             Selection::EnvAShape => c.env_ashape.set(0.0),
@@ -1429,7 +1447,7 @@ impl SampleDrumApp {
             mode: c.mode.load(Ordering::Relaxed),
             tune: c.tune.load(Ordering::Relaxed),
             fine: c.fine.load(Ordering::Relaxed),
-            tempo_match: c.tempo_match.load(Ordering::Relaxed),
+            tempo_mode: c.tempo_match.load(Ordering::Relaxed),
             loop_bars: c.loop_bars.load(Ordering::Relaxed),
             start: c.start.get(),
             loop_point: c.loop_point.get(),
@@ -1502,7 +1520,7 @@ impl SampleDrumApp {
         c.mode.store(preset.mode, Ordering::Relaxed);
         c.tune.store(preset.tune, Ordering::Relaxed);
         c.fine.store(preset.fine.clamp(-100, 100), Ordering::Relaxed);
-        c.tempo_match.store(preset.tempo_match, Ordering::Relaxed);
+        c.tempo_match.store(preset.tempo_mode.min(2), Ordering::Relaxed);
         c.loop_bars.store(if LOOP_BARS.contains(&preset.loop_bars) { preset.loop_bars } else { 1 }, Ordering::Relaxed);
         c.start.set(preset.start);
         c.loop_point.set(preset.loop_point);
@@ -2015,7 +2033,7 @@ impl AudioProcessor for SampleDrumProcessor {
                     let num_slices = c.num_slices.load(Ordering::Relaxed).max(1) as f32;
                     // With Tempo Match the loop is `loop_bars` long at the project
                     // tempo; otherwise it is one bar at Auto Rate.
-                    let loop_s = if c.tempo_match.load(Ordering::Relaxed) {
+                    let loop_s = if c.tempo_match.load(Ordering::Relaxed) != 0 {
                         c.loop_bars.load(Ordering::Relaxed).max(1) as f32 * self.params.clock.bar_beats() as f32 * 60.0 / self.params.clock.bpm().max(1.0)
                     } else {
                         240.0 / c.auto_rate_bpm.get().max(1.0)
@@ -2102,15 +2120,19 @@ impl AudioProcessor for SampleDrumProcessor {
             };
             let (data, native_rate) = slot.decoded();
             // Tempo Match: the sample's loop (`loop_bars` bars) should last as long as
-            // that many bars at the project tempo, so play it faster or slower by
-            // the ratio, expressed in semitones like every other pitch offset here.
-            let match_semitones = if c.tempo_match.load(Ordering::Relaxed) {
+            // that many bars at the project tempo. Stretch plays it at that speed
+            // without changing pitch (see `stretch`); Speed just plays it faster or
+            // slower, folded in as semitones like every other pitch offset here.
+            let tempo_mode = c.tempo_match.load(Ordering::Relaxed);
+            let ratio = if tempo_mode != 0 {
                 let loop_s = data.len() as f32 / native_rate.max(1.0);
                 let want_s = c.loop_bars.load(Ordering::Relaxed).max(1) as f32 * self.params.clock.bar_beats() as f32 * 60.0 / self.params.clock.bpm().max(1.0);
-                12.0 * (loop_s / want_s.max(0.01)).clamp(0.25, 4.0).log2()
+                (loop_s / want_s.max(0.01)).clamp(0.25, 4.0)
             } else {
-                0.0
+                1.0
             };
+            let match_semitones = if tempo_mode == 2 { 12.0 * ratio.log2() } else { 0.0 };
+            let speed = if tempo_mode == 1 { ratio } else { 1.0 };
             let semitones = match_semitones + c.tune.load(Ordering::Relaxed) as f32 + c.fine.load(Ordering::Relaxed) as f32 / 100.0 + c.ext_tune.get() + c.note_semi.get();
             let range = c.env_range.load(Ordering::Relaxed) as usize % 4;
             let range_max = ENV_RANGE_MAX_SECONDS[range];
@@ -2140,7 +2162,7 @@ impl AudioProcessor for SampleDrumProcessor {
             snapshot.clear();
             let stride = (frames / 96).max(1);
             for (i, m) in mono_buf.iter_mut().enumerate() {
-                let dry = self.voices[ch].render(data, native_rate, sample_rate, semitones, env, sample_rate);
+                let dry = self.voices[ch].render(data, native_rate, sample_rate, semitones, speed, env, sample_rate);
                 let wet = match fx_type {
                     1 => self.fx_delay[ch].process(dry, 60.0 + fx_p1 * 900.0, fx_p2, sample_rate),
                     2 => self.fx_reverb[ch].process(dry, fx_p1, fx_p2, sample_rate),
@@ -2193,7 +2215,7 @@ mod tests {
         let app = SampleDrumApp::new(sensitivity, nav_speed, modbus, audio_bus, mixer_bus);
         // Tests that measure pitch or timing want the sample at its own speed.
         for c in &app.params.channels {
-            c.tempo_match.store(false, Ordering::Relaxed);
+            c.tempo_match.store(0, Ordering::Relaxed);
         }
         app
     }
@@ -2286,7 +2308,7 @@ mod tests {
 
         let mut max_pos = 0.0f32;
         for _ in 0..20000 {
-            voice.render(&data, 48000.0, 48000.0, 0.0, long_env(), 48000.0); // huge decay so the envelope never ends this test early
+            voice.render(&data, 48000.0, 48000.0, 0.0, 1.0, long_env(), 48000.0); // huge decay so the envelope never ends this test early
             max_pos = max_pos.max(voice.head.pos);
             assert!(voice.playing, "a looping voice with an effectively infinite decay must never stop on its own");
         }
@@ -2426,14 +2448,14 @@ mod tests {
         let mut looped = DrumVoice::default();
         looped.trigger(0.0, 1.0, 0.5, true, true, data.len()); // Backward Loop
         for _ in 0..20000 {
-            looped.render(&data, 48000.0, 48000.0, 0.0, long_env(), 48000.0);
+            looped.render(&data, 48000.0, 48000.0, 0.0, 1.0, long_env(), 48000.0);
         }
         assert!(looped.playing, "Backward Loop must keep looping");
 
         let mut one_shot = DrumVoice::default();
         one_shot.trigger(0.0, 1.0, 0.5, true, false, data.len()); // plain Backward
         for _ in 0..20000 {
-            one_shot.render(&data, 48000.0, 48000.0, 0.0, long_env(), 48000.0);
+            one_shot.render(&data, 48000.0, 48000.0, 0.0, 1.0, long_env(), 48000.0);
         }
         assert!(!one_shot.playing, "plain Backward must stop at its lower bound instead of looping forever");
     }
@@ -2668,7 +2690,7 @@ mod tests {
             let mut v = DrumVoice::default();
             v.trigger(0.0, 1.0, 0.0, false, false, data.len());
             let env = EnvSettings { attack: 0.0, hold, decay: 0.0, a_shape: 0.0, d_shape: 0.0, relative: true };
-            (0..60000).take_while(|_| { v.render(&data, 48000.0, 48000.0, 0.0, env, 48000.0); v.playing }).count()
+            (0..60000).take_while(|_| { v.render(&data, 48000.0, 48000.0, 0.0, 1.0, env, 48000.0); v.playing }).count()
         };
         let half = play(0.5);
         assert!((23000..25500).contains(&half), "half the region: {half}");
@@ -2711,7 +2733,7 @@ mod tests {
                 // Retrigger from a different place in the sample.
                 v.trigger(0.3, 1.0, 0.3, false, false, data.len());
             }
-            let x = v.render(&data, 48000.0, 48000.0, 0.0, env, 48000.0);
+            let x = v.render(&data, 48000.0, 48000.0, 0.0, 1.0, env, 48000.0);
             if i > 1 {
                 worst = worst.max((x - prev).abs());
             }
@@ -2782,7 +2804,7 @@ mod tests {
         let (data, native) = app.params.samples[0].decoded();
         let loop_s = data.len() as f32 / native;
         let c = &app.params.channels[0];
-        c.tempo_match.store(true, Ordering::Relaxed);
+        c.tempo_match.store(2, Ordering::Relaxed);
         c.env_decay.set(1.0);
         c.env_range.store(2, Ordering::Relaxed);
         // Pick the bar count that keeps the ratio in range at 120 BPM.
@@ -2806,7 +2828,7 @@ mod tests {
             let app = new_app();
             app.params.clock.set_bpm(100.0); // a bar is 2.4 s
             let c = &app.params.channels[0];
-            c.tempo_match.store(true, Ordering::Relaxed);
+            c.tempo_match.store(1, Ordering::Relaxed);
             c.loop_bars.store(1, Ordering::Relaxed);
             c.num_slices.store(slices, Ordering::Relaxed);
             c.auto_clock.store(true, Ordering::Relaxed);
@@ -2826,6 +2848,34 @@ mod tests {
         };
         let (four, eight) = (count(4), count(8));
         assert!((4..=5).contains(&four) && (8..=9).contains(&eight), "one bar is 4 hits cut in 4 and 8 cut in 8: {four}, {eight}");
+    }
+
+    /// Stretch mode moves through the sample at the matched speed but the pitch
+    /// stays where it was; Speed mode moves the pitch with it.
+    #[test]
+    fn stretch_changes_the_pace_not_the_pitch() {
+        let sr = 48_000.0;
+        let data: Vec<f32> = (0..192_000).map(|i| (i as f32 * 440.0 / sr * std::f32::consts::TAU).sin() * 0.8).collect();
+        let hz = |speed: f32, semis: f32| {
+            let mut v = DrumVoice::default();
+            v.trigger(0.0, 1.0, 0.0, false, true, data.len());
+            let env = EnvSettings { attack: 0.0, hold: 100.0, decay: 1.0, a_shape: 0.0, d_shape: 0.0, relative: false };
+            let out: Vec<f32> = (0..48_000).map(|_| v.render(&data, sr, sr, semis, speed, env, sr)).collect();
+            let body = &out[8_000..40_000];
+            let crossings = body.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+            (crossings as f32 / 2.0 / (body.len() as f32 / sr), v.head.pos)
+        };
+        let (plain_hz, plain_pos) = hz(1.0, 0.0);
+        let (stretched_hz, stretched_pos) = hz(1.5, 0.0);
+        assert!((stretched_hz - plain_hz).abs() < 12.0, "pitch holds: {plain_hz} -> {stretched_hz}");
+        assert!(stretched_pos > plain_pos * 1.4, "the playhead moves 1.5x faster: {plain_pos} -> {stretched_pos}");
+        // Speed mode (the same ratio folded into pitch) really does change pitch.
+        let (sped_hz, _) = hz(1.0, 12.0 * 1.5f32.log2());
+        assert!((sped_hz / plain_hz - 1.5).abs() < 0.05, "plain speed shifts pitch: {sped_hz}");
+        // A stretch also combines with the Tune row: pitch shifts, pace stays.
+        let (tuned_hz, tuned_pos) = hz(1.5, 12.0);
+        assert!((tuned_hz / plain_hz - 2.0).abs() < 0.1, "tune still retunes a stretched sample: {tuned_hz}");
+        assert!(tuned_pos > plain_pos * 1.4);
     }
 
     #[test]

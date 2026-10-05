@@ -101,6 +101,12 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: Sample Drum time-stretch
+- Branch: claude/atlas-play
+- Changed: `src/apps/sample_drum.rs`, new `src/apps/sample_drum_stretch.rs` (private part via `#[path]`: WSOLA, 2048-sample Hann grains, 4x overlap, +-384 sample similarity search), USER_MANUAL. Tempo Match is now Off / Stretch / Speed (Stretch keeps pitch; Speed is the old repitch); Tune still retunes a stretched sample. Presets store `tempo_mode`.
+- Limits: plain WSOLA, no transient detection; fine on drums at modest ratios, slightly phasey on sustained tonal material at big ratios. Backward and loop modes use it too, untested by ear.
+- Tests: 3 new (tone keeps pitch at 0.75/1/1.5x, a hit keeps its attack, voice-level stretch vs speed vs tune).
+
 ### 2026-10-05: Claude: Sample Drum slice pads and tempo match
 - Branch: claude/atlas-play
 - Changed: `src/apps/sample_drum.rs`, USER_MANUAL. New pad layers SLICES / SLICES 17+ (one pad per slice, via `slice_request`); Tempo Match + Loop Bars (speed-matches a loop to the shared `Clock` tempo; Auto Clock follows the project bar). Loop bars/tempo-match are guessed from the sample name's tempo and length when a sample is picked.
