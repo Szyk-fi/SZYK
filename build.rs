@@ -82,6 +82,78 @@ fn main() {
     compile_cached("clouds_bridge", eurorack, &files);
 
     compile_listed_bridges(eurorack, bridge);
+    compile_airwindows(bridge);
+}
+
+/// Airwindows' ~500 effects (vendor/airwindows, MIT) as one static lib.
+/// Each plugin is a VST2 class; vendor/airwindows/shim/audioeffectx.h
+/// stands in for the SDK. Every effect defines the same global
+/// `createEffectInstance`, so each gets its own generated translation unit
+/// that renames it (`aw_make_<Name>`) and includes the effect's own .cpp
+/// files; a generated registry lists them all for vendor/bridge/
+/// airwindows_bridge.cc. Adding an effect is dropping its folder into
+/// vendor/airwindows/src.
+fn compile_airwindows(bridge: &str) {
+    let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let src = root.join("vendor/airwindows/src");
+    println!("cargo:rerun-if-changed=vendor/airwindows");
+    let Ok(entries) = std::fs::read_dir(&src) else { return };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !n.starts_with(|c: char| c.is_ascii_digit()))
+        .collect();
+    names.sort();
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("airwindows");
+    std::fs::create_dir_all(&out).unwrap();
+    let write_if_changed = |path: &std::path::Path, text: &str| {
+        if std::fs::read_to_string(path).ok().as_deref() != Some(text) {
+            std::fs::write(path, text).unwrap();
+        }
+    };
+    let mut files = Vec::new();
+    // Only the generated wrappers are listed files; a change to the shim or
+    // to any plugin source reaches the fingerprint through the registry's text.
+    fn newest(dir: &std::path::Path) -> u128 {
+        let mut t = 0;
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            t = t.max(if p.is_dir() { newest(&p) } else { e.metadata().and_then(|m| m.modified()).ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0) });
+        }
+        t
+    }
+    let stamp = newest(&root.join("vendor/airwindows"));
+    let mut registry = format!("// sources {stamp}\n#include \"audioeffectx.h\"\nstruct AwEntry {{ const char* id; AudioEffect* (*make)(audioMasterCallback); }};\n");
+    let mut table = String::new();
+    let mut count = 0;
+    for name in &names {
+        let dir = src.join(name);
+        let mut cpps: Vec<String> = std::fs::read_dir(&dir)
+            .map(|d| d.flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|f| f.ends_with(".cpp")).collect())
+            .unwrap_or_default();
+        // The effect's own file first: it declares the class the Proc file extends.
+        cpps.sort_by_key(|f| (f != &format!("{name}.cpp"), f.clone()));
+        if cpps.is_empty() || !cpps[0].starts_with(name.as_str()) {
+            continue;
+        }
+        let mut tu = format!("#define createEffectInstance aw_make_{name}\n");
+        for f in &cpps {
+            tu.push_str(&format!("#include \"{}/{f}\"\n", dir.display()));
+        }
+        let path = out.join(format!("aw_{name}.cc"));
+        write_if_changed(&path, &tu);
+        files.push(path.display().to_string());
+        registry.push_str(&format!("AudioEffect* aw_make_{name}(audioMasterCallback);\n"));
+        table.push_str(&format!("  {{\"{name}\", aw_make_{name}}},\n"));
+        count += 1;
+    }
+    registry.push_str(&format!("extern const AwEntry aw_registry[] = {{\n{table}}};\nextern const int aw_registry_len = {count};\n"));
+    let reg = out.join("aw_registry.cc");
+    write_if_changed(&reg, &registry);
+    files.push(reg.display().to_string());
+    files.push(format!("{bridge}/airwindows_bridge.cc"));
+    compile_cached_with("airwindows_bridge", &[&format!("{}", root.join("vendor/airwindows/shim").display())], &[], &files);
 }
 
 /// Every other bridge is self-describing: `vendor/bridge/<name>.sources`
@@ -115,6 +187,10 @@ fn compile_listed_bridges(eurorack: &str, bridge: &str) {
 /// `generate_app_modules`), and recompiling the DSP libs every time would
 /// cost a minute per edit.
 fn compile_cached(lib: &str, include: &str, files: &[String]) {
+    compile_cached_with(lib, &[include], &[("TEST", None)], files);
+}
+
+fn compile_cached_with(lib: &str, includes: &[&str], defines: &[(&str, Option<&str>)], files: &[String]) {
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-env-changed=CXXFLAGS");
     let mut fingerprint = std::env::var("CXXFLAGS").unwrap_or_default();
@@ -133,7 +209,13 @@ fn compile_cached(lib: &str, include: &str, files: &[String]) {
         return;
     }
     let mut build = cc::Build::new();
-    build.cpp(true).std("c++14").define("TEST", None).include(include).warnings(false);
+    build.cpp(true).std("c++14").warnings(false);
+    for (k, v) in defines {
+        build.define(k, *v);
+    }
+    for i in includes {
+        build.include(i);
+    }
     for f in files {
         build.file(f);
     }
