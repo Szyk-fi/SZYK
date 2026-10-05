@@ -1,0 +1,18 @@
+id = "peaks"
+name = "Peaks"
+category = "utility"
+description = "The real Mutable Instruments Peaks: two processors of twelve functions: envelopes, LFOs, drums, pulse tools, bouncing ball, sequencer."
+audio_outputs = ["Peaks"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Peaks Level",
+    "Peaks: A Pot 1",
+    "Peaks: A Pot 2",
+    "Peaks: A Pot 3",
+    "Peaks: A Pot 4",
+    "Peaks: B Pot 1",
+    "Peaks: B Pot 2",
+    "Peaks: B Pot 3",
+    "Peaks: B Pot 4",
+]

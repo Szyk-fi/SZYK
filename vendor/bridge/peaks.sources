@@ -1,0 +1,14 @@
+# Sources for peaks_bridge.cc, relative to vendor/eurorack -- peaks/test/makefile's
+# CC_FILES minus its test harness.
+peaks/drums/bass_drum.cc
+peaks/drums/fm_drum.cc
+peaks/drums/high_hat.cc
+peaks/modulations/lfo.cc
+peaks/modulations/multistage_envelope.cc
+peaks/number_station/number_station.cc
+peaks/processors.cc
+peaks/pulse_processor/pulse_shaper.cc
+peaks/pulse_processor/pulse_randomizer.cc
+stmlib/utils/random.cc
+peaks/resources.cc
+peaks/drums/snare_drum.cc

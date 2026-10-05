@@ -1,0 +1,13 @@
+# Sources for streams_bridge.cc, relative to vendor/eurorack. Streams has no host test
+# build, so this is the firmware's own DSP list (streams/makefile builds everything in
+# the folder except the drivers, the UI and the CV scaler, which are hardware).
+streams/compressor.cc
+streams/envelope.cc
+streams/follower.cc
+streams/lorenz_generator.cc
+streams/processor.cc
+streams/resources.cc
+streams/svf.cc
+streams/vactrol.cc
+stmlib/utils/random.cc
+stmlib/dsp/units.cc

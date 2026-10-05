@@ -249,10 +249,11 @@ every control, plus the module's routing rows.
 | **Elements** | Pads play it; hold a note to keep bowing or blowing. A hand in the depth sensors bows (left) or blows (right). SPACE above 7/8 freezes the reverb. | **Input**: another app's audio strikes the resonator. |
 | **Marbles** | F3 starts it (it opens stopped). X1, X2 and X3 play notes on T1, T2 and T3. | **Plays**: the instrument the notes go to. **T1–T3, X1–X3, Y App / Input**: patch any output to any app's mod input. |
 | **Braids** | Pads play it, one voice, last note wins; each note strikes it. U/D picks the model. | Turn **Env > VCA** off and it drones. |
+| **Peaks** | Pads are its two gate inputs (lower two rows fire A, upper two B; notes from other apps too). Each of its two processors is one of twelve functions: envelope, LFO, tap LFO, bass / snare / FM drums, hi-hat, pulse shaper, pulse randomizer, bouncing ball, mini sequencer, number station. Four pots each. | The drums and the number station are audio; the rest are control voltages: **Out A / B App / Input** patch them to a mod input. |
 | **Stages** | F3 starts it (it opens stopped). Pads are the gate input, high while held. U/D loads a preset group (ADSR, AR, LFOs, oscillators, pulse and gate generators, sample and hold, sequencer...). | The panel is the module's own: 1-6 segments, each with type, loop, slider and pot, so every preset stays editable. **Value / Phase App / Input**: patch its output to a mod input. The oscillator presets are audio. |
 | **Tides** | F3 starts it. Pads are its TRIG and V/OCT: they fire the AD/AR envelopes and transpose from C3, so in the Audio range they play it. | **Out 1–4 App / Input**: patch each output to a mod input. Looping slopes swing both ways around the knob; envelopes push one way. |
 
-Braids and Stages follow the same pattern (below). Why these: they fill the gaps the other modules leave. Rings and
+Braids, Stages and Peaks follow the same pattern (below), and Streams is an effect (§4). Why these: they fill the gaps the other modules leave. Rings and
 Elements are physical-modelling voices (Plaits has only a simple modal
 engine); Marbles is a generative source for every instrument on the note
 bus; Tides is the modulation source the mod bus didn't have. Grids, the
@@ -331,6 +332,7 @@ row) rather than generating their own signal.
 | **Tonestack** | Guitar amp-sim / effects-chain processor. |
 | **Vector Filter** | 3D "vector" filter interface — drag a projected cube face: X = cutoff (log, 40–16kHz), Y = resonance, Z-strip = drive. Low/band/high-pass share one control surface. |
 | **Mosaic** | Four effects in series (filters, delay, repeat, reverse, crush, drive, gate, ring, pitch, reverb), each switched and shaped by its own 16-step pattern. Pads = the focused slot's steps; hold one and turn knob 2 to lock its Amount. |
+| **Streams** | The real Mutable Instruments Streams dual dynamics gate: per channel an envelope, vactrol, follower, compressor, filter controller or Lorenz generator turning an excite signal into gain. Pick each channel's **Audio** and **Excite** source in the menu (with no excite source the pads are the gate). | Gain and filter-frequency control voltages of both channels patch to any mod input. The module's analogue VCA is a digital one here. |
 | **Squeeze** | Compressor with soft knee, makeup and parallel mix; pick another app as Sidechain to duck under it. |
 | **Airwindows** | Chris Johnson's whole effect library — about 520 real plugins running their own code. Pick a **Source**, a Category (Airwindows' own grouping: Reverb, Tape, Consoles, Dynamics, Dithers...) and step through the Effect. Every plugin's parameters, units and value text come from the plugin itself. Pads and the stick/hands play the first parameters. |
 | **Fracture / Ghosts / Tape Machine / Portal** | Collection-engine effects — see §7. |

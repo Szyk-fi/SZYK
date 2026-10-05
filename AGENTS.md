@@ -101,11 +101,11 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
-### 2026-10-05: Claude: eight new apps from real engines (Airwindows, Braids, Stages, SoundFont, Dexed, Chip Player, Orca, O&C)
+### 2026-10-05: Claude: ten new apps from real engines (Airwindows, Braids, Stages, Peaks, Streams, SoundFont, Dexed, Chip Player, Orca, O&C)
 - Branch: claude/atlas-play
 - Added (each is a file in `src/apps/` + `apps/<id>/manifest.toml`, with real tests):
   `airwindows.rs` (the whole ~520-effect library through a VST2 shim),
-  `braids.rs`, `stages.rs` (Mutable, via `vendor/bridge/*_bridge.cc`),
+  `braids.rs`, `stages.rs`, `peaks.rs`, `streams.rs` (Mutable, via `vendor/bridge/*_bridge.cc`),
   `soundfont.rs` (TinySoundFont), `dexed.rs` (Dexed's msfa engine; **replaces
   Cascade**: its manifest is removed, `cascade.rs` and its Slint code stay in the
   tree unused), `chip_player.rs` (Game_Music_Emu), `orca.rs` (the real Orca-c
@@ -123,8 +123,8 @@ Newest at the top. Keep each entry short. Use this format:
   `vendor/PATCHES.md`, `vendor/airwindows/PATCHES.md`, `vendor/o_c/PATCHES.md`.
   A real endless loop in the shared tides2 ramp extractor was fixed (it hung
   Stages' PLL oscillator).
-- Not done: Peaks and Streams (the other MIT Mutable modules; Tides, Rings, Marbles,
-  Elements, Plaits, Clouds, Warps and Beads were already here).
+- Not done: Mutable's AVR modules (Grids, Edges, Branches, Frames, Yarns) are GPL and stay out. Streams' VCA and
+  filter are analogue on the module; here its gain drives a digital VCA and the filter frequency is a patchable output only.
 - Status: done, but untested on hardware, and the O&C firmware runs on a thread
   shared in spirit with the audio thread like the real chip's ISRs (data races the
   firmware tolerates on one core are possible on many; none seen).
