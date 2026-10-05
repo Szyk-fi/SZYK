@@ -400,7 +400,7 @@ Four modules run at once: **O&C**, **O&C 2**, **O&C 3** and **O&C 4**, each its 
 
 | App | What it does |
 |---|---|
-| **Sample Drum** | Erica Synths Sample Drum clone: dual-channel sample player/slicer. |
+| **Sample Drum** | Erica Synths Sample Drum clone: dual-channel sample player/slicer (Start/Loop/End, four play modes, linear or zero-crossing slicing with FWD/BKW/RND/NONE/CV stepping, AHD envelope with Short/Mid/Long/Relative ranges and curve shapes, one insert FX per channel, presets). It opens with a sample on each channel, so pad 1/2 (TRIG) play straight away. **It also plays from notes**: a keyboard, sequencer or the note bus plays the sample at pitch (C4 = the sample's own pitch, velocity = level), to Ch 1, Ch 2 or both (Global ▸ Notes Play); looping modes fade out when the key is released. Tune is in semitones plus a Fine Tune in cents; retriggering fades the old hit out under the new one so it doesn't click. |
 | **Chip Player** | Plays NES, SNES, Game Boy, Mega Drive/Genesis, Master System, PC Engine, MSX, ZX Spectrum and Atari chip music with real emulated chips (Game_Music_Emu). Files go in `chiptunes/`. F3 plays; the pads mute and unmute the chip's voices (see §3.8). |
 | **Reference / Field / Sample Hunter / Studio / Vinyl / Practice / Radio / Memories** | Collection-engine recording & library apps — see §7. |
 

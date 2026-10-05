@@ -101,6 +101,12 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: Sample Drum rework (notes, cents, envelope shapes/Relative, no clicks)
+- Branch: claude/atlas-play
+- Changed: `src/apps/sample_drum.rs` only (+ USER_MANUAL row). Notes now play it at pitch (the manifest already said `notes_in` but the app ignored them); Fine Tune in cents; envelope Relative range and A/D shapes (the two features the old header said were skipped); retrigger fades the old playhead out instead of cutting; opens with a sample on each channel; audio thread no longer allocates per block, takes the scope mutex with `try_lock`, and sets filter coefficients once per block.
+- Checked against the Erica manual (manualslib pages 3-11). Still not done: manual slice-point editing, CV Assign, trigger delay, separate outputs per channel (it mixes both to one), SINGLE/DOUBLE projects.
+- Tests: 7 new (pitch, velocity/target, release, Relative, shapes, retrigger click, cents); all 24 Sample Drum tests pass.
+
 ### 2026-10-05: Claude: O&C firmware per module (stock, Hemisphere Suite, Phazerville Suite)
 - Branch: claude/atlas-play
 - Changed: `build.rs` (each firmware is a shared library built from `O_C_VARIANTS`; per-variant C++ standard; replaces the four namespaced copies), `src/apps/oc.rs` + `src/apps/oc_firmware.rs` (loads a private copy of the library per module, stops/unloads safely, a **Firmware** menu row, per-variant saves `saves/oc/eeprom_<variant><n>.bin`), `vendor/o_c/host/` (shared Arduino/Teensy stand-ins), new `vendor/o_c_hemi/` and `vendor/o_c_phaz/` (NOTICE.md and PATCHES.md in each), `tools/oc_port_patches.py`, `tools/oc_sketch.py`.
