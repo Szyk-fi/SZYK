@@ -57,11 +57,11 @@ use crate::{
     util::AtomicF32,
 };
 use embedded_graphics::{mono_font::MonoTextStyle, pixelcolor::Rgb565, prelude::*, primitives::{PrimitiveStyle, Rectangle}, text::Text};
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::c_int;
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering},
-    Arc,
+    atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+    Arc, Mutex,
 };
 
 /// How many modules can run at once (build.rs compiles the firmware this many times).
@@ -69,18 +69,9 @@ pub const INSTANCES: usize = 4;
 const APP_NAMES: [&str; INSTANCES] = ["O&C", "O&C 2", "O&C 3", "O&C 4"];
 const APP_IDS: [&str; INSTANCES] = ["oc", "oc2", "oc3", "oc4"];
 
-unsafe extern "C" {
-    fn oc_start(inst: c_int);
-    fn oc_timers_running(inst: c_int) -> c_int;
-    fn oc_run_isrs(inst: c_int, core_ticks: c_int, ui_ticks: c_int);
-    fn oc_set_pin(inst: c_int, pin: c_int, level: c_int);
-    fn oc_set_cv_millivolts(inst: c_int, channel: c_int, millivolts: c_int);
-    fn oc_dac_millivolts(inst: c_int, channel: c_int) -> c_int;
-    fn oc_frame(inst: c_int, out: *mut u8) -> u64;
-    fn oc_eeprom_read(inst: c_int, out: *mut u8);
-    fn oc_eeprom_write(inst: c_int, input: *const u8);
-    fn oc_app_name(inst: c_int) -> *const c_char;
-}
+#[path = "oc_firmware.rs"]
+mod firmware;
+use firmware::{Firmware, VARIANTS};
 
 const EEPROM_SIZE: usize = 8192;
 
@@ -153,6 +144,11 @@ struct Shared {
     frames: AtomicU64,
     /// Whether this app's audio thread is the one driving the firmware.
     driving: AtomicBool,
+    /// The running firmware, if any; both threads clone the Arc out and call it
+    /// without holding the lock.
+    fw: Mutex<Option<Arc<Firmware>>>,
+    /// The chosen firmware, an index into `VARIANTS`.
+    variant: AtomicUsize,
 }
 
 /// One app per firmware instance.
@@ -171,14 +167,32 @@ pub struct OcApp {
     note_route: NoteRoute,
     note_out: Option<NoteOut>,
     frame: [u8; 1024],
-    eeprom_path: Option<PathBuf>,
+    persist: bool,
     eeprom_saved: Vec<u8>,
     last_save: std::time::Instant,
+    /// Firmwares taken off the audio thread, to be unloaded once nothing holds them.
+    retiring: Vec<Arc<Firmware>>,
+    /// What went wrong loading a firmware, for the screen.
+    status: String,
+    /// When this module's current firmware started (tests wait out its splash screen).
+    started_at: Option<std::time::Instant>,
 }
 
-fn eeprom_file(instance: usize) -> PathBuf {
+fn saves_dir() -> PathBuf {
     let root = std::env::var_os("PORTAMAX_SAVES_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/saves")));
-    root.join("oc").join(if instance == 0 { "eeprom.bin".to_string() } else { format!("eeprom{}.bin", instance + 1) })
+    root.join("oc")
+}
+
+/// Which firmware module `instance` runs, remembered between sessions.
+fn variant_file(instance: usize) -> PathBuf {
+    saves_dir().join(if instance == 0 { "firmware.txt".to_string() } else { format!("firmware{}.txt", instance + 1) })
+}
+
+/// A firmware's settings: each variant keeps its own (their layouts differ). The
+/// stock firmware's keep the names they have always had.
+fn eeprom_file(instance: usize, variant: &str) -> PathBuf {
+    let n = if instance == 0 { String::new() } else { (instance + 1).to_string() };
+    saves_dir().join(if variant == "stock" { format!("eeprom{n}.bin") } else { format!("eeprom_{variant}{n}.bin") })
 }
 
 impl OcApp {
@@ -195,12 +209,9 @@ impl OcApp {
         // everyone's so the mixer can list it.
         let _ = mixer.register(name, &mods);
         let (route, out) = NoteRoute::new(None, name, APP_IDS[instance], false);
-        let eeprom_path = persist.then(|| eeprom_file(instance));
-        let saved = eeprom_path.as_ref().and_then(|p| std::fs::read(p).ok()).filter(|d| d.len() == EEPROM_SIZE);
-        if let Some(d) = &saved {
-            // The firmware reads its settings when it boots, so they go in first.
-            unsafe { oc_eeprom_write(instance as c_int, d.as_ptr()) };
-        }
+        let available = firmware::available();
+        let remembered = persist.then(|| std::fs::read_to_string(variant_file(instance)).ok()).flatten().and_then(|t| VARIANTS.iter().position(|v| v.id == t.trim()));
+        let variant = remembered.filter(|v| available.contains(v)).or_else(|| available.first().copied()).unwrap_or(0);
         let p = Arc::new(Shared {
             detents: [AtomicI32::new(0), AtomicI32::new(0)],
             held: std::array::from_fn(|_| AtomicBool::new(false)),
@@ -219,6 +230,8 @@ impl OcApp {
             gates: std::array::from_fn(|_| AtomicBool::new(false)),
             frames: AtomicU64::new(0),
             driving: AtomicBool::new(false),
+            fw: Mutex::new(None),
+            variant: AtomicUsize::new(variant),
         });
         Self {
             instance,
@@ -233,9 +246,12 @@ impl OcApp {
             note_route: route,
             note_out: Some(out),
             frame: [0; 1024],
-            eeprom_path,
-            eeprom_saved: saved.unwrap_or_default(),
+            persist,
+            eeprom_saved: Vec::new(),
             last_save: std::time::Instant::now(),
+            retiring: Vec::new(),
+            status: String::new(),
+            started_at: None,
         }
     }
 
@@ -247,13 +263,76 @@ impl OcApp {
         self
     }
 
+    /// The running firmware, if any.
+    fn fw(&self) -> Option<Arc<Firmware>> {
+        self.p.fw.lock().ok().and_then(|g| g.clone())
+    }
+
     /// The name of the firmware app on screen ("CopierMaschine"...).
     pub fn firmware_app(&self) -> String {
-        if self.p.driving.load(Ordering::Relaxed) {
-            unsafe { CStr::from_ptr(oc_app_name(self.instance as c_int)) }.to_string_lossy().into_owned()
-        } else {
-            String::new()
+        self.fw().map(|f| f.app_name()).unwrap_or_default()
+    }
+
+    pub fn variant_id(&self) -> &'static str {
+        VARIANTS[self.p.variant.load(Ordering::Relaxed).min(VARIANTS.len() - 1)].id
+    }
+
+    /// Loads the chosen firmware, hands it its saved settings and starts it.
+    fn ensure_firmware(&mut self) {
+        if self.fw().is_some() {
+            return;
         }
+        let id = self.variant_id();
+        match Firmware::load(id) {
+            Ok(fw) => {
+                let path = eeprom_file(self.instance, id);
+                self.eeprom_saved = Vec::new();
+                if self.persist {
+                    if let Some(d) = std::fs::read(&path).ok().filter(|d| d.len() == EEPROM_SIZE) {
+                        // The firmware reads its settings as it boots, so they go in first.
+                        fw.eeprom_write(&d);
+                        self.eeprom_saved = d;
+                    }
+                }
+                fw.start();
+                self.started_at = Some(std::time::Instant::now());
+                self.status.clear();
+                if let Ok(mut slot) = self.p.fw.lock() {
+                    *slot = Some(Arc::new(fw));
+                }
+            }
+            Err(e) => self.status = e,
+        }
+    }
+
+    /// Switches to firmware `index` (into `VARIANTS`): the old one is retired and
+    /// the new one boots, as if the module had been reflashed.
+    fn set_variant(&mut self, index: usize) {
+        let available = firmware::available();
+        if !available.contains(&index) || index == self.p.variant.load(Ordering::Relaxed) {
+            return;
+        }
+        self.p.variant.store(index, Ordering::Relaxed);
+        if self.persist {
+            std::fs::create_dir_all(saves_dir()).ok();
+            std::fs::write(variant_file(self.instance), VARIANTS[index].id).ok();
+        }
+        if let Some(old) = self.p.fw.lock().ok().and_then(|mut g| g.take()) {
+            self.retiring.push(old);
+        }
+        if self.p.driving.load(Ordering::Relaxed) {
+            self.ensure_firmware();
+        }
+    }
+
+    fn step_variant(&mut self, delta: i32) {
+        let available = firmware::available();
+        if available.len() < 2 || delta == 0 {
+            return;
+        }
+        let pos = available.iter().position(|&v| v == self.p.variant.load(Ordering::Relaxed)).unwrap_or(0) as i32;
+        let next = available[(pos + delta.signum()).rem_euclid(available.len() as i32) as usize];
+        self.set_variant(next);
     }
 
     fn text(&self, i: usize) -> (String, String) {
@@ -278,6 +357,7 @@ impl OcApp {
                 (n, v, false)
             })
             .collect();
+        r.push(("Firmware".into(), VARIANTS[self.p.variant.load(Ordering::Relaxed).min(VARIANTS.len() - 1)].name.into(), false));
         r.push(("Window".into(), if self.p.window.load(Ordering::Relaxed) { "open" } else { "closed" }.into(), false));
         for (i, name) in OUTS.iter().enumerate() {
             r.push((format!("Out {name} App"), self.outs.app_label(&self.modbus, i), false));
@@ -287,7 +367,7 @@ impl OcApp {
     }
 
     fn rows_len(&self) -> usize {
-        N_CONTROLS + 1 + OUTS.len() * 2
+        N_CONTROLS + 2 + OUTS.len() * 2
     }
 
     fn edit_row(&mut self, row: usize, delta: i32) {
@@ -297,9 +377,11 @@ impl OcApp {
         if row < N_CONTROLS {
             self.kit_edit(row, delta);
         } else if row == N_CONTROLS {
+            self.step_variant(delta);
+        } else if row == N_CONTROLS + 1 {
             self.p.window.store(delta > 0, Ordering::Relaxed);
         } else {
-            let k = row - N_CONTROLS - 1;
+            let k = row - N_CONTROLS - 2;
             if k % 2 == 0 {
                 self.outs.step_app(&self.modbus, k / 2, delta.signum());
             } else {
@@ -310,14 +392,15 @@ impl OcApp {
 
     /// Persists the firmware's EEPROM when it has changed (a settings save).
     fn save_eeprom(&mut self) {
-        let Some(path) = self.eeprom_path.clone() else { return };
-        if self.last_save.elapsed().as_secs_f32() < 2.0 || !self.p.driving.load(Ordering::Relaxed) {
+        if !self.persist || self.last_save.elapsed().as_secs_f32() < 2.0 {
             return;
         }
+        let Some(fw) = self.fw() else { return };
         self.last_save = std::time::Instant::now();
         let mut now = vec![0u8; EEPROM_SIZE];
-        unsafe { oc_eeprom_read(self.instance as c_int, now.as_mut_ptr()) };
+        fw.eeprom_read(&mut now);
         if now != self.eeprom_saved {
+            let path = eeprom_file(self.instance, self.variant_id());
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir).ok();
             }
@@ -335,7 +418,9 @@ impl OcApp {
     }
 
     fn draw_oled(&mut self, f: &mut FrameBuffer) {
-        unsafe { oc_frame(self.instance as c_int, self.frame.as_mut_ptr()) };
+        if let Some(fw) = self.fw() {
+            fw.frame(&mut self.frame);
+        }
         // The 128x64 panel at 4x, centred; its bytes are 8 pages of 128 columns,
         // bit 0 the top row of a page.
         let (x0, y0, k) = (64, 8, 4);
@@ -527,6 +612,8 @@ impl App for OcApp {
         let step = play.tick(self, input);
         self.kit = play;
         self.save_eeprom();
+        // A retired firmware is unloaded once the audio thread has let go of it.
+        self.retiring.retain(|f| Arc::strong_count(f) > 1);
         if step.menu {
             let i = &step.input;
             let n = self.rows_len();
@@ -597,10 +684,10 @@ impl App for OcApp {
         }
         self.taken = true;
         self.p.driving.store(true, Ordering::Relaxed);
-        unsafe { oc_start(self.instance as c_int) };
+        self.ensure_firmware();
         Some(Box::new(Processor {
-            instance: self.instance as c_int,
             p: Arc::clone(&self.p),
+            fw_id: 0,
             outs: Arc::clone(&self.outs),
             modbus: Arc::clone(&self.modbus),
             notes: self.note_out.take().unwrap_or_else(NoteOut::detached),
@@ -644,8 +731,9 @@ const CW: [(i32, i32); 5] = [(1, 0), (1, 0), (0, 0), (1, 0), (1, 1)];
 const CCW: [(i32, i32); 5] = [(0, 1), (0, 1), (0, 0), (0, 1), (1, 1)];
 
 struct Processor {
-    instance: c_int,
     p: Arc<Shared>,
+    /// Which firmware the panel state below belongs to (its address); a new one starts fresh.
+    fw_id: usize,
     outs: Arc<CvOuts>,
     modbus: Arc<ModBus>,
     notes: NoteOut,
@@ -663,7 +751,7 @@ struct Processor {
 
 impl Processor {
     /// One millisecond of the module's front panel.
-    fn panel_tick(&mut self) {
+    fn panel_tick(&mut self, fw: &Firmware) {
         for b in 0..4 {
             let extra = self.p.pulse_ms[b].load(Ordering::Relaxed);
             if extra > 0 {
@@ -672,7 +760,7 @@ impl Processor {
             let want_low = self.p.held[b].load(Ordering::Relaxed) || self.p.key_held[b].load(Ordering::Relaxed) || extra > 0;
             if want_low != self.buttons[b].low {
                 self.buttons[b].low = want_low;
-                unsafe { oc_set_pin(self.instance, PIN_BUTTON[b], if want_low { 0 } else { 1 }) };
+                fw.set_pin(PIN_BUTTON[b], if want_low { 0 } else { 1 });
             }
         }
         // Encoders: one detent at a time.
@@ -688,10 +776,8 @@ impl Processor {
             }
             if enc.direction != 0 {
                 let (a, b) = if enc.direction > 0 { CW[enc.phase] } else { CCW[enc.phase] };
-                unsafe {
-                    oc_set_pin(self.instance, pins[0], a);
-                    oc_set_pin(self.instance, pins[1], b);
-                }
+                fw.set_pin(pins[0], a);
+                fw.set_pin(pins[1], b);
                 enc.phase += 1;
                 if enc.phase >= CW.len() {
                     enc.direction = 0;
@@ -704,7 +790,7 @@ impl Processor {
             if high != self.gate_was[g] {
                 self.gate_was[g] = high;
                 self.p.gates[g].store(high, Ordering::Relaxed);
-                unsafe { oc_set_pin(self.instance, PIN_TR[g], if high { 0 } else { 1 }) };
+                fw.set_pin(PIN_TR[g], if high { 0 } else { 1 });
                 if g as u32 + 1 == self.p.note_gate.load(Ordering::Relaxed) && high {
                     self.note_wait = 3;
                 }
@@ -715,7 +801,7 @@ impl Processor {
             let v = (self.p.cv_knob[c].get() + self.p.cv_mod[c].get() * 5.0).clamp(-5.0, 5.0);
             let mv = (v * 1000.0) as i32;
             self.p.in_mv[c].store(mv, Ordering::Relaxed);
-            unsafe { oc_set_cv_millivolts(self.instance, c as c_int, mv) };
+            fw.set_cv_millivolts(c as c_int, mv);
         }
     }
 
@@ -762,8 +848,22 @@ impl AudioProcessor for Processor {
             return;
         }
         let frames = out.len() / channels;
-        if unsafe { oc_timers_running(self.instance) } == 0 {
+        let fw = match self.p.fw.try_lock() {
+            Ok(g) => g.clone(),
+            Err(_) => None,
+        };
+        let Some(fw) = fw else { return };
+        if !fw.timers_running() {
             return;
+        }
+        let id = Arc::as_ptr(&fw) as usize;
+        if id != self.fw_id {
+            // A different firmware: its pins start at rest, so ours must too.
+            self.fw_id = id;
+            self.buttons = [Button::default(); 4];
+            self.encoders = [Encoder::default(); 2];
+            self.gate_was = [false; 4];
+            self.note_wait = 0;
         }
         // Millisecond by millisecond: the front panel, then that millisecond's
         // share of the 16.666 kHz interrupt, then the outputs.
@@ -771,13 +871,13 @@ impl AudioProcessor for Processor {
         let mut remaining = frames as f64 + self.ui_credit;
         while remaining >= per_ms {
             remaining -= per_ms;
-            self.panel_tick();
+            self.panel_tick(&fw);
             self.core_credit += 16.666;
             let core = self.core_credit as i32;
             self.core_credit -= core as f64;
-            unsafe { oc_run_isrs(self.instance, core, 1) };
+            fw.run_isrs(core, 1);
             for c in 0..4 {
-                let mv = unsafe { oc_dac_millivolts(self.instance, c) };
+                let mv = fw.dac_millivolts(c as c_int);
                 self.p.out_mv[c as usize].store(mv, Ordering::Relaxed);
             }
             self.note_tick();
@@ -836,17 +936,16 @@ mod tests {
         }
     }
 
-    /// The firmware's splash screen holds for about three seconds of real time, so
-    /// the first test to need it waits that long; later ones find it running.
-    fn boot(p: &mut Box<dyn AudioProcessor>) {
-        static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        let t0 = *STARTED.get_or_init(std::time::Instant::now);
-        run_until(p, 10_000, || t0.elapsed().as_secs_f32() > 6.5);
+    /// A firmware's splash screen holds for about three seconds of real time, and each
+    /// module's firmware boots from scratch, so wait that long from its own start.
+    fn boot(a: &OcApp, p: &mut Box<dyn AudioProcessor>) {
+        let t0 = a.started_at.expect("the firmware was started");
+        run_until(p, 12_000, || t0.elapsed().as_secs_f32() > 6.5);
     }
 
-    fn frame_hash() -> u64 {
+    fn frame_hash(a: &OcApp) -> u64 {
         let mut f = [0u8; 1024];
-        unsafe { oc_frame(0, f.as_mut_ptr()) };
+        a.fw().unwrap().frame(&mut f);
         f.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
     }
 
@@ -868,7 +967,7 @@ mod tests {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut a = app();
         let mut p = a.audio_processor().unwrap();
-        boot(&mut p);
+        boot(&a, &mut p);
         a.p.cv_knob[0].set(1.25);
         run_ms(&mut p, 60);
         pulse_gate(&a, &mut p, 0);
@@ -889,7 +988,7 @@ mod tests {
         let a = app();
         let mut a = a;
         let mut p = a.audio_processor().expect("the first O&C owns the firmware");
-        boot(&mut p);
+        boot(&a, &mut p);
         assert_eq!(a.firmware_app(), "CopierMaschine", "the firmware's default app is up");
         // CopierMaschine samples CV 1 on trigger 1 and quantizes it: a volt is a volt,
         // and 0.58 V is the seventh semitone's 0.583.
@@ -909,20 +1008,20 @@ mod tests {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut a = app();
         let mut p = a.audio_processor().expect("the first O&C owns the firmware");
-        boot(&mut p);
+        boot(&a, &mut p);
         run_until(&mut p, 1000, || false);
-        let before = frame_hash();
+        let before = frame_hash(&a);
         // One click right on the D-pad turns the right encoder once.
         a.tick(&Input { nav_x: 1, ..Default::default() });
         run_ms(&mut p, 80);
         run_until(&mut p, 200, || false);
-        assert_ne!(frame_hash(), before, "the selected value on the OLED changed");
+        assert_ne!(frame_hash(&a), before, "the selected value on the OLED changed");
         // And down on the D-pad turns the left encoder: the menu cursor moves.
-        let before = frame_hash();
+        let before = frame_hash(&a);
         a.tick(&Input { navigation_steps: 1, ..Default::default() });
         run_ms(&mut p, 80);
         run_until(&mut p, 200, || false);
-        assert_ne!(frame_hash(), before, "the cursor moved to the next row");
+        assert_ne!(frame_hash(&a), before, "the cursor moved to the next row");
     }
 
     #[test]
@@ -936,7 +1035,7 @@ mod tests {
         a.kit_set_norm(C_NOTE_CH, 0.25); // output A
         a.kit_set_norm(C_NOTE_GATE, 0.25); // struck by TR 1
         let mut p = a.audio_processor().expect("the first O&C owns the firmware");
-        boot(&mut p);
+        boot(&a, &mut p);
         a.p.cv_knob[0].set(2.0);
         run_ms(&mut p, 60);
         let mut view = crate::note_bus::NoteView::default();
@@ -1034,9 +1133,9 @@ mod tests {
         let hashes = |apps: &[OcApp]| -> Vec<u64> {
             apps.iter()
                 .enumerate()
-                .map(|(i, _)| {
+                .map(|(_, a)| {
                     let mut f = [0u8; 1024];
-                    unsafe { oc_frame(i as c_int, f.as_mut_ptr()) };
+                    a.fw().unwrap().frame(&mut f);
                     f.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
                 })
                 .collect()
@@ -1060,7 +1159,7 @@ mod tests {
     fn a_module_can_open_its_own_window_that_takes_the_keyboard() {
         let mut a = app_n(1);
         assert!(a.popout().is_none(), "no window until asked");
-        a.edit_row(N_CONTROLS, 1); // the menu's Window row
+        a.edit_row(N_CONTROLS + 1, 1); // the menu's Window row
         let (title, frame) = a.popout().expect("a window is open");
         assert!(title.starts_with("O&C 2"), "{title}");
         assert_eq!((frame.width, frame.height), (640, 360));

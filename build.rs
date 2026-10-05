@@ -83,27 +83,26 @@ fn main() {
 
     compile_listed_bridges(eurorack, bridge);
     compile_airwindows(bridge);
-    compile_o_c();
+    compile_o_c_firmwares();
 }
 
-/// The Ornaments & Crimes firmware (vendor/o_c), built four times over so four
-/// modules can run at once. The firmware keeps its state in globals, so each
-/// instance is the same source compiled inside its own namespace (`oc0`..`oc3`):
-/// a generated wrapper per source file pulls the firmware's own headers and
-/// code into `namespace ocN { ... }` after the system and host headers, which
-/// are shared. The firmware's own source is compiled unchanged (a handful of
-/// patched files are listed in vendor/o_c/PATCHES.md) against a host stand-in
-/// for the Teensy and the module (vendor/o_c/host), whose shared half keeps
-/// per-instance state in a table. `sketch.cpp` is the Arduino sketch's .ino
-/// files in one translation unit. Changes to any file under vendor/o_c reach the
-/// build through a stamp carrying their newest timestamp.
-fn compile_o_c() {
+/// The O&C-family firmwares (stock Ornaments & Crimes, Hemisphere Suite,
+/// Phazerville Suite...), each built as a shared library the host loads a fresh
+/// copy of per module -- the firmwares keep their state in globals, so a copy
+/// per module is the isolation. Each variant's own source is compiled as published
+/// (patched files listed in its PATCHES.md) against the shared host stand-in for the
+/// Teensy and the module (vendor/o_c/host); `sketch.cpp` is an Arduino sketch's
+/// .ino files in one translation unit. The libraries land in OUT_DIR/ocfw and
+/// the Rust side finds them through `PORTAMAX_OCFW_DIR`.
+fn compile_o_c_firmwares() {
     let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let base = root.join("vendor/o_c");
     println!("cargo:rerun-if-changed=vendor/o_c");
-    if !base.is_dir() {
-        return;
+    for v in O_C_VARIANTS {
+        println!("cargo:rerun-if-changed=vendor/{}", v.dir);
     }
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("ocfw");
+    std::fs::create_dir_all(&out).unwrap();
+    println!("cargo:rustc-env=PORTAMAX_OCFW_DIR={}", out.display());
     fn newest(dir: &std::path::Path) -> u128 {
         let mut t = 0;
         for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
@@ -112,42 +111,69 @@ fn compile_o_c() {
         }
         t
     }
-    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("o_c");
-    std::fs::create_dir_all(&out).unwrap();
-    let write_if_changed = |path: &std::path::Path, text: &str| {
-        if std::fs::read_to_string(path).ok().as_deref() != Some(text) {
-            std::fs::write(path, text).unwrap();
+    let ext = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+    let shared_host = root.join("vendor/o_c/host");
+    for v in O_C_VARIANTS {
+        let base = root.join("vendor").join(v.dir);
+        if !base.is_dir() {
+            continue;
         }
-    };
-    let stamp = out.join("stamp.cc");
-    write_if_changed(&stamp, &format!("// sources {}\n", newest(&base)));
-    let mut files = vec![stamp.display().to_string(), base.join("host/oc_host_core.cpp").display().to_string()];
-    // The sources every instance compiles.
-    let mut sources: Vec<String> = vec!["sketch.cpp".into(), "host/oc_host_fw.cpp".into()];
-    for name in [
-        "OC_autotune", "OC_bitmaps", "OC_chords", "OC_debug", "OC_digital_inputs", "OC_input_map", "OC_menus", "OC_patterns", "OC_scales", "OC_strings", "OC_ui",
-        "bjorklund", "braids_quantizer", "frames_poly_lfo", "frames_resources", "peaks_bytebeat", "peaks_multistage_envelope", "peaks_resources", "streams_lorenz_generator",
-        "streams_resources",
-    ] {
-        sources.push(format!("fw/{name}.cpp"));
-    }
-    sources.push("fw/src/drivers/weegfx.cpp".into());
-    sources.push("fw/src/util/util_misc.cpp".into());
-    // System and host headers go in first, outside any namespace; the guards then
-    // keep them out of the firmware's namespace when its own headers include them.
-    let prelude = "#include <Arduino.h>\n#include <EEPROM.h>\n#include <algorithm>\n#include <atomic>\n#include <chrono>\n#include <cmath>\n#include <cstdarg>\n#include <cstddef>\n#include <cstdint>\n#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <limits>\n#include <math.h>\n#include <memory>\n#include <mutex>\n#include <new>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string>\n#include <string.h>\n#include <thread>\n#include <type_traits>\n#include <utility>\n";
-    for inst in 0..4 {
-        for (k, src) in sources.iter().enumerate() {
-            let text = format!("{prelude}#define OC_INSTANCE_NAME oc{inst}\nnamespace oc{inst} {{\n#include \"{}\"\n}}\n", base.join(src).display());
-            let path = out.join(format!("oc{inst}_{k}.cc"));
-            write_if_changed(&path, &text);
-            files.push(path.display().to_string());
+        let lib = out.join(format!("libocfw_{}.{ext}", v.id));
+        let stamp = out.join(format!("{}.stamp", v.id));
+        let fingerprint = format!("{}-{}", newest(&base), newest(&shared_host));
+        if lib.exists() && std::fs::read_to_string(&stamp).ok().as_deref() == Some(fingerprint.as_str()) {
+            continue;
         }
+        let mut build = cc::Build::new();
+        build.cpp(true).std("c++14").warnings(false).flag("-w").flag("-Wno-c++11-narrowing");
+        build.define("F_CPU", Some("120000000")).define("typeof", Some("__typeof__"));
+        for inc in std::iter::once(shared_host.display().to_string()).chain(v.includes.iter().map(|d| base.join(d).display().to_string())) {
+            build.include(inc);
+        }
+        build.file(shared_host.join("oc_host_core.cpp"));
+        for f in v.sources {
+            build.file(base.join(f));
+        }
+        for (k, val) in v.defines {
+            build.define(k, *val);
+        }
+        let objects = build.compile_intermediates();
+        let mut link = build.get_compiler().to_command();
+        link.arg(if cfg!(target_os = "macos") { "-dynamiclib" } else { "-shared" }).arg("-o").arg(&lib);
+        for o in &objects {
+            link.arg(o);
+        }
+        if cfg!(target_os = "macos") {
+            link.arg("-lc++");
+        } else {
+            link.arg("-lstdc++").arg("-lpthread");
+        }
+        let status = link.status().expect("run the linker");
+        assert!(status.success(), "linking {} failed", lib.display());
+        std::fs::write(&stamp, fingerprint).unwrap();
     }
-    let inc: Vec<String> = ["host", "fw", "fw/src/drivers", "fw/extern"].iter().map(|d| base.join(d).display().to_string()).collect();
-    let inc_refs: Vec<&str> = inc.iter().map(String::as_str).collect();
-    compile_cached_with("o_c_firmware", &inc_refs, &[("F_CPU", Some("120000000")), ("typeof", Some("__typeof__"))], &["-w", "-Wno-c++11-narrowing"], &files);
 }
+
+struct OcVariant {
+    id: &'static str,
+    dir: &'static str,
+    includes: &'static [&'static str],
+    sources: &'static [&'static str],
+    defines: &'static [(&'static str, Option<&'static str>)],
+}
+
+const O_C_VARIANTS: &[OcVariant] = &[OcVariant {
+    id: "stock",
+    dir: "o_c",
+    includes: &["host", "fw", "fw/src/drivers", "fw/extern"],
+    sources: &[
+        "sketch.cpp", "host/oc_host_fw.cpp", "fw/OC_autotune.cpp", "fw/OC_bitmaps.cpp", "fw/OC_chords.cpp", "fw/OC_debug.cpp", "fw/OC_digital_inputs.cpp", "fw/OC_input_map.cpp",
+        "fw/OC_menus.cpp", "fw/OC_patterns.cpp", "fw/OC_scales.cpp", "fw/OC_strings.cpp", "fw/OC_ui.cpp", "fw/bjorklund.cpp", "fw/braids_quantizer.cpp", "fw/frames_poly_lfo.cpp",
+        "fw/frames_resources.cpp", "fw/peaks_bytebeat.cpp", "fw/peaks_multistage_envelope.cpp", "fw/peaks_resources.cpp", "fw/streams_lorenz_generator.cpp",
+        "fw/streams_resources.cpp", "fw/src/drivers/weegfx.cpp", "fw/src/util/util_misc.cpp",
+    ],
+    defines: &[],
+}];
 
 /// Airwindows' ~500 effects (vendor/airwindows, MIT) as one static lib.
 /// Each plugin is a VST2 class; vendor/airwindows/shim/audioeffectx.h

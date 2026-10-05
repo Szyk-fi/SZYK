@@ -28,10 +28,6 @@ uint8_t *oc_host_begin_frame();
 void oc_host_end_frame();
 }
 
-#ifndef OC_INSTANCE_NAME
-#define OC_INSTANCE_NAME oc0
-#endif
-
 // ---- Stateless Arduino-core object, one per instance (the EEPROM and Serial are shared) --
 
 FreqMeasureClass FreqMeasure;
@@ -179,16 +175,12 @@ void display::AdjustOffset(uint8_t) {}
 uint8_t *display::begin_frame() { return oc_host_begin_frame(); }
 void display::end_frame() { oc_host_end_frame(); }
 
-// ---- This instance's entry points for the host ------------------------------
-
-// One of oc0_main, oc1_main... (named by the build).
-#define OC_CAT2(a, b) a##b
-#define OC_CAT(a, b) OC_CAT2(a, b)
+// ---- This firmware's entry points for the host -----------------------------
 
 extern "C" {
-void OC_CAT(OC_INSTANCE_NAME, _main)() {
+void ocfw_main() {
   setup();
   loop();
 }
-const char *OC_CAT(OC_INSTANCE_NAME, _app_name)() { return OC::apps::current_app ? OC::apps::current_app->name : ""; }
+const char *ocfw_current_app_name() { return OC::apps::current_app ? OC::apps::current_app->name : ""; }
 }
