@@ -54,3 +54,7 @@ apps/oracle/voice/
 soundfonts/*.sf2
 soundfonts/*.sf3
 soundfonts/*.SF2
+
+# Chip-music files are user-supplied; only the README is tracked.
+chiptunes/*
+!chiptunes/README.md

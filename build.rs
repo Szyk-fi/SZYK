@@ -153,7 +153,7 @@ fn compile_airwindows(bridge: &str) {
     write_if_changed(&reg, &registry);
     files.push(reg.display().to_string());
     files.push(format!("{bridge}/airwindows_bridge.cc"));
-    compile_cached_with("airwindows_bridge", &[&format!("{}", root.join("vendor/airwindows/shim").display())], &[], &files);
+    compile_cached_with("airwindows_bridge", &[&format!("{}", root.join("vendor/airwindows/shim").display())], &[], &[], &files);
 }
 
 /// Every other bridge is self-describing: `vendor/bridge/<name>.sources`
@@ -187,7 +187,27 @@ fn compile_listed_bridges(eurorack: &str, bridge: &str) {
             .collect();
         let mut includes: Vec<&str> = vec![eurorack];
         includes.extend(extra.iter().map(String::as_str));
-        compile_cached_with(&format!("{name}_bridge"), &includes, &[("TEST", None)], &files);
+        // Optional `<name>.defines`: one `NAME` or `NAME=VALUE` per line (replacing
+        // the default -DTEST); a line starting with `-` is passed as a raw compiler flag.
+        let text = std::fs::read_to_string(list.with_extension("defines")).ok();
+        let (mut defines, mut flags): (Vec<(String, Option<String>)>, Vec<String>) = (Vec::new(), Vec::new());
+        match &text {
+            None => defines.push(("TEST".into(), None)),
+            Some(t) => {
+                for l in t.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+                    if l.starts_with('-') {
+                        flags.push(l.to_string());
+                    } else if let Some((k, v)) = l.split_once('=') {
+                        defines.push((k.to_string(), Some(v.to_string())));
+                    } else {
+                        defines.push((l.to_string(), None));
+                    }
+                }
+            }
+        }
+        let define_refs: Vec<(&str, Option<&str>)> = defines.iter().map(|(k, v)| (k.as_str(), v.as_deref())).collect();
+        let flag_refs: Vec<&str> = flags.iter().map(String::as_str).collect();
+        compile_cached_with(&format!("{name}_bridge"), &includes, &define_refs, &flag_refs, &files);
     }
 }
 
@@ -197,10 +217,20 @@ fn compile_listed_bridges(eurorack: &str, bridge: &str) {
 /// `generate_app_modules`), and recompiling the DSP libs every time would
 /// cost a minute per edit.
 fn compile_cached(lib: &str, include: &str, files: &[String]) {
-    compile_cached_with(lib, &[include], &[("TEST", None)], files);
+    compile_cached_with(lib, &[include], &[("TEST", None)], &[], files);
 }
 
-fn compile_cached_with(lib: &str, includes: &[&str], defines: &[(&str, Option<&str>)], files: &[String]) {
+fn compile_cached_with(lib: &str, includes: &[&str], defines: &[(&str, Option<&str>)], flags: &[&str], files: &[String]) {
+    // Plain C files (a vendored library's one .c file) can't go through the
+    // C++ compiler; they get a C static lib of their own.
+    let (c_files, cpp_files): (Vec<String>, Vec<String>) = files.iter().cloned().partition(|f| f.ends_with(".c"));
+    if !c_files.is_empty() {
+        compile_one(&format!("{lib}_c"), false, includes, defines, flags, &c_files);
+    }
+    compile_one(lib, true, includes, defines, flags, &cpp_files);
+}
+
+fn compile_one(lib: &str, cpp: bool, includes: &[&str], defines: &[(&str, Option<&str>)], flags: &[&str], files: &[String]) {
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-env-changed=CXXFLAGS");
     let mut fingerprint = std::env::var("CXXFLAGS").unwrap_or_default();
@@ -219,12 +249,18 @@ fn compile_cached_with(lib: &str, includes: &[&str], defines: &[(&str, Option<&s
         return;
     }
     let mut build = cc::Build::new();
-    build.cpp(true).std("c++14").warnings(false);
+    build.cpp(cpp).warnings(false);
+    if cpp {
+        build.std("c++14");
+    }
     for (k, v) in defines {
         build.define(k, *v);
     }
     for i in includes {
         build.include(i);
+    }
+    for f in flags {
+        build.flag(f);
     }
     for f in files {
         build.file(f);

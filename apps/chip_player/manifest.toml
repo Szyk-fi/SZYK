@@ -1,0 +1,12 @@
+id = "chip_player"
+name = "Chip Player"
+category = "library"
+description = "Plays NES, SNES, Game Boy, Mega Drive, PC Engine, MSX and Atari chip music with real emulated chips; the pads mute voices."
+audio_outputs = ["Chip Player"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Chip Player Level",
+    "Chip Player: Volume",
+    "Chip Player: Tempo",
+    "Chip Player: Stereo",
+]

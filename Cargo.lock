@@ -4289,6 +4289,7 @@ dependencies = [
  "cc",
  "cpal",
  "embedded-graphics",
+ "flate2",
  "gilrs",
  "hound",
  "m68k",
