@@ -789,6 +789,28 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "writes a screenshot to the path in PORTAMAX_OC_SHOT"]
+    fn screenshot() {
+        let Some(path) = std::env::var_os("PORTAMAX_OC_SHOT") else { return };
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut a = app();
+        let mut p = a.audio_processor().unwrap();
+        boot(&mut p);
+        a.p.cv_knob[0].set(1.25);
+        run_ms(&mut p, 60);
+        pulse_gate(&a, &mut p, 0);
+        a.tick(&Input { nav_x: 1, ..Default::default() });
+        run_ms(&mut p, 100);
+        run_until(&mut p, 300, || false);
+        let mut fb = FrameBuffer::new();
+        a.draw(&mut fb);
+        let bytes: Vec<u8> = fb.buffer().iter().flat_map(|px| [(px >> 16) as u8, (px >> 8) as u8, *px as u8]).collect();
+        let mut out = b"P6\n640 360\n255\n".to_vec();
+        out.extend(bytes);
+        std::fs::write(path, out).unwrap();
+    }
+
+    #[test]
     fn the_real_firmware_boots_and_quantizes_a_cv_on_a_trigger() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let a = app();

@@ -531,7 +531,8 @@ mod tests {
             patch_value_to_probe(&mut a, &modbus);
             a.toggle_running();
             let v = trace(&mut a, &probe, 2.0, 1.0);
-            assert!(v.iter().all(|x| x.is_finite() && x.abs() < 4.0), "{}: finite and bounded", p.name);
+            let bad = v.iter().position(|x| !(x.is_finite() && x.abs() < 4.0));
+            assert!(bad.is_none(), "{}: finite and bounded, but block {:?} read {:?}", p.name, bad, bad.map(|i| v[i]));
         }
     }
 

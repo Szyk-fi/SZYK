@@ -101,6 +101,37 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: eight new apps from real engines (Airwindows, Braids, Stages, SoundFont, Dexed, Chip Player, Orca, O&C)
+- Branch: claude/atlas-play
+- Added (each is a file in `src/apps/` + `apps/<id>/manifest.toml`, with real tests):
+  `airwindows.rs` (the whole ~520-effect library through a VST2 shim),
+  `braids.rs`, `stages.rs` (Mutable, via `vendor/bridge/*_bridge.cc`),
+  `soundfont.rs` (TinySoundFont), `dexed.rs` (Dexed's msfa engine; **replaces
+  Cascade**: its manifest is removed, `cascade.rs` and its Slint code stay in the
+  tree unused), `chip_player.rs` (Game_Music_Emu), `orca.rs` (the real Orca-c
+  simulation, edited by pad, a note source on the note bus), `oc.rs` (the real
+  Ornaments & Crimes firmware: `vendor/o_c`, firmware thread + host stand-in
+  for the Teensy; its timer ISRs run on the audio thread).
+- Shared files touched (Max decides per change, so check these): `build.rs`
+  (compile helpers for C sources, per-bridge `.includes`/`.defines`, an Airwindows
+  generator, the O&C build), `Cargo.toml` (+`flate2`, already in the lock, for
+  `.vgz`), `.gitignore` (soundfonts/, chiptunes/), `docs/USER_MANUAL.md`.
+- Vendored: `vendor/airwindows` (MIT), `vendor/dexed` (Apache-2.0 msfa only),
+  `vendor/tinysoundfont` (MIT), `vendor/gme` (**LGPL-2.1**), `vendor/orca` (MIT),
+  `vendor/o_c` (see its NOTICE.md: about 35 core files have no licence header; two
+  GPL-3 files were left out and rewritten). Patches to vendored code are in
+  `vendor/PATCHES.md`, `vendor/airwindows/PATCHES.md`, `vendor/o_c/PATCHES.md`.
+  A real endless loop in the shared tides2 ramp extractor was fixed (it hung
+  Stages' PLL oscillator).
+- Not done: Peaks and Streams (the other MIT Mutable modules; Tides, Rings, Marbles,
+  Elements, Plaits, Clouds, Warps and Beads were already here).
+- Status: done, but untested on hardware, and the O&C firmware runs on a thread
+  shared in spirit with the audio thread like the real chip's ISRs (data races the
+  firmware tolerates on one core are possible on many; none seen).
+- Tests: per-app suites pass; full suite 942 of 943 passed with one
+  intermittent failure in `stages::every_preset_runs_without_blowing_up` that I
+  could not reproduce in 100+ runs (message now names the preset and value).
+
 ### 2026-10-04: Claude: hold-to-sweep and the one-line hint (contract steps 1-2)
 - Branch: claude/atlas-play
 - Changed: `src/controller_map.rs` (held D-pad ◀▶ is worth x1, x5 after 0.75 s,
