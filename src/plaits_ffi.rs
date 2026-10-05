@@ -19,6 +19,20 @@ const PLAITS_SAMPLE_RATE: f32 = 48000.0;
 const REFILL_SIZE: usize = 32;
 
 unsafe extern "C" {
+    fn plaits_voice_render_held(
+        handle: *mut c_void,
+        engine: c_int,
+        note: f32,
+        harmonics: f32,
+        timbre: f32,
+        morph: f32,
+        decay: f32,
+        lpg_colour: f32,
+        trigger: f32,
+        level: f32,
+        out: *mut f32,
+        size: c_int,
+    );
     fn plaits_voice_create() -> *mut c_void;
     fn plaits_voice_destroy(handle: *mut c_void);
     #[allow(clippy::too_many_arguments)]
@@ -56,6 +70,10 @@ pub struct PlaitsVoice {
     src: Vec<f32>,
     /// Read position into `src`, in source-sample units (fractional).
     phase: f32,
+    /// `Some(level)` patches Plaits' LEVEL input, so the voice's low-pass gate
+    /// follows it and a held note sustains like a normal synth's; `None` is the
+    /// module's own behaviour, each trigger a pluck that dies away by itself.
+    pub held_level: Option<f32>,
 }
 
 // The handle is a heap pointer with no shared mutable state outside what
@@ -69,6 +87,7 @@ impl PlaitsVoice {
             handle,
             src: Vec::new(),
             phase: 0.0,
+            held_level: None,
         }
     }
 
@@ -81,6 +100,24 @@ impl PlaitsVoice {
         let mut chunk = [0.0f32; REFILL_SIZE];
         let trigger = if params.trigger { 8.0 } else { 0.0 };
         unsafe {
+            if let Some(level) = self.held_level {
+                plaits_voice_render_held(
+                    self.handle,
+                    params.engine,
+                    params.note,
+                    params.harmonics,
+                    params.timbre,
+                    params.morph,
+                    params.decay,
+                    params.lpg_colour,
+                    trigger,
+                    level,
+                    chunk.as_mut_ptr(),
+                    chunk.len() as c_int,
+                );
+                self.src.extend_from_slice(&chunk);
+                return;
+            }
             plaits_voice_render(
                 self.handle,
                 params.engine,

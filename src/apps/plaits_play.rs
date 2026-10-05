@@ -175,7 +175,7 @@ pub struct Slot {
     pub note: f32,
     pub vel: f32,
     pub gate: bool,
-    age: u64,
+    pub age: u64,
 }
 
 impl Slot {

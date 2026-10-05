@@ -98,7 +98,7 @@ way.
 
 | App | What it does |
 |---|---|
-| **Plaits** | The real Mutable Instruments Plaits voice (ported DSP, not an approximation) — all 24 engines of the Eurorack module's 1.2 firmware, with a play view built around the whole device (see §3.1). |
+| **Plaits** | The real Mutable Instruments Plaits voice (ported DSP, not an approximation) — all 24 engines of the Eurorack module's 1.2 firmware, with a play view built around the whole device (see §3.1). It plays like a normal synth by default: **Poly** voices (a chord is about as loud as one note) and an **Envelope** row set to **Synth**, so a held note sustains under the Attack/Sustain/Release envelope. Set Voice Mode to Mono and Envelope to **Pluck** for the module's own behaviour, where every note is a strike that rings and dies away even with the key down. A new key pressed over a held one is always struck. |
 | **Voltage** | Classic 2-oscillator subtractive synth (Saw/Square/Triangle/Sine), filter, envelopes, mono/glide, chorus, delay and reverb. 100 preset slots, 20 synthwave factory presets. |
 | **Dexed** | A DX7-compatible 6-operator FM synth running Dexed's own engine — the DX7's envelopes, scaling, LFO and all 32 algorithms. Loads real `.syx` banks from `dx7_presets/` (none are bundled; it plays the DX7's INIT VOICE until you add some). Replaces the earlier Cascade (see §3.8). |
 | **SoundFont** | Plays your `.sf2`/`.sf3` banks with TinySoundFont: any General MIDI bank or single instrument. U/D browses a bank's presets. Banks go in `soundfonts/` (see §3.8). |

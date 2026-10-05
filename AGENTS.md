@@ -101,6 +101,13 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: Plaits plays like a normal synth; O&C licensing review
+- Branch: claude/atlas-play
+- Plaits: `src/apps/plaits.rs`, `src/apps/plaits_play.rs` (`Slot::age` public), `src/plaits_ffi.rs` + `vendor/bridge/plaits_bridge.cc` (new `plaits_voice_render_held`, which patches Plaits' LEVEL input; the old entry point and `plaits_smoke` are untouched). Cause of the odd feel: the voice was always run trigger-only, so its low-pass gate plucked and died away under a held key, and a second key in Mono changed pitch without a new strike. Now: Envelope row (Synth default / Pluck = the module's way), Poly default, a new key over a held one drops the gate for a frame so it strikes, and Poly loudness is a smoothed 1/sqrt(voices) instead of dividing by the count.
+- Not changed: Trio, Sequencer, Bloom, Nebula, Madness, Ledger still use the plucking voice (they are triggered, not held).
+- Licensing review of the O&C firmwares: recorded in `vendor/o_c/NOTICE.md`. Short version: no upstream licence files; MIT headers on most files; the maintainers say the bundle is GPLv3 *because of* files we do not ship (SH1106 driver, OC_DAC.cpp, Grids data); the unlabelled files and that claim are the residual risk. Mutable code compiled here is MIT (no AVR/GPL projects), Game_Music_Emu is LGPL (source is public), Dexed Apache-2, Orca MIT.
+- Tests: 3 new Plaits (sustain vs pluck, chord loudness, new key in Mono).
+
 ### 2026-10-05: Claude: Sample Drum time-stretch
 - Branch: claude/atlas-play
 - Changed: `src/apps/sample_drum.rs`, new `src/apps/sample_drum_stretch.rs` (private part via `#[path]`: WSOLA, 2048-sample Hann grains, 4x overlap, +-384 sample similarity search), USER_MANUAL. Tempo Match is now Off / Stretch / Speed (Stretch keeps pitch; Speed is the old repitch); Tune still retunes a stretched sample. Presets store `tempo_mode`.
