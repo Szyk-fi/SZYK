@@ -1,0 +1,136 @@
+// Copyright (c) 2018, Jason Justian
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+class Metronome : public HemisphereApplet {
+public:
+
+    const char* applet_name() {
+        return "Metronome";
+    }
+    const uint8_t* applet_icon() { return HS::clock_m.Cycle()? METRO_L_ICON : METRO_R_ICON; }
+
+    void Start() { }
+
+    void Unload() {
+        HS::clock_m.Modulate(0, 0);
+    }
+
+    void Controller() {
+        // Check the clock so that the little Metronome icon animates while
+        // Metronome is selected
+        Clock(0);
+
+        // CV inputs modulate Tempo and Swing amount
+        HS::clock_m.Modulate(SemitoneIn(0), SemitoneIn(1));
+
+        // Outputs
+        if (HS::clock_m.IsRunning()) {
+            if (HS::clock_m.Tock(hemisphere*2)) {
+              ClockOut(0);
+            }
+            /* if (HS::clock_m.EndOfBeat(hemisphere) || HS::clock_m.Tock(hemisphere*2 + 1)) { ClockOut(1); } */
+        }
+        GateOut(1, HS::clock_m.IsRunning());
+    }
+
+    void View() {
+        DrawInterface();
+    }
+
+    void OnButtonPress() {
+      ++cursor %= 2;
+    }
+
+    void OnEncoderMove(int direction) {
+      if (cursor)
+        HS::clock_m.SetMultiply(HS::clock_m.GetMultiply(io_offset) + direction, io_offset);
+      else
+        HS::clock_m.SetTempoBPM(HS::clock_m.GetTempo() + direction);
+    }
+
+    uint64_t OnDataRequest() {
+        return 0;
+    }
+
+    void OnDataReceive(uint64_t data) {
+    }
+
+protected:
+  void SetHelp() {
+    //                    "-------" <-- Label size guide
+    help[HELP_DIGITAL1] = "Clock";
+    help[HELP_DIGITAL2] = "";
+    help[HELP_CV1]      = "Tempo";
+    help[HELP_CV2]      = "Swing";
+    help[HELP_OUT1]     = "Mult";
+    help[HELP_OUT2]     = "RUN";
+    help[HELP_EXTRA1] = "Set: Tempo";
+    help[HELP_EXTRA2] = "";
+    //                  "---------------------" <-- Extra text size guide
+  }
+
+private:
+    uint8_t cursor = 0;
+    void DrawInterface() {
+        gfxIcon(1, 15, NOTE4_ICON);
+        gfxPrint(9, 15, "= ");
+        gfxPrint(pad(100, HS::clock_m.tempo), HS::clock_m.tempo);
+        gfxPrint(" BPM");
+
+        gfxPrint(46, 25, HS::clock_m.shuffle);
+        gfxPrint("%");
+
+        int mult = HS::clock_m.GetMultiply(hemisphere*2);
+        if (0 != mult || 0 != cursor) { // hide if 0
+            gfxPrint(1, 55, (mult >= 0) ? "x" : "/");
+            gfxPrint( (mult >= 0) ? mult : 1 - mult );
+        }
+
+        if (cursor)
+          gfxIcon(1, 46, DOWN_ICON);
+        else
+          gfxIcon(1, 24, UP_ICON);
+
+        DrawMetronome();
+    }
+
+    void DrawMetronome() {
+        gfxLine(20,60,38,63); // Bottom Front
+        gfxLine(38,62,44,55); // Bottom Right
+        gfxLine(44,55,36,27); // Rear right edge
+        gfxLine(38,63,33,29); // Front right edge
+        gfxLine(20,60,29,27); // Front left edge
+        gfxLine(22,49,36,51); // Front ledge
+        gfxLine(29,27,31,25); // Point: front left
+        gfxLine(33,29,31,25); // Point: front right
+        gfxLine(36,27,31,25); // Point: rear right
+        gfxLine(29,27,33,29); // Point base: front
+        gfxLine(33,29,36,27); // Point base: right
+        gfxDottedLine(29,50,31,28,3); // Tempo scale
+        gfxDottedLine(30,50,32,28,3); // Tempo scale
+        gfxCircle(40,51,1); // Winder
+
+        // Pendulum arm
+        if (HS::clock_m.Cycle(hemisphere)) gfxLine(29,50,21,31);
+        else gfxLine(29,50,37,32);
+    }
+
+
+};

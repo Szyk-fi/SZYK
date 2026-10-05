@@ -101,6 +101,13 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: O&C firmware per module (stock, Hemisphere Suite, Phazerville Suite)
+- Branch: claude/atlas-play
+- Changed: `build.rs` (each firmware is a shared library built from `O_C_VARIANTS`; per-variant C++ standard; replaces the four namespaced copies), `src/apps/oc.rs` + `src/apps/oc_firmware.rs` (loads a private copy of the library per module, stops/unloads safely, a **Firmware** menu row, per-variant saves `saves/oc/eeprom_<variant><n>.bin`), `vendor/o_c/host/` (shared Arduino/Teensy stand-ins), new `vendor/o_c_hemi/` and `vendor/o_c_phaz/` (NOTICE.md and PATCHES.md in each), `tools/oc_port_patches.py`, `tools/oc_sketch.py`.
+- Left out on purpose: Benisphere (folded into Phazerville, unmaintained), squares-and-circles (Teensy 4 audio engines tied to hardware; redundant with the Mutable apps here), micro_Crimes (Hemisphere on a Daisy: same firmware again).
+- Licensing: none of the three firmwares ships a licence file, and 41/74 files have no header; GPL files (DAC driver, SH1106 driver, Grids data/DrumMap) are not included. Flagged in each NOTICE.md; the owner should decide before redistributing.
+- Tests: boot and quantize (stock), reflash a running module between firmwares, Phazerville boots and draws. Not tried by hand: using the applets on the screen.
+
 ### 2026-10-05: Claude: four O&C modules at once, each able to have its own window
 - Branch: claude/atlas-play
 - Changed: `build.rs` (the O&C firmware is compiled four times, each inside its own

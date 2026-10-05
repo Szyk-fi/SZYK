@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include <cstdlib>
+#include <new>
 #include "stages/segment_generator.h"
 #include "stmlib/utils/gate_flags.h"
 
@@ -33,13 +35,19 @@ int stages_block_size() { return kBlock; }
 float stages_sample_rate() { return stages::kSampleRate; }
 
 void* stages_create() {
-  Handle* h = new Handle();
+  // The generator's constructor leaves some state unset; zeroed memory makes a fresh
+  // instance deterministic (a stray heap value once reached the output).
+  Handle* h = new (calloc(1, sizeof(Handle))) Handle();
   h->generator.Init(&h->step_quantizer);
   h->previous_gate = stmlib::GATE_FLAG_LOW;
   return h;
 }
 
-void stages_destroy(void* handle) { delete static_cast<Handle*>(handle); }
+void stages_destroy(void* handle) {
+  Handle* h = static_cast<Handle*>(handle);
+  h->~Handle();
+  free(h);
+}
 
 // types: 0 ramp, 1 step, 2 hold, 3 alt. loops: 0/1. n is 1..8.
 void stages_configure(void* handle, int has_trigger, const int* types, const int* loops, int n) {

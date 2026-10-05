@@ -1027,6 +1027,23 @@ mod tests {
     }
 
     #[test]
+    fn the_phazerville_suite_boots_and_draws() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(phaz) = VARIANTS.iter().position(|v| v.id == "phaz").filter(|i| firmware::available().contains(i)) else { return };
+        let mut a = app();
+        a.set_variant(phaz);
+        let mut p = a.audio_processor().expect("the first O&C owns the firmware");
+        boot(&a, &mut p);
+        assert_eq!(a.variant_id(), "phaz");
+        let name = a.firmware_app();
+        assert!(!name.is_empty(), "an app is up");
+        eprintln!("phazerville default app: {name}");
+        let mut f = [0u8; 1024];
+        a.fw().unwrap().frame(&mut f);
+        assert!(f.iter().any(|b| *b != 0), "the OLED shows something");
+    }
+
+    #[test]
     fn the_right_encoder_changes_what_the_firmware_shows() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut a = app();
@@ -1163,6 +1180,13 @@ mod tests {
                 })
                 .collect()
         };
+        // Let the screens finish redrawing the triggers just played (a slow machine redraws late).
+        for _ in 0..30 {
+            for p in procs.iter_mut() {
+                p.process(&mut buf, 2, 48_000.0);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let before = hashes(&apps);
         apps[2].tick(&Input { nav_x: 1, ..Default::default() });
         for _ in 0..10 {

@@ -103,6 +103,22 @@ class elapsedMillis {
   unsigned long ms_;
 };
 
+class elapsedMicros {
+ public:
+  elapsedMicros() { us_ = micros(); }
+  elapsedMicros(unsigned long v) { us_ = micros() - v; }
+  operator unsigned long() const { return micros() - us_; }
+  elapsedMicros &operator=(unsigned long v) { us_ = micros() - v; return *this; }
+  elapsedMicros &operator-=(unsigned long v) { us_ += v; return *this; }
+  elapsedMicros &operator+=(unsigned long v) { us_ -= v; return *this; }
+ private:
+  unsigned long us_;
+};
+
+// Teensy's min/max take operands of different types (the std ones don't).
+template <class T, class L> auto min(const T &a, const L &b) -> decltype((b < a) ? b : a) { return (b < a) ? b : a; }
+template <class T, class L> auto max(const T &a, const L &b) -> decltype((b < a) ? a : b) { return (b < a) ? a : b; }
+
 // Serial output goes nowhere.
 struct SerialClass {
   void begin(unsigned long) {}
@@ -131,6 +147,11 @@ extern "C" volatile uint32_t oc_host_cycle_counter;
 // The module's USB-MIDI device port. The host has no MIDI transport into the
 // firmware yet, so nothing is ever received and what the firmware sends is dropped.
 struct UsbMidiStub {
+  // Teensy's message-type constants are the MIDI status bytes.
+  static constexpr uint8_t NoteOff = 0x80, NoteOn = 0x90, AfterTouchPoly = 0xA0, ControlChange = 0xB0,
+                           ProgramChange = 0xC0, AfterTouchChannel = 0xD0, PitchBend = 0xE0, SystemExclusive = 0xF0,
+                           Clock = 0xF8, Start = 0xFA, Continue = 0xFB, Stop = 0xFC, SystemReset = 0xFF;
+  void sendRealTime(uint8_t) {}
   bool read(int = 0) { return false; }
   uint8_t getType() { return 0; }
   uint8_t getChannel() { return 0; }
@@ -146,3 +167,14 @@ struct UsbMidiStub {
   void send_now() {}
 };
 static UsbMidiStub usbMIDI;
+
+// Teensy 4 section attributes: placement only.
+#ifndef FLASHMEM
+#define FLASHMEM
+#endif
+#ifndef FASTRUN
+#define FASTRUN
+#endif
+#ifndef DMAMEM
+#define DMAMEM
+#endif

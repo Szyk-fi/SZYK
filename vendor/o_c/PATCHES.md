@@ -36,13 +36,18 @@ Edited:
 Added:
 - `sketch.cpp`: the Arduino sketch's `.ino` files as one translation unit, with
   `prototypes.h` standing in for the prototypes the Arduino build generates
-  (made by `tools/oc_prototypes.py`; two lines naming types defined in the
+  (made by `vendor/o_c/tools/oc_prototypes.py`; two lines naming types defined in the
   sketch were removed by hand).
 - `host/Arduino.h`, `host/EEPROM.h`, `host/arm_math.h`: the parts of the Arduino
   and Teensy cores the firmware calls.
 
-Multiple instances: `build.rs` compiles the firmware four times, each inside
-`namespace oc0`..`oc3` (the system and host headers are included first, outside
-the namespace). `host/oc_host_core.cpp` holds per-instance pins, EEPROM, CV, DAC
-and frame in a table; `host/oc_host_fw.cpp` is the part that defines members of
-the firmware's own classes and is compiled inside each namespace.
+Several modules and firmwares: `build.rs` builds each firmware variant (`O_C_VARIANTS`:
+stock here, `vendor/o_c_hemi`, `vendor/o_c_phaz`) as one shared library, with the host core
+(`host/oc_host_core.cpp`) compiled into it. The firmwares keep their state in globals, so
+the runtime (`src/apps/oc_firmware.rs`) loads a private temporary *copy* of the library per
+module -- each copy has its own globals, which is the isolation, with no namespaces and
+no changes to the firmware. `host/oc_host_core.cpp` holds the one instance's pins, EEPROM,
+CV, DAC and frame; each variant's `host/oc_host_fw.cpp` defines the members of that
+firmware's own classes (ADC, DAC, display) and its entry points. A module is stopped by
+`ocfw_stop`, which makes the firmware's blocking calls throw out of its thread, then the
+copy is unloaded and deleted. The libraries are built without RTTI, as on the Teensy.
