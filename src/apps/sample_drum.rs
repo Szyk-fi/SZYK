@@ -789,6 +789,11 @@ struct ChannelParams {
     /// the internal auto-clock (see `SampleDrumProcessor::process`),
     /// which is otherwise indistinguishable from a real trigger.
     trig_pending: AtomicBool,
+    /// A slice a pad asked for (`usize::MAX`: none). The next trigger plays that
+    /// slice instead of stepping.
+    slice_request: AtomicUsize,
+    /// The slice most recently played, for the pads' lights.
+    last_slice: AtomicUsize,
     /// The slice index the *next* trigger will play for FWD/BKW
     /// stepping -- audio-thread-owned, but exposed for the UI's
     /// "current slice" display.
@@ -859,6 +864,8 @@ impl ChannelParams {
             auto_clock: AtomicBool::new(false),
             auto_rate_bpm: AtomicF32::new(120.0),
             trig_pending: AtomicBool::new(false),
+            slice_request: AtomicUsize::new(usize::MAX),
+            last_slice: AtomicUsize::new(usize::MAX),
             step_index: AtomicUsize::new(0),
             env_attack: AtomicF32::new(0.0),
             env_hold: AtomicF32::new(0.0),
@@ -972,7 +979,10 @@ fn kit_config() -> KitConfig {
     KitConfig {
         app_id: "sample_drum",
         // TRIG1/TRIG2 on pads 0/1, exactly as before.
-        layers: vec![Layer::Native(0, "TRIG"), Layer::Controls, Layer::Moments, Layer::Throws],
+        // TRIG: the module's two trigger buttons. SLICES: one pad per slice of the
+        // selected channel, so a chopped break is played like a drum kit (SLICES
+        // 17+ is the second page, for up to 32 slices).
+        layers: vec![Layer::Native(0, "TRIG"), Layer::Native(1, "SLICES"), Layer::Native(2, "SLICES 17+"), Layer::Controls, Layer::Moments, Layer::Throws],
         hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
         // Flipping through samples is what a sample player's encoder
         // does most.
@@ -1080,6 +1090,16 @@ impl SampleDrumApp {
             }
         }
         self.prev_keys = *keys;
+    }
+
+    /// Plays slice `index` of channel `ch` now (a SLICES pad). A pad past the last
+    /// slice does nothing.
+    fn trigger_slice(&self, ch: usize, index: usize) {
+        let c = &self.params.channels[ch];
+        if index < c.num_slices.load(Ordering::Relaxed).max(1) {
+            c.slice_request.store(index, Ordering::Relaxed);
+            c.trig_pending.store(true, Ordering::Relaxed);
+        }
     }
 
     fn warm_selected_sample(&self, ch: usize) {
@@ -1661,7 +1681,11 @@ impl PlayHost for SampleDrumApp {
         let slices = c.num_slices.load(Ordering::Relaxed).max(1);
         format!("CH{} slice {}/{}  {}", ch + 1, c.step_index.load(Ordering::Relaxed).min(slices - 1) + 1, slices, self.sample_name(ch))
     }
-    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+    fn kit_pad_label(&self, layer: u8, pad: usize) -> String {
+        if layer > 0 {
+            let index = (layer as usize - 1) * 16 + pad;
+            return if index < self.params.channels[self.ch()].num_slices.load(Ordering::Relaxed).max(1) { format!("{}", index + 1) } else { String::new() };
+        }
         match pad {
             0 => "TRIG 1".into(),
             1 => "TRIG 2".into(),
@@ -1670,8 +1694,21 @@ impl PlayHost for SampleDrumApp {
     }
     /// TRIG pads lit, yellow while that channel's auto clock is firing
     /// it on its own; the other 14 pads stay dark, as before.
-    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
+    fn kit_pad_color(&self, layer: u8, pad: usize, held: bool) -> crate::led_output::PadColor {
         use crate::led_output::PadColor;
+        if layer > 0 {
+            let c = &self.params.channels[self.ch()];
+            let index = (layer as usize - 1) * 16 + pad;
+            return if index >= c.num_slices.load(Ordering::Relaxed).max(1) {
+                PadColor::Off
+            } else if held {
+                PadColor::Green
+            } else if c.last_slice.load(Ordering::Relaxed) == index {
+                PadColor::Yellow
+            } else {
+                PadColor::Blue
+            };
+        }
         if pad >= NUM_CHANNELS {
             PadColor::Off
         } else if held {
@@ -1731,11 +1768,24 @@ impl App for SampleDrumApp {
         // of the grid is unused, matching the real module's own
         // 2-trigger-button simplicity rather than inventing a use for
         // the other 14 pads.
-        if input.grid[0] && !self.prev_grid[0] {
-            self.params.channels[0].trig_pending.store(true, Ordering::Relaxed);
-        }
-        if input.grid[1] && !self.prev_grid[1] {
-            self.params.channels[1].trig_pending.store(true, Ordering::Relaxed);
+        match step.native {
+            Some(1) | Some(2) => {
+                let page = (step.native.unwrap_or(1) as usize - 1) * 16;
+                let ch = self.ch();
+                for pad in 0..16 {
+                    if input.grid[pad] && !self.prev_grid[pad] {
+                        self.trigger_slice(ch, page + pad);
+                    }
+                }
+            }
+            _ => {
+                if input.grid[0] && !self.prev_grid[0] {
+                    self.params.channels[0].trig_pending.store(true, Ordering::Relaxed);
+                }
+                if input.grid[1] && !self.prev_grid[1] {
+                    self.params.channels[1].trig_pending.store(true, Ordering::Relaxed);
+                }
+            }
         }
         self.prev_grid = input.grid;
         self.play_notes(&input.midi_keys.0);
@@ -1926,7 +1976,9 @@ impl AudioProcessor for SampleDrumProcessor {
                     let end = (c.end.get() + c.ext_end.get()).clamp(0.0, 1.0);
                     let num_slices = c.num_slices.load(Ordering::Relaxed);
                     let slice_step_mode = c.slice_step.load(Ordering::Relaxed);
+                    let requested = c.slice_request.swap(usize::MAX, Ordering::Relaxed);
                     let step = match slice_step_mode {
+                        _ if requested != usize::MAX => requested % num_slices.max(1),
                         1 => (c.step_index.load(Ordering::Relaxed) + num_slices.max(1) - 1) % num_slices.max(1),
                         2 => (rand01 * num_slices.max(1) as f32) as usize % num_slices.max(1),
                         3 => 0,
@@ -1953,7 +2005,10 @@ impl AudioProcessor for SampleDrumProcessor {
 
                     // Advance the FWD/BKW step for next time -- RND
                     // and NONE ignore this state entirely.
-                    if slice_step_mode == 0 {
+                    c.last_slice.store(step, Ordering::Relaxed);
+                    if requested != usize::MAX {
+                        // A pad chose this slice: the clock's own order carries on as it was.
+                    } else if slice_step_mode == 0 {
                         c.step_index.store((step + 1) % num_slices.max(1), Ordering::Relaxed);
                     } else if slice_step_mode == 1 {
                         c.step_index.store(step, Ordering::Relaxed);
@@ -2586,6 +2641,33 @@ mod tests {
         let (_, native) = app.params.samples[0].decoded();
         let speed = proc.voices[0].head.pos / (480.0 * native / 48000.0);
         assert!((speed - 2f32.powf(1.0 / 12.0)).abs() < 0.02, "+100 ct is a semitone: {speed}");
+    }
+
+    /// A SLICES pad plays its own slice, whatever the step order is, and a pad
+    /// past the last slice does nothing.
+    #[test]
+    fn slice_pads_play_their_own_slice() {
+        let app = new_app();
+        let mut proc = new_processor(Arc::clone(&app.params));
+        let c = &app.params.channels[0];
+        c.num_slices.store(8, Ordering::Relaxed);
+        c.slice_step.store(2, Ordering::Relaxed); // RND: pads must not follow it
+        c.env_decay.set(1.0);
+        let (data, _) = app.params.samples[0].decoded();
+        let len_f = (data.len() - 1) as f32;
+        for slice in [5usize, 0, 7, 3] {
+            app.trigger_slice(0, slice);
+            let mut buffer = vec![0.0f32; 64 * 2];
+            proc.process(&mut buffer, 2, 48000.0);
+            let (lower, _) = slice_bounds(data, 0.0, 1.0, 8, false, slice);
+            assert!((proc.voices[0].head.lower - lower * len_f).abs() < 1.0, "pad {slice} plays slice {slice}");
+            assert_eq!(c.last_slice.load(Ordering::Relaxed), slice);
+        }
+        app.trigger_slice(0, 12);
+        assert!(!c.trig_pending.load(Ordering::Relaxed), "slice 13 of 8 doesn't exist");
+        assert_eq!(app.kit_pad_label(1, 3), "4");
+        assert_eq!(app.kit_pad_label(1, 9), "");
+        assert_eq!(app.kit_pad_label(2, 0), "");
     }
 
     #[test]
