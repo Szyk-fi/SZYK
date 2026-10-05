@@ -46,6 +46,9 @@
 //! than tied to the UI frame rate -- the same technique Plaits' LFOs
 //! and the original single-track version of this app already used.
 
+#[path = "sequencer_drums.rs"]
+mod drums;
+
 use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes};
 use crate::app::{App, Input};
 use crate::apps::plaits::{ENGINE_NAMES, NUM_ENGINES};
@@ -111,6 +114,17 @@ const DEFAULT_SUBDIVISION: usize = 3;
 /// exactly.
 const TRACK_RATES: [(&str, usize); 6] = [("1x", 1), ("2x", 2), ("3x", 3), ("4x", 4), ("6x", 6), ("8x", 8)];
 const DEFAULT_TRACK_RATE_INDEX: usize = 0;
+/// Longest gap between a flam's grace note and the main hit, seconds. A flam
+/// is two hits a few milliseconds apart -- far enough to hear as one fat
+/// stroke, close enough not to sound like a separate note.
+const MAX_FLAM_S: f32 = 0.040;
+const MIN_FLAM_S: f32 = 0.012;
+/// The grace note of a flam plays at this fraction of the main hit's level.
+const FLAM_GRACE_GAIN: f32 = 0.45;
+/// Lowest step velocity: 0 would be a silent step, which is what turning the
+/// step off is for.
+const MIN_STEP_VELOCITY: f32 = 0.05;
+const DEFAULT_ACCENT: f32 = 0.5;
 const MIN_ROLLS: u32 = 1;
 const MAX_ROLLS: u32 = 4;
 const DEFAULT_ROLLS: u32 = 1;
@@ -128,7 +142,13 @@ const MAX_HUMANIZE_VELOCITY_FRAC: f32 = 0.2;
 /// (see note_bus.rs), chosen by the track's Plays row.
 const INSTRUMENT_NAMES: [&str; 4] = ["Drum", "Plaits", "Sample", "Other app"];
 const INSTRUMENT_EXTERNAL: u32 = 3;
-const DRUM_KIND_NAMES: [&str; 4] = ["Kick", "Snare", "Hat", "Clap"];
+/// The four basic voices, then the TR-808/909 set (see `drums`).
+const DRUM_KIND_NAMES: [&str; 4 + drums::KIND_NAMES.len()] = [
+    "Kick", "Snare", "Hat", "Clap", "808 Kick", "909 Kick", "808 Snare", "909 Snare", "808 Clap", "909 Clap", "808 Hat C", "808 Hat O", "909 Hat C", "909 Hat O", "808 Tom", "909 Tom", "808 Rim",
+    "808 Cowbell",
+];
+/// How many of them are the basic built-in voices.
+const BASIC_DRUM_KINDS: usize = 4;
 const SAMPLES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/samples");
 
 /// Shortens `s` to at most `max` characters (plus a "..." marker when
@@ -374,6 +394,19 @@ enum Selection {
     /// How far into its own duration the focused step's hit(s) are
     /// pushed -- same "last touched pad" convention as StepPitch.
     StepDelay(usize),
+    /// How hard the focused step hits, 5..100% -- same "last touched pad"
+    /// convention as StepPitch.
+    StepVelocity(usize),
+    /// Marks the focused step as accented: it plays louder by the track's
+    /// `Accent` amount (the TR-style accent a groove leans on).
+    StepAccent(usize),
+    /// A grace note just before the focused step's main hit.
+    StepFlam(usize),
+    /// Chance (0..100%) the focused step plays, on top of the track's own
+    /// Probability.
+    StepProb(usize),
+    /// How much louder an accented step is, per track.
+    Accent(usize),
     Decay(usize),
     /// An "Other app" track's instrument.
     Plays(usize),
@@ -480,6 +513,11 @@ impl Selection {
             | Selection::StepPitch(t)
             | Selection::StepRolls(t)
             | Selection::StepDelay(t)
+            | Selection::StepVelocity(t)
+            | Selection::StepAccent(t)
+            | Selection::StepFlam(t)
+            | Selection::StepProb(t)
+            | Selection::Accent(t)
             | Selection::Decay(t)
             | Selection::Plays(t)
             | Selection::Volume(t)
@@ -543,6 +581,16 @@ struct TrackParams {
     /// existed. Forward-only: nudging a step *earlier* would need
     /// look-ahead scheduling this sim doesn't have.
     step_delay: [AtomicF32; NUM_STEPS],
+    /// Per-step hit strength, `MIN_STEP_VELOCITY..=1` (default 1: every pattern
+    /// that hasn't touched it plays exactly as before).
+    step_vel: [AtomicF32; NUM_STEPS],
+    step_accent: [AtomicBool; NUM_STEPS],
+    /// 0..1 of `MIN_FLAM_S..MAX_FLAM_S`; 0 is no flam.
+    step_flam: [AtomicF32; NUM_STEPS],
+    /// Per-step chance the step plays, 0..1 (default 1).
+    step_prob: [AtomicF32; NUM_STEPS],
+    /// How much louder an accented step plays: gain is 1 + this.
+    accent: AtomicF32,
     decay: AtomicF32,
     volume: AtomicF32,
     /// Track-wide chance (0..1) that an active step actually sounds --
@@ -593,6 +641,11 @@ impl TrackParams {
             step_pitch: std::array::from_fn(|_| AtomicI32::new(0)),
             step_rolls: std::array::from_fn(|_| AtomicU32::new(DEFAULT_ROLLS)),
             step_delay: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            step_vel: std::array::from_fn(|_| AtomicF32::new(1.0)),
+            step_accent: std::array::from_fn(|_| AtomicBool::new(false)),
+            step_flam: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            step_prob: std::array::from_fn(|_| AtomicF32::new(1.0)),
+            accent: AtomicF32::new(DEFAULT_ACCENT),
             decay: AtomicF32::new(0.5),
             volume: AtomicF32::new(0.8),
             probability: AtomicF32::new(1.0),
@@ -625,11 +678,15 @@ struct PatternSnapshot {
     step_pitch: [i32; NUM_STEPS],
     step_rolls: [u32; NUM_STEPS],
     step_delay: [f32; NUM_STEPS],
+    step_vel: [f32; NUM_STEPS],
+    step_accent: [bool; NUM_STEPS],
+    step_flam: [f32; NUM_STEPS],
+    step_prob: [f32; NUM_STEPS],
 }
 
 impl Default for PatternSnapshot {
     fn default() -> Self {
-        Self { steps: [false; NUM_STEPS], step_pitch: [0; NUM_STEPS], step_rolls: [DEFAULT_ROLLS; NUM_STEPS], step_delay: [0.0; NUM_STEPS] }
+        Self { steps: [false; NUM_STEPS], step_pitch: [0; NUM_STEPS], step_rolls: [DEFAULT_ROLLS; NUM_STEPS], step_delay: [0.0; NUM_STEPS], step_vel: [1.0; NUM_STEPS], step_accent: [false; NUM_STEPS], step_flam: [0.0; NUM_STEPS], step_prob: [1.0; NUM_STEPS] }
     }
 }
 
@@ -640,6 +697,10 @@ impl PatternSnapshot {
             step_pitch: std::array::from_fn(|i| track.step_pitch[i].load(Ordering::Relaxed)),
             step_rolls: std::array::from_fn(|i| track.step_rolls[i].load(Ordering::Relaxed)),
             step_delay: std::array::from_fn(|i| track.step_delay[i].get()),
+            step_vel: std::array::from_fn(|i| track.step_vel[i].get()),
+            step_accent: std::array::from_fn(|i| track.step_accent[i].load(Ordering::Relaxed)),
+            step_flam: std::array::from_fn(|i| track.step_flam[i].get()),
+            step_prob: std::array::from_fn(|i| track.step_prob[i].get()),
         }
     }
 
@@ -649,6 +710,10 @@ impl PatternSnapshot {
             track.step_pitch[i].store(self.step_pitch[i], Ordering::Relaxed);
             track.step_rolls[i].store(self.step_rolls[i], Ordering::Relaxed);
             track.step_delay[i].set(self.step_delay[i]);
+            track.step_vel[i].set(self.step_vel[i]);
+            track.step_accent[i].store(self.step_accent[i], Ordering::Relaxed);
+            track.step_flam[i].set(self.step_flam[i]);
+            track.step_prob[i].set(self.step_prob[i]);
         }
     }
 }
@@ -792,7 +857,7 @@ impl Params {
             humanize: AtomicF32::new(0.0),
             running: AtomicBool::new(false),
             pulse: AtomicUsize::new(0),
-            tracks: std::array::from_fn(|i| TrackParams::new((i % DRUM_KIND_NAMES.len()) as u32, i + 1, modbus)),
+            tracks: std::array::from_fn(|i| TrackParams::new((i % BASIC_DRUM_KINDS) as u32, i + 1, modbus)),
             audition_pending: std::array::from_fn(|_| AtomicBool::new(false)),
             audition_step: std::array::from_fn(|_| AtomicUsize::new(0)),
             samples,
@@ -1031,6 +1096,10 @@ impl SequencerApp {
                 leaves.push(Selection::StepPitch(t));
                 leaves.push(Selection::StepRolls(t));
                 leaves.push(Selection::StepDelay(t));
+                leaves.push(Selection::StepVelocity(t));
+                leaves.push(Selection::StepAccent(t));
+                leaves.push(Selection::StepFlam(t));
+                leaves.push(Selection::StepProb(t));
                 leaves.push(Selection::Decay(t));
             }
             2 => {
@@ -1041,6 +1110,10 @@ impl SequencerApp {
                 leaves.push(Selection::StepPitch(t));
                 leaves.push(Selection::StepRolls(t));
                 leaves.push(Selection::StepDelay(t));
+                leaves.push(Selection::StepVelocity(t));
+                leaves.push(Selection::StepAccent(t));
+                leaves.push(Selection::StepFlam(t));
+                leaves.push(Selection::StepProb(t));
             }
             3 => {
                 leaves.push(Selection::Plays(t));
@@ -1048,6 +1121,10 @@ impl SequencerApp {
                 leaves.push(Selection::StepPitch(t));
                 leaves.push(Selection::StepRolls(t));
                 leaves.push(Selection::StepDelay(t));
+                leaves.push(Selection::StepVelocity(t));
+                leaves.push(Selection::StepAccent(t));
+                leaves.push(Selection::StepFlam(t));
+                leaves.push(Selection::StepProb(t));
                 leaves.push(Selection::Decay(t));
             }
             _ => {
@@ -1056,6 +1133,10 @@ impl SequencerApp {
                 leaves.push(Selection::StepPitch(t));
                 leaves.push(Selection::StepRolls(t));
                 leaves.push(Selection::StepDelay(t));
+                leaves.push(Selection::StepVelocity(t));
+                leaves.push(Selection::StepAccent(t));
+                leaves.push(Selection::StepFlam(t));
+                leaves.push(Selection::StepProb(t));
                 leaves.push(Selection::Decay(t));
             }
         }
@@ -1063,6 +1144,7 @@ impl SequencerApp {
         leaves.push(Selection::TrackRate(t));
         leaves.push(Selection::Volume(t));
         leaves.push(Selection::Probability(t));
+        leaves.push(Selection::Accent(t));
         leaves.push(Selection::Mute(t));
         leaves.push(Selection::Solo(t));
         leaves.push(Selection::RandomizePattern(t));
@@ -1117,6 +1199,11 @@ impl SequencerApp {
             Selection::StepPitch(t) => format!("Step {} Pitch", self.last_touched_step[t] + 1),
             Selection::StepRolls(t) => format!("Step {} Rolls", self.last_touched_step[t] + 1),
             Selection::StepDelay(t) => format!("Step {} Delay", self.last_touched_step[t] + 1),
+            Selection::StepVelocity(t) => format!("Step {} Velocity", self.last_touched_step[t] + 1),
+            Selection::StepAccent(t) => format!("Step {} Accent", self.last_touched_step[t] + 1),
+            Selection::StepFlam(t) => format!("Step {} Flam", self.last_touched_step[t] + 1),
+            Selection::StepProb(t) => format!("Step {} Chance", self.last_touched_step[t] + 1),
+            Selection::Accent(t) => "Accent Amount".into(),
             Selection::Decay(t) => if self.params.tracks[t].instrument.load(Ordering::Relaxed) == INSTRUMENT_EXTERNAL { "Gate".into() } else { "Decay".into() },
             Selection::Plays(_) => "Plays".into(),
             Selection::Volume(_) => "Volume".into(),
@@ -1214,6 +1301,14 @@ impl SequencerApp {
             Selection::Plays(t) => self.track_routes[t].label(),
             Selection::Volume(t) => format!("{:.2}", self.params.tracks[t].volume.get()),
             Selection::Probability(t) => format!("{:.0}%", self.params.tracks[t].probability.get() * 100.0),
+            Selection::StepVelocity(t) => format!("{:.0}%", self.params.tracks[t].step_vel[self.last_touched_step[t]].get() * 100.0),
+            Selection::StepAccent(t) => if self.params.tracks[t].step_accent[self.last_touched_step[t]].load(Ordering::Relaxed) { "ON".into() } else { "off".into() },
+            Selection::StepFlam(t) => {
+                let f = self.params.tracks[t].step_flam[self.last_touched_step[t]].get();
+                if f <= 0.0 { "off".into() } else { format!("{:.0} ms", (MIN_FLAM_S + f * (MAX_FLAM_S - MIN_FLAM_S)) * 1000.0) }
+            }
+            Selection::StepProb(t) => format!("{:.0}%", self.params.tracks[t].step_prob[self.last_touched_step[t]].get() * 100.0),
+            Selection::Accent(t) => format!("+{:.0}%", self.params.tracks[t].accent.get() * 100.0),
             Selection::Mute(t) => {
                 if self.params.tracks[t].mute.load(Ordering::Relaxed) { "MUTED".into() } else { "on".into() }
             }
@@ -1458,6 +1553,20 @@ impl SequencerApp {
             Selection::Plays(t) => self.track_routes[t].step(step),
             Selection::Volume(t) => bump(&self.params.tracks[t].volume, delta, sensitivity),
             Selection::Probability(t) => bump(&self.params.tracks[t].probability, delta, sensitivity),
+            Selection::StepVelocity(t) => {
+                let v = &self.params.tracks[t].step_vel[self.last_touched_step[t]];
+                v.set((v.get() + accelerate(delta) * sensitivity * 0.05).clamp(MIN_STEP_VELOCITY, 1.0));
+            }
+            Selection::StepAccent(t) => self.params.tracks[t].step_accent[self.last_touched_step[t]].store(delta > 0, Ordering::Relaxed),
+            Selection::StepFlam(t) => {
+                let v = &self.params.tracks[t].step_flam[self.last_touched_step[t]];
+                v.set((v.get() + accelerate(delta) * sensitivity * 0.05).clamp(0.0, 1.0));
+            }
+            Selection::StepProb(t) => {
+                let v = &self.params.tracks[t].step_prob[self.last_touched_step[t]];
+                v.set((v.get() + accelerate(delta) * sensitivity * 0.05).clamp(0.0, 1.0));
+            }
+            Selection::Accent(t) => bump(&self.params.tracks[t].accent, delta, sensitivity),
             Selection::Mute(t) => self.params.tracks[t].mute.store(delta > 0, Ordering::Relaxed),
             Selection::Solo(t) => self.params.tracks[t].solo.store(delta > 0, Ordering::Relaxed),
             Selection::Length(t) => {
@@ -1643,6 +1752,11 @@ impl SequencerApp {
             Selection::Plays(t) => self.track_routes[t].reset(),
             Selection::Volume(t) => self.params.tracks[t].volume.set(0.8),
             Selection::Probability(t) => self.params.tracks[t].probability.set(1.0),
+            Selection::StepVelocity(t) => self.params.tracks[t].step_vel[self.last_touched_step[t]].set(1.0),
+            Selection::StepAccent(t) => self.params.tracks[t].step_accent[self.last_touched_step[t]].store(false, Ordering::Relaxed),
+            Selection::StepFlam(t) => self.params.tracks[t].step_flam[self.last_touched_step[t]].set(0.0),
+            Selection::StepProb(t) => self.params.tracks[t].step_prob[self.last_touched_step[t]].set(1.0),
+            Selection::Accent(t) => self.params.tracks[t].accent.set(DEFAULT_ACCENT),
             Selection::Mute(t) => self.params.tracks[t].mute.store(false, Ordering::Relaxed),
             Selection::Solo(t) => self.params.tracks[t].solo.store(false, Ordering::Relaxed),
             Selection::Length(t) => self.params.tracks[t].length.store(NUM_STEPS, Ordering::Relaxed),
@@ -1857,6 +1971,21 @@ impl SequencerApp {
                 }
                 if rolls > 1 {
                     label.push_str(&format!(" x{rolls}"));
+                }
+                let tr = &self.params.tracks[track];
+                if tr.step_accent[i].load(Ordering::Relaxed) {
+                    label.push('!');
+                }
+                if tr.step_flam[i].get() > 0.0 {
+                    label.push_str(" fl");
+                }
+                let vel = tr.step_vel[i].get();
+                if vel < 0.995 {
+                    label.push_str(&format!(" v{:.0}", vel * 100.0));
+                }
+                let prob = tr.step_prob[i].get();
+                if prob < 0.995 {
+                    label.push_str(&format!(" {:.0}%", prob * 100.0));
                 }
                 (active, trimmed, is_playhead, is_focused, label)
             })
@@ -2349,6 +2478,21 @@ impl SequencerApp {
                 if rolls > 1 {
                     label.push_str(&format!(" x{rolls}"));
                 }
+                let tr = &self.params.tracks[track];
+                if tr.step_accent[i].load(Ordering::Relaxed) {
+                    label.push('!');
+                }
+                if tr.step_flam[i].get() > 0.0 {
+                    label.push_str(" fl");
+                }
+                let vel = tr.step_vel[i].get();
+                if vel < 0.995 {
+                    label.push_str(&format!(" v{:.0}", vel * 100.0));
+                }
+                let prob = tr.step_prob[i].get();
+                if prob < 0.995 {
+                    label.push_str(&format!(" {:.0}%", prob * 100.0));
+                }
                 Text::new(&label, Point::new(x + 6, y + cell_h - 8), label_style).draw(fb).ok();
             }
         }
@@ -2383,11 +2527,13 @@ struct DrumVoice {
     pitch_env: f32,
     lp: f32, // lowpass state, reused as the basis for Hat's crude highpass
     rng: u32,
+    /// The 808/909 voices (kinds past the basic four).
+    machine: drums::Voice,
 }
 
 impl DrumVoice {
     fn new(seed: u32) -> Self {
-        Self { phase: 0.0, env: 0.0, pitch_env: 0.0, lp: 0.0, rng: 0x9E3779B9 ^ (seed.wrapping_mul(0x85EBCA6B) | 1) }
+        Self { phase: 0.0, env: 0.0, pitch_env: 0.0, lp: 0.0, rng: 0x9E3779B9 ^ (seed.wrapping_mul(0x85EBCA6B) | 1), machine: drums::Voice::new(seed) }
     }
 
     fn next_rand(&mut self) -> f32 {
@@ -2401,9 +2547,13 @@ impl DrumVoice {
         self.env = 1.0;
         self.pitch_env = 1.0;
         self.phase = 0.0;
+        self.machine.trigger();
     }
 
     fn render(&mut self, kind: u32, decay: f32, pitch_semitones: i32, sample_rate: f32) -> f32 {
+        if kind as usize >= BASIC_DRUM_KINDS {
+            return self.machine.render(drums::Kind::from_index(kind as usize - BASIC_DRUM_KINDS), decay, pitch_semitones, sample_rate);
+        }
         let pitch_mult = 2f32.powf(pitch_semitones as f32 / 12.0);
         match kind {
             0 => {
@@ -2700,7 +2850,7 @@ impl AudioProcessor for SequencerProcessor {
                 // step (including every Roll repeat), not each hit
                 // independently -- a ratchet shouldn't get random
                 // silent gaps in the middle of it.
-                let probability = self.params.tracks[t].probability.get();
+                let probability = self.params.tracks[t].probability.get() * self.params.tracks[t].step_prob[step].get();
                 if self.voices[t].next_rand01() >= probability {
                     continue;
                 }
@@ -2717,6 +2867,11 @@ impl AudioProcessor for SequencerProcessor {
                 let delay_frac = self.params.tracks[t].step_delay[step].get().clamp(0.0, MAX_STEP_DELAY_FRAC);
                 let rolls = self.params.tracks[t].step_rolls[step].load(Ordering::Relaxed).clamp(MIN_ROLLS, MAX_ROLLS);
                 let humanize = self.params.humanize.get().clamp(0.0, 1.0);
+                // How hard this step hits: its own velocity, boosted when it is
+                // accented. Folded into every hit's gain below.
+                let accent = if self.params.tracks[t].step_accent[step].load(Ordering::Relaxed) { 1.0 + self.params.tracks[t].accent.get() } else { 1.0 };
+                let step_gain = self.params.tracks[t].step_vel[step].get().clamp(MIN_STEP_VELOCITY, 1.0) * accent;
+                let flam = self.params.tracks[t].step_flam[step].get().clamp(0.0, 1.0);
                 // Rolls/Delay/Humanize's timing are all fractions of
                 // this step's own *real* duration -- `swung` is just
                 // one pulse's worth, so a Rate > 1x track (whose step
@@ -2742,7 +2897,17 @@ impl AudioProcessor for SequencerProcessor {
                     } else {
                         1.0
                     };
-                    self.pending_fires[t].push((time_remaining, gain));
+                    let gain = gain * step_gain;
+                    if r == 0 && flam > 0.0 {
+                        // A flam: a soft grace note on the beat, then the main
+                        // hit a few ms later (there is no look-ahead, so the
+                        // main hit moves later rather than the grace earlier).
+                        let gap = MIN_FLAM_S + flam * (MAX_FLAM_S - MIN_FLAM_S);
+                        self.pending_fires[t].push((time_remaining, gain * FLAM_GRACE_GAIN));
+                        self.pending_fires[t].push((time_remaining + gap, gain));
+                    } else {
+                        self.pending_fires[t].push((time_remaining, gain));
+                    }
                 }
             }
         }
@@ -2770,7 +2935,23 @@ impl AudioProcessor for SequencerProcessor {
                         }
                         1 => plaits_trigger[t] = true,
                         2 => self.voices[t].sample.trigger(),
-                        _ => self.voices[t].drum.trigger(),
+                        _ => {
+                            let kind = self.params.tracks[t].drum_kind.load(Ordering::Relaxed) as usize;
+                            // A closed hat cuts off any open hat ringing on another track.
+                            if kind >= BASIC_DRUM_KINDS && drums::Kind::from_index(kind - BASIC_DRUM_KINDS).is_closed_hat() {
+                                for o in 0..NUM_TRACKS {
+                                    let other = self.params.tracks[o].drum_kind.load(Ordering::Relaxed) as usize;
+                                    if o != t
+                                        && self.params.tracks[o].instrument.load(Ordering::Relaxed) == 0
+                                        && other >= BASIC_DRUM_KINDS
+                                        && drums::Kind::from_index(other - BASIC_DRUM_KINDS).is_open_hat()
+                                    {
+                                        self.voices[o].drum.machine.choke();
+                                    }
+                                }
+                            }
+                            self.voices[t].drum.trigger()
+                        }
                     }
                     self.pending_fires[t].remove(i);
                 } else {
@@ -3047,6 +3228,62 @@ mod tests {
     /// Rolls must schedule more than one pending hit for a step, not
     /// just fire once -- the "only one note triggers" shape of bug,
     /// this time for ratchets within a single step.
+    /// Runs two bars of a one-step pattern and returns the track's loudest sample.
+    fn peak_with(setup: impl Fn(&Params)) -> f32 {
+        let (params, mut proc) = new_processor();
+        params.tracks[0].steps[1].store(true, Ordering::Relaxed);
+        setup(&params);
+        let mut buffer = vec![0.0f32; 512 * 2];
+        let mut peak = 0.0f32;
+        for _ in 0..200 {
+            proc.process(&mut buffer, 2, 48000.0);
+            peak = buffer.iter().fold(peak, |m, v| m.max(v.abs()));
+        }
+        peak
+    }
+
+    #[test]
+    fn step_velocity_and_accent_set_how_hard_a_step_hits() {
+        let full = peak_with(|_| {});
+        let soft = peak_with(|p| p.tracks[0].step_vel[1].set(0.3));
+        assert!(full > 0.01, "the drum sounds at all: {full}");
+        assert!((soft / full - 0.3).abs() < 0.05, "30% velocity is 30% as loud: {soft} vs {full}");
+        let accented = peak_with(|p| p.tracks[0].step_accent[1].store(true, Ordering::Relaxed));
+        assert!((accented / full - 1.0 - DEFAULT_ACCENT).abs() < 0.05, "an accent adds the track's amount: {accented} vs {full}");
+        let strong = peak_with(|p| {
+            p.tracks[0].step_accent[1].store(true, Ordering::Relaxed);
+            p.tracks[0].accent.set(1.0);
+        });
+        assert!(strong > accented, "more accent amount, louder");
+    }
+
+    #[test]
+    fn step_chance_gates_a_step() {
+        assert_eq!(peak_with(|p| p.tracks[0].step_prob[1].set(0.0)), 0.0, "0% never plays");
+        assert!(peak_with(|p| p.tracks[0].step_prob[1].set(1.0)) > 0.01, "100% always plays");
+        // Half the time: over many bars some hits land and some don't, so the
+        // result is audible, and track probability multiplies with it.
+        assert_eq!(peak_with(|p| { p.tracks[0].step_prob[1].set(1.0); p.tracks[0].probability.set(0.0); }), 0.0);
+    }
+
+    #[test]
+    fn a_flam_adds_a_grace_note_before_the_main_hit() {
+        let (params, mut proc) = new_processor();
+        params.tracks[0].steps[1].store(true, Ordering::Relaxed);
+        params.tracks[0].step_flam[1].set(1.0);
+        let mut buffer = vec![0.0f32; 512 * 2];
+        let mut most_pending = 0;
+        for _ in 0..200 {
+            proc.process(&mut buffer, 2, 48000.0);
+            most_pending = most_pending.max(proc.pending_fires[0].len());
+        }
+        assert!(most_pending >= 1, "the main hit waits out the flam gap");
+        // The flam leaves the pattern's other parameters alone and survives a pattern switch.
+        let snap = PatternSnapshot::capture(&params.tracks[0]);
+        assert_eq!(snap.step_flam[1], 1.0);
+        assert!(!snap.step_accent[1] && snap.step_vel[1] == 1.0 && snap.step_prob[1] == 1.0);
+    }
+
     #[test]
     fn rolls_schedule_multiple_hits() {
         let (params, mut proc) = new_processor();

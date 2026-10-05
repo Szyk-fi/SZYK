@@ -101,6 +101,12 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: Sequencer step expression + 808/909 drum voices
+- Branch: claude/atlas-play
+- Changed: `src/apps/sequencer.rs` (per-step velocity, accent, flam and chance, with a per-track accent amount, in the pattern snapshots and the step labels; the drum kind list grows to the 808/909 set; a closed hat chokes open hats), new `src/apps/sequencer_drums.rs` (private part via `#[path]`: the voices, with an honest header on what is modelled vs sampled), USER_MANUAL row.
+- Flam note: there is no look-ahead scheduling, so a flam is a soft grace note on the beat and the main hit a few ms later. Block-granular like rolls (grace and hit within one audio block collapse), hence a 12 ms minimum gap.
+- Tests: 8 new in sequencer + drums (velocity/accent levels, chance gating, flam scheduling, every voice audible/bounded/dies, kick pitch, hat brightness, decay knob, open vs closed + choke, clap bursts). Not heard by ear -- the voice tunings are by-ear estimates; tune them if they sound off.
+
 ### 2026-10-05: Claude: Sample Drum rework (notes, cents, envelope shapes/Relative, no clicks)
 - Branch: claude/atlas-play
 - Changed: `src/apps/sample_drum.rs` only (+ USER_MANUAL row). Notes now play it at pitch (the manifest already said `notes_in` but the app ignored them); Fine Tune in cents; envelope Relative range and A/D shapes (the two features the old header said were skipped); retrigger fades the old playhead out instead of cutting; opens with a sample on each channel; audio thread no longer allocates per block, takes the scope mutex with `try_lock`, and sets filter coefficients once per block.
