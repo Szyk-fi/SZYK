@@ -3,7 +3,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-extern "C" uint8_t oc_host_eeprom[8192];
+// Each firmware instance has its own EEPROM; the current one is the calling thread's.
+extern "C" uint8_t *oc_host_eeprom_ptr();
+#define oc_host_eeprom (oc_host_eeprom_ptr())
 
 struct EERef {
   EERef(size_t i) : index(i) {}

@@ -136,6 +136,34 @@ const VISIBLE_ROWS: usize = 10;
 // colliding with the last row. 5 rows (220px) leaves real headroom.
 const HOME_VISIBLE_ROWS: usize = 6;
 
+// A window of an app's own, beside the device's (App::popout): its picture,
+// with the keyboard forwarded to the app. O&C uses it, one per module.
+slint::slint! {
+    export component PopoutWindow inherits Window {
+        in property <image> frame;
+        in property <string> window-title;
+        title: root.window-title;
+        preferred-width: 640px;
+        preferred-height: 360px;
+        min-width: 320px;
+        min-height: 180px;
+        background: #05070b;
+        callback key(string, bool);
+        init => { fs.focus(); }
+        fs := FocusScope {
+            key-pressed(event) => { root.key(event.text, true); accept }
+            key-released(event) => { root.key(event.text, false); accept }
+            Image {
+                source: root.frame;
+                width: parent.width;
+                height: parent.height;
+                image-fit: contain;
+                image-rendering: pixelated;
+            }
+        }
+    }
+}
+
 slint::slint! {
     import { ForgePanel } from "slint_common/forge_panel.slint";
     import { OraclePanel } from "slint_common/oracle_panel.slint";
@@ -4443,6 +4471,8 @@ fn main() {
     }
 
     let apps = Rc::new(RefCell::new(apps));
+    // Windows of apps' own, by app index (see PopoutWindow).
+    let popouts: Rc<RefCell<std::collections::HashMap<usize, PopoutWindow>>> = Rc::default();
     // `None` = the home/launcher list; `Some(i)` = that app is active.
     let active: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
     // The "pinned" live instrument -- pads/notes always go here (see
@@ -4580,6 +4610,8 @@ fn main() {
 
     let ui_weak = ui.as_weak();
     let apps_for_timer = Rc::clone(&apps);
+    let popouts_for_timer = Rc::clone(&popouts);
+    let apps_for_popouts = Rc::clone(&apps);
     let active_for_timer = Rc::clone(&active);
     let grid_for_timer = Rc::clone(&grid_held);
     // A connected Push's pad and button LEDs, kept equal to the screen.
@@ -4600,6 +4632,45 @@ fn main() {
         audio_host.poll(&device_state);
         let Some(ui) = ui_weak.upgrade() else { return };
         ui.set_audio_connected(audio_host.is_connected());
+
+        // Apps with a window of their own (O&C's modules): open, update or close it.
+        {
+            let mut windows = popouts_for_timer.borrow_mut();
+            let mut apps_ref = apps_for_timer.borrow_mut();
+            for (i, (_, app)) in apps_ref.iter_mut().enumerate() {
+                match app.popout() {
+                    Some((title, frame)) => {
+                        let w = windows.entry(i).or_insert_with(|| {
+                            let w = PopoutWindow::new().unwrap();
+                            let apps = Rc::clone(&apps_for_popouts);
+                            w.on_key(move |key, pressed| {
+                                if let Some((_, app)) = apps.borrow_mut().get_mut(i) {
+                                    app.popout_key(key.as_str(), pressed);
+                                }
+                            });
+                            let apps = Rc::clone(&apps_for_popouts);
+                            w.window().on_close_requested(move || {
+                                if let Some((_, app)) = apps.borrow_mut().get_mut(i) {
+                                    app.popout_closed();
+                                }
+                                slint::CloseRequestResponse::HideWindow
+                            });
+                            w.show().ok();
+                            w
+                        });
+                        w.set_window_title(title.into());
+                        if let Some(image) = rgba_frame_to_slint_image(&frame.frame_rgba, frame.width, frame.height) {
+                            w.set_frame(image);
+                        }
+                    }
+                    None => {
+                        if let Some(w) = windows.remove(&i) {
+                            w.hide().ok();
+                        }
+                    }
+                }
+            }
+        }
 
         let show_cpu = show_cpu_for_timer.load(std::sync::atomic::Ordering::Relaxed);
         ui.set_cpu_visible(show_cpu);

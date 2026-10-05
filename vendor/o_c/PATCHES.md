@@ -20,8 +20,9 @@ Replaced (same public interface, no hardware):
 
 Edited:
 - `fw/OC_gpio.h`: dropped the local `pinMode` that writes Kinetis port registers.
-- `fw/OC_calibration.h`, `fw/OC_apps.ino`: `FOURCC = ::FOURCC<...>` -- clang
-  won't initialise a member from a template of the same name.
+- `fw/OC_calibration.h`, `fw/OC_apps.ino`, `fw/util/util_misc.h`: `FOURCC = FourCC<...>`, with
+  `FourCC` an alias of the template -- clang won't initialise a member from a
+  template of the same name.
 - `fw/OC_calibration.ino`: `_ADC_OFFSET` as a literal (clang's `pow()` isn't
   constexpr).
 - `fw/OC_config.h`, `fw/util/EEPROMStorage.h`: the EEPROM is 8 KB and the
@@ -39,3 +40,9 @@ Added:
   sketch were removed by hand).
 - `host/Arduino.h`, `host/EEPROM.h`, `host/arm_math.h`: the parts of the Arduino
   and Teensy cores the firmware calls.
+
+Multiple instances: `build.rs` compiles the firmware four times, each inside
+`namespace oc0`..`oc3` (the system and host headers are included first, outside
+the namespace). `host/oc_host_core.cpp` holds per-instance pins, EEPROM, CV, DAC
+and frame in a table; `host/oc_host_fw.cpp` is the part that defines members of
+the firmware's own classes and is compiled inside each namespace.

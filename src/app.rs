@@ -405,6 +405,18 @@ pub trait App {
     fn slint_extra(&mut self) -> SlintExtra {
         SlintExtra::None
     }
+
+    /// A window of its own, beside the device's, if this app has one open: its
+    /// title and what to show in it, asked for every frame. Only the Slint
+    /// shell shows them (O&C, whose four modules can each have one).
+    fn popout(&mut self) -> Option<(String, ScreenExtra)> {
+        None
+    }
+    /// A key pressed (or released) in that window; `key` is the key's text as
+    /// Slint reports it (arrow keys are its private-use characters).
+    fn popout_key(&mut self, _key: &str, _pressed: bool) {}
+    /// The player closed that window.
+    fn popout_closed(&mut self) {}
 }
 
 /// Turns a series of samples into real connected line-segment

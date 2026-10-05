@@ -11,7 +11,7 @@ compiling, tested, minimal app. Copy it, don't start from a blank file.
 ## What this project actually is
 
 Portamax is a software simulation of a hardware groovebox/instrument that
-doesn't exist yet (an STM32N6-based device). 60 installed apps — synths,
+doesn't exist yet (an STM32N6-based device). 63 installed apps — synths,
 effects, sequencers, recorders — share one real-time audio engine, one
 modulation bus, and one control surface (4x4 pad grid, D-pad, two
 knobs/encoders, four top buttons F1-F4). See

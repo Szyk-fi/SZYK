@@ -10,6 +10,11 @@ struct FOURCC
   static const uint32_t value = ((a&0xff) << 24) | ((b&0xff) << 16) | ((c&0xff) << 8) | (d&0xff);
 };
 
+// A second name for FOURCC, for structs that have a member of that name (clang
+// won't initialise a member from a template it shadows; see PATCHES.md).
+template <uint32_t a, uint32_t b, uint32_t c, uint32_t d>
+using FourCC = FOURCC<a, b, c, d>;
+
 template <uint32_t a, uint32_t b>
 struct TWOCC
 {

@@ -86,12 +86,17 @@ fn main() {
     compile_o_c();
 }
 
-/// The Ornaments & Crimes firmware (vendor/o_c) as one static lib: its own
-/// source compiled unchanged (a handful of patched files are listed in
-/// vendor/o_c/PATCHES.md) against a host stand-in for the Teensy and the module
-/// (vendor/o_c/host). `sketch.cpp` is the Arduino sketch's .ino files in one
-/// translation unit. Changes to any file under vendor/o_c reach the build
-/// through a generated wrapper that carries their newest timestamp.
+/// The Ornaments & Crimes firmware (vendor/o_c), built four times over so four
+/// modules can run at once. The firmware keeps its state in globals, so each
+/// instance is the same source compiled inside its own namespace (`oc0`..`oc3`):
+/// a generated wrapper per source file pulls the firmware's own headers and
+/// code into `namespace ocN { ... }` after the system and host headers, which
+/// are shared. The firmware's own source is compiled unchanged (a handful of
+/// patched files are listed in vendor/o_c/PATCHES.md) against a host stand-in
+/// for the Teensy and the module (vendor/o_c/host), whose shared half keeps
+/// per-instance state in a table. `sketch.cpp` is the Arduino sketch's .ino
+/// files in one translation unit. Changes to any file under vendor/o_c reach the
+/// build through a stamp carrying their newest timestamp.
 fn compile_o_c() {
     let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let base = root.join("vendor/o_c");
@@ -109,21 +114,36 @@ fn compile_o_c() {
     }
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("o_c");
     std::fs::create_dir_all(&out).unwrap();
+    let write_if_changed = |path: &std::path::Path, text: &str| {
+        if std::fs::read_to_string(path).ok().as_deref() != Some(text) {
+            std::fs::write(path, text).unwrap();
+        }
+    };
     let stamp = out.join("stamp.cc");
-    let text = format!("// sources {}\n", newest(&base));
-    if std::fs::read_to_string(&stamp).ok().as_deref() != Some(text.as_str()) {
-        std::fs::write(&stamp, text).unwrap();
-    }
-    let mut files = vec![stamp.display().to_string(), base.join("sketch.cpp").display().to_string(), base.join("host/oc_host.cpp").display().to_string()];
+    write_if_changed(&stamp, &format!("// sources {}\n", newest(&base)));
+    let mut files = vec![stamp.display().to_string(), base.join("host/oc_host_core.cpp").display().to_string()];
+    // The sources every instance compiles.
+    let mut sources: Vec<String> = vec!["sketch.cpp".into(), "host/oc_host_fw.cpp".into()];
     for name in [
         "OC_autotune", "OC_bitmaps", "OC_chords", "OC_debug", "OC_digital_inputs", "OC_input_map", "OC_menus", "OC_patterns", "OC_scales", "OC_strings", "OC_ui",
         "bjorklund", "braids_quantizer", "frames_poly_lfo", "frames_resources", "peaks_bytebeat", "peaks_multistage_envelope", "peaks_resources", "streams_lorenz_generator",
         "streams_resources",
     ] {
-        files.push(base.join(format!("fw/{name}.cpp")).display().to_string());
+        sources.push(format!("fw/{name}.cpp"));
     }
-    files.push(base.join("fw/src/drivers/weegfx.cpp").display().to_string());
-    files.push(base.join("fw/src/util/util_misc.cpp").display().to_string());
+    sources.push("fw/src/drivers/weegfx.cpp".into());
+    sources.push("fw/src/util/util_misc.cpp".into());
+    // System and host headers go in first, outside any namespace; the guards then
+    // keep them out of the firmware's namespace when its own headers include them.
+    let prelude = "#include <Arduino.h>\n#include <EEPROM.h>\n#include <algorithm>\n#include <atomic>\n#include <chrono>\n#include <cmath>\n#include <cstdarg>\n#include <cstddef>\n#include <cstdint>\n#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <limits>\n#include <math.h>\n#include <memory>\n#include <mutex>\n#include <new>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string>\n#include <string.h>\n#include <thread>\n#include <type_traits>\n#include <utility>\n";
+    for inst in 0..4 {
+        for (k, src) in sources.iter().enumerate() {
+            let text = format!("{prelude}#define OC_INSTANCE_NAME oc{inst}\nnamespace oc{inst} {{\n#include \"{}\"\n}}\n", base.join(src).display());
+            let path = out.join(format!("oc{inst}_{k}.cc"));
+            write_if_changed(&path, &text);
+            files.push(path.display().to_string());
+        }
+    }
     let inc: Vec<String> = ["host", "fw", "fw/src/drivers", "fw/extern"].iter().map(|d| base.join(d).display().to_string()).collect();
     let inc_refs: Vec<&str> = inc.iter().map(String::as_str).collect();
     compile_cached_with("o_c_firmware", &inc_refs, &[("F_CPU", Some("120000000")), ("typeof", Some("__typeof__"))], &["-w", "-Wno-c++11-narrowing"], &files);

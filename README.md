@@ -1,6 +1,6 @@
 # Portamax
 
-Portamax is a self-contained groovebox/instrument simulator: 60 installed
+Portamax is a self-contained groovebox/instrument simulator: 63 installed
 apps (synths, effects, sequencers, recorders) sharing one real-time audio
 engine, one modulation bus, and one control surface (4x4 pad grid, D-pad,
 four knobs/encoders, F1-F4). It's a software simulation of a piece of

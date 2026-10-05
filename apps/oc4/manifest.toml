@@ -1,0 +1,19 @@
+id = "oc4"
+module = "oc"
+name = "O&C 4"
+category = "utility"
+description = "The Ornaments & Crimes eurorack CV firmware: quantizers, sequencers, envelopes, LFOs, chord sequencers and more, running as the module's own code."
+audio_outputs = []
+note_outputs = ["O&C 4"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: O&C 4 Level",
+    "O&C 4: CV 1",
+    "O&C 4: CV 2",
+    "O&C 4: CV 3",
+    "O&C 4: CV 4",
+    "O&C 4: TR 1",
+    "O&C 4: TR 2",
+    "O&C 4: TR 3",
+    "O&C 4: TR 4",
+]

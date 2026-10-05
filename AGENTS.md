@@ -101,6 +101,22 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: four O&C modules at once, each able to have its own window
+- Branch: claude/atlas-play
+- Changed: `build.rs` (the O&C firmware is compiled four times, each inside its own
+  `namespace oc0..oc3`, since it keeps its state in globals), `vendor/o_c/host/`
+  (per-instance pins/EEPROM/CV/DAC/frame table in `oc_host_core.cpp`; the part that
+  defines the firmware's own class members is `oc_host_fw.cpp`, compiled per
+  namespace), `src/apps/oc.rs` (instance 0-3, ids `oc`, `oc2`..`oc4`, names, saves
+  `saves/oc/eeprom{,2,3,4}.bin`), `apps/oc2..4/manifest.toml`.
+- Shared files touched: `src/app.rs` (three default methods on `App`: `popout`,
+  `popout_key`, `popout_closed` -- a window of an app's own) and
+  `examples/slint_home_live.rs` (opens, updates and closes those windows, forwarding
+  the keyboard). Only the Slint shell shows them; the minifb `os.rs` path does not.
+- Tests: a test boots all four firmwares together and checks each quantizes its own
+  CV and that turning one's encoder changes only its screen. Not tried by eye: the
+  window itself (needs the live shell).
+
 ### 2026-10-05: Claude: ten new apps from real engines (Airwindows, Braids, Stages, Peaks, Streams, SoundFont, Dexed, Chip Player, Orca, O&C)
 - Branch: claude/atlas-play
 - Added (each is a file in `src/apps/` + `apps/<id>/manifest.toml`, with real tests):

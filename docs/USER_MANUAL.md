@@ -392,6 +392,8 @@ stick and hands play them); triggers come from the pads or the mod bus. Its four
 outputs patch to any mod input, and one output can play notes on another app.
 Its settings persist in `saves/oc/`.
 
+Four modules run at once: **O&C**, **O&C 2**, **O&C 3** and **O&C 4**, each its own firmware with its own screen, settings, inputs (`O&C 2: CV 1`...) and outputs. In the Slint shell, the menu's **Window** row opens a module in a window of its own, so all four can be on screen together; the window takes the keyboard: arrows turn the encoders (up/down the left, left/right the right), Return or R is the right button, U, D and L the other three, and 1–4 are the trigger inputs (held while the key is).
+
 ## 6. Recording & library
 
 | App | What it does |

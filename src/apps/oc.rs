@@ -33,8 +33,13 @@
 //! - The four outputs can each be patched to any app's mod input, and a chosen
 //!   output can play notes on another app, struck when a chosen trigger rises.
 //!
-//! The firmware's settings are kept in its EEPROM, saved in `saves/oc/`. One
-//! copy of the firmware exists per process; a second O&C app is silent.
+//! The firmware's settings are kept in its EEPROM, saved in `saves/oc/`.
+//!
+//! Four modules run at once, O&C 1-4 (the apps `oc`, `oc2`, `oc3`, `oc4`). The
+//! firmware keeps its state in globals, so build.rs compiles it four times over,
+//! each in its own namespace, and each instance has its own screen, settings,
+//! inputs ("O&C 2: CV 1"...) and outputs. A second app for the same instance is
+//! silent.
 
 use super::kids_kit;
 use super::mi_kit::CvOuts;
@@ -59,19 +64,22 @@ use std::sync::{
     Arc,
 };
 
-const APP_NAME: &str = "O&C";
+/// How many modules can run at once (build.rs compiles the firmware this many times).
+pub const INSTANCES: usize = 4;
+const APP_NAMES: [&str; INSTANCES] = ["O&C", "O&C 2", "O&C 3", "O&C 4"];
+const APP_IDS: [&str; INSTANCES] = ["oc", "oc2", "oc3", "oc4"];
 
 unsafe extern "C" {
-    fn oc_start();
-    fn oc_timers_running() -> c_int;
-    fn oc_run_isrs(core_ticks: c_int, ui_ticks: c_int);
-    fn oc_set_pin(pin: c_int, level: c_int);
-    fn oc_set_cv_millivolts(channel: c_int, millivolts: c_int);
-    fn oc_dac_millivolts(channel: c_int) -> c_int;
-    fn oc_frame(out: *mut u8) -> u64;
-    fn oc_eeprom_read(out: *mut u8);
-    fn oc_eeprom_write(input: *const u8);
-    fn oc_app_name() -> *const c_char;
+    fn oc_start(inst: c_int);
+    fn oc_timers_running(inst: c_int) -> c_int;
+    fn oc_run_isrs(inst: c_int, core_ticks: c_int, ui_ticks: c_int);
+    fn oc_set_pin(inst: c_int, pin: c_int, level: c_int);
+    fn oc_set_cv_millivolts(inst: c_int, channel: c_int, millivolts: c_int);
+    fn oc_dac_millivolts(inst: c_int, channel: c_int) -> c_int;
+    fn oc_frame(inst: c_int, out: *mut u8) -> u64;
+    fn oc_eeprom_read(inst: c_int, out: *mut u8);
+    fn oc_eeprom_write(inst: c_int, input: *const u8);
+    fn oc_app_name(inst: c_int) -> *const c_char;
 }
 
 const EEPROM_SIZE: usize = 8192;
@@ -102,9 +110,9 @@ const C_NOTE_GATE: usize = 5;
 const C_PLAYS: usize = 6;
 const N_CONTROLS: usize = 7;
 
-fn kit_config() -> KitConfig {
+fn kit_config(instance: usize) -> KitConfig {
     KitConfig {
-        app_id: "oc",
+        app_id: APP_IDS[instance],
         layers: vec![Layer::Native(0, "PANEL"), Layer::Controls, Layer::Moments],
         // The D-pad is the firmware's encoders, so there are no dials for it.
         hero: Vec::new(),
@@ -126,6 +134,11 @@ struct Shared {
     pulse_ms: [AtomicU32; 4],
     /// Trigger input pads held.
     gate_pads: [AtomicBool; 4],
+    /// The same, from the keyboard while the module has a window of its own.
+    key_held: [AtomicBool; 4],
+    key_gates: [AtomicBool; 4],
+    /// Whether the module's own window is open.
+    window: AtomicBool,
     /// Manual CV knobs, volts (-5..5), and the mod-bus inputs that add to them.
     cv_knob: [AtomicF32; 4],
     cv_mod: [Arc<AtomicF32>; 4],
@@ -142,10 +155,11 @@ struct Shared {
     driving: AtomicBool,
 }
 
-/// One copy of the firmware per process.
-static FIRMWARE_CLAIMED: AtomicBool = AtomicBool::new(false);
+/// One app per firmware instance.
+static FIRMWARE_CLAIMED: [AtomicBool; INSTANCES] = [AtomicBool::new(false), AtomicBool::new(false), AtomicBool::new(false), AtomicBool::new(false)];
 
 pub struct OcApp {
+    instance: usize,
     p: Arc<Shared>,
     list: ParamList,
     nav: Arc<AtomicF32>,
@@ -162,35 +176,42 @@ pub struct OcApp {
     last_save: std::time::Instant,
 }
 
-fn eeprom_file() -> PathBuf {
+fn eeprom_file(instance: usize) -> PathBuf {
     let root = std::env::var_os("PORTAMAX_SAVES_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/saves")));
-    root.join("oc").join("eeprom.bin")
+    root.join("oc").join(if instance == 0 { "eeprom.bin".to_string() } else { format!("eeprom{}.bin", instance + 1) })
 }
 
 impl OcApp {
-    pub fn new(sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, mods: Arc<ModBus>, _bus: Arc<AudioBus>, mixer: Arc<MixerBus>) -> Self {
-        Self::build(sensitivity, nav, mods, mixer, !cfg!(test))
+    /// Module `instance` (0..4): each is its own firmware, with its own settings,
+    /// screen, inputs and outputs.
+    pub fn new(instance: usize, sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, mods: Arc<ModBus>, _bus: Arc<AudioBus>, mixer: Arc<MixerBus>) -> Self {
+        Self::build(instance, sensitivity, nav, mods, mixer, !cfg!(test))
     }
 
-    fn build(sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, mods: Arc<ModBus>, mixer: Arc<MixerBus>, persist: bool) -> Self {
+    fn build(instance: usize, sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, mods: Arc<ModBus>, mixer: Arc<MixerBus>, persist: bool) -> Self {
+        let instance = instance.min(INSTANCES - 1);
+        let name = APP_NAMES[instance];
         // The module has no audio of its own, but its level is registered like
         // everyone's so the mixer can list it.
-        let _ = mixer.register(APP_NAME, &mods);
-        let (route, out) = NoteRoute::new(None, APP_NAME, "oc", false);
-        let eeprom_path = persist.then(eeprom_file);
+        let _ = mixer.register(name, &mods);
+        let (route, out) = NoteRoute::new(None, name, APP_IDS[instance], false);
+        let eeprom_path = persist.then(|| eeprom_file(instance));
         let saved = eeprom_path.as_ref().and_then(|p| std::fs::read(p).ok()).filter(|d| d.len() == EEPROM_SIZE);
         if let Some(d) = &saved {
             // The firmware reads its settings when it boots, so they go in first.
-            unsafe { oc_eeprom_write(d.as_ptr()) };
+            unsafe { oc_eeprom_write(instance as c_int, d.as_ptr()) };
         }
         let p = Arc::new(Shared {
             detents: [AtomicI32::new(0), AtomicI32::new(0)],
             held: std::array::from_fn(|_| AtomicBool::new(false)),
             pulse_ms: std::array::from_fn(|_| AtomicU32::new(0)),
             gate_pads: std::array::from_fn(|_| AtomicBool::new(false)),
+            key_held: std::array::from_fn(|_| AtomicBool::new(false)),
+            key_gates: std::array::from_fn(|_| AtomicBool::new(false)),
+            window: AtomicBool::new(false),
             cv_knob: std::array::from_fn(|_| AtomicF32::new(0.0)),
-            cv_mod: std::array::from_fn(|i| mods.register(format!("{APP_NAME}: CV {}", i + 1))),
-            gate_mod: std::array::from_fn(|i| mods.register(format!("{APP_NAME}: TR {}", i + 1))),
+            cv_mod: std::array::from_fn(|i| mods.register(format!("{name}: CV {}", i + 1))),
+            gate_mod: std::array::from_fn(|i| mods.register(format!("{name}: TR {}", i + 1))),
             note_channel: AtomicU32::new(0),
             note_gate: AtomicU32::new(0),
             out_mv: std::array::from_fn(|_| AtomicI32::new(0)),
@@ -200,12 +221,13 @@ impl OcApp {
             driving: AtomicBool::new(false),
         });
         Self {
+            instance,
             p,
             list: ParamList::new(),
             nav,
             sensitivity,
             taken: false,
-            kit: PlayKit::new(kit_config(), persist),
+            kit: PlayKit::new(kit_config(instance), persist),
             outs: Arc::new(CvOuts::new(&OUTS)),
             modbus: mods,
             note_route: route,
@@ -219,7 +241,7 @@ impl OcApp {
 
     /// Lets the module play other apps (see note_bus.rs).
     pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
-        let (route, out) = NoteRoute::new(bus, APP_NAME, "oc", false);
+        let (route, out) = NoteRoute::new(bus, APP_NAMES[self.instance], APP_IDS[self.instance], false);
         self.note_route = route;
         self.note_out = Some(out);
         self
@@ -228,7 +250,7 @@ impl OcApp {
     /// The name of the firmware app on screen ("CopierMaschine"...).
     pub fn firmware_app(&self) -> String {
         if self.p.driving.load(Ordering::Relaxed) {
-            unsafe { CStr::from_ptr(oc_app_name()) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(oc_app_name(self.instance as c_int)) }.to_string_lossy().into_owned()
         } else {
             String::new()
         }
@@ -256,6 +278,7 @@ impl OcApp {
                 (n, v, false)
             })
             .collect();
+        r.push(("Window".into(), if self.p.window.load(Ordering::Relaxed) { "open" } else { "closed" }.into(), false));
         for (i, name) in OUTS.iter().enumerate() {
             r.push((format!("Out {name} App"), self.outs.app_label(&self.modbus, i), false));
             r.push((format!("Out {name} Input"), self.outs.input_label(&self.modbus, i), false));
@@ -264,7 +287,7 @@ impl OcApp {
     }
 
     fn rows_len(&self) -> usize {
-        N_CONTROLS + OUTS.len() * 2
+        N_CONTROLS + 1 + OUTS.len() * 2
     }
 
     fn edit_row(&mut self, row: usize, delta: i32) {
@@ -273,8 +296,10 @@ impl OcApp {
         }
         if row < N_CONTROLS {
             self.kit_edit(row, delta);
+        } else if row == N_CONTROLS {
+            self.p.window.store(delta > 0, Ordering::Relaxed);
         } else {
-            let k = row - N_CONTROLS;
+            let k = row - N_CONTROLS - 1;
             if k % 2 == 0 {
                 self.outs.step_app(&self.modbus, k / 2, delta.signum());
             } else {
@@ -291,7 +316,7 @@ impl OcApp {
         }
         self.last_save = std::time::Instant::now();
         let mut now = vec![0u8; EEPROM_SIZE];
-        unsafe { oc_eeprom_read(now.as_mut_ptr()) };
+        unsafe { oc_eeprom_read(self.instance as c_int, now.as_mut_ptr()) };
         if now != self.eeprom_saved {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir).ok();
@@ -310,7 +335,7 @@ impl OcApp {
     }
 
     fn draw_oled(&mut self, f: &mut FrameBuffer) {
-        unsafe { oc_frame(self.frame.as_mut_ptr()) };
+        unsafe { oc_frame(self.instance as c_int, self.frame.as_mut_ptr()) };
         // The 128x64 panel at 4x, centred; its bytes are 8 pages of 128 columns,
         // bit 0 the top row of a page.
         let (x0, y0, k) = (64, 8, 4);
@@ -456,6 +481,47 @@ impl App for OcApp {
     fn needs_background_audio(&self) -> bool {
         true
     }
+    fn popout(&mut self) -> Option<(String, crate::app::ScreenExtra)> {
+        if !self.p.window.load(Ordering::Relaxed) {
+            return None;
+        }
+        let mut fb = FrameBuffer::new();
+        fb.clear(BG).ok();
+        self.draw_oled(&mut fb);
+        self.draw_status(&mut fb);
+        match kids_kit::screen_extra(&fb) {
+            SlintExtra::Screen(s) => Some((format!("{} - {}", APP_NAMES[self.instance], self.firmware_app()), s)),
+            _ => None,
+        }
+    }
+    fn popout_key(&mut self, key: &str, pressed: bool) {
+        // Arrows are the encoders (a detent per press, and the keyboard's own
+        // repeat turns it faster), Return and R the right button, U/D/L the other
+        // three buttons, 1-4 the trigger inputs, held while the key is.
+        let add = |a: &AtomicI32, n: i32| {
+            let cur = a.load(Ordering::Relaxed);
+            a.store((cur + n).clamp(-64, 64), Ordering::Relaxed);
+        };
+        match key {
+            "\u{f700}" if pressed => add(&self.p.detents[0], -1),
+            "\u{f701}" if pressed => add(&self.p.detents[0], 1),
+            "\u{f702}" if pressed => add(&self.p.detents[1], -1),
+            "\u{f703}" if pressed => add(&self.p.detents[1], 1),
+            "u" | "U" => self.p.key_held[0].store(pressed, Ordering::Relaxed),
+            "d" | "D" => self.p.key_held[1].store(pressed, Ordering::Relaxed),
+            "l" | "L" => self.p.key_held[2].store(pressed, Ordering::Relaxed),
+            "r" | "R" | "\n" => self.p.key_held[3].store(pressed, Ordering::Relaxed),
+            "1" | "2" | "3" | "4" => self.p.key_gates[key.parse::<usize>().unwrap_or(1) - 1].store(pressed, Ordering::Relaxed),
+            _ => {}
+        }
+    }
+    fn popout_closed(&mut self) {
+        self.p.window.store(false, Ordering::Relaxed);
+        for i in 0..4 {
+            self.p.key_held[i].store(false, Ordering::Relaxed);
+            self.p.key_gates[i].store(false, Ordering::Relaxed);
+        }
+    }
     fn tick(&mut self, input: &Input) {
         let mut play = std::mem::take(&mut self.kit);
         let step = play.tick(self, input);
@@ -500,7 +566,7 @@ impl App for OcApp {
     fn draw(&mut self, f: &mut FrameBuffer) {
         f.clear(BG).ok();
         if self.kit.menu {
-            Text::new(APP_NAME, Point::new(16, 30), MonoTextStyle::new(&SPLEEN_16X32, INK)).draw(f).ok();
+            Text::new(APP_NAMES[self.instance], Point::new(16, 30), MonoTextStyle::new(&SPLEEN_16X32, INK)).draw(f).ok();
             let r: Vec<(String, String)> = self.rows().into_iter().map(|(a, b, _)| (a, b)).collect();
             self.list.draw_themed(f, 16, 44, 24, r.len().min(10), &r, BG, DIM, ACCENT);
             return;
@@ -526,13 +592,14 @@ impl App for OcApp {
         self.list.selected
     }
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
-        if self.taken || FIRMWARE_CLAIMED.swap(true, Ordering::SeqCst) {
+        if self.taken || FIRMWARE_CLAIMED[self.instance].swap(true, Ordering::SeqCst) {
             return None;
         }
         self.taken = true;
         self.p.driving.store(true, Ordering::Relaxed);
-        unsafe { oc_start() };
+        unsafe { oc_start(self.instance as c_int) };
         Some(Box::new(Processor {
+            instance: self.instance as c_int,
             p: Arc::clone(&self.p),
             outs: Arc::clone(&self.outs),
             modbus: Arc::clone(&self.modbus),
@@ -554,7 +621,7 @@ impl Drop for OcApp {
         // Free for the next one (tests); the firmware thread itself keeps running.
         if self.taken {
             self.p.driving.store(false, Ordering::Relaxed);
-            FIRMWARE_CLAIMED.store(false, Ordering::SeqCst);
+            FIRMWARE_CLAIMED[self.instance].store(false, Ordering::SeqCst);
         }
     }
 }
@@ -577,6 +644,7 @@ const CW: [(i32, i32); 5] = [(1, 0), (1, 0), (0, 0), (1, 0), (1, 1)];
 const CCW: [(i32, i32); 5] = [(0, 1), (0, 1), (0, 0), (0, 1), (1, 1)];
 
 struct Processor {
+    instance: c_int,
     p: Arc<Shared>,
     outs: Arc<CvOuts>,
     modbus: Arc<ModBus>,
@@ -601,10 +669,10 @@ impl Processor {
             if extra > 0 {
                 self.p.pulse_ms[b].store(extra - 1, Ordering::Relaxed);
             }
-            let want_low = self.p.held[b].load(Ordering::Relaxed) || extra > 0;
+            let want_low = self.p.held[b].load(Ordering::Relaxed) || self.p.key_held[b].load(Ordering::Relaxed) || extra > 0;
             if want_low != self.buttons[b].low {
                 self.buttons[b].low = want_low;
-                unsafe { oc_set_pin(PIN_BUTTON[b], if want_low { 0 } else { 1 }) };
+                unsafe { oc_set_pin(self.instance, PIN_BUTTON[b], if want_low { 0 } else { 1 }) };
             }
         }
         // Encoders: one detent at a time.
@@ -621,8 +689,8 @@ impl Processor {
             if enc.direction != 0 {
                 let (a, b) = if enc.direction > 0 { CW[enc.phase] } else { CCW[enc.phase] };
                 unsafe {
-                    oc_set_pin(pins[0], a);
-                    oc_set_pin(pins[1], b);
+                    oc_set_pin(self.instance, pins[0], a);
+                    oc_set_pin(self.instance, pins[1], b);
                 }
                 enc.phase += 1;
                 if enc.phase >= CW.len() {
@@ -632,11 +700,11 @@ impl Processor {
         }
         // Trigger inputs, active low: a pad or a mod-bus value above half.
         for g in 0..4 {
-            let high = self.p.gate_pads[g].load(Ordering::Relaxed) || self.p.gate_mod[g].get() > 0.5;
+            let high = self.p.gate_pads[g].load(Ordering::Relaxed) || self.p.key_gates[g].load(Ordering::Relaxed) || self.p.gate_mod[g].get() > 0.5;
             if high != self.gate_was[g] {
                 self.gate_was[g] = high;
                 self.p.gates[g].store(high, Ordering::Relaxed);
-                unsafe { oc_set_pin(PIN_TR[g], if high { 0 } else { 1 }) };
+                unsafe { oc_set_pin(self.instance, PIN_TR[g], if high { 0 } else { 1 }) };
                 if g as u32 + 1 == self.p.note_gate.load(Ordering::Relaxed) && high {
                     self.note_wait = 3;
                 }
@@ -647,7 +715,7 @@ impl Processor {
             let v = (self.p.cv_knob[c].get() + self.p.cv_mod[c].get() * 5.0).clamp(-5.0, 5.0);
             let mv = (v * 1000.0) as i32;
             self.p.in_mv[c].store(mv, Ordering::Relaxed);
-            unsafe { oc_set_cv_millivolts(c as c_int, mv) };
+            unsafe { oc_set_cv_millivolts(self.instance, c as c_int, mv) };
         }
     }
 
@@ -694,7 +762,7 @@ impl AudioProcessor for Processor {
             return;
         }
         let frames = out.len() / channels;
-        if unsafe { oc_timers_running() } == 0 {
+        if unsafe { oc_timers_running(self.instance) } == 0 {
             return;
         }
         // Millisecond by millisecond: the front panel, then that millisecond's
@@ -707,9 +775,9 @@ impl AudioProcessor for Processor {
             self.core_credit += 16.666;
             let core = self.core_credit as i32;
             self.core_credit -= core as f64;
-            unsafe { oc_run_isrs(core, 1) };
+            unsafe { oc_run_isrs(self.instance, core, 1) };
             for c in 0..4 {
-                let mv = unsafe { oc_dac_millivolts(c) };
+                let mv = unsafe { oc_dac_millivolts(self.instance, c) };
                 self.p.out_mv[c as usize].store(mv, Ordering::Relaxed);
             }
             self.note_tick();
@@ -724,8 +792,9 @@ impl AudioProcessor for Processor {
     }
 }
 
-pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
-    Box::new(OcApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
+pub fn create(ctx: &crate::app::AppContext, id: &str) -> Box<dyn crate::app::App> {
+    let instance = APP_IDS.iter().position(|i| *i == id).unwrap_or(0);
+    Box::new(OcApp::new(instance, ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()).with_notes(ctx.try_get()))
 }
 
 #[cfg(test)]
@@ -737,7 +806,11 @@ mod tests {
     static LOCK: Mutex<()> = Mutex::new(());
 
     fn app() -> OcApp {
-        OcApp::build(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::new(ModBus::new()), Arc::new(MixerBus::new()), false)
+        app_n(0)
+    }
+
+    fn app_n(n: usize) -> OcApp {
+        OcApp::build(n, Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::new(ModBus::new()), Arc::new(MixerBus::new()), false)
     }
 
     /// Runs audio blocks until `done` (or `max_ms` of wall clock): the firmware
@@ -773,7 +846,7 @@ mod tests {
 
     fn frame_hash() -> u64 {
         let mut f = [0u8; 1024];
-        unsafe { oc_frame(f.as_mut_ptr()) };
+        unsafe { oc_frame(0, f.as_mut_ptr()) };
         f.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
     }
 
@@ -901,12 +974,105 @@ mod tests {
     #[test]
     fn its_inputs_are_mod_inputs_and_the_pads_are_the_panel() {
         let modbus = Arc::new(ModBus::new());
-        let a = OcApp::build(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::clone(&modbus), Arc::new(MixerBus::new()), false);
+        let a = OcApp::build(0, Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::clone(&modbus), Arc::new(MixerBus::new()), false);
         for name in ["O&C: CV 1", "O&C: CV 4", "O&C: TR 1", "O&C: TR 4"] {
             assert!(modbus.index_of(name).is_some(), "{name}");
         }
         assert_eq!(a.kit.layer_label(), "PANEL");
         assert_eq!((a.kit_pad_label(0, 0), a.kit_pad_label(0, 3), a.kit_pad_label(0, 4)), ("UP".to_string(), "R".to_string(), "TR1".to_string()));
         assert!(a.wants_fullscreen());
+    }
+
+    #[test]
+    fn four_modules_run_at_once_each_with_its_own_firmware_state() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut apps: Vec<OcApp> = (0..INSTANCES).map(app_n).collect();
+        let mut procs: Vec<Box<dyn AudioProcessor>> = apps.iter_mut().map(|a| a.audio_processor().expect("each instance owns its firmware")).collect();
+        let mut buf = vec![0.0f32; 480 * 2];
+        // Boot them all together; their splash screens last about three seconds of real time.
+        let t0 = std::time::Instant::now();
+        while t0.elapsed().as_secs_f32() < 7.0 {
+            for p in procs.iter_mut() {
+                p.process(&mut buf, 2, 48_000.0);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        for (i, a) in apps.iter().enumerate() {
+            assert_eq!(a.firmware_app(), "CopierMaschine", "instance {i} is up");
+        }
+        // Different CVs in, a trigger on each: each quantizes its own input.
+        let volts = [1.0, 2.0, 0.58, -1.0];
+        for (a, v) in apps.iter().zip(volts) {
+            a.p.cv_knob[0].set(v);
+        }
+        for _ in 0..6 {
+            for p in procs.iter_mut() {
+                p.process(&mut buf, 2, 48_000.0);
+            }
+        }
+        for a in &apps {
+            a.p.gate_pads[0].store(true, Ordering::Relaxed);
+        }
+        for _ in 0..3 {
+            for p in procs.iter_mut() {
+                p.process(&mut buf, 2, 48_000.0);
+            }
+        }
+        for a in &apps {
+            a.p.gate_pads[0].store(false, Ordering::Relaxed);
+        }
+        for _ in 0..6 {
+            for p in procs.iter_mut() {
+                p.process(&mut buf, 2, 48_000.0);
+            }
+        }
+        let expect = [1000, 2000, 583, -1000];
+        for (i, a) in apps.iter().enumerate() {
+            assert!((out(a, 0) - expect[i]).abs() < 20, "instance {i}: {} mV, wanted about {}", out(a, 0), expect[i]);
+        }
+        // Their screens are their own: turning one's encoder leaves the others as they were.
+        let hashes = |apps: &[OcApp]| -> Vec<u64> {
+            apps.iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    let mut f = [0u8; 1024];
+                    unsafe { oc_frame(i as c_int, f.as_mut_ptr()) };
+                    f.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
+                })
+                .collect()
+        };
+        let before = hashes(&apps);
+        apps[2].tick(&Input { nav_x: 1, ..Default::default() });
+        for _ in 0..10 {
+            for p in procs.iter_mut() {
+                p.process(&mut buf, 2, 48_000.0);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let after = hashes(&apps);
+        assert_ne!(before[2], after[2], "instance 2's screen changed");
+        for i in [0, 1, 3] {
+            assert_eq!(before[i], after[i], "instance {i}'s screen did not");
+        }
+    }
+
+    #[test]
+    fn a_module_can_open_its_own_window_that_takes_the_keyboard() {
+        let mut a = app_n(1);
+        assert!(a.popout().is_none(), "no window until asked");
+        a.edit_row(N_CONTROLS, 1); // the menu's Window row
+        let (title, frame) = a.popout().expect("a window is open");
+        assert!(title.starts_with("O&C 2"), "{title}");
+        assert_eq!((frame.width, frame.height), (640, 360));
+        a.popout_key("\u{f703}", true); // right arrow: the right encoder
+        a.popout_key("\u{f701}", true); // down arrow: the left encoder
+        assert_eq!((a.p.detents[1].load(Ordering::Relaxed), a.p.detents[0].load(Ordering::Relaxed)), (1, 1));
+        a.popout_key("\n", true);
+        a.popout_key("3", true);
+        assert!(a.p.key_held[3].load(Ordering::Relaxed) && a.p.key_gates[2].load(Ordering::Relaxed), "Return holds R, 3 holds TR 3");
+        a.popout_key("\n", false);
+        assert!(!a.p.key_held[3].load(Ordering::Relaxed));
+        a.popout_closed();
+        assert!(a.popout().is_none() && !a.p.key_gates[2].load(Ordering::Relaxed), "closing releases everything");
     }
 }
