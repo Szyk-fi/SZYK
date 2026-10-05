@@ -1004,6 +1004,29 @@ mod tests {
     }
 
     #[test]
+    fn a_module_can_be_reflashed_with_another_firmware_while_running() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let avail = firmware::available();
+        let hemi = VARIANTS.iter().position(|v| v.id == "hemi").unwrap();
+        if !avail.contains(&hemi) {
+            return;
+        }
+        let mut a = app();
+        a.set_variant(hemi);
+        let mut p = a.audio_processor().expect("the first O&C owns the firmware");
+        boot(&a, &mut p);
+        assert_eq!(a.variant_id(), "hemi");
+        assert_eq!(a.firmware_app(), "Hemisphere", "the Hemisphere Suite's own app is up");
+        // Reflash back to stock while the audio thread is running.
+        a.set_variant(0);
+        a.tick(&Input::default());
+        boot(&a, &mut p);
+        assert_eq!(a.firmware_app(), "CopierMaschine");
+        a.tick(&Input::default());
+        assert!(a.retiring.is_empty() || a.retiring.iter().all(|f| Arc::strong_count(f) >= 1));
+    }
+
+    #[test]
     fn the_right_encoder_changes_what_the_firmware_shows() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut a = app();

@@ -123,3 +123,26 @@ extern "C" volatile uint32_t oc_host_cycle_counter;
 #define ARM_DWT_CTRL oc_host_cycle_counter
 #define ARM_DWT_CTRL_CYCCNTENA 0
 #define IRQ_PORTB 0
+
+#ifndef constrain
+#define constrain(x, lo, hi) ((x) < (lo) ? (lo) : ((x) > (hi) ? (hi) : (x)))
+#endif
+
+// The module's USB-MIDI device port. The host has no MIDI transport into the
+// firmware yet, so nothing is ever received and what the firmware sends is dropped.
+struct UsbMidiStub {
+  bool read(int = 0) { return false; }
+  uint8_t getType() { return 0; }
+  uint8_t getChannel() { return 0; }
+  uint8_t getData1() { return 0; }
+  uint8_t getData2() { return 0; }
+  uint8_t* getSysExArray() { static uint8_t none[8]; return none; }
+  void sendNoteOn(uint8_t, uint8_t, uint8_t, uint8_t = 0) {}
+  void sendNoteOff(uint8_t, uint8_t, uint8_t, uint8_t = 0) {}
+  void sendControlChange(uint8_t, uint8_t, uint8_t, uint8_t = 0) {}
+  void sendAfterTouch(uint8_t, uint8_t, uint8_t = 0) {}
+  void sendPitchBend(int, uint8_t, uint8_t = 0) {}
+  void sendSysEx(uint32_t, const uint8_t*, bool = false, uint8_t = 0) {}
+  void send_now() {}
+};
+static UsbMidiStub usbMIDI;

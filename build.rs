@@ -125,7 +125,7 @@ fn compile_o_c_firmwares() {
             continue;
         }
         let mut build = cc::Build::new();
-        build.cpp(true).std("c++14").warnings(false).flag("-w").flag("-Wno-c++11-narrowing");
+        build.cpp(true).std("c++14").warnings(false).flag("-w").flag("-Wno-c++11-narrowing").flag("-fno-rtti"); // the Teensy build has no RTTI
         build.define("F_CPU", Some("120000000")).define("typeof", Some("__typeof__"));
         for inc in std::iter::once(shared_host.display().to_string()).chain(v.includes.iter().map(|d| base.join(d).display().to_string())) {
             build.include(inc);
@@ -170,6 +170,18 @@ const O_C_VARIANTS: &[OcVariant] = &[OcVariant {
         "sketch.cpp", "host/oc_host_fw.cpp", "fw/OC_autotune.cpp", "fw/OC_bitmaps.cpp", "fw/OC_chords.cpp", "fw/OC_debug.cpp", "fw/OC_digital_inputs.cpp", "fw/OC_input_map.cpp",
         "fw/OC_menus.cpp", "fw/OC_patterns.cpp", "fw/OC_scales.cpp", "fw/OC_strings.cpp", "fw/OC_ui.cpp", "fw/bjorklund.cpp", "fw/braids_quantizer.cpp", "fw/frames_poly_lfo.cpp",
         "fw/frames_resources.cpp", "fw/peaks_bytebeat.cpp", "fw/peaks_multistage_envelope.cpp", "fw/peaks_resources.cpp", "fw/streams_lorenz_generator.cpp",
+        "fw/streams_resources.cpp", "fw/src/drivers/weegfx.cpp", "fw/src/util/util_misc.cpp",
+    ],
+    defines: &[],
+},
+OcVariant {
+    id: "hemi",
+    dir: "o_c_hemi",
+    includes: &["host", "fw", "fw/src/drivers", "fw/extern", "."],
+    sources: &[
+        "sketch.cpp", "host/oc_host_fw.cpp", "fw/OC_autotune.cpp", "fw/OC_bitmaps.cpp", "fw/OC_debug.cpp", "fw/OC_digital_inputs.cpp", "fw/OC_input_map.cpp",
+        "fw/OC_menus.cpp", "fw/OC_patterns.cpp", "fw/OC_scales.cpp", "fw/OC_strings.cpp", "fw/OC_ui.cpp", "fw/bjorklund.cpp", "fw/braids_quantizer.cpp",
+        "fw/peaks_bytebeat.cpp", "fw/peaks_multistage_envelope.cpp", "fw/peaks_resources.cpp", "fw/streams_lorenz_generator.cpp",
         "fw/streams_resources.cpp", "fw/src/drivers/weegfx.cpp", "fw/src/util/util_misc.cpp",
     ],
     defines: &[],
