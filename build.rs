@@ -83,6 +83,50 @@ fn main() {
 
     compile_listed_bridges(eurorack, bridge);
     compile_airwindows(bridge);
+    compile_o_c();
+}
+
+/// The Ornaments & Crimes firmware (vendor/o_c) as one static lib: its own
+/// source compiled unchanged (a handful of patched files are listed in
+/// vendor/o_c/PATCHES.md) against a host stand-in for the Teensy and the module
+/// (vendor/o_c/host). `sketch.cpp` is the Arduino sketch's .ino files in one
+/// translation unit. Changes to any file under vendor/o_c reach the build
+/// through a generated wrapper that carries their newest timestamp.
+fn compile_o_c() {
+    let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let base = root.join("vendor/o_c");
+    println!("cargo:rerun-if-changed=vendor/o_c");
+    if !base.is_dir() {
+        return;
+    }
+    fn newest(dir: &std::path::Path) -> u128 {
+        let mut t = 0;
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            t = t.max(if p.is_dir() { newest(&p) } else { e.metadata().and_then(|m| m.modified()).ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0) });
+        }
+        t
+    }
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("o_c");
+    std::fs::create_dir_all(&out).unwrap();
+    let stamp = out.join("stamp.cc");
+    let text = format!("// sources {}\n", newest(&base));
+    if std::fs::read_to_string(&stamp).ok().as_deref() != Some(text.as_str()) {
+        std::fs::write(&stamp, text).unwrap();
+    }
+    let mut files = vec![stamp.display().to_string(), base.join("sketch.cpp").display().to_string(), base.join("host/oc_host.cpp").display().to_string()];
+    for name in [
+        "OC_autotune", "OC_bitmaps", "OC_chords", "OC_debug", "OC_digital_inputs", "OC_input_map", "OC_menus", "OC_patterns", "OC_scales", "OC_strings", "OC_ui",
+        "bjorklund", "braids_quantizer", "frames_poly_lfo", "frames_resources", "peaks_bytebeat", "peaks_multistage_envelope", "peaks_resources", "streams_lorenz_generator",
+        "streams_resources",
+    ] {
+        files.push(base.join(format!("fw/{name}.cpp")).display().to_string());
+    }
+    files.push(base.join("fw/src/drivers/weegfx.cpp").display().to_string());
+    files.push(base.join("fw/src/util/util_misc.cpp").display().to_string());
+    let inc: Vec<String> = ["host", "fw", "fw/src/drivers", "fw/extern"].iter().map(|d| base.join(d).display().to_string()).collect();
+    let inc_refs: Vec<&str> = inc.iter().map(String::as_str).collect();
+    compile_cached_with("o_c_firmware", &inc_refs, &[("F_CPU", Some("120000000")), ("typeof", Some("__typeof__"))], &["-w", "-Wno-c++11-narrowing"], &files);
 }
 
 /// Airwindows' ~500 effects (vendor/airwindows, MIT) as one static lib.
