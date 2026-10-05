@@ -49,3 +49,8 @@ saves/
 exports/
 apps/oracle/prompt.txt
 apps/oracle/voice/
+
+# SoundFont banks are user-supplied (and often large); only the README is tracked.
+soundfonts/*.sf2
+soundfonts/*.sf3
+soundfonts/*.SF2

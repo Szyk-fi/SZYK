@@ -647,7 +647,11 @@ impl AudioProcessor for Processor {
         let step = 1.0 / (rate * 0.01);
         let frames = out.len() / channels;
         let (mut in_peak, mut out_peak) = (0.0f32, 0.0f32);
-        let mut bus_mix: Vec<f32> = Vec::new();
+        // The bus buffer keeps its capacity between blocks, so refilling it doesn't allocate.
+        let mut bus = self.p.output.try_lock().ok();
+        if let Some(b) = bus.as_mut() {
+            b.clear();
+        }
         let mut done = 0;
         while done < frames {
             let n = (frames - done).min(BLOCK);
@@ -677,16 +681,14 @@ impl AudioProcessor for Processor {
                     [a] => *a = (yl + yr) * 0.5,
                     [] => {}
                 }
-                bus_mix.push((yl + yr) * 0.5);
+                if let Some(b) = bus.as_mut() {
+                    b.push((yl + yr) * 0.5);
+                }
             }
             done += n;
         }
         self.p.in_peak.set(in_peak);
         self.p.out_peak.set(out_peak);
-        if let Ok(mut b) = self.p.output.try_lock() {
-            b.clear();
-            b.extend_from_slice(&bus_mix);
-        }
     }
 }
 
