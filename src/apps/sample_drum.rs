@@ -101,6 +101,21 @@ const ENV_RANGE_NAMES: [&str; 4] = ["Short", "Mid", "Long", "Relative"];
 const NOTE_TARGET_NAMES: [&str; 3] = ["Ch 1", "Ch 2", "Both"];
 /// The note that plays a sample at its own pitch (C4).
 const ROOT_NOTE: i32 = 60;
+/// Loop lengths, in bars, the Loop Bars row steps through.
+const LOOP_BARS: [u32; 4] = [1, 2, 4, 8];
+
+/// A tempo written into a sample's name ("..._174_AmenBreak"), if any.
+fn tempo_in_name(name: &str) -> Option<f32> {
+    name.split(|c: char| !c.is_ascii_digit()).filter_map(|t| t.parse::<u32>().ok()).find(|t| (60..=240).contains(t)).map(|t| t as f32)
+}
+
+/// How many bars a loop of `seconds` most likely is: from a tempo in its name when
+/// there is one, otherwise whichever length puts it nearest the project tempo.
+fn guess_loop_bars(name: &str, seconds: f32, project_bpm: f32, beats_per_bar: f32) -> u32 {
+    let bpm_of = |bars: u32| bars as f32 * beats_per_bar * 60.0 / seconds.max(0.01);
+    let aim = tempo_in_name(name).unwrap_or(project_bpm);
+    *LOOP_BARS.iter().min_by(|a, b| (bpm_of(**a) - aim).abs().total_cmp(&(bpm_of(**b) - aim).abs())).unwrap_or(&1)
+}
 /// Max Attack/Hold/Decay time in seconds per range preset -- matches
 /// the manual's own SHORT (1s)/MID (3s)/LONG (10s) figures.
 const ENV_RANGE_MAX_SECONDS: [f32; 4] = [1.0, 3.0, 10.0, 1.0];
@@ -671,6 +686,10 @@ struct DrumPreset {
     tune: i32,
     #[serde(default)]
     fine: i32,
+    #[serde(default)]
+    tempo_match: bool,
+    #[serde(default = "default_one")]
+    loop_bars: u32,
     start: f32,
     loop_point: f32,
     end: f32,
@@ -696,6 +715,10 @@ struct DrumPreset {
     volume: f32,
 }
 
+fn default_one() -> u32 {
+    1
+}
+
 fn default_auto_rate_bpm() -> f32 {
     120.0
 }
@@ -717,6 +740,8 @@ enum Selection {
     Mode,
     Tune,
     FineTune,
+    TempoMatch,
+    LoopBars,
     Start,
     LoopPoint,
     End,
@@ -771,6 +796,11 @@ struct ChannelParams {
     /// held like a keyboard's 1V/oct CV, so later triggers keep it.
     note_semi: AtomicF32,
     note_gain: AtomicF32,
+    /// Plays the sample faster or slower so its loop (`loop_bars` long) fits the
+    /// project tempo: speed-matching, like turning a record's pitch control, so
+    /// pitch moves with it. Auto Clock then fires on the project's bar grid.
+    tempo_match: AtomicBool,
+    loop_bars: AtomicU32,
     /// A note-off arrived: looping voices fade out.
     release_pending: AtomicBool,
     start: AtomicF32,
@@ -854,6 +884,8 @@ impl ChannelParams {
             fine: AtomicI32::new(0),
             note_semi: AtomicF32::new(0.0),
             note_gain: AtomicF32::new(1.0),
+            tempo_match: AtomicBool::new(false),
+            loop_bars: AtomicU32::new(1),
             release_pending: AtomicBool::new(false),
             start: AtomicF32::new(0.0),
             loop_point: AtomicF32::new(0.0),
@@ -896,6 +928,8 @@ struct Params {
     preset_slot: AtomicUsize,
     /// Which channel(s) incoming notes play: 0 = 1, 1 = 2, 2 = both.
     note_target: AtomicU32,
+    /// The shared transport: its tempo is what Tempo Match fits samples to.
+    clock: Arc<crate::clock::Clock>,
     bus_out: Arc<Mutex<Vec<f32>>>,
     mix_level: Arc<AtomicF32>,
     ext_mix_level: Arc<AtomicF32>,
@@ -918,6 +952,7 @@ impl Params {
             samples,
             preset_slot: AtomicUsize::new(0),
             note_target: AtomicU32::new(0),
+            clock: crate::clock::Clock::shared(),
             bus_out: audio_bus.register("Sample Drum"),
             mix_level,
             ext_mix_level,
@@ -1024,8 +1059,9 @@ const SAMPLE_DRUM_DIM: Rgb565 = Rgb565::new(15, 28, 13);
 
 impl SampleDrumApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
-        Self {
-            params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)),
+        let params = Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus));
+        let app = Self {
+            params,
             sensitivity,
             nav_speed,
             list: ParamList::new(),
@@ -1033,7 +1069,11 @@ impl SampleDrumApp {
             prev_grid: [false; 16],
             prev_keys: [0; 128],
             kit: PlayKit::new(kit_config(), !cfg!(test)),
+        };
+        for ch in 0..NUM_CHANNELS {
+            app.guess_bars(ch);
         }
+        app
     }
 
     fn ch(&self) -> usize {
@@ -1102,6 +1142,20 @@ impl SampleDrumApp {
         }
     }
 
+    /// Sets Loop Bars from the channel's sample: its length against a tempo in its
+    /// name, or the project tempo.
+    fn guess_bars(&self, ch: usize) {
+        if let Some(slot) = self.resolved_sample(ch).and_then(|i| self.params.samples.get(i)) {
+            let (data, rate) = slot.decoded();
+            let bars = guess_loop_bars(&slot.name, data.len() as f32 / rate.max(1.0), self.params.clock.bpm(), self.params.clock.bar_beats() as f32);
+            self.params.channels[ch].loop_bars.store(bars, Ordering::Relaxed);
+            // Only a sample that says its tempo is assumed to be a loop; a one-shot
+            // (a piano note, a kick) must not be sped up to fit the bar. Either way
+            // the row can be switched.
+            self.params.channels[ch].tempo_match.store(tempo_in_name(&slot.name).is_some(), Ordering::Relaxed);
+        }
+    }
+
     fn warm_selected_sample(&self, ch: usize) {
         if let Some(slot) = self.resolved_sample(ch).and_then(|i| self.params.samples.get(i)) {
             slot.decoded();
@@ -1122,7 +1176,7 @@ impl SampleDrumApp {
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         match g {
             0 => vec![Selection::Channel, Selection::NotesTo, Selection::Preset, Selection::SavePreset, Selection::LoadPreset],
-            1 => vec![Selection::Sample, Selection::Mode, Selection::Tune, Selection::FineTune, Selection::Start, Selection::LoopPoint, Selection::End],
+            1 => vec![Selection::Sample, Selection::Mode, Selection::Tune, Selection::FineTune, Selection::TempoMatch, Selection::LoopBars, Selection::Start, Selection::LoopPoint, Selection::End],
             2 => vec![Selection::NumSlices, Selection::SliceMode, Selection::SliceStep, Selection::ResetSlice, Selection::AutoClock, Selection::AutoRate],
             3 => vec![Selection::EnvAttack, Selection::EnvHold, Selection::EnvDecay, Selection::EnvRange, Selection::EnvAShape, Selection::EnvDShape],
             4 => vec![Selection::FxType, Selection::FxParam1, Selection::FxParam2, Selection::FxMix],
@@ -1166,6 +1220,8 @@ impl SampleDrumApp {
             Selection::Mode => "Mode".into(),
             Selection::Tune => "Tune".into(),
             Selection::FineTune => "Fine Tune".into(),
+            Selection::TempoMatch => "Tempo Match".into(),
+            Selection::LoopBars => "Loop Bars".into(),
             Selection::NotesTo => "Notes Play".into(),
             Selection::EnvAShape => "Attack Shape".into(),
             Selection::EnvDShape => "Decay Shape".into(),
@@ -1201,6 +1257,8 @@ impl SampleDrumApp {
             Selection::Mode => PLAY_MODE_NAMES[c.mode.load(Ordering::Relaxed) as usize % 4].to_string(),
             Selection::Tune => format!("{:+} st", c.tune.load(Ordering::Relaxed)),
             Selection::FineTune => format!("{:+} ct", c.fine.load(Ordering::Relaxed)),
+            Selection::TempoMatch => if c.tempo_match.load(Ordering::Relaxed) { format!("to {:.0} BPM", self.params.clock.bpm()) } else { "off".into() },
+            Selection::LoopBars => format!("{}", c.loop_bars.load(Ordering::Relaxed)),
             Selection::NotesTo => NOTE_TARGET_NAMES[self.params.note_target.load(Ordering::Relaxed) as usize % 3].to_string(),
             Selection::EnvAShape => format!("{:+.0}", c.env_ashape.get() * 50.0),
             Selection::EnvDShape => format!("{:+.0}", c.env_dshape.get() * 50.0),
@@ -1258,6 +1316,7 @@ impl SampleDrumApp {
                 let next = crate::audio_bus::cycle_source(cur, step, self.params.samples.len());
                 c.sample.store(next, Ordering::Relaxed);
                 self.warm_selected_sample(ch);
+                self.guess_bars(ch);
             }
             Selection::Mode => {
                 let cur = c.mode.load(Ordering::Relaxed) as i32;
@@ -1266,6 +1325,11 @@ impl SampleDrumApp {
             Selection::Tune => {
                 let cur = c.tune.load(Ordering::Relaxed);
                 c.tune.store(cur + step, Ordering::Relaxed);
+            }
+            Selection::TempoMatch => c.tempo_match.store(delta > 0, Ordering::Relaxed),
+            Selection::LoopBars => {
+                let cur = LOOP_BARS.iter().position(|b| *b == c.loop_bars.load(Ordering::Relaxed)).unwrap_or(0) as i32;
+                c.loop_bars.store(LOOP_BARS[(cur + step).clamp(0, LOOP_BARS.len() as i32 - 1) as usize], Ordering::Relaxed);
             }
             Selection::FineTune => {
                 let cur = c.fine.load(Ordering::Relaxed);
@@ -1330,6 +1394,8 @@ impl SampleDrumApp {
             Selection::Sample | Selection::Mode | Selection::SliceMode | Selection::FxType => {} // no sensible single default
             Selection::Tune => c.tune.store(0, Ordering::Relaxed),
             Selection::FineTune => c.fine.store(0, Ordering::Relaxed),
+            Selection::TempoMatch => c.tempo_match.store(false, Ordering::Relaxed),
+            Selection::LoopBars => self.guess_bars(ch),
             Selection::NotesTo => self.params.note_target.store(0, Ordering::Relaxed),
             Selection::EnvAShape => c.env_ashape.set(0.0),
             Selection::EnvDShape => c.env_dshape.set(0.0),
@@ -1363,6 +1429,8 @@ impl SampleDrumApp {
             mode: c.mode.load(Ordering::Relaxed),
             tune: c.tune.load(Ordering::Relaxed),
             fine: c.fine.load(Ordering::Relaxed),
+            tempo_match: c.tempo_match.load(Ordering::Relaxed),
+            loop_bars: c.loop_bars.load(Ordering::Relaxed),
             start: c.start.get(),
             loop_point: c.loop_point.get(),
             end: c.end.get(),
@@ -1434,6 +1502,8 @@ impl SampleDrumApp {
         c.mode.store(preset.mode, Ordering::Relaxed);
         c.tune.store(preset.tune, Ordering::Relaxed);
         c.fine.store(preset.fine.clamp(-100, 100), Ordering::Relaxed);
+        c.tempo_match.store(preset.tempo_match, Ordering::Relaxed);
+        c.loop_bars.store(if LOOP_BARS.contains(&preset.loop_bars) { preset.loop_bars } else { 1 }, Ordering::Relaxed);
         c.start.set(preset.start);
         c.loop_point.set(preset.loop_point);
         c.end.set(preset.end);
@@ -1943,7 +2013,14 @@ impl AudioProcessor for SampleDrumProcessor {
                     // arrived). At `num_slices == 4` this is exactly
                     // the previous `60.0 / bpm` -- unchanged.
                     let num_slices = c.num_slices.load(Ordering::Relaxed).max(1) as f32;
-                    let period = (240.0 / c.auto_rate_bpm.get().max(1.0) / num_slices).max(0.02);
+                    // With Tempo Match the loop is `loop_bars` long at the project
+                    // tempo; otherwise it is one bar at Auto Rate.
+                    let loop_s = if c.tempo_match.load(Ordering::Relaxed) {
+                        c.loop_bars.load(Ordering::Relaxed).max(1) as f32 * self.params.clock.bar_beats() as f32 * 60.0 / self.params.clock.bpm().max(1.0)
+                    } else {
+                        240.0 / c.auto_rate_bpm.get().max(1.0)
+                    };
+                    let period = (loop_s / num_slices).max(0.02);
                     // `+=` (not `=`), so a block-length rounding
                     // remainder carries into the next period instead
                     // of quietly drifting the tempo late over time.
@@ -2024,7 +2101,17 @@ impl AudioProcessor for SampleDrumProcessor {
                 continue;
             };
             let (data, native_rate) = slot.decoded();
-            let semitones = c.tune.load(Ordering::Relaxed) as f32 + c.fine.load(Ordering::Relaxed) as f32 / 100.0 + c.ext_tune.get() + c.note_semi.get();
+            // Tempo Match: the sample's loop (`loop_bars` bars) should last as long as
+            // that many bars at the project tempo, so play it faster or slower by
+            // the ratio, expressed in semitones like every other pitch offset here.
+            let match_semitones = if c.tempo_match.load(Ordering::Relaxed) {
+                let loop_s = data.len() as f32 / native_rate.max(1.0);
+                let want_s = c.loop_bars.load(Ordering::Relaxed).max(1) as f32 * self.params.clock.bar_beats() as f32 * 60.0 / self.params.clock.bpm().max(1.0);
+                12.0 * (loop_s / want_s.max(0.01)).clamp(0.25, 4.0).log2()
+            } else {
+                0.0
+            };
+            let semitones = match_semitones + c.tune.load(Ordering::Relaxed) as f32 + c.fine.load(Ordering::Relaxed) as f32 / 100.0 + c.ext_tune.get() + c.note_semi.get();
             let range = c.env_range.load(Ordering::Relaxed) as usize % 4;
             let range_max = ENV_RANGE_MAX_SECONDS[range];
             let env = EnvSettings {
@@ -2103,7 +2190,12 @@ mod tests {
         let modbus = Arc::new(ModBus::new());
         let audio_bus = Arc::new(AudioBus::new());
         let mixer_bus = Arc::new(MixerBus::new());
-        SampleDrumApp::new(sensitivity, nav_speed, modbus, audio_bus, mixer_bus)
+        let app = SampleDrumApp::new(sensitivity, nav_speed, modbus, audio_bus, mixer_bus);
+        // Tests that measure pitch or timing want the sample at its own speed.
+        for c in &app.params.channels {
+            c.tempo_match.store(false, Ordering::Relaxed);
+        }
+        app
     }
 
     /// An envelope so long it never ends a test early.
@@ -2668,6 +2760,72 @@ mod tests {
         assert_eq!(app.kit_pad_label(1, 3), "4");
         assert_eq!(app.kit_pad_label(1, 9), "");
         assert_eq!(app.kit_pad_label(2, 0), "");
+    }
+
+    #[test]
+    fn a_tempo_in_the_name_is_found_and_bars_are_guessed() {
+        assert_eq!(tempo_in_name("KAB1_174_AmenBreak_Cut_01"), Some(174.0));
+        assert_eq!(tempo_in_name("Mystery Sample 07"), None, "07 is not a tempo");
+        assert_eq!(tempo_in_name("Kick 808 Long"), None);
+        // 2 s is one bar at 120 BPM, and 4 s is two.
+        assert_eq!(guess_loop_bars("loop_120", 2.0, 100.0, 4.0), 1);
+        assert_eq!(guess_loop_bars("loop_120", 4.0, 100.0, 4.0), 2);
+        // No tempo in the name: whichever length lands nearest the project tempo.
+        assert_eq!(guess_loop_bars("break", 8.0, 120.0, 4.0), 4);
+    }
+
+    /// Tempo Match: a loop that is one bar at 100 BPM plays 1.2x faster at a project
+    /// tempo of 120, so chopping it in 4 or in 8 both still tile the bar.
+    #[test]
+    fn tempo_match_fits_the_loop_to_the_project_tempo() {
+        let app = new_app();
+        let (data, native) = app.params.samples[0].decoded();
+        let loop_s = data.len() as f32 / native;
+        let c = &app.params.channels[0];
+        c.tempo_match.store(true, Ordering::Relaxed);
+        c.env_decay.set(1.0);
+        c.env_range.store(2, Ordering::Relaxed);
+        // Pick the bar count that keeps the ratio in range at 120 BPM.
+        let bars = LOOP_BARS.iter().copied().min_by(|a, b| ((loop_s / (*a as f32 * 2.0)) - 1.0).abs().total_cmp(&((loop_s / (*b as f32 * 2.0)) - 1.0).abs())).unwrap();
+        c.loop_bars.store(bars, Ordering::Relaxed);
+        app.params.clock.set_bpm(120.0);
+        let want = (loop_s / (bars as f32 * 2.0)).clamp(0.25, 4.0);
+        let mut proc = new_processor(Arc::clone(&app.params));
+        c.trig_pending.store(true, Ordering::Relaxed);
+        let mut buffer = vec![0.0f32; 480 * 2];
+        proc.process(&mut buffer, 2, 48000.0);
+        let speed = proc.voices[0].head.pos / (480.0 * native / 48000.0);
+        assert!((speed - want).abs() < 0.03 * want.max(1.0), "plays {want}x so {bars} bars last {bars} bars at 120: {speed}");
+    }
+
+    /// With Tempo Match, Auto Clock fires on the project's bar: the same bar of
+    /// triggers whether the loop is cut in 4 or in 8.
+    #[test]
+    fn auto_clock_tiles_the_bar_at_the_project_tempo_for_any_slice_count() {
+        let count = |slices: usize| {
+            let app = new_app();
+            app.params.clock.set_bpm(100.0); // a bar is 2.4 s
+            let c = &app.params.channels[0];
+            c.tempo_match.store(true, Ordering::Relaxed);
+            c.loop_bars.store(1, Ordering::Relaxed);
+            c.num_slices.store(slices, Ordering::Relaxed);
+            c.auto_clock.store(true, Ordering::Relaxed);
+            let mut proc = new_processor(Arc::clone(&app.params));
+            let mut buffer = vec![0.0f32; 480 * 2];
+            let mut triggers = 0;
+            let mut prev = c.step_index.load(Ordering::Relaxed);
+            for _ in 0..240 {
+                proc.process(&mut buffer, 2, 48000.0);
+                let now = c.step_index.load(Ordering::Relaxed);
+                if now != prev {
+                    triggers += 1;
+                    prev = now;
+                }
+            }
+            triggers
+        };
+        let (four, eight) = (count(4), count(8));
+        assert!((4..=5).contains(&four) && (8..=9).contains(&eight), "one bar is 4 hits cut in 4 and 8 cut in 8: {four}, {eight}");
     }
 
     #[test]

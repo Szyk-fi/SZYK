@@ -101,6 +101,12 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: Sample Drum slice pads and tempo match
+- Branch: claude/atlas-play
+- Changed: `src/apps/sample_drum.rs`, USER_MANUAL. New pad layers SLICES / SLICES 17+ (one pad per slice, via `slice_request`); Tempo Match + Loop Bars (speed-matches a loop to the shared `Clock` tempo; Auto Clock follows the project bar). Loop bars/tempo-match are guessed from the sample name's tempo and length when a sample is picked.
+- Limits: matching is speed (repitch), not time-stretch -- a true stretch would be a separate piece of DSP. Auto Clock follows the project *tempo* but not its beat position/transport.
+- Tests: 4 new (slice pads, tempo-in-name/bars guess, tempo-match speed, Auto Clock bar tiling for 4 vs 8 slices).
+
 ### 2026-10-05: Claude: Sequencer step expression + 808/909 drum voices
 - Branch: claude/atlas-play
 - Changed: `src/apps/sequencer.rs` (per-step velocity, accent, flam and chance, with a per-track accent amount, in the pattern snapshots and the step labels; the drum kind list grows to the 808/909 set; a closed hat chokes open hats), new `src/apps/sequencer_drums.rs` (private part via `#[path]`: the voices, with an honest header on what is modelled vs sampled), USER_MANUAL row.
