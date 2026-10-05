@@ -177,7 +177,17 @@ fn compile_listed_bridges(eurorack: &str, bridge: &str) {
             .map(|l| format!("{eurorack}/{l}"))
             .collect();
         files.push(format!("{bridge}/{name}_bridge.cc"));
-        compile_cached(&format!("{name}_bridge"), eurorack, &files);
+        // Optional `<name>.includes`: extra include directories, relative to the repo root.
+        let extra: Vec<String> = std::fs::read_to_string(list.with_extension("includes"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(String::from)
+            .collect();
+        let mut includes: Vec<&str> = vec![eurorack];
+        includes.extend(extra.iter().map(String::as_str));
+        compile_cached_with(&format!("{name}_bridge"), &includes, &[("TEST", None)], &files);
     }
 }
 
