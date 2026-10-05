@@ -548,11 +548,24 @@ impl App for DexedApp {
         }
         self.taken = true;
         let handle = unsafe { dexed_create(self.p.rate.get() as c_double) };
-        Some(Box::new(Processor { p: Arc::clone(&self.p), notes: Arc::clone(&self.keys.queue), handle, mono: vec![0.0; CHUNK], last_sustain: false, sent: false }))
+        Some(Box::new(Processor { p: Arc::clone(&self.p), notes: Arc::clone(&self.keys.queue), handle, mono: vec![0.0; CHUNK], last_sustain: false, master_prev: 0.0, sent: false }))
     }
 }
 
 const CHUNK: usize = 1024;
+
+/// The voices are summed at full scale, so a chord on a bright patch goes past 1.0 and
+/// would clip hard at the device (a crackle, not a tone). Below 0.6 the signal passes
+/// untouched; above it, it bends smoothly toward 1.0.
+fn soft_limit(x: f32) -> f32 {
+    const KNEE: f32 = 0.6;
+    let a = x.abs();
+    if a <= KNEE {
+        x
+    } else {
+        x.signum() * (KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh())
+    }
+}
 
 struct Processor {
     p: Arc<Shared>,
@@ -560,6 +573,9 @@ struct Processor {
     handle: *mut c_void,
     mono: Vec<f32>,
     last_sustain: bool,
+    /// Last block's master gain, so a level change glides across the block instead of
+    /// stepping (a step is a click on a sounding note).
+    master_prev: f32,
     /// Whether the app's current voice has reached the engine yet.
     sent: bool,
 }
@@ -626,12 +642,16 @@ impl AudioProcessor for Processor {
         if let Some(b) = bus.as_mut() {
             b.clear();
         }
+        let master_from = self.master_prev;
+        let master_step = (master - master_from) / frames.max(1) as f32;
+        self.master_prev = master;
         let mut done = 0;
         while done < frames {
             let n = (frames - done).min(CHUNK);
             unsafe { dexed_render(h, self.mono.as_mut_ptr(), n as c_int) };
             for k in 0..n {
-                let s = self.mono[k] * master;
+                let gain = master_from + master_step * (done + k) as f32;
+                let s = soft_limit(self.mono[k] * gain);
                 let s = if s.is_finite() { s } else { 0.0 };
                 peak = peak.max(s.abs());
                 for o in out[(done + k) * channels..(done + k + 1) * channels].iter_mut() {
@@ -774,6 +794,46 @@ mod tests {
         assert!((f - 261.6).abs() < 5.0, "middle C, got {f}");
     }
 
+    /// A big chord on a loud patch never leaves ±1 (it would clip at the device), and
+    /// the limiter leaves a quiet note exactly alone.
+    #[test]
+    fn a_chord_never_clips_and_a_single_note_is_untouched() {
+        let dir = dir_with(&[("bank.syx", bulk_dump(&[organ_voice(31, 99, "SINE")]))]);
+        let peak = |keys: &[usize], level: f32| {
+            let mut a = app(&dir);
+            a.p.level.set(level);
+            let mut p = a.audio_processor().unwrap();
+            let mut input = Input::default();
+            for k in keys {
+                input.midi_keys.0[*k] = 127;
+            }
+            a.tick(&input);
+            render(&mut p, 60).iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        };
+        let one = peak(&[69], 0.8);
+        assert!(one < 0.6, "one note stays under the knee: {one}");
+        let many: Vec<usize> = (0..12).map(|k| 48 + k * 3).collect();
+        let loud = peak(&many, 1.0);
+        assert!(loud <= 1.0, "twelve notes at full level never exceed full scale: {loud}");
+        assert!((soft_limit(0.3) - 0.3).abs() < 1e-6 && soft_limit(5.0) <= 1.0 && soft_limit(-5.0) >= -1.0);
+    }
+
+    /// Turning the level knob mid-note glides: no jump from one sample to the next.
+    #[test]
+    fn a_level_change_does_not_click() {
+        let dir = dir_with(&[("bank.syx", bulk_dump(&[organ_voice(31, 99, "SINE")]))]);
+        let mut a = app(&dir);
+        let mut p = a.audio_processor().unwrap();
+        let mut input = Input::default();
+        input.midi_keys.0[69] = 100;
+        a.tick(&input);
+        render(&mut p, 20);
+        a.p.level.set(0.3);
+        let out = render(&mut p, 4);
+        let worst = out.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(worst < 0.03, "largest step across the level change: {worst}");
+    }
+
     #[test]
     fn browsing_changes_the_voice_that_sounds() {
         let quiet = organ_voice(31, 20, "QUIET");
@@ -855,7 +915,7 @@ mod tests {
             a.tick(&input);
             render(&mut p, 2);
             let out = render(&mut p, 12);
-            assert!(out.iter().all(|s| s.is_finite() && s.abs() <= 4.0), "voice {} ({}) is finite and bounded", v + 1, a.voice_name());
+            assert!(out.iter().all(|s| s.is_finite() && s.abs() <= 1.0), "voice {} ({}) is finite and never clips", v + 1, a.voice_name());
             input.midi_keys.0[57] = 0;
             input.midi_keys.0[64] = 0;
             a.tick(&input);

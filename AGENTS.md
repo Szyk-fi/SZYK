@@ -101,6 +101,12 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-05: Claude: Dexed clipping and level clicks
+- Branch: claude/atlas-play
+- Changed: `src/apps/dexed.rs` only. The engine's voices are summed at full scale and went past 1.0 on chords (12 notes on a plain sine patch peaked over 1.0; real patches are louder), so the device clipped them hard. Output now goes through a soft limiter (untouched below 0.6, bends smoothly to 1.0), and the master level glides across each block instead of stepping.
+- Not changed: voice stealing, the engine, the bridge. The 'real syx in the repo' test now requires |sample| <= 1.0 (was 4.0).
+- Tests: 2 new (chord never clips and a single note is untouched; level change doesn't click).
+
 ### 2026-10-05: Claude: Plaits plays like a normal synth; O&C licensing review
 - Branch: claude/atlas-play
 - Plaits: `src/apps/plaits.rs`, `src/apps/plaits_play.rs` (`Slot::age` public), `src/plaits_ffi.rs` + `vendor/bridge/plaits_bridge.cc` (new `plaits_voice_render_held`, which patches Plaits' LEVEL input; the old entry point and `plaits_smoke` are untouched). Cause of the odd feel: the voice was always run trigger-only, so its low-pass gate plucked and died away under a held key, and a second key in Mono changed pitch without a new strike. Now: Envelope row (Synth default / Pluck = the module's way), Poly default, a new key over a held one drops the gate for a frame so it strikes, and Poly loudness is a smoothed 1/sqrt(voices) instead of dividing by the count.
