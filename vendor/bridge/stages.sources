@@ -1,0 +1,7 @@
+# Sources for stages_bridge.cc, relative to vendor/eurorack -- stages/test/makefile's
+# CC_FILES minus its test harness.
+tides2/ramp/ramp_extractor.cc
+stages/segment_generator.cc
+stages/resources.cc
+stmlib/utils/random.cc
+stmlib/dsp/units.cc

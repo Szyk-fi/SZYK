@@ -1,0 +1,22 @@
+id = "stages"
+name = "Stages"
+category = "utility"
+description = "The real Mutable Instruments Stages: six segments as envelopes, LFOs, oscillators, sequencers."
+audio_outputs = ["Stages"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Stages Level",
+    "Stages: S1 Slider",
+    "Stages: S1 Pot",
+    "Stages: S2 Slider",
+    "Stages: S2 Pot",
+    "Stages: S3 Slider",
+    "Stages: S3 Pot",
+    "Stages: S4 Slider",
+    "Stages: S4 Pot",
+    "Stages: S5 Slider",
+    "Stages: S5 Pot",
+    "Stages: S6 Slider",
+    "Stages: S6 Pot",
+]
