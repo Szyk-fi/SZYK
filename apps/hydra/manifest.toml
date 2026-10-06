@@ -1,0 +1,7 @@
+id = "hydra"
+name = "Hydra"
+category = "instrument"
+description = "An all-in-one hybrid synth: three oscillators (analog, wavetable, FM, pluck, noise), dual filters, 12-slot mod matrix, FX chain and arpeggiator."
+audio_outputs = ["Hydra"]
+notes_in = true
+mod_inputs = []
