@@ -120,6 +120,7 @@ const ENV_HISTORY_LEN: usize = 240;
 /// `envelope`/`gate_open`/`hit_flash` -- nothing here is fabricated
 /// for display.
 #[derive(Clone, Default)]
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct ChannelVisual {
     /// Rolling snapshot of this channel's envelope value (0..1) over
     /// the last `ENV_HISTORY_LEN` audio blocks, oldest first -- the
@@ -147,6 +148,7 @@ pub(crate) struct ChannelVisual {
 
 /// The full live visualization state for both channels -- see
 /// `ChannelVisual` and `NaturalGateApp::output_visual`.
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct NaturalGateVisual {
     pub channels: [ChannelVisual; NUM_CHANNELS],
 }
@@ -369,6 +371,7 @@ const NATURAL_GATE_ACCENT: Rgb565 = Rgb565::new(24, 34, 7);
 const NATURAL_GATE_DIM: Rgb565 = Rgb565::new(17, 28, 10);
 const NATURAL_GATE_METER_OUTLINE: Rgb565 = Rgb565::new(6, 10, 4);
 
+#[allow(dead_code)] // not used by the main binary
 impl NaturalGateApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {

@@ -1086,7 +1086,7 @@ mod tests {
     fn fixture() -> (MosaicApp, Arc<Mutex<Vec<f32>>>) {
         let bus = Arc::new(AudioBus::new());
         let src = bus.register("Synth");
-        let mut a = MosaicApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::new(ModBus::new()), bus, Arc::new(MixerBus::new()));
+        let a = MosaicApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::new(ModBus::new()), bus, Arc::new(MixerBus::new()));
         a.p.source.store(0, Ordering::Relaxed);
         a.p.running.store(true, Ordering::Relaxed); // F3: patterns run
         (a, src)

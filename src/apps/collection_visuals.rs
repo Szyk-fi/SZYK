@@ -13,6 +13,7 @@ pub const MODES: [&str; 10] = [
     "Contour Field",
     "Wave Ribbons",
 ];
+#[allow(dead_code)] // not used by the main binary
 fn at(v: &[f32], i: usize) -> f32 {
     v.get(i)
         .copied()
@@ -20,14 +21,17 @@ fn at(v: &[f32], i: usize) -> f32 {
         .unwrap_or(0.)
         .clamp(-1., 1.)
 }
+#[allow(dead_code)] // not used by the main binary
 fn line(out: &mut Vec<f32>, a: (f32, f32), b: (f32, f32), alpha: f32, tint: f32, width: f32) {
     if out.len() < 560 * 7 {
         out.extend([a.0, a.1, b.0, b.1, alpha.clamp(0., 1.), tint, width]);
     }
 }
+#[allow(dead_code)] // not used by the main binary
 fn polar(a: f32, r: f32) -> (f32, f32) {
     (0.5 + a.cos() * r, 0.51 + a.sin() * r * 0.83)
 }
+#[allow(dead_code)] // not used by the main binary
 pub fn geometry(
     mode: usize,
     wave: &[f32],
@@ -330,6 +334,7 @@ pub fn geometry(
     }
     out
 }
+#[allow(dead_code)] // not used by the main binary
 fn at_note(v: &[f32], i: usize) -> f32 {
     v.get(i).copied().filter(|n| n.is_finite()).unwrap_or(60.)
 }

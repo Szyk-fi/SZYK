@@ -228,6 +228,7 @@ impl CvOutApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl CvOutApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building, exposed for an alternate
@@ -438,7 +439,7 @@ mod tests {
     /// clamped to a valid 0-127 CC range either direction.
     #[test]
     fn external_modulation_stacks_on_top_of_the_manual_value_and_clamps() {
-        let mut app = new_app();
+        let app = new_app();
         app.channels[0].set(0.5);
         assert_eq!(app.midi_value(0), 64, "0.5 * 127 should round to 64 with no modulation");
 

@@ -528,6 +528,12 @@ impl<M: Module> PlayHost for MiApp<M> {
 }
 
 impl<M: Module> App for MiApp<M> {
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        crate::app::play_kit::settings_of(self)
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        crate::app::play_kit::adjust_in(self, index, delta)
+    }
     fn supports_pad_lock(&self) -> bool {
         true
     }

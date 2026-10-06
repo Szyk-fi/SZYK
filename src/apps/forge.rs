@@ -2,7 +2,7 @@
 //! Decoding, analysis, persistence and large-buffer destruction stay off the audio thread.
 #[path="forge_analysis.rs"]
 mod analysis;
-use analysis::{Instrument,Chunk,RATE,MAX_FRAMES};
+use analysis::{Instrument,Chunk,RATE};
 use crate::{app::{App,Input,SlintExtra,ForgeExtra},audio::AudioProcessor,audio_bus::{AudioBus,NO_SOURCE,cycle_source},display::FrameBuffer,modbus::ModBus,mixer_bus::MixerBus,paramlist::ParamList,util::AtomicF32};
 use std::{path::{Path,PathBuf},sync::{Arc,Mutex,mpsc::{self,SyncSender,Receiver,TrySendError},atomic::{AtomicBool,AtomicUsize,Ordering}},time::{SystemTime,UNIX_EPOCH}};
 use serde::{Serialize,Deserialize};
@@ -125,6 +125,8 @@ impl PlayHost for ForgeApp{
  fn kit_line(&self)->String{if self.p.recording.load(Ordering::Relaxed){return "RECORDING".into();}if self.busy{return "analyzing...".into();}match self.chunk_count(){0=>"no instrument".into(),n=>format!("{} / {} chunks",MODES[self.p.mode.load(Ordering::Relaxed).min(3)],n)}}
 }
 impl App for ForgeApp{
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> { crate::app::play_kit::settings_of(self) }
+    fn adjust_setting(&mut self, index: usize, delta: i32) { crate::app::play_kit::adjust_in(self, index, delta) }
  fn play_surface(&self)->bool{true}
  fn play_column(&self)->Option<crate::app::PlayColumn>{(!self.kit.menu).then(||self.kit.column(self))}
  fn grid_mode_label(&self)->Option<&'static str>{Some(self.kit.layer_label())}

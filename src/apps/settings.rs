@@ -40,6 +40,7 @@ const MAX_NAV_SPEED: f32 = 10.0;
 /// shared with `slint_extra`'s marker math so a click on the wheel
 /// and the dot it leaves behind always agree (see
 /// `ThemeColor::set_from_wheel`/`wheel_marker`).
+#[allow(dead_code)] // not used by the main binary
 pub const WHEEL_RADIUS_PX: f32 = 70.0;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -255,6 +256,7 @@ impl SettingsApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl SettingsApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building, exposed for an alternate
@@ -291,6 +293,7 @@ impl SettingsApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl SettingsApp {
     fn theme_extra(&self) -> ThemeExtra {
         let (h, s, v) = self.target().hsv();

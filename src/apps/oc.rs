@@ -95,10 +95,12 @@ const NOTE_CHANNELS: [&str; 5] = ["Off", "A", "B", "C", "D"];
 const NOTE_GATES: [&str; 5] = ["Off", "TR 1", "TR 2", "TR 3", "TR 4"];
 const OUTS: [&str; 4] = ["A", "B", "C", "D"];
 
-// Controls: the four CV knobs, then the notes setup.
-const C_NOTE_CH: usize = 4;
-const C_NOTE_GATE: usize = 5;
-const C_PLAYS: usize = 6;
+// Controls: Plays first (like every note source), the four CV knobs, then the
+// rest of the notes setup.
+const C_PLAYS: usize = 0;
+const C_CV0: usize = 1;
+const C_NOTE_CH: usize = 5;
+const C_NOTE_GATE: usize = 6;
 const N_CONTROLS: usize = 7;
 
 fn kit_config(instance: usize) -> KitConfig {
@@ -337,7 +339,7 @@ impl OcApp {
 
     fn text(&self, i: usize) -> (String, String) {
         match i {
-            i if i < 4 => (format!("CV {}", i + 1), format!("{:+.2} V", self.p.cv_knob[i].get())),
+            i if (C_CV0..C_NOTE_CH).contains(&i) => (format!("CV {}", i - C_CV0 + 1), format!("{:+.2} V", self.p.cv_knob[i - C_CV0].get())),
             C_NOTE_CH => (
                 "Notes from".into(),
                 match self.p.note_channel.load(Ordering::Relaxed) as usize {
@@ -351,12 +353,15 @@ impl OcApp {
     }
 
     fn rows(&self) -> Vec<(String, String, bool)> {
-        let mut r: Vec<(String, String, bool)> = (0..N_CONTROLS)
-            .map(|i| {
-                let (n, v) = self.text(i);
-                (n, v, false)
-            })
-            .collect();
+        let mut r: Vec<(String, String, bool)> = Vec::new();
+        for i in 0..N_CONTROLS {
+            let (n, v) = self.text(i);
+            r.push((n, v, false));
+            if i == C_PLAYS {
+                // The instrument it plays, dialled in right under Plays.
+                r.extend(self.note_route.settings().into_iter().map(|s| (format!("  {}", s.label), s.value, false)));
+            }
+        }
         r.push(("Firmware".into(), VARIANTS[self.p.variant.load(Ordering::Relaxed).min(VARIANTS.len() - 1)].name.into(), false));
         r.push(("Window".into(), if self.p.window.load(Ordering::Relaxed) { "open" } else { "closed" }.into(), false));
         for (i, name) in OUTS.iter().enumerate() {
@@ -367,13 +372,20 @@ impl OcApp {
     }
 
     fn rows_len(&self) -> usize {
-        N_CONTROLS + 2 + OUTS.len() * 2
+        N_CONTROLS + 2 + OUTS.len() * 2 + self.note_route.settings().len()
     }
 
     fn edit_row(&mut self, row: usize, delta: i32) {
         if delta == 0 {
             return;
         }
+        let row = match crate::app::play_kit::menu_row(row, self.note_route.settings().len()) {
+            crate::app::play_kit::MenuRow::Setting(j) => {
+                self.note_route.adjust(j, delta.signum());
+                return;
+            }
+            crate::app::play_kit::MenuRow::Control(c) => c,
+        };
         if row < N_CONTROLS {
             self.kit_edit(row, delta);
         } else if row == N_CONTROLS {
@@ -477,23 +489,24 @@ impl PlayHost for OcApp {
     }
     fn kit_norm(&self, i: usize) -> Option<f32> {
         Some(match i {
-            i if i < 4 => (self.p.cv_knob[i].get() + 5.0) / 10.0,
+            i if (C_CV0..C_NOTE_CH).contains(&i) => (self.p.cv_knob[i - C_CV0].get() + 5.0) / 10.0,
             C_NOTE_CH => self.p.note_channel.load(Ordering::Relaxed) as f32 / 4.0,
             C_NOTE_GATE => self.p.note_gate.load(Ordering::Relaxed) as f32 / 4.0,
             _ => return None,
         })
     }
     fn kit_stepped(&self, i: usize) -> bool {
-        i >= C_NOTE_CH
+        i == C_PLAYS || i >= C_NOTE_CH
     }
     fn kit_pads_play(&self, _layer: u8) -> bool {
         false
     }
     fn kit_edit(&mut self, i: usize, delta: i32) {
         match i {
-            i if i < 4 => {
+            i if (C_CV0..C_NOTE_CH).contains(&i) => {
+                let k = i - C_CV0;
                 let step = delta as f32 * 0.05 * self.sensitivity.get().max(0.01) * 10.0;
-                self.p.cv_knob[i].set((self.p.cv_knob[i].get() + step).clamp(-5.0, 5.0));
+                self.p.cv_knob[k].set((self.p.cv_knob[k].get() + step).clamp(-5.0, 5.0));
             }
             C_NOTE_CH => self.p.note_channel.store((self.p.note_channel.load(Ordering::Relaxed) as i32 + delta.signum()).rem_euclid(5) as u32, Ordering::Relaxed),
             C_NOTE_GATE => self.p.note_gate.store((self.p.note_gate.load(Ordering::Relaxed) as i32 + delta.signum()).rem_euclid(5) as u32, Ordering::Relaxed),
@@ -506,7 +519,7 @@ impl PlayHost for OcApp {
     }
     fn kit_reset(&mut self, i: usize) {
         match i {
-            i if i < 4 => self.p.cv_knob[i].set(0.0),
+            i if (C_CV0..C_NOTE_CH).contains(&i) => self.p.cv_knob[i - C_CV0].set(0.0),
             C_NOTE_CH => self.p.note_channel.store(0, Ordering::Relaxed),
             C_NOTE_GATE => self.p.note_gate.store(0, Ordering::Relaxed),
             C_PLAYS => self.note_route.reset(),
@@ -516,7 +529,7 @@ impl PlayHost for OcApp {
     fn kit_set_norm(&mut self, i: usize, v: f32) {
         let v = v.clamp(0.0, 1.0);
         match i {
-            i if i < 4 => self.p.cv_knob[i].set(v * 10.0 - 5.0),
+            i if (C_CV0..C_NOTE_CH).contains(&i) => self.p.cv_knob[i - C_CV0].set(v * 10.0 - 5.0),
             C_NOTE_CH => self.p.note_channel.store((v * 4.0).round() as u32, Ordering::Relaxed),
             C_NOTE_GATE => self.p.note_gate.store((v * 4.0).round() as u32, Ordering::Relaxed),
             _ => {}
@@ -621,7 +634,9 @@ impl App for OcApp {
             let sel = self.list.selected.min(n - 1);
             self.edit_row(sel, i.knob2);
             if i.knob2_press {
-                self.kit_reset(sel.min(N_CONTROLS - 1));
+                if let crate::app::play_kit::MenuRow::Control(c) = crate::app::play_kit::menu_row(sel, self.note_route.settings().len()) {
+                    self.kit_reset(c.min(N_CONTROLS - 1));
+                }
             }
             self.release_all();
             return;
@@ -939,7 +954,7 @@ mod tests {
     /// A firmware's splash screen holds for about three seconds of real time, and each
     /// module's firmware boots from scratch, so wait that long from its own start.
     fn boot(a: &OcApp, p: &mut Box<dyn AudioProcessor>) {
-        let t0 = a.started_at.expect("the firmware was started");
+        let t0 = a.started_at.unwrap_or_else(|| panic!("the firmware was started (status: {:?})", a.status));
         run_until(p, 12_000, || t0.elapsed().as_secs_f32() > 6.5);
     }
 

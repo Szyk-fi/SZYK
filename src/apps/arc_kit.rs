@@ -279,6 +279,7 @@ pub mod draw {
     use super::LEDS;
 
     /// LEDs `from` to `to` inclusive, going clockwise and wrapping past 63.
+    #[allow(dead_code)] // not used by the main binary
     pub fn range(ring: &mut [u8; LEDS], from: i32, to: i32, level: u8) {
         let (a, b) = (from.rem_euclid(LEDS as i32), to.rem_euclid(LEDS as i32));
         let n = (b - a).rem_euclid(LEDS as i32);

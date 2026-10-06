@@ -218,6 +218,14 @@ impl Input {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SystemRole { Mixer, Settings }
 
+/// One line of an instrument's settings, as another app lists it under its
+/// own "Plays" row (see `NoteRoute::settings` in note_bus.rs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Setting {
+    pub label: String,
+    pub value: String,
+}
+
 pub trait App {
     /// Configured live routes, frozen buffers, or external control outputs that
     /// must continue after leaving this screen. Transport is handled separately.
@@ -332,6 +340,7 @@ pub trait App {
     /// knob-only input instead of a menu row. Default: nothing. The
     /// one real use so far is Settings' color wheel (`apps/settings.
     /// rs`): `x`/`y` are the click offset from the wheel's center.
+    #[allow(dead_code)] // not used by the main binary
     fn slint_pointer_pick(&mut self, x: f32, y: f32) {
         let _ = (x, y);
     }
@@ -360,7 +369,20 @@ pub trait App {
         Vec::new()
     }
 
+    /// The settings a sequencer-like app lists under the instrument it plays,
+    /// so the instrument can be dialled in from there. Apps built on the
+    /// shared play kit and the Mutable Instruments kit answer from their
+    /// controls; any other app falls back to its menu rows, read-only.
+    fn instrument_settings(&self) -> Vec<Setting> {
+        self.slint_rows().into_iter().filter(|(_, _, group)| !group).map(|(label, value, _)| Setting { label, value }).collect()
+    }
+
+    /// Steps setting `index` of `instrument_settings` by `delta` clicks.
+    /// Nothing happens for an app whose settings are read-only.
+    fn adjust_setting(&mut self, _index: usize, _delta: i32) {}
+
     /// Which row `slint_rows` should show as selected.
+    #[allow(dead_code)] // not used by the main binary
     fn slint_scale_info(&self) -> Option<music_scales::ScaleInfo> { None }
 
     fn slint_selected(&self) -> usize {
@@ -391,6 +413,7 @@ pub trait App {
     /// Real fader-level fraction (0..1) per windowed row, aligned with
     /// `slint_windowed_rows`' own window -- `None` per row for an app
     /// with nothing level-like to show (every app except Mixer).
+    #[allow(dead_code)] // the Slint front end (examples/) calls it, not the main binary
     fn slint_levels(&mut self, visible: usize) -> Vec<Option<f32>> {
         let _ = visible;
         Vec::new()
@@ -432,6 +455,7 @@ pub trait App {
 /// parallel `(mid_x, mid_y, length, angle_deg)` arrays, one entry per
 /// segment (samples.len() - 1 of them), all in pixels except the
 /// angle.
+#[allow(dead_code)] // not used by the main binary
 pub fn polyline_segments(samples: &[f32], width_px: f32, height_px: f32, centered: bool) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
     if samples.len() < 2 {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -461,6 +485,7 @@ pub fn polyline_segments(samples: &[f32], width_px: f32, height_px: f32, centere
 }
 
 /// See `App::slint_extra`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub enum SlintExtra {
     None,
     Plaits(PlaitsExtra),
@@ -546,6 +571,7 @@ pub struct NornsExtra {
 }
 
 /// Retro's real per-frame telemetry -- see `RetroApp::slint_extra`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct RetroExtra {
     /// Every system Retro supports, in chip order.
     pub consoles: Vec<String>,
@@ -576,6 +602,7 @@ pub struct RetroExtra {
 /// exactly (Visualizer wraps `AnalyzerApp` verbatim for these), only
 /// populated when `scene_kind == 0`; otherwise the Boxer/Car fields
 /// (`bass_level`/`treble_level`/`beat_pulse`/`car_x`) drive the scene.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct VisualizerExtra {
     pub mode_kind: u32,
     pub mode_name: String,
@@ -598,6 +625,7 @@ pub struct VisualizerExtra {
 
 /// Sample Drum's real per-channel telemetry -- see
 /// `SampleDrumApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct SampleDrumExtra {
     pub channel: usize,
     pub sample_name: String,
@@ -620,6 +648,7 @@ pub struct SampleDrumExtra {
 
 /// Tonestack's real post-chain telemetry -- see
 /// `TonestackApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct TonestackExtra {
     pub voicing_name: String,
     /// The real post-chain output waveform, downsampled once per
@@ -753,6 +782,7 @@ pub struct TinkertoneExtra {
 }
 
 /// Settings' live color-wheel state -- see `SettingsApp::slint_extra`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct ThemeExtra {
     pub section: usize,
     pub detail: String,
@@ -777,6 +807,7 @@ pub struct ThemeExtra {
 
 /// Magnito's real hysteresis-loop XY trace + tape-character state --
 /// see `MagnitoApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct MagnitoExtra {
     /// Real connected-line-segment geometry (see `polyline_segments`-
     /// style construction) of the (input, output) XY trace across the
@@ -798,6 +829,7 @@ pub struct MagnitoExtra {
 
 /// CV Out's real 32-channel output state -- see
 /// `CvOutApp::slint_extra`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct CvOutExtra {
     pub midi_channel: u32,
     /// Each channel's real combined output (manual offset + external
@@ -806,6 +838,7 @@ pub struct CvOutExtra {
 }
 
 /// The real mixer-strip state -- see `MixerApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct MixerExtra {
     pub master: f32,
     /// One entry per channel: `(name, fader level 0..1.5, live peak
@@ -815,6 +848,7 @@ pub struct MixerExtra {
 
 /// Warps' real carrier/modulator/output traces + vocoder band levels
 /// -- see `WarpsApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct WarpsExtra {
     pub algorithm_name: String,
     pub next_algorithm_name: Option<String>,
@@ -835,6 +869,7 @@ pub struct WarpsExtra {
 /// see `NautilusApp::output_visual`. Flattened out of its native
 /// `[T; 8]`-per-field shape (Slint has no array-of-struct property
 /// type).
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct NautilusExtra {
     pub delay_mode_name: String,
     pub delay_mode_index: usize,
@@ -856,6 +891,7 @@ pub struct NautilusExtra {
 
 /// StarLab's real oscilloscope + texture/LFO/tank-energy state -- see
 /// `StarlabApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct StarlabExtra {
     pub waveform: CurveSegments,
     pub texture_name: String,
@@ -869,6 +905,7 @@ pub struct StarlabExtra {
 
 /// Rainmaker's real 16-tap timing map -- see
 /// `RainmakerApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct RainmakerExtra {
     pub groove_name: String,
     pub groove_amount: f32,
@@ -881,6 +918,7 @@ pub struct RainmakerExtra {
 
 /// Turing Machine's real 16-bit shift register + Locks-derived lock
 /// state -- see `TuringMachineApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct TuringMachineExtra {
     pub bits: [bool; 16],
     pub active_len: usize,
@@ -898,6 +936,7 @@ pub struct TuringMachineExtra {
 /// state -- see `NaturalGateApp::output_visual`. Flattened out of its
 /// native `[ChannelVisual; 2]` shape (Slint has no array-of-struct
 /// property type) into two explicit channel slots.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct NaturalGateExtra {
     /// Real connected-line-segment geometry (see `polyline_segments`)
     /// of each channel's envelope history.
@@ -913,6 +952,7 @@ pub struct NaturalGateExtra {
 
 /// Queen of Pentacles' real chaotic-map trajectory + live CV/Gate/
 /// Delta output state -- see `QueenOfPentaclesApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct QueenOfPentaclesExtra {
     pub map_name: String,
     pub r: f32,
@@ -932,6 +972,7 @@ pub struct QueenOfPentaclesExtra {
 
 /// Black Hole's real category badge + oscilloscope + per-algorithm
 /// parameter meters -- see `BlackHoleApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct BlackHoleExtra {
     pub algorithm_name: String,
     pub category_name: String,
@@ -954,6 +995,7 @@ pub struct BlackHoleExtra {
 /// scrolling snapshot of the live capture buffer, with each currently
 /// active grain plotted at its real read position within it, sized/
 /// glowing by its real current envelope amplitude.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct BeadsExtra {
     pub mode_name: String,
     pub frozen: bool,
@@ -967,6 +1009,7 @@ pub struct BeadsExtra {
 }
 
 /// Clouds' real output monitor -- see `CloudsApp::output_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct CloudsExtra {
     pub playback_mode: usize,
     pub playback_mode_name: String,
@@ -982,6 +1025,7 @@ pub struct CloudsExtra {
 /// regardless of which app is on screen); this is the same real
 /// step/playhead/focus state, just also shown on the screen itself,
 /// matching what the real embedded_graphics `draw()` does.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct SequencerExtra {
     pub header: String,
     /// One entry per step (16, row-major): `(active, trimmed,
@@ -1091,6 +1135,7 @@ pub struct ControllerExtra {
     pub status: String,
 }
 
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct PlaitsExtra {
     pub engine_name: String,
     pub engine_bank: usize,
@@ -1110,6 +1155,7 @@ pub struct PlaitsExtra {
 /// The standalone Analyzer app's own real mode-switching panel --
 /// same shape as `PlaitsExtra`'s analyzer half, without the
 /// engine-selection dots Plaits alone has.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct AnalyzerExtra {
     pub analyzer_kind: u32,
     pub analyzer_name: String,
@@ -1134,6 +1180,7 @@ pub struct CurveSegments {
 /// Pre-converted to real line-segment geometry (see
 /// `polyline_segments`) rather than raw samples, so the live screen
 /// draws genuine connected curves instead of a bar chart.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct VoltageExtra {
     /// The loaded preset, "07 Neon Arp", with " *" once edited.
     pub preset: String,
@@ -1151,6 +1198,7 @@ pub struct VoltageExtra {
 /// fixed ring, inner note dots each drifting on their own ring), but
 /// now has its own dedicated `BloomVisual` for its botanical styling
 /// -- see that struct's doc comment for why.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct ShapeVisual {
     pub shape_index: usize,
     pub running: bool,
@@ -1171,6 +1219,7 @@ pub struct ShapeVisual {
 /// `ShapeVisual` (still used by Madness) so Bloom can carry its own
 /// botanical styling (a rose-to-gold petal gradient by ring, plus its
 /// current Pattern name) without changing Madness's look.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct BloomVisual {
     pub shape_index: usize,
     pub running: bool,
@@ -1187,6 +1236,7 @@ pub struct BloomVisual {
 
 /// Nebula's real gravity-well particle sim -- see
 /// `NebulaApp::arena_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct NebulaExtra {
     /// `(x, y)` in -1..1, `active`, `lit` (just fired) -- one entry
     /// per gravity well.
@@ -1198,6 +1248,7 @@ pub struct NebulaExtra {
 
 /// Pam's real CV monitor scope for the currently-browsed channel --
 /// see `PamsApp::channel_monitor`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct PamsExtra {
     pub channel_index: usize,
     /// -1..1, oldest first.
@@ -1207,6 +1258,7 @@ pub struct PamsExtra {
 
 /// Singularity's real chaotic orbiting point -- see
 /// `SingularityApp::orbit_visual`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct OrbitExtra {
     pub x: f32,
     pub y: f32,
@@ -1214,6 +1266,7 @@ pub struct OrbitExtra {
 }
 
 /// Prism's real tap-time/rate map -- see `PrismApp::tap_map`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct PrismExtra {
     /// `(x_frac, height_frac)` per tap/tick, both 0..1.
     pub ticks: Vec<(f32, f32)>,
@@ -1222,6 +1275,7 @@ pub struct PrismExtra {
 
 /// Cascade's real FM operator-routing graph -- see
 /// `CascadeApp::operator_graph`.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct CascadeExtra {
     pub algorithm_name: String,
     /// Whether each operator (fixed at 6, see `NUM_OPS`) is a carrier
@@ -1248,12 +1302,14 @@ pub struct CascadeExtra {
 /// that a chain of consecutive operator indices (the common case,
 /// e.g. the "Stack" algorithm's 5->4->3->2->1->0) always connects
 /// adjacent boxes instead of jumping diagonally across the grid.
+#[allow(dead_code)] // not used by the main binary
 fn cascade_op_center(op: usize) -> (f32, f32) {
     let row = (op / 3) as f32;
     let col = if op < 3 { (op % 3) as f32 } else { (5 - op) as f32 };
     (20.0 + col * 90.0 + 35.0, 10.0 + row * 60.0 + 13.0)
 }
 
+#[allow(dead_code)] // not used by the main binary
 pub fn cascade_connection_lines(connections: &[(usize, usize)]) -> CurveSegments {
     let mut mid_x = Vec::with_capacity(connections.len());
     let mut mid_y = Vec::with_capacity(connections.len());
@@ -1273,6 +1329,7 @@ pub fn cascade_connection_lines(connections: &[(usize, usize)]) -> CurveSegments
 }
 
 /// Bounded live telemetry for the independently installed collection apps.
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct CollectionExtra {
     pub visual_lines:Vec<f32>,
     pub terrain:Vec<f32>,
@@ -1284,11 +1341,14 @@ pub struct CollectionExtra {
     pub playing: bool, pub source: String, pub hint: String,
 }
 
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 #[derive(Clone,Debug)]
 pub struct PortalExtra {pub sources:Vec<String>,pub targets:Vec<String>,pub amounts:Vec<f32>,pub enabled:Vec<bool>,pub levels:Vec<f32>,pub selected:i32,pub active:bool,pub status:String}
 
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct VectorFilterExtra {pub xyz:Vec<f32>,pub wave:Vec<f32>,pub source:String,pub mode:String,pub enabled:bool}
 
+#[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct ForgeExtra{pub wave:Vec<f32>,pub starts:Vec<f32>,pub ends:Vec<f32>,pub labels:Vec<String>,pub levels:Vec<f32>,pub name:String,pub status:String,pub mode:String,pub source:String,pub selected:i32,pub busy:bool,pub recording:bool,pub duration:f32}
 
 /// Atlas's panel in the Slint GUI -- see `AtlasPanel`.

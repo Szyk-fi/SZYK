@@ -105,6 +105,8 @@ enum Selection {
     /// Where the register's notes go (another app, or nowhere): each step
     /// whose Pulse bit is set plays the CV quantized to Scale.
     Plays,
+    /// A setting of the instrument Plays points at, listed under Plays.
+    InstSetting(usize),
     NoteScale,
     Rate,
     Locks,
@@ -129,6 +131,7 @@ const NUM_GROUPS: usize = 4;
 const CORE_GROUP: usize = 0;
 const GATE_GROUP: usize = 1;
 const CV_GROUP: usize = 2;
+#[allow(dead_code)] // not used by the main binary
 const OUTPUT_GROUP: usize = 3;
 
 /// Live panel state for a bespoke Slint Turing Machine screen: the
@@ -140,6 +143,7 @@ const OUTPUT_GROUP: usize = 3;
 /// exact same formula the processor itself evaluates -- nothing here
 /// is invented for display purposes.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct TuringMachineVisual {
     /// The full 16-position ring, in the same display-index convention
     /// as `register_bits()`: index 0 is the bit about to shift out
@@ -336,6 +340,7 @@ const TURING_ACCENT: Rgb565 = Rgb565::new(0, 20, 18);
 const TURING_DIM: Rgb565 = Rgb565::new(9, 17, 7);
 const TURING_LED_OFF: Rgb565 = Rgb565::new(25, 50, 17);
 
+#[allow(dead_code)] // not used by the main binary
 impl TuringMachineApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>) -> Self {
         Self {
@@ -364,12 +369,14 @@ impl TuringMachineApp {
             CORE_GROUP => vec![Selection::Rate, Selection::Locks, Selection::Length, Selection::Write],
             GATE_GROUP => vec![Selection::GateBitA, Selection::GateBitB, Selection::GateMode],
             CV_GROUP => (0..NUM_VOLTS_WEIGHTS).map(Selection::VoltsWeight).collect(),
-            _ => [Selection::Plays, Selection::NoteScale].into_iter().chain((0..NUM_OUTPUTS).flat_map(|c| [Selection::OutputTarget(c), Selection::OutputInput(c), Selection::OutputLevel(c)])).collect(),
+            _ => [Selection::NoteScale].into_iter().chain((0..NUM_OUTPUTS).flat_map(|c| [Selection::OutputTarget(c), Selection::OutputInput(c), Selection::OutputLevel(c)])).collect(),
         }
     }
 
     fn visible_rows(&self) -> Vec<Row> {
-        let mut rows = Vec::new();
+        // Plays leads the menu, as in every note source.
+        let mut rows = vec![Row::Leaf(Selection::Plays)];
+        rows.extend((0..self.note_route.settings().len()).map(|i| Row::Leaf(Selection::InstSetting(i))));
         for g in 0..NUM_GROUPS {
             rows.push(Row::Group(g));
             if self.expanded[g] {
@@ -427,6 +434,7 @@ impl TuringMachineApp {
         match sel {
             Selection::Rate => "Rate".into(),
             Selection::Plays => "Plays".into(),
+            Selection::InstSetting(i) => format!("  {}", self.note_route.settings().get(i).map_or(String::new(), |s| s.label.clone())),
             Selection::NoteScale => "Note scale".into(),
             Selection::Locks => "Locks".into(),
             Selection::Length => "Length".into(),
@@ -461,6 +469,7 @@ impl TuringMachineApp {
         match sel {
             Selection::Rate => format!("{:.1} Hz", self.params.rate_hz.get()),
             Selection::Plays => self.note_route.label(),
+            Selection::InstSetting(i) => self.note_route.settings().get(i).map_or(String::new(), |s| s.value.clone()),
             Selection::NoteScale => SCALE_TYPES[self.params.note_scale.load(Ordering::Relaxed) % SCALE_TYPES.len()].0.into(),
             Selection::Locks => {
                 let t = self.params.locks.get().clamp(0.0, 1.0);
@@ -490,6 +499,7 @@ impl TuringMachineApp {
         match sel {
             Selection::Rate => bump(&self.params.rate_hz, delta, sensitivity, MIN_RATE_HZ, MAX_RATE_HZ),
             Selection::Plays => self.note_route.step(delta.signum()),
+            Selection::InstSetting(i) => self.note_route.adjust(i, delta.signum()),
             Selection::NoteScale => self.params.note_scale.store((self.params.note_scale.load(Ordering::Relaxed) as i32 + delta.signum()).rem_euclid(SCALE_TYPES.len() as i32) as usize, Ordering::Relaxed),
             Selection::Locks => bump(&self.params.locks, delta, sensitivity, 0.0, 1.0),
             Selection::Length => {
@@ -527,6 +537,7 @@ impl TuringMachineApp {
         match sel {
             Selection::Rate => self.params.rate_hz.set(4.0),
             Selection::Plays => self.note_route.reset(),
+            Selection::InstSetting(_) => {}
             Selection::NoteScale => self.params.note_scale.store(1, Ordering::Relaxed),
             Selection::Locks => self.params.locks.set(0.5),
             Selection::Length => self.params.length_idx.store(DEFAULT_LENGTH_IDX, Ordering::Relaxed),
@@ -1334,7 +1345,7 @@ mod tests {
     /// `locks_label` already document.
     #[test]
     fn output_visual_keep_probability_and_lock_side_track_the_locks_knob() {
-        let (mut app, _modbus) = new_app();
+        let (app, _modbus) = new_app();
 
         app.params.locks.set(1.0);
         let locked = app.output_visual();

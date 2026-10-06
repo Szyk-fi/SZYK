@@ -101,6 +101,112 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: Bloom: each shape picks its own engine
+- Branch: claude/picker-and-cleanup
+- Changed: src/apps/bloom.rs, apps/bloom/manifest.toml, src/note_bus.rs
+  (NoteRoute::set), src/registry.rs (test). Bloom had one note route for all
+  eight shapes and a Plaits engine at the bottom of every shape. Now each shape
+  has its own route ("Bloom Shape 1".."8" on the note bus) and an Engine row
+  right under Pattern: Own sound (the Plaits voice, with its Voice/Harmonics/
+  Timbre/Decay rows listed under it), None, or any instrument, whose own
+  settings (patch, plugin...) list there through the instrument-settings
+  bridge; for an instrument the Plaits rows give way to its settings and Decay
+  becomes the note length. The top-level Plays row sets every shape at once.
+- Status: done. Not built: a "now playing" overview app.
+- Tests: each_shape_picks_its_engine_under_pattern; full suite: only the 25
+  environmental failures.
+- Notes for the other assistant: anything that named the note source "Bloom"
+  now needs "Bloom Shape N".
+
+### 2026-10-06: Claude: Grid and Teletype: the grid is playable and says how
+- Branch: claude/picker-and-cleanup
+- Why it was dark: an app joined the grid only when it was built, and apps are
+  built lazily, so Teletype was not on the Grid app's list until opened (and
+  the first app built, e.g. Kria, held the focus); and Teletype's default
+  scenes have no G ops, so even with focus it drew nothing.
+- Changed: manifest field `grid_client` (kria, teletype, grid_pads, norns),
+  declared at startup (Grid::declare, shared area src/apps/grid_kit.rs +
+  src/registry.rs + src/app_runtime.rs); handing the grid to an unbuilt app
+  builds it (LazyApp::with_grid, Grid::focus_owner). Grid::set_hint plus a line
+  under the Grid screen saying how the focused app uses the grid. Teletype with
+  a scene that has no G ops now shows and runs the module's script buttons on
+  the top row (keys 1-8 = S1-S8, 10 = M, 11 = I, lit while running); scenes
+  with G ops draw the grid themselves as before. docs/USER_MANUAL.md section
+  5.3 (Grid, Teletype, Kria; the manual had nothing on them),
+  docs/ADDING_AN_APP.md.
+- Status: done in the sim; not tried on a real grid.
+- Tests: handing_the_grid_to_an_unopened_teletype_builds_it_and_lights_the_grid;
+  full suite: only the 25 environmental failures.
+- Notes for the other assistant: an app that plays the grid should add
+  `grid_client = "<name it registers under>"` to its manifest.
+
+### 2026-10-06: Claude: instrument settings listed under a source's Plays row
+- Branch: claude/picker-and-cleanup
+- Changed: new shared mechanism. src/app.rs: `Setting`, and App gains
+  `instrument_settings()` / `adjust_setting()` (play-kit apps and the MI kit
+  answer from their controls via play_kit::settings_of/adjust_in; any other
+  app falls back to its menu rows, read-only: choir, chop, skins, timbre_map).
+  src/note_bus.rs: a settings port per instrument slot (shared area: a new
+  field and methods, nothing existing changed), `NoteRoute::settings()` and
+  `NoteRoute::adjust()`. src/app_runtime.rs: LazyApp publishes the instrument's
+  settings while a source is asking and applies the edits queued for it.
+  Source menus that now list them under Plays: Bloom, Madness, Nebula, Turing
+  Machine, Marbles, Norns, Hum, Chordsmith, Session (SETUP), Collection synths,
+  Sequencer (instrument tracks), Kria, Orca, Teletype, O&C.
+- Status: done except Ledger (its menu is the kit's own control list, so there
+  is nowhere to insert rows; Plays is there but without the settings) and
+  Dialogue (not mine to edit now).
+- Tests: registry tests a_source_lists_and_edits_the_settings_of_the_instrument_it_plays
+  and a_sources_menu_lists_the_instruments_settings_under_plays; full suite has
+  only the 25 environmental failures.
+- Notes for the other assistant: a source calls `note_route.settings()` every
+  frame it draws the rows (asking is what keeps the instrument publishing); to
+  list them in a new source, add rows after Plays from that call and send edits
+  with `note_route.adjust(i, delta)`.
+
+### 2026-10-06: Claude: Plays first in every note source's menu, orphan apps, warnings
+- Branch: claude/picker-and-cleanup (on top of claude/dropin-cleanup)
+- Changed: Plays is now the first row in Kria, Teletype, Orca, O&C (constants
+  renumbered), Collection synths, Hum, Turing Machine, Nebula (a top-level
+  leaf), Session (SETUP) and Ledger (new Plays row: its tracks had routes but
+  no row to change them) and Norns (new, first row of PARAMS; it had no
+  picker). Sequencer keeps Plays first inside each track's group. Cascade
+  removed (replaced by Dexed); Synth reinstalled (apps/synth, the manual
+  documents it); Analyzer's `create` removed (it is Visualizer's helper).
+  build.rs adds -include cstdio/cstring/cstdlib on Linux. 112 compiler
+  warnings down to 0 (`#[allow(dead_code)]` where only the Slint examples use
+  an item). tools/sync_manifests.sh fills in mod_inputs.
+- Status: done, except the instrument's own settings listed under the Plays
+  row: that needs a shared mechanism (ModBus inputs by owner) and is not built.
+- Tests: cargo test --bin portamax-sim: 25 failed, all environmental (19 need
+  samples/; 6 in apps::oc: dlopen of the firmware library fails here with no
+  error text, undiagnosed, so the O&C renumber is only covered by the tests
+  that do not boot the firmware).
+- Notes for the other assistant: menu row numbers moved in those apps; any
+  script or doc that named a row by position needs checking.
+
+### 2026-10-06: Claude: drop-in app contract checked, docs and build fixed
+- Branch: claude/dropin-cleanup
+- Changed: docs/ADDING_AN_APP.md (rewritten: nothing central to edit, the
+  manifest table says what each field gives an app), CLAUDE.md and
+  docs/app-independence.md (stale: told agents to leave registry.rs/mod.rs and
+  the manifest to the owner, and quoted old app/test counts), src/registry.rs
+  (new test every_installed_app_is_wired_up_and_runs: every manifest has code,
+  unique ids and names, notes_in/note_outputs really declared, every app can be
+  entered, ticked, drawn and run with finite audio), build.rs
+  (apply_vendor_patches: the Tides ramp-extractor fix from vendor/PATCHES.md,
+  which lives in an upstream submodule and so was missing from fresh checkouts;
+  without it Stages' every_preset_runs_without_blowing_up spins forever),
+  vendor/PATCHES.md.
+- Status: done. The drop-in promise already held (build.rs generates the module
+  list and factory table; the manifest installs the app).
+- Tests: cargo test --bin portamax-sim: 1031 passed, 25 failed. 19 need
+  samples/ (sample_drum, sequencer); 6 in apps::oc ("the firmware was started")
+  fail in this Linux container, not diagnosed.
+- Notes for the other assistant: src/apps/{cascade,synth,analyzer}.rs have a
+  `create` but no manifest (cascade was uninstalled for Dexed on purpose); I
+  left them. On newer GCC the eurorack C++ needs CXXFLAGS="-include cstdio".
+
 ### 2026-10-06: Claude: grid and arc pieces after monome-community/collected
 - Branch: claude/teletype
 - Changed: new bundled norns scripts in assets/norns/code (all new code,

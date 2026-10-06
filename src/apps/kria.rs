@@ -869,20 +869,20 @@ struct Shared {
     output: Arc<Mutex<Vec<f32>>>,
 }
 
-const C_CLOCK: usize = 0;
-const C_PERIOD: usize = 1;
-const C_TRACK: usize = 2;
-const C_DIR: usize = 3;
-const C_DURMUL: usize = 4;
-const C_OCTSHIFT: usize = 5;
-const C_MUTE: usize = 6;
-const C_TRIGCLK: usize = 7;
-const C_NOTESYNC: usize = 8;
-const C_LOOPSYNC: usize = 9;
-const C_CUE: usize = 10;
-const C_CUESTEPS: usize = 11;
-const C_BASE: usize = 12;
-const C_ROUTE: usize = 13;
+const C_CLOCK: usize = 1;
+const C_PERIOD: usize = 2;
+const C_TRACK: usize = 3;
+const C_DIR: usize = 4;
+const C_DURMUL: usize = 5;
+const C_OCTSHIFT: usize = 6;
+const C_MUTE: usize = 7;
+const C_TRIGCLK: usize = 8;
+const C_NOTESYNC: usize = 9;
+const C_LOOPSYNC: usize = 10;
+const C_CUE: usize = 11;
+const C_CUESTEPS: usize = 12;
+const C_BASE: usize = 13;
+const C_ROUTE: usize = 0;
 const C_WAVE: usize = 14;
 const C_RELEASE: usize = 15;
 const C_LEVEL: usize = 16;
@@ -949,6 +949,7 @@ struct GridKeys {
     down_at: Vec<Option<std::time::Instant>>,
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl KriaApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, mods: Arc<ModBus>, bus: Arc<AudioBus>, mixer: Arc<MixerBus>) -> Self {
         Self::with(Path::new(SAVE_DIR), link(), sensitivity, nav, mods, bus, mixer)
@@ -1791,7 +1792,7 @@ impl KriaApp {
             C_CUE => ("Pattern pads cue".into(), onoff(self.cue_mode)),
             C_CUESTEPS => ("Cue every".into(), format!("{} clocks", d.cue_steps as u32 + 1)),
             C_BASE => ("0 V is".into(), note_name(self.p.base.load(Ordering::Relaxed) as i32)),
-            C_ROUTE => ("TR plays".into(), self.route.label()),
+            C_ROUTE => ("Plays".into(), self.route.label()),
             C_WAVE => ("Voice".into(), WAVES[self.p.wave.load(Ordering::Relaxed) % 4].into()),
             C_RELEASE => ("Release".into(), format!("{:.0} ms", release_ms(self.p.release.get()))),
             C_LEVEL => ("Level".into(), format!("{:.0}%", self.p.level.get() * 100.0)),
@@ -1814,10 +1815,16 @@ impl KriaApp {
     }
 
     fn rows(&self) -> Vec<(String, String, bool)> {
-        (0..N_CONTROLS).map(|i| {
+        let mut r = Vec::new();
+        for i in 0..N_CONTROLS {
             let (n, v) = self.text(i);
-            (n, v, false)
-        }).collect()
+            r.push((n, v, false));
+            if i == 0 {
+                // The instrument it plays, dialled in right under Plays.
+                r.extend(self.route.settings().into_iter().map(|s| (format!("  {}", s.label), s.value, false)));
+            }
+        }
+        r
     }
 
     fn control(&mut self, i: usize, d: i32) {
@@ -2038,11 +2045,21 @@ impl App for KriaApp {
         self.kit = play;
         if step.menu {
             let i = &step.input;
-            self.list.navigate_input(i, N_CONTROLS, self.nav.get() as i32);
-            let sel = self.list.selected.min(N_CONTROLS - 1);
-            self.kit_edit(sel, i.knob2);
-            if i.knob2_press {
-                self.kit_reset(sel);
+            let n = self.route.settings().len();
+            self.list.navigate_input(i, N_CONTROLS + n, self.nav.get() as i32);
+            let sel = self.list.selected.min(N_CONTROLS + n - 1);
+            match crate::app::play_kit::menu_row(sel, n) {
+                crate::app::play_kit::MenuRow::Setting(j) => {
+                    if i.knob2 != 0 {
+                        self.route.adjust(j, i.knob2.signum());
+                    }
+                }
+                crate::app::play_kit::MenuRow::Control(c) => {
+                    self.kit_edit(c, i.knob2);
+                    if i.knob2_press {
+                        self.kit_reset(c);
+                    }
+                }
             }
             self.pads_down = [false; 16];
             return;

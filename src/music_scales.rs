@@ -25,7 +25,9 @@ pub fn degree(index: usize, position: usize) -> i32 {
     let notes=intervals(index); notes[position % notes.len()] + 12*(position/notes.len()) as i32
 }
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // not used by the main binary
 pub struct ScaleInfo { pub name: String, pub root: String, pub notes: String, pub keys: Vec<bool> }
+#[allow(dead_code)] // not used by the main binary
 impl ScaleInfo {
     pub fn new(index: usize, root: i32) -> Self {
         let (name,notes)=SCALE_TYPES[index % SCALE_TYPES.len()];

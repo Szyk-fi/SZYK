@@ -1407,6 +1407,7 @@ pub fn kids_footer(fb: &mut FrameBuffer, s: &str) {
 
 /// The strip along the top of every Kids screen: the app's name, which
 /// age group it's for, and the way home.
+#[allow(dead_code)] // not used by the main binary
 pub fn header(fb: &mut FrameBuffer, title: &str, ages: &str, bg: Rgb565, ink: Rgb565) {
     rect(fb, 0, 0, WIDTH as i32, 30, bg);
     text(fb, title, 12, 7, Size2::Medium, ink, -1);

@@ -21,14 +21,14 @@ F1 opens Home (Settings from Home when installed). F2 is contextual: Sequencer p
 
 ## Verification
 
-`cargo test --offline --bin portamax-sim` exercises 322 tests, including duplicate/missing/renamed entries, no-source routing, Pam's clock pause/resume and Prism utility actions.
+`cargo test --offline --bin portamax-sim` exercises every installed app through the real registry, plus duplicate/missing/renamed entries, no-source routing, Pam's clock pause/resume and Prism utility actions.
 
-`cargo run --offline --example slint_home_live -- --render-instruments OUTPUT_DIRECTORY` constructs each of 31 implemented apps with fresh shared buses and no peers, checks its menu/visual payload, processes finite audio where applicable, and verifies transport toggling. It then renders the collection and checks pointer navigation, disabled F-buttons, all pads, joystick and D-pad repeat timing. This is a startup smoke test, not exhaustive DSP interoperability or physical-device verification.
+`cargo run --offline --example slint_home_live -- --render-instruments OUTPUT_DIRECTORY` constructs each implemented app with fresh shared buses and no peers, checks its menu/visual payload, processes finite audio where applicable, and verifies transport toggling. It then renders the collection and checks pointer navigation, disabled F-buttons, all pads, joystick and D-pad repeat timing. This is a startup smoke test, not exhaustive DSP interoperability or physical-device verification.
 
 ## Remaining architecture work
 
 This is not a hot-unload plugin system. Audio/modulation routes currently use session-local indices, and processors/bus registrations live for the session. Do not persist those indices as portable patches. Live removal requires stable app-instance/port IDs, registration ownership and unregister operations, safe audio-thread graph swaps, held-note cleanup, and unresolved-route handling. Saved patches must retain unresolved stable IDs rather than silently reconnecting by index.
 
-Compiled app code and its Slint visual variants also remain centrally registered. Removing a manifest needs no peer changes; deleting implementation source still requires updating that compiled registration. A fully independently packaged application format is not implemented.
+App code is compiled in, but nothing central lists it: `build.rs` generates the module list and factory table from `src/apps/`, and the manifest installs it. Removing a manifest needs no peer changes, and deleting an implementation file needs none either. A fully independently packaged application format is not implemented.
 
 The twenty new concepts are a separate `slint_new_apps` UI study executable. They do not register unfinished audio/storage/network implementations in the working inventory. Each concept has its own control and pad state; the study's F-buttons browse/control previews, not audio transport. Integrate future working apps through the same capability contract, with explicit audio, recording, storage and resource-lifecycle tests.

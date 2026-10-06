@@ -116,6 +116,12 @@ struct State {
     gen: u64,
     keys: VecDeque<Key>,
     clients: Vec<String>,
+    /// Which installed app (by id) each declared client is, so the app can
+    /// be built when the grid is handed to it.
+    owners: Vec<(String, String)>,
+    /// What each client says about its own use of the grid (shown by the
+    /// Grid app under "plays"), e.g. that the scene draws nothing.
+    hints: Vec<(String, String)>,
     focus: Option<String>,
     device: Option<Device>,
     /// Where the hardware's top-left key sits on the grid.
@@ -130,6 +136,8 @@ pub struct Snapshot {
     pub leds: Vec<u8>,
     pub held: Vec<bool>,
     pub focus: Option<String>,
+    /// What the app holding the grid says about its use of it, if anything.
+    pub hint: Option<String>,
     pub device: Option<Device>,
     pub offset: (usize, usize),
 }
@@ -157,6 +165,8 @@ impl Grid {
                 gen: 1,
                 keys: VecDeque::new(),
                 clients: Vec::new(),
+                owners: Vec::new(),
+                hints: Vec::new(),
                 focus: None,
                 device: None,
                 offset: (0, 0),
@@ -219,6 +229,44 @@ impl Grid {
         }
         if s.focus.is_none() {
             s.focus = Some(name.to_string());
+        }
+    }
+
+    /// An installed app that plays the grid, announced at startup from its
+    /// manifest (`grid_client`) so it can be chosen before it has ever been
+    /// built; it is built when the grid is handed to it (`focus_owner`).
+    /// Declaring never takes the focus.
+    pub fn declare(&self, owner: &str, name: &str) {
+        let mut s = self.st();
+        if !s.clients.iter().any(|c| c == name) {
+            s.clients.push(name.to_string());
+        }
+        if !s.owners.iter().any(|(n, _)| n == name) {
+            s.owners.push((name.to_string(), owner.to_string()));
+        }
+    }
+
+    /// The id of the installed app holding the grid, when it was declared.
+    pub fn focus_owner(&self) -> Option<String> {
+        let s = self.st();
+        let f = s.focus.as_deref()?;
+        s.owners.iter().find(|(n, _)| n == f).map(|(_, o)| o.clone())
+    }
+
+    /// `name` says something about its use of the grid ("" clears it).
+    pub fn set_hint(&self, name: &str, text: &str) {
+        let mut s = self.st();
+        match s.hints.iter().position(|(n, _)| n == name) {
+            Some(i) if text.is_empty() => {
+                s.hints.remove(i);
+            }
+            Some(i) => {
+                if s.hints[i].1 != text {
+                    s.hints[i].1 = text.to_string();
+                }
+            }
+            None if text.is_empty() => {}
+            None => s.hints.push((name.to_string(), text.to_string())),
         }
     }
 
@@ -312,6 +360,7 @@ impl Grid {
             leds: s.leds.clone(),
             held: s.held.clone(),
             focus: s.focus.clone(),
+            hint: s.focus.as_deref().and_then(|f| s.hints.iter().find(|(n, _)| n == f)).map(|(_, t)| t.clone()),
             device: s.device.clone(),
             offset: s.offset,
         }
@@ -1087,6 +1136,7 @@ pub mod serial {
         scanned: Option<Instant>,
     }
 
+    #[allow(dead_code)] // not used by the main binary
     impl Driver {
         pub fn new(grid: Arc<Grid>, arc: Arc<ArcHub>) -> Driver {
             Driver {

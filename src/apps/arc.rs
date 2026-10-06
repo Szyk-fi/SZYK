@@ -43,6 +43,7 @@ const HARDWARE: Rgb565 = Rgb565::new(31, 34, 4);
 const HELD: Rgb565 = Rgb565::new(10, 52, 31);
 
 /// Steps in a full turn, as a real arc counts them.
+#[allow(dead_code)] // not used by the main binary
 const STEPS_PER_TURN: f32 = 1024.0;
 
 const C_ENCODERS: usize = 0;
@@ -82,6 +83,7 @@ fn onoff(b: bool) -> String {
 
 /// What the pointer is doing.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(dead_code)] // not used by the main binary
 enum Pointer {
     /// Turning ring `n`: the angle last seen and the part-step left over.
     Turn { n: usize, angle: f32, rest: f32 },
@@ -115,6 +117,7 @@ fn kit_config() -> KitConfig {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl ArcApp {
     pub fn new(a: Arc<ArcHub>, nav: Arc<AtomicF32>) -> Self {
         Self { a, kit: PlayKit::new(kit_config(), !cfg!(test)), list: ParamList::new(), nav, sel: 0, step: 8, pads_down: [false; 16], pointer: None }

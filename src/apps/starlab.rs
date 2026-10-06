@@ -106,6 +106,7 @@ const LFO_SHAPE_NAMES: [&str; 6] = ["Triangle", "Square", "Ramp", "Saw", "Random
 /// no fabricated animation: every field mirrors DSP state already
 /// computed once per audio block by `StarlabProcessor::process` (see
 /// `Params::waveform_snapshot`/`lfo_phase`/`lfo_value`/`tank_energy`).
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct StarlabVisual {
     /// A real oscilloscope of this block's processed (dry+wet mixed)
     /// output, as connected line-segment geometry (see
@@ -178,6 +179,7 @@ enum Row {
 
 const NUM_GROUPS: usize = 6;
 
+#[allow(dead_code)] // not used by the main binary
 struct Params {
     source: AtomicUsize,
     texture: AtomicU32,
@@ -378,6 +380,7 @@ const STARLAB_DIM: Rgb565 = Rgb565::new(9, 19, 13);
 /// Unlit pad cells and dial tracks on the play column.
 const STARLAB_FAINT: Rgb565 = Rgb565::new(3, 7, 9);
 
+#[allow(dead_code)] // not used by the main binary
 impl StarlabApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {
@@ -825,6 +828,12 @@ fn lfo_speed_hz(v: f32) -> f32 {
 }
 
 impl App for StarlabApp {
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        crate::app::play_kit::settings_of(self)
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        crate::app::play_kit::adjust_in(self, index, delta)
+    }
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
     fn supports_pad_lock(&self) -> bool { true }
     fn play_surface(&self) -> bool { true }

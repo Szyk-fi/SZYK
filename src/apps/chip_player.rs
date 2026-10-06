@@ -56,6 +56,7 @@ const DIM: Rgb565 = Rgb565::new(10, 20, 16);
 const FAINT: Rgb565 = Rgb565::new(4, 6, 8);
 
 /// Tracks without a stated length play this long, then fade.
+#[allow(dead_code)] // not used by the main binary
 const FADE_MS: c_int = 6_000;
 const MAX_VOICES: usize = 32;
 const CHUNK: usize = 1024;

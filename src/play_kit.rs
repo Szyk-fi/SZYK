@@ -133,6 +133,40 @@ pub struct KitConfig {
     pub own_expression: bool,
 }
 
+/// A kit app's controls as `App::instrument_settings`: the same labels and
+/// values its own dials show.
+pub fn settings_of(host: &dyn PlayHost) -> Vec<super::Setting> {
+    (0..host.kit_control_count()).map(|i| super::Setting { label: host.kit_label(i), value: host.kit_value(i) }).collect()
+}
+
+/// What a menu row of a kit app is when the settings of the instrument its
+/// control 0 ("Plays") points at are listed right under that row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuRow {
+    /// A control of the app (or, past the controls, its own extra rows).
+    Control(usize),
+    /// Setting `i` of the instrument it plays.
+    Setting(usize),
+}
+
+/// Menu row `row` when `settings` settings are listed under control 0.
+pub fn menu_row(row: usize, settings: usize) -> MenuRow {
+    if row == 0 {
+        MenuRow::Control(0)
+    } else if row <= settings {
+        MenuRow::Setting(row - 1)
+    } else {
+        MenuRow::Control(row - settings)
+    }
+}
+
+/// `App::adjust_setting` for a kit app.
+pub fn adjust_in(host: &mut dyn PlayHost, index: usize, delta: i32) {
+    if index < host.kit_control_count() {
+        host.kit_edit(index, delta);
+    }
+}
+
 /// What the app tells the kit about itself. Controls are indexed in order
 /// of importance: the first ones land on the knobs and the bottom pads.
 pub trait PlayHost {

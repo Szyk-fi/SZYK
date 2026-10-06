@@ -1873,6 +1873,12 @@ fn fit(s: &str, max: usize) -> String {
 }
 
 impl App for PulsarApp {
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        crate::app::play_kit::settings_of(self)
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        crate::app::play_kit::adjust_in(self, index, delta)
+    }
     fn tick(&mut self, input: &Input) {
         // The play view takes the knobs and D-pad first; in the menu they
         // pass straight through. Pads reach handle_pads only on Pulsar's
@@ -2246,7 +2252,7 @@ mod tests {
 
     #[test]
     fn beat_save_format_round_trips_through_the_app() {
-        let (mut app, ..) = make();
+        let (app, ..) = make();
         app.shared.bpm.set(97.0);
         app.shared.lanes[2].tune.set(-3.0);
         let b = app.beat_file();

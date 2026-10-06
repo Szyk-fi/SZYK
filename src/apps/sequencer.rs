@@ -410,6 +410,8 @@ enum Selection {
     Decay(usize),
     /// An "Other app" track's instrument.
     Plays(usize),
+    /// Setting `.1` of the instrument track `.0` plays, listed under Plays.
+    InstSetting(usize, usize),
     Volume(usize),
     Probability(usize),
     Mute(usize),
@@ -520,6 +522,7 @@ impl Selection {
             | Selection::Accent(t)
             | Selection::Decay(t)
             | Selection::Plays(t)
+            | Selection::InstSetting(t, _)
             | Selection::Volume(t)
             | Selection::Probability(t)
             | Selection::Mute(t)
@@ -1117,6 +1120,7 @@ impl SequencerApp {
             }
             3 => {
                 leaves.push(Selection::Plays(t));
+                leaves.extend((0..self.track_routes[t].settings().len()).map(|i| Selection::InstSetting(t, i)));
                 leaves.push(Selection::Pitch(t));
                 leaves.push(Selection::StepPitch(t));
                 leaves.push(Selection::StepRolls(t));
@@ -1203,9 +1207,10 @@ impl SequencerApp {
             Selection::StepAccent(t) => format!("Step {} Accent", self.last_touched_step[t] + 1),
             Selection::StepFlam(t) => format!("Step {} Flam", self.last_touched_step[t] + 1),
             Selection::StepProb(t) => format!("Step {} Chance", self.last_touched_step[t] + 1),
-            Selection::Accent(t) => "Accent Amount".into(),
+            Selection::Accent(_t) => "Accent Amount".into(),
             Selection::Decay(t) => if self.params.tracks[t].instrument.load(Ordering::Relaxed) == INSTRUMENT_EXTERNAL { "Gate".into() } else { "Decay".into() },
             Selection::Plays(_) => "Plays".into(),
+            Selection::InstSetting(t, i) => format!("  {}", self.track_routes[t].settings().get(i).map_or(String::new(), |x| x.label.clone())),
             Selection::Volume(_) => "Volume".into(),
             Selection::Probability(_) => "Probability".into(),
             Selection::Mute(_) => "Mute".into(),
@@ -1299,6 +1304,7 @@ impl SequencerApp {
             }
             Selection::Decay(t) => format!("{:.2}", self.params.tracks[t].decay.get()),
             Selection::Plays(t) => self.track_routes[t].label(),
+            Selection::InstSetting(t, i) => self.track_routes[t].settings().get(i).map_or(String::new(), |x| x.value.clone()),
             Selection::Volume(t) => format!("{:.2}", self.params.tracks[t].volume.get()),
             Selection::Probability(t) => format!("{:.0}%", self.params.tracks[t].probability.get() * 100.0),
             Selection::StepVelocity(t) => format!("{:.0}%", self.params.tracks[t].step_vel[self.last_touched_step[t]].get() * 100.0),
@@ -1551,6 +1557,7 @@ impl SequencerApp {
             }
             Selection::Decay(t) => bump(&self.params.tracks[t].decay, delta, sensitivity),
             Selection::Plays(t) => self.track_routes[t].step(step),
+            Selection::InstSetting(t, i) => self.track_routes[t].adjust(i, step),
             Selection::Volume(t) => bump(&self.params.tracks[t].volume, delta, sensitivity),
             Selection::Probability(t) => bump(&self.params.tracks[t].probability, delta, sensitivity),
             Selection::StepVelocity(t) => {
@@ -1750,6 +1757,7 @@ impl SequencerApp {
             Selection::StepDelay(t) => self.params.tracks[t].step_delay[self.last_touched_step[t]].set(0.0),
             Selection::Decay(t) => self.params.tracks[t].decay.set(0.5),
             Selection::Plays(t) => self.track_routes[t].reset(),
+            Selection::InstSetting(..) => {}
             Selection::Volume(t) => self.params.tracks[t].volume.set(0.8),
             Selection::Probability(t) => self.params.tracks[t].probability.set(1.0),
             Selection::StepVelocity(t) => self.params.tracks[t].step_vel[self.last_touched_step[t]].set(1.0),
@@ -1894,6 +1902,7 @@ impl SequencerApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl SequencerApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building, exposed for an alternate
@@ -4046,7 +4055,7 @@ mod tests {
     #[test]
     fn saving_and_loading_a_kit_round_trips_by_sample_name() {
         let scratch = ScratchDir::new("kit_round_trip");
-        let mut app = new_app();
+        let app = new_app();
         assert!(app.params.samples.len() >= 2, "expected the real samples/ directory to have at least 2 samples for this test to mean anything");
 
         app.params.pad_sample[0].store(0, Ordering::Relaxed);
@@ -4084,7 +4093,7 @@ mod tests {
     #[test]
     fn loading_a_never_saved_kit_slot_does_not_panic_or_change_state() {
         let scratch = ScratchDir::new("kit_missing");
-        let mut app = new_app();
+        let app = new_app();
         app.params.pad_sample[0].store(0, Ordering::Relaxed);
 
         app.load_kit_from(&scratch.0); // nothing was ever saved here

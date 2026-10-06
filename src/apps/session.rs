@@ -418,8 +418,10 @@ enum SetupRow {
     Slot,
     Save,
     Load,
+    /// A setting of the instrument Plays points at, listed under Plays.
+    InstSetting(usize),
 }
-const SETUP: [SetupRow; 14] = [SetupRow::Track, SetupRow::Kind, SetupRow::Plays, SetupRow::Mute, SetupRow::Octave, SetupRow::LockApp, SetupRow::LockInput, SetupRow::ClipLength, SetupRow::Tempo, SetupRow::Swing, SetupRow::Clock, SetupRow::Slot, SetupRow::Save, SetupRow::Load];
+const SETUP: [SetupRow; 14] = [SetupRow::Track, SetupRow::Plays, SetupRow::Kind, SetupRow::Mute, SetupRow::Octave, SetupRow::LockApp, SetupRow::LockInput, SetupRow::ClipLength, SetupRow::Tempo, SetupRow::Swing, SetupRow::Clock, SetupRow::Slot, SetupRow::Save, SetupRow::Load];
 
 pub struct Session {
     pub sound: Sound,
@@ -675,10 +677,27 @@ impl Session {
         }
     }
 
+    /// The SETUP rows: the table, with the settings of the instrument the
+    /// selected track plays listed right under Plays.
+    fn setup_rows(&self) -> Vec<SetupRow> {
+        let mut rows = Vec::new();
+        for r in SETUP {
+            rows.push(r);
+            if r == SetupRow::Plays {
+                rows.extend((0..self.routes[self.track].settings().len()).map(SetupRow::InstSetting));
+            }
+        }
+        rows
+    }
+
     fn setup_value(&self, r: SetupRow) -> String {
+        if let SetupRow::InstSetting(i) = r {
+            return self.routes[self.track].settings().get(i).map_or(String::new(), |x| x.value.clone());
+        }
         let p = self.s.project.lock().unwrap();
         let t = &p.tracks[self.track];
         match r {
+            SetupRow::InstSetting(_) => String::new(),
             SetupRow::Track => format!("{}", self.track + 1),
             SetupRow::Kind => if t.kind == Kind::Drums { "drums".into() } else { "notes".into() },
             SetupRow::Plays => self.routes[self.track].label(),
@@ -696,29 +715,32 @@ impl Session {
         }
     }
 
-    fn setup_label(r: SetupRow) -> &'static str {
+    fn setup_label(&self, r: SetupRow) -> String {
         match r {
-            SetupRow::Track => "Track",
-            SetupRow::Kind => "Kind",
-            SetupRow::Plays => "Plays",
-            SetupRow::Mute => "Mute",
-            SetupRow::Octave => "Octave",
-            SetupRow::LockApp => "Lock to app",
-            SetupRow::LockInput => "Lock to input",
-            SetupRow::ClipLength => "Clip length",
-            SetupRow::Tempo => "Tempo",
-            SetupRow::Swing => "Swing",
-            SetupRow::Clock => "Clock",
-            SetupRow::Slot => "Project slot",
-            SetupRow::Save => "Save",
-            SetupRow::Load => "Load",
+            SetupRow::InstSetting(i) => format!("  {}", self.routes[self.track].settings().get(i).map_or(String::new(), |x| x.label.clone())),
+            SetupRow::Track => "Track".into(),
+            SetupRow::Kind => "Kind".into(),
+            SetupRow::Plays => "Plays".into(),
+            SetupRow::Mute => "Mute".into(),
+            SetupRow::Octave => "Octave".into(),
+            SetupRow::LockApp => "Lock to app".into(),
+            SetupRow::LockInput => "Lock to input".into(),
+            SetupRow::ClipLength => "Clip length".into(),
+            SetupRow::Tempo => "Tempo".into(),
+            SetupRow::Swing => "Swing".into(),
+            SetupRow::Clock => "Clock".into(),
+            SetupRow::Slot => "Project slot".into(),
+            SetupRow::Save => "Save".into(),
+            SetupRow::Load => "Load".into(),
         }
     }
 
     fn setup_edit(&mut self, d: i32) {
-        let row = SETUP[self.setup_row];
+        let rows = self.setup_rows();
+        let row = rows[self.setup_row.min(rows.len() - 1)];
         let t = self.track;
         match row {
+            SetupRow::InstSetting(i) => self.routes[t].adjust(i, d),
             SetupRow::Track => self.track = (self.track as i32 + d).rem_euclid(TRACKS as i32) as usize,
             SetupRow::Kind => {
                 let mut p = self.s.project.lock().unwrap();
@@ -1015,7 +1037,7 @@ impl App for Session {
             }
             View::Setup => {
                 if input.navigation_steps != 0 {
-                    self.setup_row = (self.setup_row as i32 + input.navigation_steps).clamp(0, SETUP.len() as i32 - 1) as usize;
+                    self.setup_row = (self.setup_row as i32 + input.navigation_steps).clamp(0, self.setup_rows().len() as i32 - 1) as usize;
                 }
                 if input.knob2 != 0 {
                     self.setup_edit(input.knob2.signum());
@@ -1189,11 +1211,14 @@ impl App for Session {
                 kit::footer(fb, "Pads 1-8: add scene   pad 16: remove last   up/down: part   left/right: bars", panel, dim);
             }
             View::Setup => {
-                for (i, r) in SETUP.iter().enumerate() {
-                    let y = 38 + i as i32 * 22;
+                let rows = self.setup_rows();
+                // Fourteen rows fit; scroll to keep the selected one in view.
+                let first = self.setup_row.saturating_sub(13).min(rows.len().saturating_sub(14));
+                for (i, r) in rows.iter().enumerate().skip(first).take(14) {
+                    let y = 38 + (i - first) as i32 * 22;
                     let sel = i == self.setup_row;
                     kit::round_rect(fb, 8, y, 330, 20, 5, if sel { kit::blend(panel, kit::WHITE, 0.15) } else { panel });
-                    kit::text(fb, Session::setup_label(*r), 16, y + 4, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
+                    kit::text(fb, &self.setup_label(*r), 16, y + 4, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
                     let v: String = self.setup_value(*r).chars().take(28).collect();
                     kit::text(fb, &v, 330, y + 4, Size2::Small, ink, 1);
                 }
