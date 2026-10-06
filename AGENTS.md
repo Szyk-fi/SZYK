@@ -101,6 +101,22 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: grid over USB serial (mext), no serialosc needed
+- Branch: claude/teletype
+- Changed: src/apps/grid_kit.rs (new `mext` codec module, new `serial` driver,
+  serialosc now marks itself heard and won't attach over a USB-attached grid),
+  src/apps/grid.rs (one status string), Cargo.toml (shared: `libc = "0.2"`
+  under cfg(unix), already in Cargo.lock; raw termios for the serial port).
+- Status: done. A grid plugged into the Mac is found on /dev/cu.usbserial-m*
+  or /dev/cu.usbmodem* (ttyUSB*/ttyACM* on Linux), probed with mext's size
+  query, opened exclusively at 115200 raw; keys in, changed 8x8 level maps
+  out. If serialosc answers it owns the grid and the driver stays off the
+  ports. `mext` is allocation-free plain bytes, meant for the firmware's USB
+  host too. Protocol details from libmonome (ISC).
+- Tests: cargo test --bin portamax-sim (adds a fake grid on a pty).
+- Notes for the other assistant: hardware: a grid on Portamax needs USB host
+  mode on OTG1 with VBUS out (older grids are FTDI, newer CDC-ACM).
+
 ### 2026-10-06: Claude: the grid (on-screen + real monome via serialosc), Kria on it
 - Branch: claude/teletype
 - Changed: new src/apps/grid_kit.rs (shared grid hub, OSC codec, serialosc
@@ -112,8 +128,8 @@ Newest at the top. Keep each entry short. Use this format:
   slint_pointer_pick for that kind, so nothing else changes.
 - Status: done. Grid 8x16 by default, 1x1..64x128; Follow hardware sizes it to a
   plugged-in grid; the hardware shows a movable window of a bigger grid.
-  Not done: mext (USB serial) driver for the real hardware's USB host, arc,
-  Teletype G.* ops, norns `grid` API (prelude.lua still reports no grid).
+  Not done: arc, Teletype G.* ops, norns `grid` API (prelude.lua still
+  reports no grid).
 - Tests: cargo test --bin portamax-sim (incl. a loopback serialosc exchange).
 - Notes for the other assistant: apps that want the grid call
   grid_kit::grid().register(name), read keys(name) and show(name, &Leds) on the

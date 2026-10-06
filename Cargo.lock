@@ -4292,6 +4292,7 @@ dependencies = [
  "flate2",
  "gilrs",
  "hound",
+ "libc",
  "m68k",
  "meru-interface",
  "midir",

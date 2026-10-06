@@ -23,12 +23,15 @@
 //! found. The hardware shows an `offset` window of the grid, so a 16 x 8 grid
 //! can look at any part of a 64 x 128 one.
 //!
-//! On the Portamax hardware there is no serialosc: a grid on the USB host port
-//! speaks monome's serial protocol (mext) directly. That driver isn't written
-//! yet; it would feed the same `Grid` the way `Client` does here.
+//! Without serialosc, a grid plugged straight into the Mac is found and spoken
+//! to directly in monome's serial protocol (`mext`, module below) over its USB
+//! serial port (`serial`). That is also how the Portamax hardware will talk to
+//! a grid on its USB host port: `mext` is plain bytes with no allocation, ready
+//! for the firmware. serialosc wins when it's running, since it already has
+//! the grid open; the two never both talk to it.
 //!
-//! Threads: the UI thread (apps, in `tick` / `background_tick`) and the
-//! serialosc thread share the grid through one mutex. The audio thread never
+//! Threads: the UI thread (apps, in `tick` / `background_tick`), the
+//! serialosc thread and the serial thread share the grid through one mutex. The audio thread never
 //! touches it: an app that wants grid presses in its sound reads them on the
 //! UI thread and passes them on the way it passes pad presses.
 
@@ -359,13 +362,15 @@ impl Grid {
 }
 
 /// The one grid. Opening it the first time also starts looking for a real
-/// grid through serialosc.
+/// grid, through serialosc and on the USB serial ports.
 #[cfg(not(test))]
 pub fn grid() -> Arc<Grid> {
     static GRID: std::sync::OnceLock<Arc<Grid>> = std::sync::OnceLock::new();
     Arc::clone(GRID.get_or_init(|| {
         let g = Arc::new(Grid::new());
         serialosc::start(Arc::clone(&g));
+        #[cfg(unix)]
+        serial::start(Arc::clone(&g));
         g
     }))
 }
@@ -480,6 +485,15 @@ pub mod serialosc {
     /// LEDs go out at most this often (a grid refreshes at about 60 Hz).
     const LED_EVERY: Duration = Duration::from_millis(10);
 
+    /// Set once serialosc has answered at all: it's running and owns the
+    /// grids, so the serial driver leaves the ports alone.
+    static HEARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn heard() -> bool {
+        HEARD.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     #[cfg_attr(test, allow(dead_code))] // tests never go looking for hardware
     pub fn start(grid: Arc<Grid>) {
         let spawned = std::thread::Builder::new().name("serialosc".into()).spawn(move || {
@@ -562,10 +576,14 @@ pub mod serialosc {
         }
 
         fn handle(&mut self, addr: &str, args: &[Arg]) {
+            if addr.starts_with("/serialosc/") {
+                HEARD.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             match (addr, args) {
                 ("/serialosc/device", [Arg::S(id), Arg::S(kind), Arg::I(port), ..]) => {
-                    // The first grid wins; an arc isn't a grid.
-                    if self.dev.is_none() && !kind.to_ascii_lowercase().contains("arc") {
+                    // The first grid wins (one opened over USB serial too);
+                    // an arc isn't a grid.
+                    if self.dev.is_none() && self.grid.device().is_none() && !kind.to_ascii_lowercase().contains("arc") {
                         self.attach(id, kind, *port);
                     }
                 }
@@ -639,6 +657,418 @@ pub mod serialosc {
             self.sent_gen = gen;
             self.sent_at = Instant::now();
         }
+    }
+}
+
+/// monome's serial protocol ("mext", every grid since 2011), as the grid
+/// itself speaks it over USB. Everything here is plain bytes in and out with
+/// no allocation and no OS, so the same code can run on Portamax's STM32 USB
+/// host; `serial` below is the Mac/Linux transport around it.
+///
+/// A message is a header byte, `(subsystem << 4) | command`, then a payload
+/// whose length the header fixes. Taken from libmonome (ISC licence,
+/// src/proto/mext.h and mext.c), which is what serialosc runs on:
+/// - to the grid: `0x01` ask its id, `0x05` ask its size, `0x19 l` set every
+///   LED to level `l`, `0x1A x y d0..d31` an 8 x 8 block of levels at
+///   (x, y), two levels a byte with the first of each pair in the high nibble;
+/// - from the grid: `0x00 a b` query reply, `0x01 id[32]`, `0x02 n x y`
+///   offset, `0x03 x y` size (columns, rows), `0x0F v[8]` firmware,
+///   `0x20 x y` key up, `0x21 x y` key down (plus arc and tilt messages,
+///   which are read past).
+pub mod mext {
+    pub const GET_ID: u8 = 0x01;
+    pub const GET_SIZE: u8 = 0x05;
+    pub const LEVEL_ALL: u8 = 0x19;
+    pub const LEVEL_MAP: u8 = 0x1A;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Event {
+        Key { x: u8, y: u8, down: bool },
+        Size { cols: u8, rows: u8 },
+        Id([u8; 32]),
+        /// Anything else the grid said, by header.
+        Other(u8),
+    }
+
+    /// Payload length for a message from the grid, or None for a byte that
+    /// can't start one (read past, which is how the stream resynchronises).
+    fn payload_len(header: u8) -> Option<usize> {
+        Some(match header {
+            0x00 => 2,
+            0x01 => 32,
+            0x02 => 3,
+            0x03 => 2,
+            0x04 => 2,
+            0x0F => 8,
+            0x20 | 0x21 => 2,
+            0x50 => 2,
+            0x51 | 0x52 => 1,
+            0x80 => 1,
+            0x81 => 7,
+            _ => return None,
+        })
+    }
+
+    /// Turns the byte stream from a grid back into messages, however the
+    /// reads happen to split it.
+    pub struct Parser {
+        buf: [u8; 33],
+        n: usize,
+        need: usize,
+    }
+
+    impl Default for Parser {
+        fn default() -> Self {
+            Parser::new()
+        }
+    }
+
+    impl Parser {
+        pub const fn new() -> Parser {
+            Parser { buf: [0; 33], n: 0, need: 0 }
+        }
+
+        pub fn feed(&mut self, b: u8) -> Option<Event> {
+            if self.n == 0 {
+                self.need = payload_len(b)?;
+            }
+            self.buf[self.n] = b;
+            self.n += 1;
+            if self.n < self.need + 1 {
+                return None;
+            }
+            self.n = 0;
+            let p = &self.buf[1..=self.need];
+            Some(match self.buf[0] {
+                0x20 | 0x21 => Event::Key { x: p[0], y: p[1], down: self.buf[0] == 0x21 },
+                0x03 => Event::Size { cols: p[0], rows: p[1] },
+                0x01 => {
+                    let mut id = [0u8; 32];
+                    id.copy_from_slice(p);
+                    Event::Id(id)
+                }
+                h => Event::Other(h),
+            })
+        }
+    }
+
+    /// An 8 x 8 block of levels (row-major, 0-15) for the block whose
+    /// top-left key is (x, y).
+    pub fn level_map(x: u8, y: u8, levels: &[u8; 64]) -> [u8; 35] {
+        let mut m = [0u8; 35];
+        m[0] = LEVEL_MAP;
+        m[1] = x;
+        m[2] = y;
+        for i in 0..32 {
+            m[3 + i] = (levels[2 * i].min(15) << 4) | levels[2 * i + 1].min(15);
+        }
+        m
+    }
+
+    /// A grid's id as text ("m1000123"), without the padding.
+    pub fn id_text(id: &[u8; 32]) -> String {
+        id.iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string()
+    }
+}
+
+/// A grid plugged straight into the Mac (or a Linux box) over USB, with no
+/// serialosc: the port is opened raw at 115200 baud (libmonome's settings)
+/// and spoken to in `mext`. Older grids show up as an FTDI serial port
+/// (`/dev/cu.usbserial-m...` on a Mac, `/dev/ttyUSB*` on Linux), newer ones
+/// as a USB modem (`/dev/cu.usbmodem...`, `/dev/ttyACM*`); a port only
+/// counts as a grid once it answers the size question.
+///
+/// If serialosc is running, it has the grid already and this stays out of
+/// its way: it waits a few seconds at start for serialosc to answer, and
+/// never probes once it has. A grid opened here is opened exclusively, so
+/// nothing else can talk to it underneath us.
+#[cfg(unix)]
+pub mod serial {
+    use super::mext::{self, Event};
+    use super::*;
+    use std::ffi::CString;
+    use std::io;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    const SCAN_EVERY: Duration = Duration::from_secs(2);
+    /// A port that didn't answer as a grid is left alone this long.
+    const RETRY_AFTER: Duration = Duration::from_secs(10);
+    /// Time for serialosc to answer before we go looking ourselves.
+    const WAIT_FOR_SERIALOSC: Duration = Duration::from_millis(2500);
+    const ANSWER_WITHIN: Duration = Duration::from_millis(500);
+    const LED_EVERY: Duration = Duration::from_millis(10);
+
+    /// A serial port in raw mode.
+    pub struct Port {
+        fd: OwnedFd,
+    }
+
+    impl Port {
+        pub fn open(path: &str) -> io::Result<Port> {
+            let c = CString::new(path).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+            // SAFETY: a valid C string; the fd is owned from here on.
+            let raw = unsafe { libc::open(c.as_ptr(), libc::O_RDWR | libc::O_NOCTTY | libc::O_NONBLOCK) };
+            if raw < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+            let f = fd.as_raw_fd();
+            // SAFETY: plain termios calls on an fd we own.
+            unsafe {
+                libc::ioctl(f, libc::TIOCEXCL as _);
+                let mut t: libc::termios = std::mem::zeroed();
+                if libc::tcgetattr(f, &mut t) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                libc::cfmakeraw(&mut t);
+                t.c_cflag |= libc::CLOCAL | libc::CREAD;
+                t.c_cflag &= !(libc::CSTOPB | libc::PARENB);
+                t.c_cc[libc::VMIN] = 0;
+                t.c_cc[libc::VTIME] = 0;
+                libc::cfsetispeed(&mut t, libc::B115200);
+                libc::cfsetospeed(&mut t, libc::B115200);
+                if libc::tcsetattr(f, libc::TCSANOW, &t) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                libc::tcflush(f, libc::TCIOFLUSH);
+            }
+            Ok(Port { fd })
+        }
+
+        fn wait(&self, events: libc::c_short, ms: i32) -> io::Result<bool> {
+            let mut p = libc::pollfd { fd: self.fd.as_raw_fd(), events, revents: 0 };
+            // SAFETY: one pollfd we own.
+            let r = unsafe { libc::poll(&mut p, 1, ms) };
+            if r < 0 {
+                let e = io::Error::last_os_error();
+                return if e.kind() == io::ErrorKind::Interrupted { Ok(false) } else { Err(e) };
+            }
+            if p.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+                return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+            }
+            Ok(p.revents & events != 0)
+        }
+
+        /// Whatever has arrived, waiting up to `ms` for something. An error
+        /// means the grid has gone (unplugged).
+        pub fn read(&self, buf: &mut [u8], ms: i32) -> io::Result<usize> {
+            if !self.wait(libc::POLLIN, ms)? {
+                return Ok(0);
+            }
+            // SAFETY: reading into a buffer we own.
+            let n = unsafe { libc::read(self.fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
+            match n {
+                n if n > 0 => Ok(n as usize),
+                // Readable but nothing there: the other end hung up.
+                0 => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+                _ => {
+                    let e = io::Error::last_os_error();
+                    if e.kind() == io::ErrorKind::WouldBlock { Ok(0) } else { Err(e) }
+                }
+            }
+        }
+
+        pub fn write_all(&self, mut data: &[u8]) -> io::Result<()> {
+            let deadline = Instant::now() + Duration::from_millis(250);
+            while !data.is_empty() {
+                // SAFETY: writing from a slice we own.
+                let n = unsafe { libc::write(self.fd.as_raw_fd(), data.as_ptr().cast(), data.len()) };
+                if n > 0 {
+                    data = &data[n as usize..];
+                    continue;
+                }
+                let e = io::Error::last_os_error();
+                if n < 0 && e.kind() != io::ErrorKind::WouldBlock {
+                    return Err(e);
+                }
+                if Instant::now() > deadline {
+                    return Err(io::Error::from(io::ErrorKind::TimedOut));
+                }
+                self.wait(libc::POLLOUT, 20)?;
+            }
+            Ok(())
+        }
+    }
+
+    /// Ports that could be a grid, by name.
+    pub fn candidates() -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir("/dev")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.starts_with("cu.usbserial-m") || n.starts_with("cu.usbmodem") || n.starts_with("ttyUSB") || n.starts_with("ttyACM"))
+            .map(|n| format!("/dev/{n}"))
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Asks the port at `path` whether it's a grid: its size (and id).
+    pub fn probe(path: &str) -> io::Result<(Port, Device)> {
+        let port = Port::open(path)?;
+        port.write_all(&[mext::GET_SIZE, mext::GET_ID])?;
+        let mut parser = mext::Parser::new();
+        let (mut size, mut id) = (None, None);
+        let t0 = Instant::now();
+        let mut buf = [0u8; 256];
+        while t0.elapsed() < ANSWER_WITHIN && (size.is_none() || id.is_none()) {
+            let n = port.read(&mut buf, 20)?;
+            for &b in &buf[..n] {
+                match parser.feed(b) {
+                    Some(Event::Size { cols, rows }) if cols > 0 && rows > 0 => size = Some((rows as usize, cols as usize)),
+                    Some(Event::Id(i)) => id = Some(mext::id_text(&i)),
+                    _ => {}
+                }
+            }
+        }
+        let Some((rows, cols)) = size else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "not a grid"));
+        };
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let id = id.filter(|s| !s.is_empty()).unwrap_or(name);
+        Ok((port, Device { id, kind: "monome grid (USB)".into(), rows: rows.min(MAX_ROWS), cols: cols.min(MAX_COLS) }))
+    }
+
+    pub struct Driver {
+        grid: Arc<Grid>,
+        port: Option<Port>,
+        parser: mext::Parser,
+        /// What each 8 x 8 block last showed, so only changed blocks are sent.
+        sent: Vec<[u8; 64]>,
+        sent_dims: (usize, usize),
+        sent_gen: u64,
+        sent_at: Instant,
+        failed: Vec<(String, Instant)>,
+        started: Instant,
+        scanned: Option<Instant>,
+    }
+
+    impl Driver {
+        pub fn new(grid: Arc<Grid>) -> Driver {
+            Driver { grid, port: None, parser: mext::Parser::new(), sent: Vec::new(), sent_dims: (0, 0), sent_gen: u64::MAX, sent_at: Instant::now(), failed: Vec::new(), started: Instant::now(), scanned: None }
+        }
+
+        pub fn attached(&self) -> bool {
+            self.port.is_some()
+        }
+
+        /// Opens the grid at `path` and hands it to the grid.
+        pub fn attach(&mut self, path: &str) -> io::Result<()> {
+            let (port, dev) = probe(path)?;
+            // Start dark: whatever the grid showed before isn't ours.
+            port.write_all(&[mext::LEVEL_ALL, 0])?;
+            self.port = Some(port);
+            self.parser = mext::Parser::new();
+            self.sent.clear();
+            self.sent_gen = u64::MAX;
+            self.grid.set_device(Some(dev));
+            Ok(())
+        }
+
+        fn detach(&mut self) {
+            self.port = None;
+            self.grid.set_device(None);
+        }
+
+        /// One turn: look for a grid if there isn't one, read its keys
+        /// (waiting up to 5 ms), and send the LEDs that changed.
+        pub fn step(&mut self) {
+            if self.port.is_none() {
+                self.scan();
+                return;
+            }
+            let mut buf = [0u8; 256];
+            let read = self.port.as_ref().map(|p| p.read(&mut buf, 5));
+            match read {
+                Some(Ok(n)) => {
+                    for &b in &buf[..n] {
+                        match self.parser.feed(b) {
+                            Some(Event::Key { x, y, down }) => self.grid.device_press(x as usize, y as usize, down),
+                            Some(Event::Size { cols, rows }) if cols > 0 && rows > 0 => {
+                                if let Some(d) = self.grid.device() {
+                                    self.grid.set_device(Some(Device { rows: (rows as usize).min(MAX_ROWS), cols: (cols as usize).min(MAX_COLS), ..d }));
+                                    self.sent_gen = u64::MAX;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => return self.detach(),
+            }
+            if self.leds().is_err() {
+                self.detach();
+            }
+        }
+
+        fn scan(&mut self) {
+            let quiet = self.started.elapsed() >= WAIT_FOR_SERIALOSC && !serialosc::heard() && self.grid.device().is_none();
+            if !quiet || self.scanned.is_some_and(|t| t.elapsed() < SCAN_EVERY) {
+                std::thread::sleep(Duration::from_millis(20));
+                return;
+            }
+            self.scanned = Some(Instant::now());
+            self.failed.retain(|(_, t)| t.elapsed() < RETRY_AFTER);
+            for path in candidates() {
+                if self.failed.iter().any(|(p, _)| *p == path) {
+                    continue;
+                }
+                if self.attach(&path).is_ok() {
+                    return;
+                }
+                self.failed.push((path, Instant::now()));
+            }
+        }
+
+        fn leds(&mut self) -> io::Result<()> {
+            if self.sent_at.elapsed() < LED_EVERY {
+                return Ok(());
+            }
+            let Some((rows, cols, v, gen)) = self.grid.hardware_frame() else { return Ok(()) };
+            if gen == self.sent_gen {
+                return Ok(());
+            }
+            let (qr, qc) = (rows.div_ceil(8), cols.div_ceil(8));
+            if self.sent_dims != (rows, cols) || self.sent.len() != qr * qc {
+                // A value no level can take, so every block goes out once.
+                self.sent = vec![[0xFF; 64]; qr * qc];
+                self.sent_dims = (rows, cols);
+            }
+            let Some(port) = self.port.as_ref() else { return Ok(()) };
+            for by in 0..qr {
+                for bx in 0..qc {
+                    let mut block = [0u8; 64];
+                    for y in 0..8 {
+                        for x in 0..8 {
+                            let (gx, gy) = (bx * 8 + x, by * 8 + y);
+                            if gx < cols && gy < rows {
+                                block[y * 8 + x] = v[gy * cols + gx];
+                            }
+                        }
+                    }
+                    let k = by * qc + bx;
+                    if self.sent[k] != block {
+                        port.write_all(&mext::level_map((bx * 8) as u8, (by * 8) as u8, &block))?;
+                        self.sent[k] = block;
+                    }
+                }
+            }
+            self.sent_gen = gen;
+            self.sent_at = Instant::now();
+            Ok(())
+        }
+    }
+
+    #[cfg_attr(test, allow(dead_code))] // tests never go looking for hardware
+    pub fn start(grid: Arc<Grid>) {
+        let spawned = std::thread::Builder::new().name("grid-serial".into()).spawn(move || {
+            let mut d = Driver::new(grid);
+            loop {
+                d.step();
+            }
+        });
+        drop(spawned);
     }
 }
 
@@ -811,5 +1241,124 @@ mod tests {
             c.poll();
         }
         assert_eq!(g.device(), None);
+    }
+
+    #[test]
+    fn mext_messages_parse_however_the_reads_split_them() {
+        let mut p = mext::Parser::new();
+        let stream = [0x21, 3, 2, 0x99, 0x03, 16, 8, 0x20, 3, 2];
+        let got: Vec<mext::Event> = stream.iter().filter_map(|&b| p.feed(b)).collect();
+        assert_eq!(
+            got,
+            [mext::Event::Key { x: 3, y: 2, down: true }, mext::Event::Size { cols: 16, rows: 8 }, mext::Event::Key { x: 3, y: 2, down: false }],
+            "a stray byte (0x99) is read past"
+        );
+        let mut id = vec![0x01];
+        id.extend_from_slice(b"m1000123");
+        id.resize(33, 0);
+        let got: Vec<_> = id.iter().filter_map(|&b| p.feed(b)).collect();
+        match got.as_slice() {
+            [mext::Event::Id(i)] => assert_eq!(mext::id_text(i), "m1000123"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_level_map_packs_two_levels_a_byte_first_one_high() {
+        let mut levels = [0u8; 64];
+        levels[0] = 15;
+        levels[1] = 3;
+        levels[13] = 9;
+        let m = mext::level_map(8, 0, &levels);
+        assert_eq!(&m[..4], &[0x1A, 8, 0, 0xF3]);
+        assert_eq!(m[3 + 6], 0x09, "index 13 is the low nibble of byte 6");
+    }
+
+    /// A pretend grid on a pseudo-terminal: it answers the size and id
+    /// questions, sends key presses, and hands back every LED message.
+    #[cfg(unix)]
+    #[test]
+    fn a_grid_on_a_serial_port_plays_and_lights() {
+        use std::io::{Read, Write};
+        use std::os::fd::FromRawFd;
+        let (mut m, mut s) = (0, 0);
+        // SAFETY: openpty fills in two fds we then own.
+        let ok = unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        assert_eq!(ok, 0, "openpty");
+        let path = unsafe { std::ffi::CStr::from_ptr(libc::ttyname(s)) }.to_string_lossy().into_owned();
+        let master = unsafe { std::fs::File::from_raw_fd(m) };
+        let mut keys = master.try_clone().unwrap();
+        let mut reader = master.try_clone().unwrap();
+        let mut writer = master;
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            let (mut pending, mut buf) = (Vec::new(), [0u8; 512]);
+            loop {
+                let n = match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => n,
+                };
+                pending.extend_from_slice(&buf[..n]);
+                while let Some(&h) = pending.first() {
+                    let len = match h {
+                        0x19 => 2,
+                        0x1A => 35,
+                        _ => 1,
+                    };
+                    if pending.len() < len {
+                        break;
+                    }
+                    let msg: Vec<u8> = pending.drain(..len).collect();
+                    match h {
+                        0x05 => writer.write_all(&[0x03, 16, 8]).unwrap(),
+                        0x01 => {
+                            let mut id = vec![0x01];
+                            id.extend_from_slice(b"m0000042");
+                            id.resize(33, 0);
+                            writer.write_all(&id).unwrap();
+                        }
+                        _ => {
+                            let _ = tx.send(msg);
+                        }
+                    }
+                }
+            }
+        });
+        let g = Arc::new(Grid::new());
+        g.set_size(16, 32);
+        g.register("Kria");
+        let mut d = serial::Driver::new(Arc::clone(&g));
+        d.attach(&path).expect("the pretend grid answers");
+        let dev = g.device().unwrap();
+        assert_eq!((dev.id.as_str(), dev.rows, dev.cols), ("m0000042", 8, 16));
+        assert_eq!(g.size(), (8, 16), "Follow hardware sizes the grid to it");
+        keys.write_all(&[0x21, 3, 2, 0x20, 3, 2]).unwrap();
+        let mut got = Vec::new();
+        let t0 = Instant::now();
+        while got.len() < 2 && t0.elapsed() < Duration::from_secs(2) {
+            d.step();
+            got.extend(g.keys("Kria"));
+        }
+        assert_eq!(got, [Key { x: 3, y: 2, down: true }, Key { x: 3, y: 2, down: false }]);
+        let mut l = Leds::new(8, 16);
+        l.set(5, 1, 15);
+        l.set(9, 0, 7);
+        g.show("Kria", &l);
+        let (mut left, mut right) = (false, false);
+        let t0 = Instant::now();
+        while !(left && right) && t0.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(12));
+            d.step();
+            while let Ok(msg) = rx.try_recv() {
+                if msg[0] == 0x1A && msg[1] == 0 && msg[2] == 0 {
+                    left |= msg[3 + 6] == 0x0F;
+                }
+                if msg[0] == 0x1A && msg[1] == 8 && msg[2] == 0 {
+                    right |= msg[3] == 0x07;
+                }
+            }
+        }
+        assert!(left && right, "both 8 x 8 blocks went out with their levels");
+        assert!(d.attached());
     }
 }

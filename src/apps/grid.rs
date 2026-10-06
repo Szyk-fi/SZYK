@@ -184,7 +184,7 @@ impl GridApp {
             C_PLAYS => ("Plays".into(), self.g.focus().unwrap_or_else(|| "nothing yet".into())),
             C_HARDWARE => ("Hardware".into(), match &dev {
                 Some(d) => format!("{} {} ({} x {})", d.kind, d.id, d.rows, d.cols),
-                None => "none (serialosc)".into(),
+                None => "none: plug in a grid".into(),
             }),
             C_HW_X => ("Hardware column".into(), (ox + 1).to_string()),
             C_HW_Y => ("Hardware row".into(), (oy + 1).to_string()),

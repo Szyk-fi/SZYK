@@ -147,6 +147,11 @@ objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-game-controller = "0.3"
 
+# The USB serial driver for a monome grid (src/apps/grid_kit.rs): raw termios.
+# Already in the lockfile through other crates.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 cc = "1.4.6"
 
