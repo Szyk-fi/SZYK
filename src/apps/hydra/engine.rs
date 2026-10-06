@@ -416,7 +416,8 @@ impl AudioProcessor for Engine {
         let frames = out.len() / channels;
         let mut peak = 0.0f32;
         let mut done = 0;
-        let mut mono_out = self.sh.output.try_lock().ok();
+        let sh = Arc::clone(&self.sh);
+        let mut mono_out = sh.output.try_lock().ok();
         if let Some(m) = mono_out.as_mut() {
             m.clear();
         }
