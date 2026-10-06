@@ -68,7 +68,7 @@ fn menu_lists_groups_and_expands() {
 #[test]
 fn instrument_settings_expose_the_hero_controls() {
     let a = app();
-    let names: Vec<String> = a.instrument_settings().into_iter().map(|s| s.name).collect();
+    let names: Vec<String> = a.instrument_settings().into_iter().map(|s| s.label).collect();
     for want in ["Preset", "Cutoff", "Resonance"] {
         assert!(names.iter().any(|n| n == want), "missing {want}");
     }

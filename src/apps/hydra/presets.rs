@@ -145,7 +145,7 @@ pub fn randomize(params: &Params, rng: &mut Rng) {
     params.reset_all();
     let r = |rng: &mut Rng, lo: f32, hi: f32| lo + rng.unit() * (hi - lo);
     let pick = |rng: &mut Rng, n: usize| (rng.unit() * n as f32) as usize % n;
-    for (base, level) in [(P::A_Type as usize, 0.8), (P::B_Type as usize, 0.0), (P::C_Type as usize, 0.0)] {
+    for (base, level) in [(P::A_Type as usize, 0.8f32), (P::B_Type as usize, 0.0), (P::C_Type as usize, 0.0)] {
         let on = base == P::A_Type as usize || rng.unit() < 0.6;
         params.set_at(base, pick(rng, 3) as f32);
         params.set_at(base + 1, if on { r(rng, 0.4, 0.9) * (level.max(0.5) / 0.8f32).min(1.0) } else { 0.0 });
