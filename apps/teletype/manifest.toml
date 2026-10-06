@@ -3,6 +3,7 @@ name = "Teletype"
 category = "sequencer"
 description = "monome Teletype: eight trigger scripts, a metro and four patterns in its own little language. Edit by pad."
 audio_outputs = ["Teletype"]
+grid_client = "Teletype"
 note_outputs = ["Teletype"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [

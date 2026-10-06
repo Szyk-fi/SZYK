@@ -101,6 +101,28 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: Grid and Teletype: the grid is playable and says how
+- Branch: claude/picker-and-cleanup
+- Why it was dark: an app joined the grid only when it was built, and apps are
+  built lazily, so Teletype was not on the Grid app's list until opened (and
+  the first app built, e.g. Kria, held the focus); and Teletype's default
+  scenes have no G ops, so even with focus it drew nothing.
+- Changed: manifest field `grid_client` (kria, teletype, grid_pads, norns),
+  declared at startup (Grid::declare, shared area src/apps/grid_kit.rs +
+  src/registry.rs + src/app_runtime.rs); handing the grid to an unbuilt app
+  builds it (LazyApp::with_grid, Grid::focus_owner). Grid::set_hint plus a line
+  under the Grid screen saying how the focused app uses the grid. Teletype with
+  a scene that has no G ops now shows and runs the module's script buttons on
+  the top row (keys 1-8 = S1-S8, 10 = M, 11 = I, lit while running); scenes
+  with G ops draw the grid themselves as before. docs/USER_MANUAL.md section
+  5.3 (Grid, Teletype, Kria; the manual had nothing on them),
+  docs/ADDING_AN_APP.md.
+- Status: done in the sim; not tried on a real grid.
+- Tests: handing_the_grid_to_an_unopened_teletype_builds_it_and_lights_the_grid;
+  full suite: only the 25 environmental failures.
+- Notes for the other assistant: an app that plays the grid should add
+  `grid_client = "<name it registers under>"` to its manifest.
+
 ### 2026-10-06: Claude: instrument settings listed under a source's Plays row
 - Branch: claude/picker-and-cleanup
 - Changed: new shared mechanism. src/app.rs: `Setting`, and App gains

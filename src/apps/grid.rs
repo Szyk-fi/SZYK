@@ -57,7 +57,8 @@ const N_CONTROLS: usize = 10;
 
 /// Grid area on screen: below the title line, above the hint line.
 const TOP: i32 = 26;
-const BOTTOM: i32 = HEIGHT as i32 - 20;
+/// Two footer lines: what the app holding the grid says, then the controls.
+const BOTTOM: i32 = HEIGHT as i32 - 34;
 const SIDE: i32 = 8;
 
 /// Where the grid sits on screen: top-left corner and key pitch in pixels.
@@ -428,6 +429,11 @@ impl App for GridApp {
         Text::new(&format!("GRID {} x {}", s.rows, s.cols), Point::new(SIDE, 18), title).draw(f).ok();
         let plays = format!("plays: {}", s.focus.as_deref().unwrap_or("nothing yet"));
         Text::new(&plays, Point::new(200, 18), title).draw(f).ok();
+        // What the app holding the grid says about its use of it (for
+        // Teletype: which keys do what, or that the scene draws its own).
+        if let Some(h) = &s.hint {
+            Text::new(&h.chars().take(100).collect::<String>(), Point::new(SIDE, HEIGHT as i32 - 20), MonoTextStyle::new(&SPLEEN_6X12, INK)).draw(f).ok();
+        }
         let hw = match &s.device {
             Some(d) => format!("{} ({} x {})", d.kind, d.rows, d.cols),
             None => "no hardware".into(),

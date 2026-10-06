@@ -74,6 +74,9 @@ impl Registry {
             for name in &m.mod_inputs {
                 self.modbus.declare(&m.id, name);
             }
+            if let Some(client) = &m.grid_client {
+                crate::apps::grid_kit::grid().declare(&m.id, client);
+            }
             if m.notes_in {
                 self.notes.declare_instrument(&m.id, &m.name);
             }
@@ -92,7 +95,10 @@ impl Registry {
             .filter_map(|m| match self.constructor(m) {
                 Some(make) => {
                     let inbox = if m.notes_in { self.notes.instrument_index(&m.name).map(|i| self.notes.inbox_ref(i)) } else { None };
-                    let app = runtime::LazyApp::new(m.id.clone(), make, Arc::clone(&self.audio_bus)).with_modbus(Arc::clone(&self.modbus)).with_notes(Arc::clone(&self.notes), inbox);
+                    let mut app = runtime::LazyApp::new(m.id.clone(), make, Arc::clone(&self.audio_bus)).with_modbus(Arc::clone(&self.modbus)).with_notes(Arc::clone(&self.notes), inbox);
+                    if m.grid_client.is_some() {
+                        app = app.with_grid();
+                    }
                     Some((m.name.clone(), Box::new(app) as Box<dyn App>))
                 }
                 None => {
@@ -463,6 +469,36 @@ mod manifest_contract_tests {
         }
         let after = rows_of(&mut apps)[cutoff].1.clone();
         assert_ne!(before, after, "editing the listed row changed the instrument");
+    }
+
+    /// The grid is playable from the first frame: Teletype is chosen in the
+    /// Grid app without ever having been opened, handing it the grid builds
+    /// it, and with a scene that has no G ops it still shows (and runs)
+    /// something instead of staying dark.
+    #[test]
+    fn handing_the_grid_to_an_unopened_teletype_builds_it_and_lights_the_grid() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let manifests: Vec<_> = crate::manifest::discover(dir).into_iter().filter(|m| m.id == "teletype" || m.id == "kria").collect();
+        let ctx = test_context(Arc::new(ModBus::new()));
+        let registry = Registry::new(ctx);
+        let mut apps = registry.build(&manifests);
+        let grid = crate::apps::grid_kit::grid();
+        assert!(grid.clients().contains(&"Teletype".to_string()), "declared from its manifest, before it is built");
+        assert_eq!(grid.focus(), None, "declaring takes nothing");
+        grid.set_focus("Teletype");
+        for _ in 0..3 {
+            for (_, app) in apps.iter_mut() {
+                app.background_tick();
+            }
+        }
+        let s = grid.snapshot();
+        assert!(s.hint.is_some(), "Teletype was built and says how it uses the grid");
+        assert_eq!(s.leds[0], 5, "the first script key is lit dimly");
+        grid.press(0, 0, true);
+        for (_, app) in apps.iter_mut() {
+            app.background_tick();
+        }
+        assert_eq!(grid.snapshot().leds[0], 15, "pressing it lights it as the script runs");
     }
 
     /// Drag and drop: a folder holding a manifest and a patch is a new

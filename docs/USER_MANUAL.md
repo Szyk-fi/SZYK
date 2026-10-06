@@ -346,6 +346,9 @@ row) rather than generating their own signal.
 | **Bloom** | Generative circular sequencer built from two groups of the same element ("dots"). |
 | **Pam's** | Clone of the core of Pamela's Pro Workout — multi-channel clock/gate generator with logic combinators between channels. |
 | **Turing Machine** | Music Thing Modular Turing Machine clone: clocked 16-bit shift register, "Locks" sets random-vs-repeat. |
+| **Teletype** | monome Teletype: eight trigger scripts (S1-S8), a metro (M) and an init script (I) in its own little language, with four patterns. Plays any instrument through its **Plays** row and drives the grid (see §5.3). |
+| **Kria** | monome Kria: a four-track step sequencer where every parameter has its own loop, clock division and probability. Plays on the grid (see §5.3); Teletype can drive it with KR ops. |
+| **Grid** | The on-screen monome grid (8 × 16 up to 64 × 128) that apps play on, and the way to hand the grid to an app (see §5.3). |
 | **Orca** | The Orca livecoding sequencer: a grid of letters that run as operators and play notes. Edited by pad (D-pad moves the cursor, pads type glyphs, F2 turns the pages, SELECT erases); bundled examples, Save. Plays its own plain voice or any instrument on the note bus (see §5.2). |
 | **Marbles** | The real Mutable Instruments Marbles: random rhythms and melodies with deja vu, played on any instrument (see §3.5). |
 | **Tides** | The real Mutable Instruments Tides (2018): four linked envelopes, LFOs or oscillators (see §3.5). |
@@ -395,6 +398,41 @@ Its settings persist in `saves/oc/`.
 The **Firmware** menu row picks what each module runs, as if reflashing it: **Ornaments & Crimes** (the stock firmware), **Hemisphere Suite** (Chysn's fork: two applets side by side, each a small module — clocks, quantizers, envelopes, logic, sequencers, scopes) or **Phazerville Suite** (a large fork of Hemisphere with many more applets). Each module remembers its choice and keeps separate settings per firmware, so four modules can run four different firmwares. Hemisphere and Phazerville take the same controls; MIDI in/out inside them does nothing (no MIDI path into the firmware yet), and Phazerville has no DrumMap applet (it depends on GPL Grids data).
 
 Four modules run at once: **O&C**, **O&C 2**, **O&C 3** and **O&C 4**, each its own firmware with its own screen, settings, inputs (`O&C 2: CV 1`...) and outputs. In the Slint shell, the menu's **Window** row opens a module in a window of its own, so all four can be on screen together; the window takes the keyboard: arrows turn the encoders (up/down the left, left/right the right), Return or R is the right button, U, D and L the other three, and 1–4 are the trigger inputs (held while the key is).
+
+### 5.3 The grid: Grid, Teletype and Kria
+
+The grid is one shared monome-style grid of keys that light. One app holds it
+at a time (its **focus**): that app reads the key presses and draws every LED.
+It shows on screen in the **Grid** app and, when one is plugged in, on a real
+monome grid at the same moment (through serialosc, or straight over USB).
+
+**Choosing who plays it.** Open **Grid** and press **SELECT** (or turn the
+**Plays** row): the grid goes to the next app. The title line says
+`plays: <app>`. Every app that can play the grid is on the list from the
+start, built or not (Kria, Teletype, Grid Pads, Norns); handing the grid to
+one builds it, so it draws and reads keys at once. A line under the grid says
+how the app uses it.
+
+**Teletype on the grid.** There are two cases:
+
+- A scene with **no `G.` ops** (the default scenes): the top row is the
+  module's script buttons. Keys 1-8 run scripts 1-8, key 10 runs M and key 11
+  runs I; each lights while it runs. You can play a scene's triggers and CV
+  from the grid without opening Teletype.
+- A scene that **uses `G.` ops** (for example scene `06 grid steps`): the
+  scene draws and reads the grid itself (`G.LED`, `G.BTN`, `G.FDR`, ...), in a
+  16 × 16 space at the grid's top-left, and takes the grid when it loads. Grid
+  presses run scripts whether or not the metro (F3) is running.
+
+If the grid stays dark: check the title says `plays: Teletype`, and read the
+line under the grid. Press F3 in Teletype if the scene needs the metro.
+
+**Kria on the grid** uses Ansible's layout (16 × 8): the keys are the steps of
+the current track and parameter. Switch the grid to Kria in the Grid app.
+
+**Adding your own app to the list:** put `grid_client = "Name"` in its
+manifest and `register` it with the grid when it is built (see
+`docs/ADDING_AN_APP.md`).
 
 ## 6. Recording & library
 
