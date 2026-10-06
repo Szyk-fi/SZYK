@@ -101,6 +101,21 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: Teletype's grid ops (G.*) on the shared grid
+- Branch: claude/teletype
+- Changed: new src/apps/teletype_grid.rs (the grid integration: 256 buttons,
+  64 faders of all 8 types with hold-repeat and slides, 64 groups, 8 XY
+  pads, the LED layer, G.DIM/G.ROTATE, rendering), src/apps/teletype.rs (65
+  G ops in the op table, GRID and GRID+ pad pages before TRACKER, grid keys
+  in through the edit queue and a 16 x 16 picture out, Teletype registers as
+  a grid client and a scene using G ops takes the grid), new bundled scene
+  teletype/scenes/06_grid_steps.txt (from make_scenes.py).
+- Status: done. Behaviour matched to the firmware's (read for behaviour
+  only, GPL); grid control mode and the on-screen grid visualiser are not
+  done.
+- Tests: cargo test --bin portamax-sim -- teletype (8 in teletype_grid, one
+  app test playing the grid scene from the shared grid).
+
 ### 2026-10-06: Claude: norns `grid` API on the shared grid
 - Branch: claude/teletype
 - Changed: src/apps/norns/host.rs (GridHost: `_px.grid_*` functions, key and
@@ -141,7 +156,7 @@ Newest at the top. Keep each entry short. Use this format:
   slint_pointer_pick for that kind, so nothing else changes.
 - Status: done. Grid 8x16 by default, 1x1..64x128; Follow hardware sizes it to a
   plugged-in grid; the hardware shows a movable window of a bigger grid.
-  Not done: arc, Teletype G.* ops (prelude.lua still
+  Not done: arc (prelude.lua still
   reports no grid).
 - Tests: cargo test --bin portamax-sim (incl. a loopback serialosc exchange).
 - Notes for the other assistant: apps that want the grid call

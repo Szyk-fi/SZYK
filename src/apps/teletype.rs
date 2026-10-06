@@ -29,11 +29,15 @@
 //! .-W; and Kria's ops, as Teletype has them for Ansible: KR.PAT, KR.POS,
 //! KR.L.ST, KR.L.LEN, KR.RES, KR.CV, KR.MUTE, KR.TMUTE, KR.CLK, KR.PG,
 //! KR.CUE, KR.DIR, KR.DUR, KR.PERIOD, KR.SCALE, KR.PRE (see kria.rs; they
-//! read 0 and do nothing when there is no Kria). Scenes load and save in the module's own text format (the files its
+//! read 0 and do nothing when there is no Kria). And the grid ops, all of
+//! them: G.RST/CLR/DIM/ROTATE/KEY, groups (G.GRP...), the LED layer (G.LED,
+//! G.REC, G.RCT), buttons (G.BTN, G.BTX, G.GBT, G.GBX and their queries),
+//! faders (G.FDR... with all eight types, hold-repeat and slides) and XY
+//! pads (G.XYP); see teletype_grid.rs. Scenes load and save in the module's own text format (the files its
 //! USB stick reads and writes: `#1`..`#8`, `#M`, `#I`, `#P`).
 //!
 //! **Not implemented**: the other I2C/expander ops (Ansible's other apps, Just Friends, ER-301,
-//! TXo, crow, Disting...), grid and fader ops, MIDI ops, Q, the turtle,
+//! TXo, crow, Disting...), the FADER expander's ops, grid control mode, MIDI ops, Q, the turtle,
 //! CHAOS, functions ($F, $L, $S), SCENE ops, DEL.X/R/G/B, P.MAP, SCALE0,
 //! EXP, the rotation ops, hex/binary literals, comment lines and
 //! SCRIPT.POL. A scene line that uses one does not load (it shows as an
@@ -62,6 +66,11 @@
 //!   nothing plays until you start it (the pads and trigger inputs still
 //!   run scripts at any time).
 //!
+//! - The grid is the shared grid (the Grid app's screen grid, or a real
+//!   monome grid): Teletype is one of its apps, and a scene whose scripts
+//!   use a G op takes the grid when it loads. Its 16 x 16 space sits at the
+//!   grid's top-left. Grid presses run scripts whether or not F3 is on.
+//!
 //! Editing is by pad, a word at a time: the D-pad moves along the line and
 //! between lines, F2 turns the pad pages (numbers, variables, I/O, maths,
 //! logic, flow, patterns, the tracker), a pad inserts its word at the caret,
@@ -86,7 +95,9 @@ use crate::{
     spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12, SPLEEN_8X16},
     util::AtomicF32,
 };
+use super::grid_kit::{self, Grid, Leds};
 use super::kria::{self, KrOp};
+use super::teletype_grid::{self as tg, GOp, TtGrid};
 use embedded_graphics::{mono_font::MonoTextStyle, pixelcolor::Rgb565, prelude::*, primitives::{PrimitiveStyle, Rectangle}, text::Text};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -256,6 +267,8 @@ enum Op {
     PN(PatOp),
     /// Kria's ops, as Teletype has them for Ansible.
     Kr(KrOp),
+    /// The grid ops (teletype_grid.rs).
+    G(GOp),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -524,12 +537,88 @@ static OPS: &[OpDef] = &[
     kr(KrOp::Cue, "KR.CUE"),
     kr(KrOp::Dir, "KR.DIR"),
     kr(KrOp::Dur, "KR.DUR"),
+    gr(GOp::Rst, "G.RST"),
+    gr(GOp::Clr, "G.CLR"),
+    gr(GOp::Dim, "G.DIM"),
+    gr(GOp::Rotate, "G.ROTATE"),
+    gr(GOp::Key, "G.KEY"),
+    gr(GOp::Grp, "G.GRP"),
+    gr(GOp::GrpEn, "G.GRP.EN"),
+    gr(GOp::GrpRst, "G.GRP.RST"),
+    gr(GOp::GrpSw, "G.GRP.SW"),
+    gr(GOp::GrpSc, "G.GRP.SC"),
+    gr(GOp::Grpi, "G.GRPI"),
+    gr(GOp::Led, "G.LED"),
+    gr(GOp::LedC, "G.LED.C"),
+    gr(GOp::Rec, "G.REC"),
+    gr(GOp::Rct, "G.RCT"),
+    gr(GOp::Btn, "G.BTN"),
+    gr(GOp::Gbt, "G.GBT"),
+    gr(GOp::Btx, "G.BTX"),
+    gr(GOp::Gbx, "G.GBX"),
+    gr(GOp::BtnEn, "G.BTN.EN"),
+    gr(GOp::BtnX, "G.BTN.X"),
+    gr(GOp::BtnY, "G.BTN.Y"),
+    gr(GOp::BtnV, "G.BTN.V"),
+    gr(GOp::BtnL, "G.BTN.L"),
+    gr(GOp::Btni, "G.BTNI"),
+    gr(GOp::Btnx, "G.BTNX"),
+    gr(GOp::Btny, "G.BTNY"),
+    gr(GOp::Btnv, "G.BTNV"),
+    gr(GOp::Btnl, "G.BTNL"),
+    gr(GOp::BtnSw, "G.BTN.SW"),
+    gr(GOp::BtnPr, "G.BTN.PR"),
+    gr(GOp::GbtnV, "G.GBTN.V"),
+    gr(GOp::GbtnL, "G.GBTN.L"),
+    gr(GOp::GbtnC, "G.GBTN.C"),
+    gr(GOp::GbtnI, "G.GBTN.I"),
+    gr(GOp::GbtnW, "G.GBTN.W"),
+    gr(GOp::GbtnH, "G.GBTN.H"),
+    gr(GOp::GbtnX1, "G.GBTN.X1"),
+    gr(GOp::GbtnX2, "G.GBTN.X2"),
+    gr(GOp::GbtnY1, "G.GBTN.Y1"),
+    gr(GOp::GbtnY2, "G.GBTN.Y2"),
+    gr(GOp::Fdr, "G.FDR"),
+    gr(GOp::Gfd, "G.GFD"),
+    gr(GOp::Fdx, "G.FDX"),
+    gr(GOp::Gfx, "G.GFX"),
+    gr(GOp::FdrEn, "G.FDR.EN"),
+    gr(GOp::FdrX, "G.FDR.X"),
+    gr(GOp::FdrY, "G.FDR.Y"),
+    gr(GOp::FdrN, "G.FDR.N"),
+    gr(GOp::FdrV, "G.FDR.V"),
+    gr(GOp::FdrL, "G.FDR.L"),
+    gr(GOp::Fdri, "G.FDRI"),
+    gr(GOp::Fdrx, "G.FDRX"),
+    gr(GOp::Fdry, "G.FDRY"),
+    gr(GOp::Fdrn, "G.FDRN"),
+    gr(GOp::Fdrv, "G.FDRV"),
+    gr(GOp::Fdrl, "G.FDRL"),
+    gr(GOp::FdrPr, "G.FDR.PR"),
+    gr(GOp::GfdrN, "G.GFDR.N"),
+    gr(GOp::GfdrV, "G.GFDR.V"),
+    gr(GOp::GfdrL, "G.GFDR.L"),
+    gr(GOp::GfdrRn, "G.GFDR.RN"),
+    gr(GOp::Xyp, "G.XYP"),
+    gr(GOp::XypX, "G.XYP.X"),
+    gr(GOp::XypY, "G.XYP.Y"),
 ];
 
 /// A Kria op, shaped as Kria's link describes it.
 const fn kr(op: KrOp, name: &'static str) -> OpDef {
     let (params, ret, set) = kria::Link::shape(op);
     OpDef { op: Op::Kr(op), name, params, ret, set }
+}
+
+/// A grid op, shaped as teletype_grid.rs describes it.
+const fn gr(op: GOp, name: &'static str) -> OpDef {
+    let (params, ret, set) = op.shape();
+    OpDef { op: Op::G(op), name, params, ret, set }
+}
+
+/// Does a line use the grid?
+fn uses_grid(toks: &[Tok]) -> bool {
+    toks.iter().any(|t| matches!(t, Tok::Op(Op::G(_))))
 }
 
 fn def(op: Op) -> &'static OpDef {
@@ -957,6 +1046,8 @@ struct Engine {
     /// both on: on the module M.ACT alone decides, but on Portamax nothing
     /// plays until you start it.
     transport: bool,
+    /// The grid ops' buttons, faders and LED layer.
+    grid: Box<TtGrid>,
 }
 
 impl Engine {
@@ -983,6 +1074,7 @@ impl Engine {
             in_raw: 0,
             param_raw: 0,
             transport: true,
+            grid: Box::new(TtGrid::new()),
         };
         e.reset_state();
         e
@@ -1002,6 +1094,16 @@ impl Engine {
         }
         for t in self.tr.iter_mut() {
             *t = TrOut { on: false, pol: true, time: 100, timer: 0 };
+        }
+        self.grid.reset();
+    }
+
+    /// Runs the scripts a grid key fired (bits 0-9), in order.
+    fn run_mask(&mut self, mask: u16) {
+        for s in 0..SCRIPTS {
+            if mask & (1 << s) != 0 {
+                self.run_script(s, None);
+            }
         }
     }
 
@@ -1615,6 +1717,25 @@ impl Engine {
                     self.kria.set(k, args, 0);
                 }
             }
+            Op::G(g) => {
+                let (params, ret, _) = g.shape();
+                let mut args = [0i16; 11];
+                for a in args.iter_mut().take(params as usize) {
+                    *a = st.pop();
+                }
+                let v = if set { st.pop() } else { 0 };
+                let out = self.grid.op(g, set, &args[..params as usize], v);
+                if let (Some(r), false, true) = (out.ret, set, ret) {
+                    st.push(r);
+                }
+                let parent = *fr;
+                for s in out.run {
+                    if s >= 0 {
+                        self.run_script(s as usize, Some(&parent));
+                    }
+                }
+                self.run_mask(out.mask);
+            }
         }
     }
 
@@ -1802,6 +1923,8 @@ impl Engine {
                 }
             }
         }
+        let fired = self.grid.tick_ms();
+        self.run_mask(fired);
         if self.vars.m_act && self.transport {
             self.metro_acc += 1;
             if self.metro_acc >= self.vars.m.max(METRO_MIN) as i32 {
@@ -1975,9 +2098,9 @@ enum Pad {
 
 use Pad::{Digit as Dg, Word as W_};
 
-const P_TRACKER: usize = 9;
+const P_TRACKER: usize = 11;
 
-const PAGES: [(&str, [Pad; 16]); 10] = [
+const PAGES: [(&str, [Pad; 16]); 12] = [
     ("SCRIPTS", [Pad::Fire(0), Pad::Fire(1), Pad::Fire(2), Pad::Fire(3), Pad::Fire(4), Pad::Fire(5), Pad::Fire(6), Pad::Fire(7), Pad::Fire(8), Pad::Fire(9), Pad::PrevScript, Pad::NextScript, Pad::RunLine, Pad::ClearLine, Pad::Back, Pad::None]),
     ("NUMBERS", [Dg(1), Dg(2), Dg(3), Pad::Minus, Dg(4), Dg(5), Dg(6), W_(":"), Dg(7), Dg(8), Dg(9), W_(";"), Pad::Back, Dg(0), W_("ADD"), W_("I")]),
     ("VARS", [W_("A"), W_("B"), W_("C"), W_("D"), W_("X"), W_("Y"), W_("Z"), W_("T"), W_("I"), W_("J"), W_("K"), W_("O"), W_("DRUNK"), W_("FLIP"), W_("R"), W_("TIME")]),
@@ -1987,6 +2110,8 @@ const PAGES: [(&str, [Pad; 16]); 10] = [
     ("FLOW", [W_("IF"), W_("ELIF"), W_("ELSE"), W_("L"), W_("W"), W_("EVERY"), W_("SKIP"), W_("OTHER"), W_("PROB"), W_("DEL"), W_("S"), W_("S.ALL"), W_("$"), W_("BREAK"), W_("KILL"), W_("SYNC")]),
     ("PATTERN", [W_("P"), W_("P.N"), W_("P.L"), W_("P.I"), W_("P.HERE"), W_("P.NEXT"), W_("P.PREV"), W_("P.START"), W_("P.END"), W_("P.WRAP"), W_("P.INS"), W_("P.RM"), W_("P.PUSH"), W_("P.POP"), W_("PN"), W_("P.RND")]),
     ("KRIA", [W_("KR.PAT"), W_("KR.POS"), W_("KR.L.ST"), W_("KR.L.LEN"), W_("KR.RES"), W_("KR.CV"), W_("KR.MUTE"), W_("KR.TMUTE"), W_("KR.CLK"), W_("KR.PG"), W_("KR.CUE"), W_("KR.DIR"), W_("KR.DUR"), W_("KR.PERIOD"), W_("KR.SCALE"), W_("KR.PRE")]),
+    ("GRID", [W_("G.BTN"), W_("G.BTX"), W_("G.FDR"), W_("G.FDX"), W_("G.LED"), W_("G.REC"), W_("G.CLR"), W_("G.RST"), W_("G.BTNV"), W_("G.BTNI"), W_("G.FDRN"), W_("G.FDRV"), W_("G.FDRI"), W_("G.GRP"), W_("G.DIM"), W_("G.KEY")]),
+    ("GRID+", [W_("G.BTN.V"), W_("G.BTN.L"), W_("G.BTN.EN"), W_("G.BTN.SW"), W_("G.GBTN.C"), W_("G.GBTN.I"), W_("G.FDR.N"), W_("G.FDR.V"), W_("G.FDR.L"), W_("G.GFDR.RN"), W_("G.GRP.EN"), W_("G.GRP.SC"), W_("G.GRPI"), W_("G.ROTATE"), W_("G.RCT"), W_("G.XYP")]),
     ("TRACKER", [Dg(1), Dg(2), Dg(3), Pad::Minus, Dg(4), Dg(5), Dg(6), Pad::Zero, Dg(7), Dg(8), Dg(9), Pad::LenHere, Pad::Back, Dg(0), Pad::Ins, Pad::Rm]),
 ];
 
@@ -2055,6 +2180,8 @@ enum Edit {
     Load(Box<Scene>),
     Metro(i16),
     MetroAct(bool),
+    /// A key on the grid: x, y, down.
+    GridKey(usize, usize, bool),
 }
 
 /// What the screen shows, published by the audio thread after a change.
@@ -2098,6 +2225,10 @@ struct Shared {
     output: Arc<Mutex<Vec<f32>>>,
     notes_played: AtomicU32,
     running: AtomicBool,
+    /// The grid's size (columns, rows), from the UI thread.
+    grid_size: [AtomicUsize; 2],
+    /// The grid ops' picture (16 x 16 levels) and a count of redraws.
+    grid_out: Mutex<([u8; tg::DIM * tg::DIM], u64)>,
 }
 
 pub struct TeletypeApp {
@@ -2125,6 +2256,10 @@ pub struct TeletypeApp {
     route: NoteRoute,
     note_out: Option<NoteOut>,
     status: String,
+    grid: Arc<Grid>,
+    /// The last picture shown on the grid, and which redraw it was.
+    grid_leds: Leds,
+    grid_gen: u64,
 }
 
 impl TeletypeApp {
@@ -2154,6 +2289,8 @@ impl TeletypeApp {
                 output,
                 notes_played: AtomicU32::new(0),
                 running: AtomicBool::new(false),
+                grid_size: [AtomicUsize::new(grid_kit::DEFAULT_COLS), AtomicUsize::new(grid_kit::DEFAULT_ROWS)],
+                grid_out: Mutex::new(([0; tg::DIM * tg::DIM], 0)),
             }),
             mods,
             list: ParamList::new(),
@@ -2175,7 +2312,11 @@ impl TeletypeApp {
             route,
             note_out: Some(out),
             status: String::new(),
+            grid: grid_kit::grid(),
+            grid_leds: Leds::new(tg::DIM, tg::DIM),
+            grid_gen: 0,
         };
+        app.grid.register(APP_NAME);
         app.rescan();
         app.load_scene(1.min(app.scenes.len() - 1));
         app
@@ -2228,6 +2369,11 @@ impl TeletypeApp {
             None => String::new(),
         };
         self.send(Edit::Load(Box::new(text.compiled())));
+        // A scene that plays the grid takes it, as plugging a grid into the
+        // module would.
+        if text.scripts.iter().flatten().any(|l| uses_grid(l)) {
+            self.grid.set_focus(APP_NAME);
+        }
         self.text = text;
         self.scene = index;
         self.script = 0;
@@ -2577,7 +2723,10 @@ impl App for TeletypeApp {
     fn needs_background_audio(&self) -> bool {
         // The metro keeps the scene playing when another app is on screen,
         // and a mod input can fire a script at any time.
-        self.p.running.load(Ordering::Relaxed) || self.mods.requested(APP_NAME)
+        self.p.running.load(Ordering::Relaxed) || self.mods.requested(APP_NAME) || self.grid.focus().as_deref() == Some(APP_NAME)
+    }
+    fn background_tick(&mut self) {
+        self.grid_frame();
     }
     fn tick(&mut self, input: &Input) {
         self.p.hands[0].set(input.hands[0]);
@@ -2692,6 +2841,34 @@ impl App for TeletypeApp {
 }
 
 impl TeletypeApp {
+    /// Passes the grid's presses to the interpreter and shows its picture.
+    /// Runs every frame, on screen or not, so a scene plays from the Grid
+    /// app's screen or a real grid while anything else is showing.
+    fn grid_frame(&mut self) {
+        let (rows, cols) = self.grid.size();
+        self.p.grid_size[0].store(cols, Ordering::Relaxed);
+        self.p.grid_size[1].store(rows, Ordering::Relaxed);
+        if self.grid.focus().as_deref() != Some(APP_NAME) {
+            return;
+        }
+        for k in self.grid.keys(APP_NAME) {
+            if k.x < tg::DIM && k.y < tg::DIM {
+                self.send(Edit::GridKey(k.x, k.y, k.down));
+            }
+        }
+        if let Ok(g) = self.p.grid_out.lock() {
+            if g.1 != self.grid_gen {
+                self.grid_gen = g.1;
+                for y in 0..tg::DIM {
+                    for x in 0..tg::DIM {
+                        self.grid_leds.set(x, y, g.0[y * tg::DIM + x] as i32);
+                    }
+                }
+            }
+        }
+        self.grid.show(APP_NAME, &self.grid_leds);
+    }
+
     fn draw_editor(&self, f: &mut FrameBuffer, view: &View) {
         let big = MonoTextStyle::new(&SPLEEN_8X16, BRIGHT);
         let dim = MonoTextStyle::new(&SPLEEN_8X16, DIM);
@@ -2931,6 +3108,10 @@ impl Processor {
                     self.eng.vars.m_act = on;
                     self.eng.metro_acc = 0;
                 }
+                Edit::GridKey(x, y, z) => {
+                    let fired = self.eng.grid.key(x, y, z);
+                    self.eng.run_mask(fired);
+                }
             }
         }
     }
@@ -2976,7 +3157,14 @@ impl Processor {
         }
     }
 
-    fn publish(&self) {
+    fn publish(&mut self) {
+        if self.eng.grid.dirty {
+            if let Ok(mut g) = self.p.grid_out.try_lock() {
+                self.eng.grid.render(&mut g.0);
+                g.1 += 1;
+                self.eng.grid.dirty = false;
+            }
+        }
         if let Ok(mut v) = self.p.view.try_lock() {
             let e = &self.eng;
             v.vars = e.vars.v;
@@ -3001,6 +3189,7 @@ impl AudioProcessor for Processor {
             return;
         }
         let frames = out.len() / channels;
+        self.eng.grid.set_size(self.p.grid_size[0].load(Ordering::Relaxed), self.p.grid_size[1].load(Ordering::Relaxed));
         self.apply_edits();
         self.eng.transport = self.p.running.load(Ordering::Relaxed);
         let raw = |v: f32| (v.clamp(0.0, 1.0) * CV_MAX as f32) as i16;
@@ -3438,6 +3627,55 @@ mod tests {
         let out = run(&mut p, 300);
         assert!(rms(&out) > 0.005, "{} makes sound on its own ({})", a.scenes[1].0, rms(&out));
     }
+
+    #[test]
+    fn a_grid_scene_takes_the_grid_lights_it_and_plays_from_it() {
+        let (mut a, _) = app(Path::new(TT_DIR));
+        let g = grid_kit::grid();
+        g.register("Other");
+        g.set_focus("Other");
+        let i = a.scenes.iter().position(|(n, _)| n.contains("grid")).expect("the grid scene");
+        a.load_scene(i);
+        assert!(a.status.is_empty(), "{}", a.status);
+        assert_eq!(g.focus().as_deref(), Some(APP_NAME), "a scene with G ops takes the grid");
+        assert!(a.needs_background_audio(), "it plays the grid while another app is on screen");
+        let mut p = a.audio_processor().unwrap();
+        let frame = |a: &mut TeletypeApp, p: &mut Box<dyn AudioProcessor>| {
+            a.background_tick();
+            run(p, 2);
+            a.background_tick();
+        };
+        frame(&mut a, &mut p);
+        let led = |x: usize, y: usize| {
+            let s = g.snapshot();
+            s.leds[y * s.cols + x]
+        };
+        // Steps 1 and 9 of track 1 are on, the rest dim; the speed fader is
+        // half way.
+        assert_eq!((led(0, 0), led(1, 0), led(8, 0), led(0, 4)), (13, 3, 13, 0));
+        assert_eq!((led(8, 6), led(9, 6)), (13, 3));
+        // A key turns a step on.
+        g.press(1, 0, true);
+        frame(&mut a, &mut p);
+        g.press(1, 0, false);
+        frame(&mut a, &mut p);
+        assert_eq!(led(1, 0), 13);
+        // The fader's far end is the fastest speed, through script 1.
+        g.press(15, 6, true);
+        frame(&mut a, &mut p);
+        g.press(15, 6, false);
+        frame(&mut a, &mut p);
+        assert_eq!(a.view().m, 60);
+        assert!(rms(&run(&mut p, 50)) < 1e-6, "silent until started");
+        a.toggle_running();
+        let out = run(&mut p, 100);
+        assert!(rms(&out) > 0.005, "plays ({})", rms(&out));
+        // The playhead brightens its column.
+        a.background_tick();
+        let s = g.snapshot();
+        let bright = (0..16).filter(|&x| (0..4).all(|y| s.leds[y * s.cols + x] >= 6)).count();
+        assert_eq!(bright, 1, "{:?}", &s.leds[..16]);
+    }
 }
 
 #[cfg(test)]
@@ -3476,9 +3714,29 @@ mod screenshot {
             std::fs::write(Path::new(&dir).join(name), out).unwrap();
         };
         shoot(&mut a, "tt_editor.ppm");
-        for _ in 0..6 {
+        for _ in 0..8 {
             a.toggle_grid_mode();
         }
         shoot(&mut a, "tt_tracker.ppm");
+        // The grid scene, on the GRID pad page and on the Grid app's screen.
+        let i = a.scenes.iter().position(|(n, _)| n.contains("grid")).unwrap();
+        a.load_scene(i);
+        a.script = INIT;
+        for _ in 0..12 {
+            a.toggle_grid_mode();
+        }
+        let mut screen = crate::apps::grid::GridApp::new(grid_kit::grid(), Arc::new(AtomicF32::new(3.0)));
+        for _ in 0..45 {
+            a.background_tick();
+            let mut buf = vec![0.0f32; 480 * 2];
+            p.process(&mut buf, 2, 48_000.0);
+        }
+        a.background_tick();
+        shoot(&mut a, "tt_grid_page.ppm");
+        let mut fb = FrameBuffer::new();
+        screen.draw(&mut fb);
+        let mut out = b"P6\n640 360\n255\n".to_vec();
+        out.extend(fb.buffer().iter().flat_map(|px| [(px >> 16) as u8, (px >> 8) as u8, *px as u8]));
+        std::fs::write(Path::new(&dir).join("tt_grid.ppm"), out).unwrap();
     }
 }
