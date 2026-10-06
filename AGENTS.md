@@ -101,6 +101,30 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: instrument settings listed under a source's Plays row
+- Branch: claude/picker-and-cleanup
+- Changed: new shared mechanism. src/app.rs: `Setting`, and App gains
+  `instrument_settings()` / `adjust_setting()` (play-kit apps and the MI kit
+  answer from their controls via play_kit::settings_of/adjust_in; any other
+  app falls back to its menu rows, read-only: choir, chop, skins, timbre_map).
+  src/note_bus.rs: a settings port per instrument slot (shared area: a new
+  field and methods, nothing existing changed), `NoteRoute::settings()` and
+  `NoteRoute::adjust()`. src/app_runtime.rs: LazyApp publishes the instrument's
+  settings while a source is asking and applies the edits queued for it.
+  Source menus that now list them under Plays: Bloom, Madness, Nebula, Turing
+  Machine, Marbles, Norns, Hum, Chordsmith, Session (SETUP), Collection synths,
+  Sequencer (instrument tracks), Kria, Orca, Teletype, O&C.
+- Status: done except Ledger (its menu is the kit's own control list, so there
+  is nowhere to insert rows; Plays is there but without the settings) and
+  Dialogue (not mine to edit now).
+- Tests: registry tests a_source_lists_and_edits_the_settings_of_the_instrument_it_plays
+  and a_sources_menu_lists_the_instruments_settings_under_plays; full suite has
+  only the 25 environmental failures.
+- Notes for the other assistant: a source calls `note_route.settings()` every
+  frame it draws the rows (asking is what keeps the instrument publishing); to
+  list them in a new source, add rows after Plays from that call and send edits
+  with `note_route.adjust(i, delta)`.
+
 ### 2026-10-06: Claude: Plays first in every note source's menu, orphan apps, warnings
 - Branch: claude/picker-and-cleanup (on top of claude/dropin-cleanup)
 - Changed: Plays is now the first row in Kria, Teletype, Orca, O&C (constants

@@ -353,12 +353,15 @@ impl OcApp {
     }
 
     fn rows(&self) -> Vec<(String, String, bool)> {
-        let mut r: Vec<(String, String, bool)> = (0..N_CONTROLS)
-            .map(|i| {
-                let (n, v) = self.text(i);
-                (n, v, false)
-            })
-            .collect();
+        let mut r: Vec<(String, String, bool)> = Vec::new();
+        for i in 0..N_CONTROLS {
+            let (n, v) = self.text(i);
+            r.push((n, v, false));
+            if i == C_PLAYS {
+                // The instrument it plays, dialled in right under Plays.
+                r.extend(self.note_route.settings().into_iter().map(|s| (format!("  {}", s.label), s.value, false)));
+            }
+        }
         r.push(("Firmware".into(), VARIANTS[self.p.variant.load(Ordering::Relaxed).min(VARIANTS.len() - 1)].name.into(), false));
         r.push(("Window".into(), if self.p.window.load(Ordering::Relaxed) { "open" } else { "closed" }.into(), false));
         for (i, name) in OUTS.iter().enumerate() {
@@ -369,13 +372,20 @@ impl OcApp {
     }
 
     fn rows_len(&self) -> usize {
-        N_CONTROLS + 2 + OUTS.len() * 2
+        N_CONTROLS + 2 + OUTS.len() * 2 + self.note_route.settings().len()
     }
 
     fn edit_row(&mut self, row: usize, delta: i32) {
         if delta == 0 {
             return;
         }
+        let row = match crate::app::play_kit::menu_row(row, self.note_route.settings().len()) {
+            crate::app::play_kit::MenuRow::Setting(j) => {
+                self.note_route.adjust(j, delta.signum());
+                return;
+            }
+            crate::app::play_kit::MenuRow::Control(c) => c,
+        };
         if row < N_CONTROLS {
             self.kit_edit(row, delta);
         } else if row == N_CONTROLS {
@@ -624,7 +634,9 @@ impl App for OcApp {
             let sel = self.list.selected.min(n - 1);
             self.edit_row(sel, i.knob2);
             if i.knob2_press {
-                self.kit_reset(sel.min(N_CONTROLS - 1));
+                if let crate::app::play_kit::MenuRow::Control(c) = crate::app::play_kit::menu_row(sel, self.note_route.settings().len()) {
+                    self.kit_reset(c.min(N_CONTROLS - 1));
+                }
             }
             self.release_all();
             return;

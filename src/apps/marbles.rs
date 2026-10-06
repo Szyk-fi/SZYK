@@ -141,6 +141,8 @@ impl Module for Marbles {
 
     fn extra_rows(&self) -> Vec<(String, String)> {
         let mut rows = vec![("Plays".into(), self.route.label())];
+        // The instrument it plays, dialled in right under Plays.
+        rows.extend(self.route.settings().into_iter().map(|s| (format!("  {}", s.label), s.value)));
         for (i, name) in OUTS.iter().enumerate() {
             rows.push((format!("{name} App"), self.outs.app_label(&self.modbus, i)));
             rows.push((format!("{name} Input"), self.outs.input_label(&self.modbus, i)));
@@ -149,9 +151,12 @@ impl Module for Marbles {
     }
 
     fn edit_extra(&mut self, i: usize, delta: i32) {
+        let n = self.route.settings().len();
         match i {
             0 => self.route.step(delta.signum()),
+            i if i <= n => self.route.adjust(i - 1, delta.signum()),
             i => {
+                let i = i - n;
                 let out = (i - 1) / 2;
                 if (i - 1) % 2 == 0 {
                     self.outs.step_app(&self.modbus, out, delta.signum());
@@ -163,9 +168,11 @@ impl Module for Marbles {
     }
 
     fn reset_extra(&mut self, i: usize) {
+        let n = self.route.settings().len();
         match i {
             0 => self.route.reset(),
-            i => self.outs.clear((i - 1) / 2),
+            i if i <= n => {}
+            i => self.outs.clear((i - n - 1) / 2),
         }
     }
 

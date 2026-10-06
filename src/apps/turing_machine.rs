@@ -105,6 +105,8 @@ enum Selection {
     /// Where the register's notes go (another app, or nowhere): each step
     /// whose Pulse bit is set plays the CV quantized to Scale.
     Plays,
+    /// A setting of the instrument Plays points at, listed under Plays.
+    InstSetting(usize),
     NoteScale,
     Rate,
     Locks,
@@ -374,6 +376,7 @@ impl TuringMachineApp {
     fn visible_rows(&self) -> Vec<Row> {
         // Plays leads the menu, as in every note source.
         let mut rows = vec![Row::Leaf(Selection::Plays)];
+        rows.extend((0..self.note_route.settings().len()).map(|i| Row::Leaf(Selection::InstSetting(i))));
         for g in 0..NUM_GROUPS {
             rows.push(Row::Group(g));
             if self.expanded[g] {
@@ -431,6 +434,7 @@ impl TuringMachineApp {
         match sel {
             Selection::Rate => "Rate".into(),
             Selection::Plays => "Plays".into(),
+            Selection::InstSetting(i) => format!("  {}", self.note_route.settings().get(i).map_or(String::new(), |s| s.label.clone())),
             Selection::NoteScale => "Note scale".into(),
             Selection::Locks => "Locks".into(),
             Selection::Length => "Length".into(),
@@ -465,6 +469,7 @@ impl TuringMachineApp {
         match sel {
             Selection::Rate => format!("{:.1} Hz", self.params.rate_hz.get()),
             Selection::Plays => self.note_route.label(),
+            Selection::InstSetting(i) => self.note_route.settings().get(i).map_or(String::new(), |s| s.value.clone()),
             Selection::NoteScale => SCALE_TYPES[self.params.note_scale.load(Ordering::Relaxed) % SCALE_TYPES.len()].0.into(),
             Selection::Locks => {
                 let t = self.params.locks.get().clamp(0.0, 1.0);
@@ -494,6 +499,7 @@ impl TuringMachineApp {
         match sel {
             Selection::Rate => bump(&self.params.rate_hz, delta, sensitivity, MIN_RATE_HZ, MAX_RATE_HZ),
             Selection::Plays => self.note_route.step(delta.signum()),
+            Selection::InstSetting(i) => self.note_route.adjust(i, delta.signum()),
             Selection::NoteScale => self.params.note_scale.store((self.params.note_scale.load(Ordering::Relaxed) as i32 + delta.signum()).rem_euclid(SCALE_TYPES.len() as i32) as usize, Ordering::Relaxed),
             Selection::Locks => bump(&self.params.locks, delta, sensitivity, 0.0, 1.0),
             Selection::Length => {
@@ -531,6 +537,7 @@ impl TuringMachineApp {
         match sel {
             Selection::Rate => self.params.rate_hz.set(4.0),
             Selection::Plays => self.note_route.reset(),
+            Selection::InstSetting(_) => {}
             Selection::NoteScale => self.params.note_scale.store(1, Ordering::Relaxed),
             Selection::Locks => self.params.locks.set(0.5),
             Selection::Length => self.params.length_idx.store(DEFAULT_LENGTH_IDX, Ordering::Relaxed),

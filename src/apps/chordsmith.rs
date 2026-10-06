@@ -351,6 +351,8 @@ enum Row {
     Strum,
     Tempo,
     Bass,
+    /// A setting of the instrument Plays points at, listed under Plays.
+    InstSetting(usize),
 }
 const ROWS: [Row; 8] = [Row::Plays, Row::Sound, Row::Key, Row::Mode, Row::Style, Row::Strum, Row::Tempo, Row::Bass];
 
@@ -410,21 +412,36 @@ impl Chordsmith {
         self.current = None;
     }
 
-    fn label(r: Row) -> &'static str {
+    fn label(&self, r: Row) -> String {
         match r {
-            Row::Plays => "Plays",
-            Row::Sound => "Sound",
-            Row::Key => "Key",
-            Row::Mode => "Mode",
-            Row::Style => "Style",
-            Row::Strum => "Strum",
-            Row::Tempo => "Tempo",
-            Row::Bass => "Bass",
+            Row::InstSetting(i) => format!("  {}", self.route.settings().get(i).map_or(String::new(), |x| x.label.clone())),
+            Row::Plays => "Plays".into(),
+            Row::Sound => "Sound".into(),
+            Row::Key => "Key".into(),
+            Row::Mode => "Mode".into(),
+            Row::Style => "Style".into(),
+            Row::Strum => "Strum".into(),
+            Row::Tempo => "Tempo".into(),
+            Row::Bass => "Bass".into(),
         }
+    }
+
+    /// The menu: ROWS, with the settings of the instrument Plays points at
+    /// listed right under Plays.
+    fn rows(&self) -> Vec<Row> {
+        let mut rows = Vec::new();
+        for r in ROWS {
+            rows.push(r);
+            if r == Row::Plays {
+                rows.extend((0..self.route.settings().len()).map(Row::InstSetting));
+            }
+        }
+        rows
     }
 
     fn value(&self, r: Row) -> String {
         match r {
+            Row::InstSetting(i) => self.route.settings().get(i).map_or(String::new(), |x| x.value.clone()),
             Row::Plays => self.route.label(),
             Row::Sound => TONES[self.s.tone.load(Ordering::Relaxed) % TONES.len()].name().into(),
             Row::Key => kit::note_name(self.key).into(),
@@ -465,7 +482,7 @@ impl App for Chordsmith {
         kit::screen_extra(&fb)
     }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
-        ROWS.iter().map(|r| (Chordsmith::label(*r).to_string(), self.value(*r), false)).collect()
+        self.rows().iter().map(|r| (self.label(*r), self.value(*r), false)).collect()
     }
     fn on_exit(&mut self) {
         self.release();
@@ -502,12 +519,14 @@ impl App for Chordsmith {
         }
         self.prev_pads = input.grid;
         if input.navigation_steps != 0 {
-            self.row = (self.row as i32 + input.navigation_steps).clamp(0, ROWS.len() as i32 - 1) as usize;
+            self.row = (self.row as i32 + input.navigation_steps).clamp(0, self.rows().len() as i32 - 1) as usize;
         }
         if input.knob2 != 0 {
             let d = input.knob2.signum();
             let bump = |a: &AtomicUsize, n: usize| a.store((a.load(Ordering::Relaxed) as i32 + d).rem_euclid(n as i32) as usize, Ordering::Relaxed);
-            match ROWS[self.row] {
+            let rows = self.rows();
+            match rows[self.row.min(rows.len() - 1)] {
+                Row::InstSetting(i) => self.route.adjust(i, d),
                 Row::Plays => self.route.step(d),
                 Row::Sound => bump(&self.s.tone, TONES.len()),
                 Row::Key => {
@@ -533,11 +552,15 @@ impl App for Chordsmith {
         kit::text(fb, NAME, 12, 7, Size2::Medium, kit::WHITE, -1);
         kit::text(fb, &format!("{} {}", kit::note_name(self.key), if self.minor { "minor" } else { "major" }), 630, 9, Size2::Small, dim, 1);
         // Settings.
-        for (i, r) in ROWS.iter().enumerate() {
-            let y = 38 + i as i32 * 28;
+        let rows = self.rows();
+        // Eight rows fit; scroll to keep the selected one in view.
+        let first = self.row.saturating_sub(7).min(rows.len().saturating_sub(8));
+        for (n, r) in rows.iter().enumerate().skip(first).take(8) {
+            let i = n;
+            let y = 38 + (n - first) as i32 * 28;
             let sel = i == self.row;
             kit::round_rect(fb, 8, y, 200, 25, 6, if sel { kit::blend(panel, kit::WHITE, 0.15) } else { panel });
-            kit::text(fb, Chordsmith::label(*r), 16, y + 6, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
+            kit::text(fb, &self.label(*r), 16, y + 6, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
             let v: String = self.value(*r).chars().take(16).collect();
             kit::text(fb, &v, 200, y + 6, Size2::Small, ink, 1);
         }

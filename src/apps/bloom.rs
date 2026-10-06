@@ -884,6 +884,8 @@ enum Selection {
     /// instrument on the note bus), or nowhere -- "signal only", when the
     /// CV outputs below are all that matters.
     Plays,
+    /// A setting of the instrument Plays points at, listed under Plays.
+    InstSetting(usize),
     /// Gate CV: high while a note sounds (Decay sets how long). App, then
     /// input, like every other modulation output.
     GateApp,
@@ -1314,7 +1316,10 @@ impl BloomApp {
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         if g == 0 {
-            return vec![Selection::Plays, Selection::GateApp, Selection::GateInput, Selection::PitchApp, Selection::PitchInput, Selection::MasterBpm, Selection::RandomizeAll];
+            let mut v = vec![Selection::Plays];
+            v.extend((0..self.note_route.settings().len()).map(Selection::InstSetting));
+            v.extend([Selection::GateApp, Selection::GateInput, Selection::PitchApp, Selection::PitchInput, Selection::MasterBpm, Selection::RandomizeAll]);
+            return v;
         }
         let s = g - 1;
         // Running comes first -- the master on/off for this shape.
@@ -1376,7 +1381,7 @@ impl BloomApp {
 
     fn selection_shape(sel: Selection) -> Option<usize> {
         match sel {
-            Selection::MasterBpm | Selection::RandomizeAll | Selection::Plays | Selection::GateApp | Selection::GateInput | Selection::PitchApp | Selection::PitchInput => None,
+            Selection::MasterBpm | Selection::RandomizeAll | Selection::Plays | Selection::InstSetting(_) | Selection::GateApp | Selection::GateInput | Selection::PitchApp | Selection::PitchInput => None,
             Selection::Running(s)
             | Selection::Pattern(s)
             | Selection::Dots(s)
@@ -1424,6 +1429,7 @@ impl BloomApp {
         match sel {
             Selection::MasterBpm => "BPM".into(),
             Selection::Plays => "Plays".into(),
+            Selection::InstSetting(i) => format!("  {}", self.note_route.settings().get(i).map_or(String::new(), |s| s.label.clone())),
             Selection::GateApp => "Gate CV".into(),
             Selection::GateInput => "  Gate input".into(),
             Selection::PitchApp => "Pitch CV".into(),
@@ -1468,6 +1474,7 @@ impl BloomApp {
         match sel {
             Selection::MasterBpm => format!("{:.0}", self.params.master_bpm.get()),
             Selection::Plays => self.note_route.label(),
+            Selection::InstSetting(i) => self.note_route.settings().get(i).map_or(String::new(), |s| s.value.clone()),
             Selection::GateApp => crate::modbus::Patch::app_label(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed)),
             Selection::GateInput => crate::modbus::Patch::input_label(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed)),
             Selection::PitchApp => crate::modbus::Patch::app_label(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed)),
@@ -1559,6 +1566,7 @@ impl BloomApp {
         let step = delta.signum();
         match sel {
             Selection::Plays => self.note_route.step(step),
+            Selection::InstSetting(i) => self.note_route.adjust(i, step),
             Selection::GateApp => self.params.gate_cv.store(crate::modbus::Patch::step_app(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::GateInput => self.params.gate_cv.store(crate::modbus::Patch::step_input(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::PitchApp => self.params.pitch_cv.store(crate::modbus::Patch::step_app(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
@@ -1682,6 +1690,7 @@ impl BloomApp {
         match sel {
             Selection::MasterBpm => self.params.master_bpm.set(DEFAULT_BPM),
             Selection::Plays => self.note_route.reset(),
+            Selection::InstSetting(_) => {}
             Selection::GateApp | Selection::GateInput => self.params.gate_cv.store(0, Ordering::Relaxed),
             Selection::PitchApp | Selection::PitchInput => self.params.pitch_cv.store(0, Ordering::Relaxed),
             Selection::Pattern(s) => self.apply_pattern(s, 0),

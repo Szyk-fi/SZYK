@@ -448,10 +448,16 @@ impl OrcaApp {
     }
 
     fn rows(&self) -> Vec<(String, String, bool)> {
-        (0..N_CONTROLS).map(|i| {
+        let mut r = Vec::new();
+        for i in 0..N_CONTROLS {
             let (n, v) = self.text(i);
-            (n, v, false)
-        }).collect()
+            r.push((n, v, false));
+            if i == 0 {
+                // The instrument it plays, dialled in right under Plays.
+                r.extend(self.route.settings().into_iter().map(|s| (format!("  {}", s.label), s.value, false)));
+            }
+        }
+        r
     }
 
     fn edit_continuous(&mut self, i: usize, d: i32) {
@@ -588,11 +594,21 @@ impl App for OrcaApp {
         self.kit = play;
         if step.menu {
             let i = &step.input;
-            self.list.navigate_input(i, N_CONTROLS, self.nav.get() as i32);
-            let sel = self.list.selected.min(N_CONTROLS - 1);
-            self.kit_edit(sel, i.knob2);
-            if i.knob2_press {
-                self.kit_reset(sel);
+            let n = self.route.settings().len();
+            self.list.navigate_input(i, N_CONTROLS + n, self.nav.get() as i32);
+            let sel = self.list.selected.min(N_CONTROLS + n - 1);
+            match crate::app::play_kit::menu_row(sel, n) {
+                crate::app::play_kit::MenuRow::Setting(j) => {
+                    if i.knob2 != 0 {
+                        self.route.adjust(j, i.knob2.signum());
+                    }
+                }
+                crate::app::play_kit::MenuRow::Control(c) => {
+                    self.kit_edit(c, i.knob2);
+                    if i.knob2_press {
+                        self.kit_reset(c);
+                    }
+                }
             }
             self.pads_down = [false; 16];
             return;

@@ -1018,8 +1018,8 @@ impl CollectionApp {
     }
     fn offset(&self) -> usize {
         if self.kind.synth() {
-            // Plays, Instrument, Source
-            3
+            // Plays, the settings of the instrument it plays, Instrument, Source
+            3 + self.note_route.settings().len()
         } else if self.kind == Kind::Master {
             2
         } else {
@@ -1031,6 +1031,8 @@ impl CollectionApp {
         if self.kind.synth() {
             // First, like every note source: where the generator's notes go.
             r.push(("Plays".into(), self.note_route.label(), false));
+            // The instrument it plays, dialled in right under Plays.
+            r.extend(self.note_route.settings().into_iter().map(|s| (format!("  {}", s.label), s.value, false)));
             r.push((
                 "Instrument".into(),
                 VOICE_NAMES[self.p.voice.load(Ordering::Relaxed).min(7)].into(),
@@ -1978,9 +1980,12 @@ impl App for CollectionApp {
         if d != 0 {
             let i = self.list.selected;
             if i < off {
+                let n = off.saturating_sub(3); // settings listed under Plays (synth kinds)
                 if self.kind.synth() && i == 0 {
                     // Plays: stepped above
-                } else if self.kind.synth() && i == 1 {
+                } else if self.kind.synth() && i <= n {
+                    self.note_route.adjust(i - 1, d.signum());
+                } else if self.kind.synth() && i == n + 1 {
                     self.edit_voice(d);
                 } else if self.kind.media() {
                     if !self.files.is_empty() {
