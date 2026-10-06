@@ -1,0 +1,8 @@
+id = "arc_knobs"
+name = "Arc Knobs"
+category = "utility"
+description = "The arc's rings as sixteen knobs (four banks of four) for any app's mod inputs. After knobs/quadknobs by MonsieurBon."
+audio_outputs = []
+note_outputs = []
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = []

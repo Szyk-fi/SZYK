@@ -1,0 +1,14 @@
+id = "streams"
+name = "Streams"
+category = "effect"
+description = "The real Mutable Instruments Streams: a dual dynamics gate: envelope, vactrol, follower, compressor, filter controller, Lorenz."
+audio_outputs = ["Streams"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Streams Level",
+    "Streams: A Shape",
+    "Streams: A Response",
+    "Streams: B Shape",
+    "Streams: B Response",
+]

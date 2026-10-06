@@ -1,0 +1,78 @@
+#ifndef OS_SCALES_H_
+#define OS_SCALES_H_
+
+#include <Arduino.h>
+// host: no SD card, so no Scala file load/save (vendor/o_c_phaz/PATCHES.md)
+#ifdef OC_HOST_SDCARD
+#include "FS.h"
+#endif
+#include "braids_quantizer.h"
+#include "braids_quantizer_scales.h"
+
+// Common scales and stuff
+namespace OC {
+
+using Scale = braids::Scale;
+
+static constexpr int kMaxScaleLength = 16;
+static constexpr int kMinScaleLength = 4;
+
+class Scales {
+public:
+
+  enum {
+    SCALE_USER_0,
+    SCALE_USER_1,
+    SCALE_USER_2,
+    SCALE_USER_3,
+    SCALE_USER_COUNT, // index 0 in braids::scales
+    SCALE_SEMI,
+    SCALE_NONE = SCALE_USER_COUNT,
+  };
+
+  static void Init();
+  static void Validate();
+  static const Scale &GetScale(int index);
+  static constexpr int NUM_SCALES = SCALE_USER_COUNT + sizeof(braids::scales) / sizeof(braids::scales[0]);
+
+#ifdef OC_HOST_SDCARD
+  static void SaveToScala(Scale &scale, File &file);
+  static void LoadScala(Scale &scale, File &file);
+#endif
+};
+
+// H1200/A11Z are semitone based, so don't need to go "full quanty" for now.
+// They still need some hysteresis though
+class SemitoneQuantizer {
+public:
+  static constexpr int32_t kHysteresis = 32;
+
+  SemitoneQuantizer() { }
+  ~SemitoneQuantizer() { }
+
+  void Init() {
+    last_pitch_ = 0;
+  }
+
+  int32_t Process(int32_t pitch) {
+    if ((pitch > last_pitch_ + kHysteresis) || (pitch < last_pitch_ - kHysteresis)) {
+      last_pitch_ = pitch;
+    } else {
+      pitch = last_pitch_;
+    }
+    return (pitch + 63) >> 7;
+  }
+
+private:
+  int32_t last_pitch_;
+};
+
+extern const char *const scale_names[];
+extern const char *const scale_names_short[];
+extern Scale user_scales[OC::Scales::SCALE_USER_COUNT];
+extern Scale dummy_scale;
+extern const char *const voltage_scalings[];
+
+};
+
+#endif // OS_SCALES_H_

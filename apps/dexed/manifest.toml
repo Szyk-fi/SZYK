@@ -1,0 +1,14 @@
+id = "dexed"
+name = "Dexed"
+category = "instrument"
+description = "A DX7-compatible FM synth running Dexed's own engine. Loads real .syx banks."
+audio_outputs = ["Dexed"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Dexed Level",
+    "Dexed: Level",
+    "Dexed: Bend",
+    "Dexed: Mod",
+    "Dexed: Pressure",
+]

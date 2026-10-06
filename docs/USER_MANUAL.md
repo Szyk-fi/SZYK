@@ -98,9 +98,10 @@ way.
 
 | App | What it does |
 |---|---|
-| **Plaits** | The real Mutable Instruments Plaits voice (ported DSP, not an approximation) — all 24 engines of the Eurorack module's 1.2 firmware, with a play view built around the whole device (see §3.1). |
+| **Plaits** | The real Mutable Instruments Plaits voice (ported DSP, not an approximation) — all 24 engines of the Eurorack module's 1.2 firmware, with a play view built around the whole device (see §3.1). It plays like a normal synth by default: **Poly** voices (a chord is about as loud as one note) and an **Envelope** row set to **Synth**, so a held note sustains under the Attack/Sustain/Release envelope. Set Voice Mode to Mono and Envelope to **Pluck** for the module's own behaviour, where every note is a strike that rings and dies away even with the key down. A new key pressed over a held one is always struck. |
 | **Voltage** | Classic 2-oscillator subtractive synth (Saw/Square/Triangle/Sine), filter, envelopes, mono/glide, chorus, delay and reverb. 100 preset slots, 20 synthwave factory presets. |
-| **Cascade** | 6-operator FM synth in the spirit of the DX7 — real FM synthesis, not a clone of Yamaha's ROM. Loads real `.syx` presets. |
+| **Dexed** | A DX7-compatible 6-operator FM synth running Dexed's own engine — the DX7's envelopes, scaling, LFO and all 32 algorithms. Loads real `.syx` banks from `dx7_presets/` (none are bundled; it plays the DX7's INIT VOICE until you add some). Replaces the earlier Cascade (see §3.8). |
+| **SoundFont** | Plays your `.sf2`/`.sf3` banks with TinySoundFont: any General MIDI bank or single instrument. U/D browses a bank's presets. Banks go in `soundfonts/` (see §3.8). |
 | **Synth** | The simplest instrument: 4x4 grid as a 16-note held keyboard, two knobs for cutoff/volume. |
 | **Madness** | Independent per-position phase drift warping a polygon into a generative voice (started life as "Bloom", renamed once the mechanic diverged). |
 | **Nebula** | A small real 2D gravity simulation — particles drift and get captured into orbits, each capture fires a note. |
@@ -112,6 +113,7 @@ way.
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
 | **Rings** | The real Mutable Instruments Rings resonator: modal bodies, sympathetic and inharmonic strings, FM voice, and the hidden "Disastrous Peace" string synth (see §3.5). |
 | **Elements** | The real Mutable Instruments Elements: a bowed, blown and struck physical-modelling voice with its own reverb (see §3.5). |
+| **Braids** | The real Mutable Instruments Braids macro oscillator: 47 models (saws, sync, filtered and vocal shapes, FM, plucked/bowed/blown, drums, wavetables, noises), TIMBRE and COLOR, an AD envelope on timbre/colour/pitch/VCA, bit and rate reduction (see §3.5). |
 | **Chordsmith** | A whole chord under one finger, on any instrument: the bottom two pad rows are the key's chords (I ii iii IV V vi vii° bVII), the top two rows modify them (7th, sus4, add9, flip, 6th, power, bass on the fifth, wide). Each chord is voice-led from the last. Styles: pad, strum, arp up, arp up-down, pulse. **Plays** picks the instrument. |
 | **Skins** | A drum synthesizer: eight synthesized voices (kick, snare, clap, hats, tom, rim, metal) with six controls each, 16-step lanes of independent length (polymeter), accents, ratchets, chance, and per-step sound locks. Four factory kits. Follows the device clock (see §5.1). Notes from 36 (C2) up play the voices. |
 | **Chop** | A resampling sampler in the spirit of the SP-404 (see §3.6): record or load into 16 pads, chop at hits or into equal slices, two effect slots, and resample its own output. Notes from 36 play the pads. |
@@ -246,15 +248,17 @@ every control, plus the module's routing rows.
 | **Rings** | Pads (chromatic from C3) or any keyboard strum it. Each note goes to the next of up to four voices. U/D picks the model. | **Exciter**: another app's audio excites the resonator instead of the internal exciter, like patching into the module's IN. |
 | **Elements** | Pads play it; hold a note to keep bowing or blowing. A hand in the depth sensors bows (left) or blows (right). SPACE above 7/8 freezes the reverb. | **Input**: another app's audio strikes the resonator. |
 | **Marbles** | F3 starts it (it opens stopped). X1, X2 and X3 play notes on T1, T2 and T3. | **Plays**: the instrument the notes go to. **T1–T3, X1–X3, Y App / Input**: patch any output to any app's mod input. |
+| **Braids** | Pads play it, one voice, last note wins; each note strikes it. U/D picks the model. | Turn **Env > VCA** off and it drones. |
+| **Peaks** | Pads are its two gate inputs (lower two rows fire A, upper two B; notes from other apps too). Each of its two processors is one of twelve functions: envelope, LFO, tap LFO, bass / snare / FM drums, hi-hat, pulse shaper, pulse randomizer, bouncing ball, mini sequencer, number station. Four pots each. | The drums and the number station are audio; the rest are control voltages: **Out A / B App / Input** patch them to a mod input. |
+| **Stages** | F3 starts it (it opens stopped). Pads are the gate input, high while held. U/D loads a preset group (ADSR, AR, LFOs, oscillators, pulse and gate generators, sample and hold, sequencer...). | The panel is the module's own: 1-6 segments, each with type, loop, slider and pot, so every preset stays editable. **Value / Phase App / Input**: patch its output to a mod input. The oscillator presets are audio. |
 | **Tides** | F3 starts it. Pads are its TRIG and V/OCT: they fire the AD/AR envelopes and transpose from C3, so in the Audio range they play it. | **Out 1–4 App / Input**: patch each output to a mod input. Looping slopes swing both ways around the knob; envelopes push one way. |
 
-Why these four: they fill the gaps the other modules leave. Rings and
+Braids, Stages and Peaks follow the same pattern (below), and Streams is an effect (§4). Why these: they fill the gaps the other modules leave. Rings and
 Elements are physical-modelling voices (Plaits has only a simple modal
 engine); Marbles is a generative source for every instrument on the note
 bus; Tides is the modulation source the mod bus didn't have. Grids, the
 other obvious candidate, isn't here because its code is GPL-licensed and
-Portamax is MIT. Braids is Plaits' predecessor, Warps is already here, and
-Stages overlaps Tides and Pam's.
+Portamax is MIT.
 
 ### 3.6 Chop
 
@@ -296,6 +300,18 @@ loop; up/down picks the loop.
 Not modelled: input latency compensation (the device knows its codec's
 round trip; the simulator can't know the computer's).
 
+### 3.8 Bring your own sounds
+
+Several apps play content you supply; none is bundled, and none of it is
+committed to the repository:
+
+| Folder | For | Formats |
+|---|---|---|
+| `soundfonts/` | SoundFont | `.sf2`, `.sf3` |
+| `dx7_presets/` | Dexed | DX7 SysEx `.syx` (a folder per bank collection) |
+| `chiptunes/` | Chip Player | `.nsf` `.nsfe` `.spc` `.gbs` `.vgm` `.vgz` `.gym` `.hes` `.kss` `.ay` `.sap` |
+| `orca/` | Orca | `.orca`; bundled examples are under `orca/examples/`, saved patterns under `orca/saved/` |
+
 ## 4. Effects
 
 All effects tap another app's live audio via the shared bus (the **Source**
@@ -316,7 +332,9 @@ row) rather than generating their own signal.
 | **Tonestack** | Guitar amp-sim / effects-chain processor. |
 | **Vector Filter** | 3D "vector" filter interface — drag a projected cube face: X = cutoff (log, 40–16kHz), Y = resonance, Z-strip = drive. Low/band/high-pass share one control surface. |
 | **Mosaic** | Four effects in series (filters, delay, repeat, reverse, crush, drive, gate, ring, pitch, reverb), each switched and shaped by its own 16-step pattern. Pads = the focused slot's steps; hold one and turn knob 2 to lock its Amount. |
+| **Streams** | The real Mutable Instruments Streams dual dynamics gate: per channel an envelope, vactrol, follower, compressor, filter controller or Lorenz generator turning an excite signal into gain. Pick each channel's **Audio** and **Excite** source in the menu (with no excite source the pads are the gate). | Gain and filter-frequency control voltages of both channels patch to any mod input. The module's analogue VCA is a digital one here. |
 | **Squeeze** | Compressor with soft knee, makeup and parallel mix; pick another app as Sidechain to duck under it. |
+| **Airwindows** | Chris Johnson's whole effect library — about 520 real plugins running their own code. Pick a **Source**, a Category (Airwindows' own grouping: Reverb, Tape, Consoles, Dynamics, Dithers...) and step through the Effect. Every plugin's parameters, units and value text come from the plugin itself. Pads and the stick/hands play the first parameters. |
 | **Fracture / Ghosts / Tape Machine / Portal** | Collection-engine effects — see §7. |
 
 ## 5. Sequencing & modulation
@@ -328,9 +346,10 @@ row) rather than generating their own signal.
 | **Bloom** | Generative circular sequencer built from two groups of the same element ("dots"). |
 | **Pam's** | Clone of the core of Pamela's Pro Workout — multi-channel clock/gate generator with logic combinators between channels. |
 | **Turing Machine** | Music Thing Modular Turing Machine clone: clocked 16-bit shift register, "Locks" sets random-vs-repeat. |
+| **Orca** | The Orca livecoding sequencer: a grid of letters that run as operators and play notes. Edited by pad (D-pad moves the cursor, pads type glyphs, F2 turns the pages, SELECT erases); bundled examples, Save. Plays its own plain voice or any instrument on the note bus (see §5.2). |
 | **Marbles** | The real Mutable Instruments Marbles: random rhythms and melodies with deja vu, played on any instrument (see §3.5). |
 | **Tides** | The real Mutable Instruments Tides (2018): four linked envelopes, LFOs or oscillators (see §3.5). |
-| **Sequencer** | Multi-track step sequencer in the spirit of Sugar Bytes DrumComputer. |
+| **Sequencer** | Multi-track step sequencer in the spirit of Sugar Bytes DrumComputer. Per step (the step you last touched): pitch, rolls, delay, **velocity, accent, flam and chance**; per track: length, rate, probability, **accent amount**. The Drum instrument has the basic Kick/Snare/Hat/Clap plus **808 and 909 voices** (kicks, snares, claps, closed/open hats, toms, 808 rim and cowbell); a closed hat cuts an open one. The 808/909 voices model how those machines make their sounds; the 909's hats were ROM samples on the real machine, so here they are the same six-oscillator metal, brighter and tighter. |
 | **Ledger** | A tracker: 8 tracks × up to 64 rows × 16 patterns, each track a Plaits voice or (its Plays row) any instrument app. Follows the device clock (§5.1). Play view = performance (pads 1–8 mute, 9–16 loop / reverse / octave / half speed / dark); R1 = the editor (knob 1 rows, press for next field; knob 2 value, press to clear; pads enter notes). Effects: T M H D (sound locks), R retrigger, P chance, N nudge. |
 | **CV Out** | 32 independent CV outputs sent as MIDI CC to an external MIDI-to-CV box. |
 | **MIDI Learn** | Browse/add/remove CC → modulation-target mappings. |
@@ -353,11 +372,36 @@ in any of them starts all of them, locked to the same sample. Tempo is its front
   accent).
 - **Metronome**: off, on, or only while something records.
 
+### 5.2 Orca and O&C
+
+**Orca** runs Orca's own simulation. Every letter is an operator, every tick of
+the device clock (a sixteenth note) runs the whole grid once. The pad pages are
+the glyph keyboard: operators A–P, then Q–Z with `* # : ! ? %`, then the values
+0–F, G–V and W–Z. `:` plays a note (channel, octave, note, velocity, length),
+`%` a monophonic one. Notes go to the app named in **Plays** (menu: R1) or to
+Orca's plain built-in voice. MIDI CC, pitch bend, OSC and UDP glyphs run but go
+nowhere here.
+
+**O&C** is the Ornaments & Crimes eurorack firmware running as the module's own
+code: thirteen apps (quantizers, shift register, sequencers, envelopes, LFOs,
+chords, Lorenz...) on its own 128x64 screen. The D-pad is its two encoders
+(up/down the left one, left/right the right), SELECT the right encoder's button
+(hold for the app list), the top pad row its four buttons, the second pad row
+its four trigger inputs. CV 1–4 take a mod-bus input or the Controls knobs (the
+stick and hands play them); triggers come from the pads or the mod bus. Its four
+outputs patch to any mod input, and one output can play notes on another app.
+Its settings persist in `saves/oc/`.
+
+The **Firmware** menu row picks what each module runs, as if reflashing it: **Ornaments & Crimes** (the stock firmware), **Hemisphere Suite** (Chysn's fork: two applets side by side, each a small module — clocks, quantizers, envelopes, logic, sequencers, scopes) or **Phazerville Suite** (a large fork of Hemisphere with many more applets). Each module remembers its choice and keeps separate settings per firmware, so four modules can run four different firmwares. Hemisphere and Phazerville take the same controls; MIDI in/out inside them does nothing (no MIDI path into the firmware yet), and Phazerville has no DrumMap applet (it depends on GPL Grids data).
+
+Four modules run at once: **O&C**, **O&C 2**, **O&C 3** and **O&C 4**, each its own firmware with its own screen, settings, inputs (`O&C 2: CV 1`...) and outputs. In the Slint shell, the menu's **Window** row opens a module in a window of its own, so all four can be on screen together; the window takes the keyboard: arrows turn the encoders (up/down the left, left/right the right), Return or R is the right button, U, D and L the other three, and 1–4 are the trigger inputs (held while the key is).
+
 ## 6. Recording & library
 
 | App | What it does |
 |---|---|
-| **Sample Drum** | Erica Synths Sample Drum clone: dual-channel sample player/slicer. |
+| **Sample Drum** | Erica Synths Sample Drum clone: dual-channel sample player/slicer (Start/Loop/End, four play modes, linear or zero-crossing slicing with FWD/BKW/RND/NONE/CV stepping, AHD envelope with Short/Mid/Long/Relative ranges and curve shapes, one insert FX per channel, presets). It opens with a sample on each channel, so pad 1/2 (TRIG) play straight away. **It also plays from notes**: a keyboard, sequencer or the note bus plays the sample at pitch (C4 = the sample's own pitch, velocity = level), to Ch 1, Ch 2 or both (Global ▸ Notes Play); looping modes fade out when the key is released. **SLICES pads** (F2 cycles TRIG / SLICES / SLICES 17+): one pad per slice of the selected channel, so a chopped break plays like a drum kit. **Tempo Match** (Sample ▸ Tempo Match, Loop Bars) speeds a loop up or down so its bars fit the project tempo, and Auto Clock then fires on that bar, so cutting a loop in 4, 8 or 16 all tile it; it turns on by itself for samples with a tempo in their name (`..._174_...`), and has two modes: **Stretch** (the default for those samples) changes the pace without changing pitch (a WSOLA time-stretch, best on drums and breaks), **Speed** just plays faster or slower so pitch follows, like a record's pitch control. Tune is in semitones plus a Fine Tune in cents; retriggering fades the old hit out under the new one so it doesn't click. |
+| **Chip Player** | Plays NES, SNES, Game Boy, Mega Drive/Genesis, Master System, PC Engine, MSX, ZX Spectrum and Atari chip music with real emulated chips (Game_Music_Emu). Files go in `chiptunes/`. F3 plays; the pads mute and unmute the chip's voices (see §3.8). |
 | **Reference / Field / Sample Hunter / Studio / Vinyl / Practice / Radio / Memories** | Collection-engine recording & library apps — see §7. |
 
 ## 7. The Collection apps (19 apps, one shared engine)

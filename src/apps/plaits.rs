@@ -260,6 +260,10 @@ enum Selection {
     Decay,
     Octave,
     VoiceMode,
+    /// How a held note behaves: Synth sustains while the key is down (Plaits' low-pass
+    /// gate held open, the Attack/Sustain/Release envelope shaping it); Pluck is the
+    /// module's own behaviour, every note a strike that rings and dies by itself.
+    EnvMode,
     ChordMode,
     ChordType,
     Attack,
@@ -324,7 +328,7 @@ fn group_leaves(g: usize) -> Vec<Selection> {
             Selection::Release,
             Selection::Octave,
         ],
-        2 => vec![Selection::VoiceMode, Selection::ChordMode, Selection::ChordType],
+        2 => vec![Selection::VoiceMode, Selection::EnvMode, Selection::ChordMode, Selection::ChordType],
         4 => vec![Selection::RollVisible, Selection::RollHeight, Selection::RootNote, Selection::ScaleType],
         5 => vec![Selection::AnalyzerType],
         6 => vec![Selection::ArpOn, Selection::ArpPattern, Selection::ArpRate],
@@ -379,6 +383,8 @@ struct Params {
     release: AtomicF32,
     octave: AtomicI32,
     poly_mode: AtomicBool,
+    /// 0 = Synth (sustains), 1 = Pluck (the module's strike-and-decay).
+    env_mode: AtomicU32,
     chord_mode: AtomicBool,
     chord_type: AtomicU32,
     mod_target: [AtomicU32; NUM_MOD_SLOTS],
@@ -467,7 +473,10 @@ impl Params {
             sustain: AtomicF32::new(1.0),
             release: AtomicF32::new(0.3),
             octave: AtomicI32::new(0),
-            poly_mode: AtomicBool::new(false),
+            // Polyphonic and sustaining by default, like a normal synth; Mono and Pluck
+            // are the module's own way and one row away.
+            poly_mode: AtomicBool::new(true),
+            env_mode: AtomicU32::new(0),
             chord_mode: AtomicBool::new(false),
             chord_type: AtomicU32::new(0),
             mod_target: std::array::from_fn(|_| AtomicU32::new(0)),
@@ -548,6 +557,8 @@ pub struct PlaitsApp {
     expanded: [bool; NUM_GROUPS],
     mod_expanded: [bool; NUM_MOD_SLOTS],
     current_index: Option<usize>,
+    /// The note that was newest last frame, to notice a new key while another is held.
+    last_newest: Option<u64>,
     // --- play surface ---
     audio_bus: Arc<AudioBus>,
     /// The shared play view (play_kit.rs): menu toggle, pad layers,
@@ -596,6 +607,7 @@ impl PlaitsApp {
             expanded: [false; NUM_GROUPS],
             mod_expanded: [false; NUM_MOD_SLOTS],
             current_index: None,
+            last_newest: None,
             audio_bus,
             kit: PlayKit::new(kit_config(), !cfg!(test)),
             expr: ExprSettings::default(),
@@ -776,6 +788,7 @@ impl PlaitsApp {
             Selection::VoiceMode => {
                 if self.params.poly_mode.load(Ordering::Relaxed) { "Poly".into() } else { "Mono".into() }
             }
+            Selection::EnvMode => if self.params.env_mode.load(Ordering::Relaxed) == 0 { "Synth".into() } else { "Pluck".into() },
             Selection::ChordMode => {
                 if self.params.poly_mode.load(Ordering::Relaxed) {
                     "n/a (Poly)".into()
@@ -845,6 +858,7 @@ impl PlaitsApp {
             Selection::Release => "Release".into(),
             Selection::Octave => "Octave".into(),
             Selection::VoiceMode => "Voice Mode".into(),
+            Selection::EnvMode => "Envelope".into(),
             Selection::ChordMode => "Chord Mode".into(),
             Selection::ChordType => "Chord Type".into(),
             Selection::ModTarget(slot) => format!("{} Target", MOD_SLOT_NAMES[slot]),
@@ -920,6 +934,7 @@ impl PlaitsApp {
                 self.params.octave.store(cur + step, Ordering::Relaxed);
             }
             Selection::VoiceMode => self.params.poly_mode.store(delta > 0, Ordering::Relaxed),
+            Selection::EnvMode => self.params.env_mode.store((delta < 0) as u32, Ordering::Relaxed),
             Selection::ChordMode => self.params.chord_mode.store(delta > 0, Ordering::Relaxed),
             Selection::ChordType => {
                 let cur = self.params.chord_type.load(Ordering::Relaxed) as i32;
@@ -997,7 +1012,8 @@ impl PlaitsApp {
             Selection::Sustain => self.params.sustain.set(1.0),
             Selection::Release => self.params.release.set(0.3),
             Selection::Octave => self.params.octave.store(0, Ordering::Relaxed),
-            Selection::VoiceMode => self.params.poly_mode.store(false, Ordering::Relaxed),
+            Selection::VoiceMode => self.params.poly_mode.store(true, Ordering::Relaxed),
+            Selection::EnvMode => self.params.env_mode.store(0, Ordering::Relaxed),
             Selection::ChordMode => self.params.chord_mode.store(false, Ordering::Relaxed),
             Selection::ChordType => self.params.chord_type.store(0, Ordering::Relaxed),
             Selection::ModTarget(slot) => self.params.mod_target[slot].store(0, Ordering::Relaxed),
@@ -1478,12 +1494,19 @@ impl PlaitsApp {
         match newest {
             Some(v) => {
                 p.note.set(v.note);
-                p.gate.store(true, Ordering::Relaxed);
+                // A new key while another is still down drops the gate for a frame, so
+                // Plaits sees a fresh trigger: strike engines (strings, modal, drums)
+                // only sound a new note on a rising edge, and a pitch change alone
+                // would be silent once the first strike had died away.
+                let fresh = self.last_newest.is_some_and(|age| age != v.age);
+                self.last_newest = Some(v.age);
+                p.gate.store(!fresh, Ordering::Relaxed);
                 p.level.set(0.35 + 0.65 * v.vel);
                 self.current_index = Some(0);
             }
             None => {
                 p.gate.store(false, Ordering::Relaxed);
+                self.last_newest = None;
                 self.current_index = None;
             }
         }
@@ -1770,6 +1793,7 @@ impl App for PlaitsApp {
             mod_runtime: std::array::from_fn(|i| ModRuntime::new(i as u32)),
             mono_adsr: AdsrState::default(),
             poly_adsr: [AdsrState::default(); 16],
+            poly_norm: 1.0,
             fft,
             history: VecDeque::with_capacity(ANALYZER_FFT_SIZE),
             fft_buf: [Complex::new(0.0, 0.0); ANALYZER_FFT_SIZE],
@@ -2052,6 +2076,9 @@ struct PlaitsProcessor {
     mod_runtime: [ModRuntime; NUM_MOD_SLOTS],
     mono_adsr: AdsrState,
     poly_adsr: [AdsrState; 16],
+    /// Smoothed 1/sqrt(voices sounding): keeps a chord as loud as a single note
+    /// without the level jumping as keys come and go.
+    poly_norm: f32,
     fft: Arc<dyn Fft<f32>>,
     history: VecDeque<f32>,
     // Reused block-to-block instead of being allocated fresh every call
@@ -2299,6 +2326,11 @@ impl AudioProcessor for PlaitsProcessor {
         let release_s = adsr_time(self.params.release.get(), 2.0);
         let dt = frames_f / sample_rate;
 
+        // Synth mode holds each voice's low-pass gate open while its note (or its
+        // release tail) is alive; 0.48 is the level that gives the engines the same
+        // strike strength they get when unpatched (Plaits' compressed level 0.8).
+        let synth = self.params.env_mode.load(Ordering::Relaxed) == 0;
+        let held = |alive: bool| if synth { Some(if alive { 0.48 } else { 0.0 }) } else { None };
         let make_params = |note: f32, gate: bool| PlaitsParams {
             engine,
             note: (note + perf_pitch).clamp(NOTE_MIN as f32, NOTE_MAX as f32),
@@ -2333,21 +2365,26 @@ impl AudioProcessor for PlaitsProcessor {
                 if gate {
                     active += 1;
                 }
+                voice.held_level = held(gate || self.poly_adsr[i].stage != AdsrStage::Idle);
                 voice.render(&mut self.scratch_buf, sample_rate, &make_params(poly_note, gate));
                 let env = self.poly_adsr[i].step(gate, attack_s, decay_s, sustain_level, release_s, dt) * gain;
                 for (m, s) in self.mono_buf.iter_mut().zip(self.scratch_buf.iter()) {
                     *m += *s * env;
                 }
             }
-            let headroom = active.max(1) as f32;
+            let target = 1.0 / (active.max(1) as f32).sqrt();
+            let k = 1.0 - (-dt / 0.06).exp();
+            self.poly_norm += (target - self.poly_norm) * k;
             for m in self.mono_buf.iter_mut() {
-                *m /= headroom;
+                *m *= self.poly_norm;
             }
             // Poly mode has 16 independent envelopes -- the panel can
             // only show one, so voice 0 stands in as a representative.
             self.params.env_level.set(self.poly_adsr[0].level);
             self.params.env_stage.store(adsr_stage_code(self.poly_adsr[0].stage), Ordering::Relaxed);
         } else {
+            let mono_alive = trigger || self.mono_adsr.stage != AdsrStage::Idle;
+            self.voice.held_level = held(mono_alive);
             self.voice.render(&mut self.mono_buf, sample_rate, &make_params(note, trigger));
 
             if chord_mode {
@@ -2356,6 +2393,7 @@ impl AudioProcessor for PlaitsProcessor {
                 self.extra_buf.resize(frames, 0.0);
                 let mut voice_count = 1;
                 for (voice, interval) in self.chord_voices.iter_mut().zip(intervals) {
+                    voice.held_level = held(mono_alive);
                     voice.render(&mut self.extra_buf, sample_rate, &make_params(note + *interval as f32, trigger));
                     for (m, e) in self.mono_buf.iter_mut().zip(self.extra_buf.iter()) {
                         *m += *e;
@@ -2454,6 +2492,64 @@ mod tests {
         assert!(render(&mut proc, 20) > 0.01, "a held pad must sound");
         a.tick(&Input::default());
         assert!(render(&mut proc, 400) < 0.001, "releasing must decay to silence");
+    }
+
+    fn pads(list: &[usize]) -> Input {
+        Input { grid: std::array::from_fn(|k| list.contains(&k)), ..Default::default() }
+    }
+
+    /// A held note sustains like a normal synth's; Pluck is the module's own strike
+    /// that dies away by itself even with the key down.
+    #[test]
+    fn synth_mode_sustains_a_held_note_and_pluck_mode_lets_it_die() {
+        let level_after_hold = |env_mode: u32| {
+            let mut a = app();
+            let mut proc = a.audio_processor().unwrap();
+            a.params.env_mode.store(env_mode, Ordering::Relaxed);
+            a.tick(&pad(LOWEST_PAD));
+            render(&mut proc, 400) // four seconds later, key still down
+        };
+        let synth = level_after_hold(0);
+        let pluck = level_after_hold(1);
+        assert!(synth > 0.05, "a held note keeps sounding in Synth mode: {synth}");
+        assert!(pluck < synth * 0.3, "Pluck lets it ring out: {pluck} vs {synth}");
+    }
+
+    /// A chord is about as loud as a single note, and it is steady.
+    #[test]
+    fn a_chord_is_not_much_louder_than_one_note() {
+        let peak_of = |keys: &[usize]| {
+            let mut a = app();
+            let mut proc = a.audio_processor().unwrap();
+            a.tick(&pads(keys));
+            render(&mut proc, 30);
+            let mut worst = 0.0f32;
+            for _ in 0..20 {
+                worst = worst.max(render(&mut proc, 5));
+            }
+            worst
+        };
+        let one = peak_of(&[LOWEST_PAD]);
+        let four = peak_of(&[LOWEST_PAD, LOWEST_PAD + 1, LOWEST_PAD + 2, LOWEST_PAD + 3]);
+        assert!(one > 0.05 && four > 0.05);
+        assert!(four < one * 2.2, "four notes aren't four times louder: {one} -> {four}");
+    }
+
+    /// In Mono a second key pressed while the first is down must sound: Plaits only
+    /// strikes on a rising trigger, so the gate is dropped for a frame.
+    #[test]
+    fn a_new_key_over_a_held_one_sounds_in_mono_pluck() {
+        let mut a = app();
+        let mut proc = a.audio_processor().unwrap();
+        a.params.poly_mode.store(false, Ordering::Relaxed);
+        a.params.env_mode.store(1, Ordering::Relaxed);
+        a.tick(&pad(LOWEST_PAD));
+        render(&mut proc, 400); // the first strike has died away
+        a.tick(&pads(&[LOWEST_PAD, LOWEST_PAD + 2]));
+        let dip = render(&mut proc, 3);
+        let _ = dip;
+        a.tick(&pads(&[LOWEST_PAD, LOWEST_PAD + 2]));
+        assert!(render(&mut proc, 20) > 0.01, "the new note is struck");
     }
 
     #[test]

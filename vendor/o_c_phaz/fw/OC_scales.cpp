@@ -1,0 +1,433 @@
+#include "OC_scales.h"
+#include "avr/pgmspace.h"
+
+namespace OC {
+
+Scale user_scales[Scales::SCALE_USER_COUNT];
+Scale dummy_scale;
+
+/*static*/
+FLASHMEM
+void Scales::Init() {
+  for (size_t i = 0; i < SCALE_USER_COUNT; ++i)
+    memcpy(&user_scales[i], &braids::scales[1], sizeof(Scale));
+}
+
+/*static*/
+FLASHMEM
+void Scales::Validate() {
+  // protecc from garbage EEPROM data
+  for (size_t i = 0; i < SCALE_USER_COUNT; ++i) {
+    CONSTRAIN(user_scales[i].num_notes, 4, 16);
+    CONSTRAIN(user_scales[i].span, 12 << 7, 24 << 7);
+    // TODO: note values?
+  }
+}
+
+/*static*/
+const Scale &Scales::GetScale(int index) {
+  CONSTRAIN(index, 0, NUM_SCALES - 1);
+  if (index < SCALE_USER_COUNT)
+    return user_scales[index];
+  else
+    return braids::scales[index - SCALE_USER_COUNT];
+}
+
+#ifdef OC_HOST_SDCARD
+void Scales::SaveToScala(Scale &scale, File &file) {
+  file.print("O_C User Scale\n");
+
+  file.printf("%d\n", scale.num_notes);
+
+  // skip the first pitch because it's ALWAYS ZERO
+  for (size_t i = 1; i < scale.num_notes; ++i) {
+    int cents = scale.notes[i] * 100 / 128;
+    int decimal = (scale.notes[i] * 100 * 10000 / 128) % 10000;
+    file.printf("%d.%04d\n", cents, decimal);
+  }
+
+  // TA-DA!! it's that easy.
+}
+void Scales::LoadScala(Scale &scale, File &file) {
+  if (!file.available()) return;
+  String buf = file.readStringUntil('\n'); // grab the first line
+
+  // maybe it's a comment
+  while (buf.charAt(0) == '!') {
+    if (!file.available()) return;
+    buf = file.readStringUntil('\n');
+  }
+  // found the first non-comment - description. skip it.
+  do {
+    if (!file.available()) return;
+    buf = file.readStringUntil('\n');
+  } while (buf.charAt(0) == '!'); // skip other comments
+
+  // next line - number of notes
+  scale.num_notes = buf.toInt();
+  CONSTRAIN(scale.num_notes, 2, 16);
+
+  bool largespan = false;
+  scale.notes[0] = 0;
+  // start at one because 0.0 is implicit
+  for (size_t i = 1; i < scale.num_notes; ++i) {
+    do {
+      if (!file.available()) return;
+      buf = file.readStringUntil('\n');
+    } while (buf.charAt(0) == '!'); // skip comments
+
+    // a note, either a decimal or fraction
+    // so we look for either '.' or '/' inside
+    float notef = buf.toFloat();
+    int dividx = buf.indexOf('/');
+    if (dividx > 0) {
+      int numer = buf.substring(0,dividx).toInt();
+      int denom = buf.substring(dividx+1).toInt();
+      notef = 1200.0 * (static_cast<float>(numer) / static_cast<float>(denom)) - 1200.0f;
+    }
+
+    // from cents to CV values (128 per semitone)
+    notef += 0.001; // just trying not to round down
+    int pitch = notef * 128 / 100;
+    CONSTRAIN(pitch, 1, 12 * 128 * 2); // max span... two octaves?
+    scale.notes[i] = pitch;
+
+    if (pitch > (12 << 7)) largespan = true;
+  }
+  // either one or two octaves
+  // if you want more, hack it in yourself :P
+  scale.span = (12 << 7) * (1+largespan);
+}
+#endif
+
+const char* const scale_names_short[] = {
+    "USR1",
+    "USR2",
+    "USR3",
+    "USR4",
+    "OFF ",
+    "SEMI",
+    "IONI",
+    "DORI",
+    "PHRY",
+    "LYDI",
+    "MIXO",
+    "AEOL",
+    "LOCR",
+    "BLU+",
+    "BLU-",
+    "PEN+",
+    "PEN-",
+    "FOLK",
+    "JAPA",
+    "GAME",
+    "GYPS",
+    "ARAB",
+    "FLAM",
+    "WHOL",
+    "PYTH",
+    "EB/4",
+    "E /4",
+    "EA/4",
+    "BHAI",
+     "GUNA",
+    "MARW",
+     "SHRI",
+     "PURV",
+     "BILA",
+    "YAMA",
+     "KAFI",
+    "BHIM",
+     "DARB",
+     "RAGE",
+     "KHAM",
+     "MIMA",
+     "PARA",
+     "RANG",
+     "GANG",
+     "KAME",
+     "PAKA",
+     "NATB",
+     "KAUN",
+    "BAIR",
+     "BTOD",
+     "CHAN",
+     "KTOD",
+     "JOGE",
+    "VALL",
+    "1322",
+    "MANF",
+    "MAGC",
+    "QUAR",
+    "ARMO",
+    "HIRA",
+    "SCOT",
+    "THAI",
+    
+    "SEVI",
+    "MACH",
+    "FATH",
+    "BLAC",
+    "MAV7",
+    "MAV9",
+    "SPYT",
+    "22OR",
+    "PAJS",
+    "PAJP",
+    "PORC",
+    "FLAT",
+    "LEMB",
+    "SENS",
+    "53OR",
+    "1272",
+    "TRIZ",
+    "2028",
+    "MADG",
+    "MARV",
+    "PARA",
+    
+    "16ED",
+    "15ED",
+    "14ED",
+    "13ED",
+    "11ED",
+    "10ED",
+    "9ED",
+    "8ED",
+    "7ED",
+    "6ED",
+    "5ED",
+    "16H2",
+    "15H2",
+    "14H2",
+    "13H2",
+    "12H2",
+    "11H2",
+    "10H2",
+    "9H2",
+    "8H2",
+    "7H2",
+    "6H2",
+    "5H2",
+    "4H2",
+    "16S2",
+    "15S2",
+    "14S2",
+    "13S2",
+    "12S2",
+    "11S2",
+    "10S2",
+    "9S2",
+    "8S2",
+    "7S2",
+    "6S2",
+    "5S2",
+    "4S2",
+    //
+    "B-Pe",
+    "B-Pj",
+    "B-Pl",
+    "16H3",
+    "14H3",
+    "12H3",
+    "10H3",
+    "8H3",
+    "16S3",
+    "14S3",
+    "12S3",
+    "10S3",
+    "8S3",
+
+    "5+7", // Root +5th + 7th (5+7), 
+    "5+6", // Root + 5th + 6th (5+6), 
+    "3b7-",// Minor Triad + 7 (3b+5+7), 
+    "3b7+",// Major Triad + 7 (Triad+7), 
+    "3b6-",// Minor Triad + 6th (3b+5+6), 
+    "3b6+",// Major Triad + 6th (Triad+6), 
+    "5th", // Fifth, 
+    "3b+", // major triad (Triad), 
+    "3b-", // minor triad (3b+5), 
+    "HAR-",// Harmonic Minor (Harm Minor), aka "HMIN"
+
+    "LOn6",
+    "IAUG",
+    "MBKH",
+    "FREY",
+    "LY#9",
+    "UTLO", 
+    
+    };
+
+const char* const scale_names[] = {
+    "User-defined 1",
+    "User-defined 2",
+    "User-defined 3",
+    "User-defined 4",
+    "Off ",
+    "Semitone",
+    "Ionian",
+    "Dorian",
+    "Phrygian",
+    "Lydian",
+    "Mixolydian",
+    "Aeolian",
+    "Locrian",
+    "Blues major",
+    "Blues minor",
+    "Pentatonic maj",
+    "Pentatonic min",
+    "Folk",
+    "Japanese",
+    "Gamelan",
+    "Gypsy",
+    "Arabian",
+    "Flamenco",
+    "Whole tone",
+    "Pythagorean",
+    "EB/4",
+    "E /4",
+    "EA/4",
+    "Bhairav",
+     "Gunakri",
+    "Marwa",
+     "Shree [Camel]",
+     "Purvi",
+     "Bilawal",
+    "Yaman",
+     "Kafi",
+    "Bhimpalasree",
+     "Darbari",
+     "Rageshree",
+     "Khamaj",
+     "Mimal",
+     "Parameshwari",
+     "Rangeshwari",
+     "Gangeshwari",
+     "Kameshwari",
+     "Pa Khafi",
+     "Natbhairav",
+     "Malkauns",
+    "Bairagi",
+     "B Todi",
+     "Chandradeep",
+     "Kaushik Todi",
+     "Jogeshwari",
+
+    "Tart.-Vallotti",
+    "13of22tETgen=5",
+    "Mandelbaum",
+    "Magic-in-145tET",
+    "Quartaminor3rds",
+    "Armodue semi-eq",
+    "Hirajoshi",
+    "Scot bagpipes",
+    "Thai ranat",
+
+    "Sevish12on31EDO",
+    "11tetMachine6",
+    "13tetFather8",
+    "15tetBlackwd10",
+    "16tetMavila7",
+    "16tetMavila9",
+    "17tetSuprpyth12",
+    "22tetOrwell9",
+    "22tetPajaraSy10",
+    "22tetPajara5-10",
+    "22tetPorcupine7",
+    "26tetFlattone12",
+    "26tetLemba10",
+    "46tetSensi11",
+    "53tetOrwell9",
+    "12of72tetRodgrs",
+    "TrivalentZeus7",
+    "202tetOctone",
+    "313tetElfMadag9",
+    "MarvelWooGlumma",
+    "TOP Parapyth12",
+    "16-ED (2 or 3)",
+    "15-ED (2 or 3)",
+    "14-ED (2 or 3)",
+    "13-ED (2 or 3)",
+    "11-ED (2 or 3)",
+    "10-ED (2 or 3)",
+    "9-ED (2 or 3)",
+    "8-ED (2 or 3)",
+    "7-ED (2 or 3)",
+    "6-ED2",
+    "5-ED2",
+    "16-HD2",
+    "15-HD2",
+    "14-HD2",
+    "13-HD2",
+    "12-HD2",
+    "11-HD2",
+    "10-HD2",
+    "9-HD2",
+    "8-HD2",
+    "7-HD2",
+    "6-HD2",
+    "5-HD2",
+    "4-HD2",
+    "16-SD2",
+    "15-SD2",
+    "14-SD2",
+    "13-SD2",
+    "12-SD2",
+    "11-SD2",
+    "10-SD2",
+    "9-SD2",
+    "8-SD2",
+    "7-SD2",
+    "6-SD2",
+    "5-SD2",
+    "4-SD2",
+    
+    "Bohlen-Pierce =",
+    "Bohlen-Pierce j",
+    "Bohlen-Pierce l",
+    "8-24-HD3[16]",
+    "7-21-HD3[14]",
+    "6-18-HD3[12]",
+    "5-15-HD3[10]",
+    "4-12-HD3[8]",
+    "24-8-SD3[16]",
+    "21-7-SD3[14]",
+    "18-6-SD3[12]",
+    "15-5-SD3[10]",
+    "12-4-SD3[8]",
+
+    "5th+7th", // Root +5th + 7th (5+7), 
+    "5th+6th", // Root + 5th + 6th (5+6), 
+    "Triad min+7",// Minor Triad + 7 (3b+5+7), 
+    "Triad maj+7",// Major Triad + 7 (Triad+7), 
+    "Triad min+6",// Minor Triad + 6th (3b+5+6), 
+    "Triad maj+6",// Major Triad + 6th (Triad+6), 
+    "Fifth",// Fifth, 
+    "TriadMaj", // major triad (Triad), 
+    "TriadMin",// minor triad (3b+5), 
+    "HarmonicMin",// Harmonic Minor (Harm Minor),
+
+    "Locrian n6",
+    "Ionian aug",
+    "Misheberakh",
+    "Freygish",
+    "Lydian #9",
+    "Ultralocrian",
+
+    };
+
+const char* const voltage_scalings[] = {
+    " 1V/O", // 1V/octave
+    "alpha", // Wendy Carlos alpha scale
+    " beta", // Wendy Carlos beta scale
+    "gamma", // Wendy Carlos gamma scale
+    "  tri", // Tritave (as used by Bohlen-Pierce macrotonal scale)
+    "  qtr", // quartertone scale (essentially dowbscales to 0.5V/oct)
+    "1.2/O", // 1.2V/octave Buchla
+    " 2V/O"  // 2V/oct Buchla
+    } ;
+
+static_assert( ARRAY_SIZE(scale_names) == ARRAY_SIZE(scale_names_short), "Different number of long vs. short scale names!");
+static_assert( ARRAY_SIZE(scale_names) == (ARRAY_SIZE(braids::scales) + Scales::SCALE_USER_COUNT), "Mismatched number of scale definitions!");
+
+}; // namespace OC

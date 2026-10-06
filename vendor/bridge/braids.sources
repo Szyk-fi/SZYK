@@ -1,0 +1,8 @@
+# Sources for braids_bridge.cc, relative to vendor/eurorack -- braids/test/makefile's
+# CC_FILES minus its test harness. The quantizer is the firmware's note
+# quantizer; Portamax picks notes on the pads, so the bridge doesn't call it.
+braids/analog_oscillator.cc
+braids/digital_oscillator.cc
+braids/macro_oscillator.cc
+braids/resources.cc
+stmlib/utils/random.cc

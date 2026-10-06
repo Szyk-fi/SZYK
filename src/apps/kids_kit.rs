@@ -1302,6 +1302,109 @@ impl DrawTarget for Scaled<'_> {
     }
 }
 
+/// Decoded original artwork, cached by its app on the UI thread. Neither
+/// PNG decoding nor drawing runs in the audio callback.
+pub struct Illustration {
+    width: usize,
+    height: usize,
+    rgba: Vec<u8>,
+}
+
+impl Illustration {
+    /// The app owns its image bytes as compact source data so there are no
+    /// runtime files to install and no changes to launcher manifests.
+    pub fn from_base64_png(encoded: &str) -> Option<Self> {
+        let mut bytes = Vec::with_capacity(encoded.len() * 3 / 4);
+        let (mut value, mut bits) = (0u32, 0u32);
+        for ch in encoded.bytes().filter(|ch| !ch.is_ascii_whitespace()) {
+            let digit = match ch {
+                b'A'..=b'Z' => ch - b'A', b'a'..=b'z' => ch - b'a' + 26,
+                b'0'..=b'9' => ch - b'0' + 52, b'+' => 62, b'/' => 63,
+                b'=' => break, _ => return None,
+            };
+            value = (value << 6) | digit as u32;
+            bits += 6;
+            if bits >= 8 { bits -= 8; bytes.push((value >> bits) as u8); }
+        }
+        Self::from_png(&bytes)
+    }
+
+    pub fn from_png(bytes: &[u8]) -> Option<Self> {
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+        let mut reader = decoder.read_info().ok()?;
+        // These are small built-in atlases, not unbounded user images.
+        if reader.info().width > 1024 || reader.info().height > 1024 { return None; }
+        let mut rgba = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut rgba).ok()?;
+        if info.color_type != png::ColorType::Rgba { return None; }
+        rgba.truncate(info.buffer_size());
+        Some(Self { width: info.width as usize, height: info.height as usize, rgba })
+    }
+
+    /// Square, equally sized cells; transparent edges blend with the real
+    /// framebuffer so the same artwork works on every app background.
+    /// `gutter` skips top/left atlas overlap from the preceding row or column.
+    pub fn draw_cell(&self, fb: &mut FrameBuffer, cell: usize, columns: usize, x: i32, y: i32, gutter: usize) {
+        if columns == 0 { return; }
+        let size = self.width / columns;
+        if size == 0 || (cell / columns + 1) * size > self.height { return; }
+        let sx = (cell % columns) * size;
+        let sy = (cell / columns) * size;
+        for yy in gutter.min(size)..size {
+            let dy = y + yy as i32;
+            if !(0..HEIGHT as i32).contains(&dy) { continue; }
+            for xx in gutter.min(size)..size {
+                let dx = x + xx as i32;
+                if !(0..WIDTH as i32).contains(&dx) { continue; }
+                let i = ((sy + yy) * self.width + sx + xx) * 4;
+                let a = self.rgba[i + 3] as u32;
+                if a == 0 { continue; }
+                let old = fb.buffer()[dy as usize * WIDTH + dx as usize];
+                let channel = |n: usize, shift: u32| -> u8 {
+                    ((self.rgba[i + n] as u32 * a + ((old >> shift) & 255) * (255 - a) + 127) / 255) as u8
+                };
+                let color = rgb(channel(0, 16), channel(1, 8), channel(2, 0));
+                fb.draw_iter(std::iter::once(Pixel(Point::new(dx, dy), color))).ok();
+            }
+        }
+    }
+}
+
+/// Warm paper and dark ink are confined to the ten Kids screens. Other
+/// apps also use the generic header/footer, so those helpers stay unchanged.
+pub const PAPER: Rgb565 = Rgb565::new(31, 59, 27);
+pub const INK: Rgb565 = Rgb565::new(5, 13, 9);
+pub const MUTED: Rgb565 = Rgb565::new(10, 25, 14);
+pub const TEAL: Rgb565 = Rgb565::new(4, 27, 14);
+
+/// A tactile card: a small offset shadow and a quiet edge, with no image
+/// assets or changes to the hardware/Slint rendering path.
+pub fn card(fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32, r: u32, c: Rgb565) {
+    round_rect(fb, x, y + 2, w, h, r, blend(c, INK, 0.25));
+    round_rect(fb, x, y, w, h, r, c);
+    outline(fb, x, y, w, h, r, 1, blend(c, INK, 0.12));
+}
+
+pub fn kids_header(fb: &mut FrameBuffer, title: &str, ages: &str) {
+    rect(fb, 0, 0, WIDTH as i32, 32, PAPER);
+    round_rect(fb, 8, 6, 4, 20, 2, TEAL);
+    text(fb, title, 20, 8, Size2::Medium, INK, -1);
+    let x = 32 + text_width(title, Size2::Medium);
+    round_rect(fb, x, 8, text_width(ages, Size2::Small) + 12, 16, 8, blend(PAPER, TEAL, 0.12));
+    text(fb, ages, x + 6, 10, Size2::Small, TEAL, -1);
+    round_rect(fb, WIDTH as i32 - 82, 6, 74, 20, 10, TEAL);
+    text(fb, "F1 home", WIDTH as i32 - 45, 10, Size2::Small, WHITE, 0);
+}
+
+/// Callers keep hints below 102 characters so every control fits on the
+/// 640-pixel display at the native small font size.
+pub fn kids_footer(fb: &mut FrameBuffer, s: &str) {
+    rect(fb, 0, HEIGHT as i32 - 22, WIDTH as i32, 22, PAPER);
+    line(fb, 12, HEIGHT as i32 - 22, WIDTH as i32 - 12, HEIGHT as i32 - 22, 1, blend(PAPER, TEAL, 0.2));
+    text(fb, s, 12, HEIGHT as i32 - 17, Size2::Small, INK, -1);
+}
+
 /// The strip along the top of every Kids screen: the app's name, which
 /// age group it's for, and the way home.
 pub fn header(fb: &mut FrameBuffer, title: &str, ages: &str, bg: Rgb565, ink: Rgb565) {
@@ -1470,5 +1573,39 @@ pub mod tests {
         let ys: Vec<usize> = lit.iter().map(|i| i / WIDTH).collect();
         let h = ys.iter().max().unwrap() - ys.iter().min().unwrap();
         assert!(h > 32, "{h}");
+    }
+}
+
+#[cfg(test)]
+mod illustration_tests {
+    use super::*;
+
+    #[test]
+    fn atlas_cells_and_alpha_preserve_the_background() {
+        let mut png = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png, 2, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header().unwrap().write_image_data(&[0, 0, 0, 0, 255, 0, 0, 128]).unwrap();
+        }
+        let art = Illustration::from_png(&png).unwrap();
+        let mut fb = FrameBuffer::new();
+        clear(&mut fb, rgb(0, 0, 255));
+        let before = fb.buffer()[0];
+        art.draw_cell(&mut fb, 0, 2, 0, 0, 0);
+        assert_eq!(fb.buffer()[0], before);
+        art.draw_cell(&mut fb, 1, 2, 0, 0, 0);
+        assert_eq!(fb.buffer()[0], 0x800078);
+        assert_eq!(fb.buffer()[1], before);
+        art.draw_cell(&mut fb, 99, 2, 0, 0, 0);
+        assert_eq!(fb.buffer()[0], 0x800078);
+    }
+
+    #[test]
+    fn malformed_artwork_is_rejected() {
+        assert!(Illustration::from_png(b"not a PNG").is_none());
+        assert!(Illustration::from_base64_png("bm90IGEgUE5H").is_none());
+        assert!(Illustration::from_base64_png("!").is_none());
     }
 }

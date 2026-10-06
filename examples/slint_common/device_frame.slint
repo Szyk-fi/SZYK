@@ -46,13 +46,9 @@ export component ParamListColumn inherits Rectangle {
         alignment: start;
         spacing: 1px;
         HorizontalLayout {
-            height: root.big-text ? (root.more-above ? 18px : 0px) : 22px;
-            Text {
-                text: root.big-text ? "" : "↑↓ SELECT · ◀▶ EDIT · R1 OPEN";
-                color: root.ink.with-alpha(0.72);
-                font-family: "JetBrains Mono"; font-size: 12px; letter-spacing: 1px;
-                vertical-alignment: center;
-            }
+            // The old "SELECT / EDIT / R1 OPEN" line lived here; the shell's
+            // hint line above the F bar says it now (App::hint).
+            height: root.more-above ? 18px : 0px;
             Text {
                 text: root.more-above ? "↑" : "";
                 color: root.accent; font-size: 12px; horizontal-alignment: right;
@@ -116,8 +112,12 @@ export component ParamListColumn inherits Rectangle {
 // One step on press; repeat after 250 ms, then every 100 ms until release.
 component DirectionalButton inherits Rectangle {
     in property <string> symbol;
-    callback activated();
+    callback activated(int);
     property <bool> repeating: false;
+    // Repeats counted since the press; first lands at 250 ms, then every
+    // 100 ms, so 6 is 0.75 s and 16 is 1.75 s -- same schedule as
+    // controller_map::hold_multiplier (x1, x5, x20).
+    property <int> ticks: 0;
     width: 38px; height: 38px; border-radius: 4px;
     background: touch.pressed ? #4b5055 : #222528;
     Text {
@@ -128,7 +128,8 @@ component DirectionalButton inherits Rectangle {
         pointer-event(event) => {
             if event.kind == PointerEventKind.down {
                 root.repeating = false;
-                root.activated();
+                root.ticks = 0;
+                root.activated(1);
             }
             if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
                 root.repeating = false;
@@ -141,13 +142,16 @@ component DirectionalButton inherits Rectangle {
         triggered => {
             if touch.pressed {
                 root.repeating = true;
-                root.activated();
+                root.ticks += 1;
+                root.activated(root.ticks < 6 ? 1 : root.ticks < 16 ? 5 : 20);
             }
         }
     }
 }
 
 export component DeviceFrame inherits Window {
+    // Steps the current D-pad press is worth (held ◄/► ramps up).
+    in-out property <int> dpad-step: 1;
     width: 1240px;
     height: 560px;
     background: #252628;
@@ -166,6 +170,7 @@ export component DeviceFrame inherits Window {
     in property <color> accent: #5CF07A;
     in property <color> screen-bg: #0B100C;
     in property <color> screen-ink: #ffffff;
+    in property <string> hint-line: "";
     in property <[bool]> function-enabled: [true, true, true, true];
     in property <[BarSegment]> bar: [
         { label: "F1  SETTINGS", active: false },
@@ -329,9 +334,24 @@ export component DeviceFrame inherits Window {
                     // Clipped: an app's panel or list can never draw over
                     // the F-button bar below, whatever its content.
                     Rectangle {
-                        height: root.hide-chrome ? 360px : 284px;
+                        height: root.hide-chrome ? 360px : 266px;
                         clip: true;
                         @children
+                    }
+
+                    // The one line every screen spends on what the controls
+                    // do right now (App::hint).
+                    Rectangle {
+                        height: root.hide-chrome ? 0px : 18px;
+                        clip: true;
+                        Text {
+                            x: 18px; width: parent.width - 36px;
+                            text: root.hint-line;
+                            font-size: 11px;
+                            color: root.screen-ink.with-alpha(0.62);
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
                     }
 
                     // On-screen bottom bar -- sized for real
@@ -392,7 +412,7 @@ export component DeviceFrame inherits Window {
                 x: direction == 1 ? 94px : (direction == 3 ? 12px : 50px);
                 y: direction == 0 ? 12px : (direction == 2 ? 94px : 50px);
                 symbol: direction == 0 ? "▴" : (direction == 1 ? "▸" : (direction == 2 ? "▾" : "◂"));
-                activated => { root.navigation-pressed(direction); }
+                activated(step) => { root.dpad-step = step; root.navigation-pressed(direction); }
             }
             Rectangle {
                 x: 53px; y: 53px; width: 38px; height: 38px;

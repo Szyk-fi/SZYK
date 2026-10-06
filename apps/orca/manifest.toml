@@ -1,0 +1,12 @@
+id = "orca"
+name = "Orca"
+category = "sequencer"
+description = "The Orca livecoding sequencer: a grid of operators that plays notes. Edit by pad."
+audio_outputs = ["Orca"]
+note_outputs = ["Orca"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Orca Level",
+    "Orca: Release",
+    "Orca: Level",
+]

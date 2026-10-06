@@ -136,6 +136,34 @@ const VISIBLE_ROWS: usize = 10;
 // colliding with the last row. 5 rows (220px) leaves real headroom.
 const HOME_VISIBLE_ROWS: usize = 6;
 
+// A window of an app's own, beside the device's (App::popout): its picture,
+// with the keyboard forwarded to the app. O&C uses it, one per module.
+slint::slint! {
+    export component PopoutWindow inherits Window {
+        in property <image> frame;
+        in property <string> window-title;
+        title: root.window-title;
+        preferred-width: 640px;
+        preferred-height: 360px;
+        min-width: 320px;
+        min-height: 180px;
+        background: #05070b;
+        callback key(string, bool);
+        init => { fs.focus(); }
+        fs := FocusScope {
+            key-pressed(event) => { root.key(event.text, true); accept }
+            key-released(event) => { root.key(event.text, false); accept }
+            Image {
+                source: root.frame;
+                width: parent.width;
+                height: parent.height;
+                image-fit: contain;
+                image-rendering: pixelated;
+            }
+        }
+    }
+}
+
 slint::slint! {
     import { ForgePanel } from "slint_common/forge_panel.slint";
     import { OraclePanel } from "slint_common/oracle_panel.slint";
@@ -219,6 +247,8 @@ slint::slint! {
         in-out property <bool> pad-lock-available: false;
         in-out property <bool> has-settings: true;
         in-out property <bool> has-mixer: true;
+        in-out property <string> hint-text: "";
+        hint-line: root.splash-active ? "" : root.hint-text;
         function-enabled: [!root.splash-active && (!root.on-home || root.has-settings), !root.splash-active && (root.grid-mode-label != "" || root.pad-lock-available || root.midi-target-label != ""), !root.splash-active && !root.on-home && root.transport-action != "", !root.splash-active && root.has-mixer];
         // Which app pads/notes currently go to -- "" when nothing's
         // pinned (pads follow the active screen), "PINNED" while
@@ -253,8 +283,8 @@ slint::slint! {
         navigation-pressed(direction) => {
             if direction == 0 { root.navigation-delta -= 1; }
             if direction == 2 { root.navigation-delta += 1; }
-            if direction == 1 { root.knob2-delta += 1; root.nav-x-delta += 1; }
-            if direction == 3 { root.knob2-delta -= 1; root.nav-x-delta -= 1; }
+            if direction == 1 { root.knob2-delta += root.dpad-step; root.nav-x-delta += root.dpad-step; }
+            if direction == 3 { root.knob2-delta -= root.dpad-step; root.nav-x-delta -= root.dpad-step; }
             if direction == 4 { root.knob1-clicked(); }
         }
         // While a play-surface app is up, the shoulders are its own held
@@ -664,6 +694,7 @@ slint::slint! {
         in-out property <color> theme-accent-swatch: #5CF07A;
         in-out property <color> theme-bg-swatch: #0B100C;
         callback theme-wheel-picked(float, float);
+        callback screen-touched(float, float);
 
         // --- Tonestack-specific state (active-kind == 26): the real
         // post-chain output waveform + level/gate telemetry. ---
@@ -1145,7 +1176,6 @@ slint::slint! {
                         text: root.active-app-name == "MIDI Learn" ? "Select a mapping to learn or edit its MIDI control." : root.active-app-name == "Synth" ? "Pads play notes. Knobs: cutoff and volume; D-pad: waveform." : "Up/down picks a row; left/right changes it.";
                         color: root.live-ink.with-alpha(0.72); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap;
                     }
-                    InstrumentLabel { text: root.active-app-name == "Synth" ? "F2 PAD LAYER  ·  R1 MENU" : "R1 SELECT  ·  ◀ ▶ ADJUST"; ink: root.live-ink; font-size: 12px; }
                 }
             }
 
@@ -3422,6 +3452,22 @@ slint::slint! {
                     image-fit: contain;
                     width: 100%; height: 100%;
                 }
+                // Clicks and touches, in the picture's own 640x360 pixels
+                // (undoing the contain-fit); (-1, -1) when let go. The Grid
+                // app presses keys with it; other full-screen apps ignore it.
+                TouchArea {
+                    property <float> sc: min(self.width / 640px, self.height / 360px);
+                    property <float> fx: (self.mouse-x - (self.width - 640px * sc) / 2) / 1px / sc;
+                    property <float> fy: (self.mouse-y - (self.height - 360px * sc) / 2) / 1px / sc;
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down {
+                            root.screen-touched(fx, fy);
+                        } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                            root.screen-touched(-1, -1);
+                        }
+                    }
+                    moved => { if self.pressed { root.screen-touched(fx, fy); } }
+                }
             }
 
             if !root.on-home && root.active-kind == 29 : BloomPanel {
@@ -4369,6 +4415,10 @@ mod instrument_preview;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--render-atlas-howto") {
+        instrument_preview::atlas_howto::render(args.get(2).expect("usage: --render-atlas-howto OUTPUT_DIRECTORY"));
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--render-instruments") {
         instrument_preview::render(args.get(2).expect("usage: --render-instruments OUTPUT_DIRECTORY"));
         return;
@@ -4438,6 +4488,8 @@ fn main() {
     }
 
     let apps = Rc::new(RefCell::new(apps));
+    // Windows of apps' own, by app index (see PopoutWindow).
+    let popouts: Rc<RefCell<std::collections::HashMap<usize, PopoutWindow>>> = Rc::default();
     // `None` = the home/launcher list; `Some(i)` = that app is active.
     let active: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
     // The "pinned" live instrument -- pads/notes always go here (see
@@ -4504,6 +4556,14 @@ fn main() {
     ui.on_theme_wheel_picked(move |x, y| {
         if let Some(idx) = *active_for_wheel.borrow() {
             apps_for_wheel.borrow_mut()[idx].1.slint_pointer_pick(x, y);
+        }
+    });
+    // Clicks on a full-screen app's picture (the Grid app's keys).
+    let apps_for_screen = Rc::clone(&apps);
+    let active_for_screen = Rc::clone(&active);
+    ui.on_screen_touched(move |x, y| {
+        if let Some(idx) = *active_for_screen.borrow() {
+            apps_for_screen.borrow_mut()[idx].1.slint_pointer_pick(x, y);
         }
     });
 
@@ -4575,6 +4635,8 @@ fn main() {
 
     let ui_weak = ui.as_weak();
     let apps_for_timer = Rc::clone(&apps);
+    let popouts_for_timer = Rc::clone(&popouts);
+    let apps_for_popouts = Rc::clone(&apps);
     let active_for_timer = Rc::clone(&active);
     let grid_for_timer = Rc::clone(&grid_held);
     // A connected Push's pad and button LEDs, kept equal to the screen.
@@ -4595,6 +4657,45 @@ fn main() {
         audio_host.poll(&device_state);
         let Some(ui) = ui_weak.upgrade() else { return };
         ui.set_audio_connected(audio_host.is_connected());
+
+        // Apps with a window of their own (O&C's modules): open, update or close it.
+        {
+            let mut windows = popouts_for_timer.borrow_mut();
+            let mut apps_ref = apps_for_timer.borrow_mut();
+            for (i, (_, app)) in apps_ref.iter_mut().enumerate() {
+                match app.popout() {
+                    Some((title, frame)) => {
+                        let w = windows.entry(i).or_insert_with(|| {
+                            let w = PopoutWindow::new().unwrap();
+                            let apps = Rc::clone(&apps_for_popouts);
+                            w.on_key(move |key, pressed| {
+                                if let Some((_, app)) = apps.borrow_mut().get_mut(i) {
+                                    app.popout_key(key.as_str(), pressed);
+                                }
+                            });
+                            let apps = Rc::clone(&apps_for_popouts);
+                            w.window().on_close_requested(move || {
+                                if let Some((_, app)) = apps.borrow_mut().get_mut(i) {
+                                    app.popout_closed();
+                                }
+                                slint::CloseRequestResponse::HideWindow
+                            });
+                            w.show().ok();
+                            w
+                        });
+                        w.set_window_title(title.into());
+                        if let Some(image) = rgba_frame_to_slint_image(&frame.frame_rgba, frame.width, frame.height) {
+                            w.set_frame(image);
+                        }
+                    }
+                    None => {
+                        if let Some(w) = windows.remove(&i) {
+                            w.hide().ok();
+                        }
+                    }
+                }
+            }
+        }
 
         let show_cpu = show_cpu_for_timer.load(std::sync::atomic::Ordering::Relaxed);
         ui.set_cpu_visible(show_cpu);
@@ -4730,6 +4831,7 @@ fn main() {
             ui.set_active_kind(0);
             ui.set_grid_mode_label("".into());
             ui.set_transport_action("".into());
+            ui.set_hint_text(app::hints::HOME.into());
             ui.set_transport_label("".into());
             ui.set_pad_lock_available(false);
             if let Some(play_idx) = *midi_target_for_timer.borrow() {
@@ -4838,6 +4940,7 @@ fn main() {
             });
             ui.set_grid_mode_label(app.grid_mode_label().unwrap_or("").into());
             ui.set_transport_action(app.transport_action().unwrap_or("").into());
+            ui.set_hint_text(app.hint().into());
             ui.set_pad_lock_available(app.supports_pad_lock());
 
             // Real pad lighting: an app with its own meaning for the

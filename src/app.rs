@@ -79,7 +79,18 @@ pub struct Input {
     pub mod_wheel: f32,
     /// MIDI channel aftertouch, 0..1.
     pub aftertouch: f32,
+    /// How firmly each pad is pressed, 0..1 (0 = not touched). On hardware
+    /// the pads are pressure sensitive and the driver fills this in; a
+    /// Push 2 supplies note-on velocity and polyphonic aftertouch. Pads
+    /// with no pressure data (computer keyboard, gamepad) report
+    /// `SIM_PAD_PRESSURE` while held, so a pressure route still does
+    /// something audible in the simulator.
+    pub pad_pressure: [f32; 16],
 }
+
+/// What a held pad with no real pressure data reports (see
+/// `Input::pad_pressure`).
+pub const SIM_PAD_PRESSURE: f32 = 0.6;
 
 /// 128 MIDI note velocities -- a newtype only because `Default` isn't
 /// derived for arrays longer than 32.
@@ -138,6 +149,16 @@ impl Input {
         for (i, (slot, key)) in top.iter_mut().zip(Self::TOP_KEYS).enumerate() {
             *slot = pressed(key) || controller.take_top(i);
         }
+        // Real pressure where a driver reported it; held pads without any
+        // (keyboard, gamepad, a controller that only sends velocity 0)
+        // get the simulator default.
+        let pad_pressure: [f32; 16] = std::array::from_fn(|i| {
+            if !grid[i] {
+                return 0.0;
+            }
+            let real = controller.pad_pressure[i].get();
+            if real > 0.0 { real } else { SIM_PAD_PRESSURE }
+        });
 
         // Auto-repeating (unlike `pressed`) so holding the key down keeps
         // spinning the knob instead of needing repeated taps.
@@ -171,6 +192,7 @@ impl Input {
             nav_up: pressed(Key::Up) || knob1 < 0 || navigation_steps < 0,
             nav_down: pressed(Key::Down) || knob1 > 0 || navigation_steps > 0,
             nav_select: pressed(Key::Enter) || knob1_press,
+            pad_pressure,
             ..controller.play_surface_input(Self::keyboard_play_surface(window))
         }
     }
@@ -211,6 +233,16 @@ pub trait App {
     /// The shared play column (see play_kit.rs) when the app is on its
     /// play view; `None` shows the usual parameter list instead.
     fn play_column(&self) -> Option<PlayColumn> { None }
+    /// The one line every screen spends above the F bar. Derived from what
+    /// the app is showing, so an app can't advertise a control that its
+    /// current view ignores; override only for a screen with its own verbs.
+    fn hint(&self) -> String {
+        match self.play_column() {
+            Some(col) => hints::play(&col.layer).into(),
+            None if self.play_surface() => hints::MENU_OF_PLAY_APP.into(),
+            None => hints::LIST.into(),
+        }
+    }
     /// The action F3 will perform, supplied by the app rather than inferred by name.
     fn transport_action(&self) -> Option<&'static str> {
         self.running().map(|running| if running { "STOP" } else { "PLAY" })
@@ -373,6 +405,18 @@ pub trait App {
     fn slint_extra(&mut self) -> SlintExtra {
         SlintExtra::None
     }
+
+    /// A window of its own, beside the device's, if this app has one open: its
+    /// title and what to show in it, asked for every frame. Only the Slint
+    /// shell shows them (O&C, whose four modules can each have one).
+    fn popout(&mut self) -> Option<(String, ScreenExtra)> {
+        None
+    }
+    /// A key pressed (or released) in that window; `key` is the key's text as
+    /// Slint reports it (arrow keys are its private-use characters).
+    fn popout_key(&mut self, _key: &str, _pressed: bool) {}
+    /// The player closed that window.
+    fn popout_closed(&mut self) {}
 }
 
 /// Turns a series of samples into real connected line-segment
@@ -994,6 +1038,43 @@ pub struct PlayColumn {
     pub status: String,
 }
 
+
+/// The words on the hint line. One table, so the same control is always
+/// named the same way and the lines can be checked against each other.
+pub mod hints {
+    /// Launcher (and anything that lays apps out in a grid).
+    pub const HOME: &str = "\u{2191}\u{2193}\u{25C0}\u{25B6} BROWSE  \u{B7}  SELECT OPEN  \u{B7}  F2 CATEGORY";
+    /// Any ordinary parameter list.
+    pub const LIST: &str = "\u{2191}\u{2193} ROW  \u{B7}  \u{25C0}\u{25B6} VALUE (HOLD: FASTER)  \u{B7}  SELECT OPEN  \u{B7}  HOLD SELECT RESET";
+    /// A play app's full menu: same as a list, plus the way back.
+    pub const MENU_OF_PLAY_APP: &str = "\u{2191}\u{2193} ROW  \u{B7}  \u{25C0}\u{25B6} VALUE (HOLD: FASTER)  \u{B7}  SELECT OPEN  \u{B7}  R1 PLAY VIEW";
+    const CONTROLS: &str = "PAD PICKS A DIAL  \u{B7}  WIGGLE STICK OR HAND TO BIND  \u{B7}  \u{25C0}\u{25B6} TURN  \u{B7}  R1 MENU";
+    const PLAYING: &str = "L1 + STICK SETS DIAL  \u{B7}  \u{25C0}\u{25B6} TURN  \u{B7}  F2 PAD LAYER  \u{B7}  R1 MENU";
+
+    /// The play view's line, by pad layer label.
+    pub fn play(layer: &str) -> &'static str {
+        if layer.eq_ignore_ascii_case("CONTROLS") { CONTROLS } else { PLAYING }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn every_hint_fits_one_line_of_the_screen() {
+            // 640 px at the shell's 12 px mono face is about 80 characters.
+            for h in [HOME, LIST, MENU_OF_PLAY_APP, CONTROLS, PLAYING] {
+                assert!(h.chars().count() <= 80, "{h:?} is {} characters", h.chars().count());
+            }
+        }
+
+        #[test]
+        fn the_play_view_names_the_way_to_the_menu_and_the_menu_the_way_back() {
+            assert!(PLAYING.contains("R1 MENU") && CONTROLS.contains("R1 MENU"));
+            assert!(MENU_OF_PLAY_APP.contains("R1 PLAY VIEW"));
+        }
+    }
+}
 
 /// The Controller app's live view of the connected game controller.
 #[derive(Default)]

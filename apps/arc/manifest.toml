@@ -1,0 +1,8 @@
+id = "arc"
+name = "Arc"
+category = "utility"
+description = "An on-screen monome arc: four (or two) rings of 64 LEDs, turned by dragging round them, the knobs or the pads. A real monome arc plugged in (through serialosc or straight over USB) plays and lights along with it."
+audio_outputs = []
+note_outputs = []
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = []

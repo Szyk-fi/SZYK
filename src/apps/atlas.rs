@@ -98,12 +98,19 @@ const C_PRESET: usize = 8;
 const C_LEVEL: usize = 9;
 const C_VOICES: usize = 10;
 const C_DEPTH: usize = 11;
+/// ENERGY: what pad pressure pushes until the player binds it elsewhere.
+const C_ENERGY: usize = 5;
+/// The native pad layer where the bottom row of pads recalls the states.
+const STATES_LAYER: u8 = 1;
+/// How much of the remaining distance MORPH covers each frame (~60 Hz)
+/// when a state pad glides to its state: about a second to settle.
+const MORPH_GLIDE: f32 = 0.06;
 const N_CONTROLS: usize = 12;
 
 fn kit_config() -> KitConfig {
     KitConfig {
         app_id: "atlas",
-        layers: vec![Layer::Native(0, "PLAY"), Layer::Controls, Layer::Moments],
+        layers: vec![Layer::Native(0, "PLAY"), Layer::Native(STATES_LAYER, "STATES"), Layer::Controls, Layer::Moments],
         // CHARACTER/COLOR, MOTION/TEXTURE, SPACE/SHAPE, ENERGY/MORPH
         hero: vec![[0, 1], [2, 6], [3, 4], [5, C_MORPH]],
         browse: Some(C_PRESET),
@@ -522,6 +529,9 @@ pub struct AtlasApp {
     status: String,
     rng: Rng,
     prev_grid: [bool; 16],
+    /// Where a state pad is gliding MORPH to, if it is.
+    morph_target: Option<f32>,
+    states_prev: [bool; 16],
 }
 
 impl AtlasApp {
@@ -562,7 +572,10 @@ impl AtlasApp {
             status: String::new(),
             rng: Rng::seeded(),
             prev_grid: [false; 16],
+            morph_target: None,
+            states_prev: [false; 16],
         };
+        app.kit.suggest_pressure_route(C_ENERGY);
         app.load(0);
         app
     }
@@ -591,6 +604,7 @@ impl AtlasApp {
             }
         };
         self.release_all();
+        self.morph_target = None;
         self.preset = idx;
         self.maps = patch.params.iter().map(ParamMap::from_spec).collect();
         self.graph = engine.graph.clone();
@@ -756,6 +770,41 @@ impl AtlasApp {
             }
         }
         self.prev_grid = *grid;
+    }
+
+    /// STATES layer: the bottom row of pads (A B C D, left to right) glide
+    /// MORPH to that state. No dial needed: a tap is the whole gesture.
+    fn state_pads(&mut self, grid: &[bool; 16]) {
+        let n = self.s.n_states.load(Ordering::Relaxed).clamp(1, MAX_STATES);
+        for k in 0..MAX_STATES {
+            let pad = kit::rank_pad(k);
+            if grid[pad] && !self.states_prev[pad] && k < n {
+                if n < 2 {
+                    self.status = "This sound has one state: store more in Edit".into();
+                } else {
+                    self.morph_target = Some(k as f32 / (n - 1) as f32);
+                    self.status = format!("Gliding to state {}", STATE_NAMES[k]);
+                }
+            }
+        }
+        self.states_prev = *grid;
+    }
+
+    /// Moves MORPH toward a state pad's target, a little each frame.
+    fn glide_morph(&mut self) {
+        let Some(target) = self.morph_target else { return };
+        let now = self.s.morph.get();
+        let next = now + (target - now) * MORPH_GLIDE;
+        if (target - next).abs() < 0.002 {
+            self.s.morph.set(target);
+            self.morph_target = None;
+            // "Gliding to state B" is only true while it's gliding.
+            if self.status.starts_with("Gliding") {
+                self.status.clear();
+            }
+        } else {
+            self.s.morph.set(next);
+        }
     }
 
     fn pad_midi(&self, pad: usize) -> i32 {
@@ -1141,7 +1190,15 @@ impl PlayHost for AtlasApp {
         let cat = &self.patch.category;
         format!("{}{}  ·  {} voices", if cat.is_empty() { String::new() } else { format!("{cat}  ·  ") }, self.morph_label(), self.s.active_voices.load(Ordering::Relaxed))
     }
-    fn kit_pad_label(&self, _layer: u8, pad: usize) -> String {
+    fn kit_pads_play(&self, layer: u8) -> bool {
+        layer != STATES_LAYER
+    }
+    fn kit_pad_label(&self, layer: u8, pad: usize) -> String {
+        if layer == STATES_LAYER {
+            let n = self.s.n_states.load(Ordering::Relaxed).clamp(1, MAX_STATES);
+            let k = kit::pad_rank(pad);
+            return if k < n { STATE_NAMES[k].into() } else { String::new() };
+        }
         note_name(self.pad_midi(pad).clamp(0, 127))
     }
     /// A key plays the pad of the same pitch (or pitch class).
@@ -1149,7 +1206,22 @@ impl PlayHost for AtlasApp {
         let n = note as i32;
         (0..16).find(|&p| self.pad_midi(p) == n).or_else(|| (0..16).find(|&p| self.pad_midi(p).rem_euclid(12) == n % 12))
     }
-    fn kit_pad_color(&self, _layer: u8, pad: usize, held: bool) -> PadColor {
+    fn kit_pad_color(&self, layer: u8, pad: usize, held: bool) -> PadColor {
+        if layer == STATES_LAYER {
+            let n = self.s.n_states.load(Ordering::Relaxed).clamp(1, MAX_STATES);
+            let k = kit::pad_rank(pad);
+            if k >= n {
+                return PadColor::Off;
+            }
+            let at = if n > 1 { k as f32 / (n - 1) as f32 } else { 0.0 };
+            return if (self.s.morph.get() - at).abs() < 0.03 {
+                PadColor::Green
+            } else if self.morph_target.is_some_and(|t| (t - at).abs() < 0.001) {
+                PadColor::Yellow
+            } else {
+                PadColor::Blue
+            };
+        }
         if held || self.s.held[pad].load(Ordering::Relaxed) {
             PadColor::Green
         } else if (self.pad_midi(pad) - self.s.b(B::Root).round() as i32 - self.s.b(B::Transpose).round() as i32).rem_euclid(12) == 0 {
@@ -1184,7 +1256,16 @@ impl App for AtlasApp {
         let step = play.tick(self, input);
         self.kit = play;
         let input = &step.input;
-        self.handle_pads(&input.grid);
+        // STATES pads pick states instead of playing: no notes sound, and
+        // switching layers releases anything held.
+        if step.native == Some(STATES_LAYER) {
+            self.handle_pads(&[false; 16]);
+            self.state_pads(&input.grid);
+        } else {
+            self.handle_pads(&input.grid);
+            self.states_prev = [false; 16];
+        }
+        self.glide_morph();
         if step.menu {
             let rows = self.rows();
             self.list.navigate_input(input, rows.len(), self.nav.get() as i32);
@@ -1357,6 +1438,72 @@ mod tests {
             }
             a.tick(&Input::default());
         }
+    }
+
+    fn pressed(on: usize, firmness: f32) -> Input {
+        let mut input = pads(&[on]);
+        input.pad_pressure[on] = firmness;
+        input
+    }
+
+    /// With no dial to turn MORPH, the bottom row of pads (on the STATES
+    /// layer) glides there: a tap is the whole gesture, nothing sounds,
+    /// and the pads show where the sound is.
+    #[test]
+    fn state_pads_glide_morph_to_each_state_without_playing_notes() {
+        let mut a = app();
+        a.load(0); // Evolving Glass: states A and B
+        a.toggle_grid_mode();
+        assert_eq!(a.kit.layer_label(), "STATES");
+        let b_pad = kit::rank_pad(1);
+        a.tick(&pads(&[b_pad]));
+        assert!(a.s.held.iter().all(|h| !h.load(Ordering::Relaxed)), "state pads don't sound notes");
+        assert_eq!(a.morph_target, Some(1.0));
+        assert!(a.status.contains("state B"), "{}", a.status);
+        assert_eq!(a.kit_pad_color(STATES_LAYER, b_pad, false), PadColor::Yellow, "the target shows while it glides");
+        assert_eq!(a.kit_pad_label(STATES_LAYER, b_pad), "B");
+        assert_eq!(a.kit_pad_label(STATES_LAYER, kit::rank_pad(2)), "", "no state C in this sound");
+        for _ in 0..200 {
+            a.tick(&Input::default());
+        }
+        assert!((a.s.morph.get() - 1.0).abs() < 1e-3, "settled on B: {}", a.s.morph.get());
+        assert!(a.morph_target.is_none());
+        assert!(!a.status.contains("Gliding"), "the message goes once it has arrived: {}", a.status);
+        assert_eq!(a.kit_pad_color(STATES_LAYER, b_pad, false), PadColor::Green, "now at B");
+        a.tick(&pads(&[kit::rank_pad(0)]));
+        for _ in 0..200 {
+            a.tick(&Input::default());
+        }
+        assert!(a.s.morph.get() < 1e-3, "and back to A: {}", a.s.morph.get());
+    }
+
+    /// Switching to the STATES layer lets go of any held note instead of
+    /// leaving it hanging.
+    #[test]
+    fn leaving_the_play_layer_releases_held_notes() {
+        let mut a = app();
+        a.tick(&pads(&[3]));
+        assert!(a.s.held[3].load(Ordering::Relaxed));
+        a.toggle_grid_mode();
+        a.tick(&pads(&[3]));
+        assert!(!a.s.held[3].load(Ordering::Relaxed));
+    }
+
+    /// Pad pressure is Atlas's first dial-free modulation: out of the box
+    /// it pushes ENERGY while pads are played, and lets go exactly.
+    #[test]
+    fn pad_pressure_pushes_energy_while_playing_and_not_on_the_state_pads() {
+        let mut a = app();
+        let base = a.s.macros[C_ENERGY].get();
+        a.tick(&pressed(0, 0.5));
+        let pushed = a.s.macros[C_ENERGY].get();
+        assert!((pushed - (base + 0.3).min(1.0)).abs() < 1e-4, "0.5 pressure x 0.6 span: {base} -> {pushed}");
+        a.tick(&pressed(0, 0.0));
+        a.tick(&Input::default());
+        assert!((a.s.macros[C_ENERGY].get() - base).abs() < 1e-4, "released");
+        a.toggle_grid_mode(); // STATES: pads select, they don't play
+        a.tick(&pressed(kit::rank_pad(1), 1.0));
+        assert!((a.s.macros[C_ENERGY].get() - base).abs() < 1e-4, "selecting a state isn't musical pressure");
     }
 
     #[test]

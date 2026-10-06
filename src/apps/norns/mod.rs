@@ -10,9 +10,18 @@
 //! lua/prelude.lua); no norns code is included, so scripts are
 //! user-supplied, like ROMs for Retro.
 //!
+//! Grid: `grid.connect()` gives a script Portamax's grid (the Grid app on
+//! screen, and a real monome grid when one is plugged in), with `g.key`,
+//! `g:led`, `g:all`, `g:refresh`, `g:rotation` and `g.cols` / `g.rows`; the
+//! script takes the grid when it connects. Play it from the Grid app.
+//!
+//! Arc: `arc.connect()` gives a script Portamax's arc (the Arc app on
+//! screen, and a real monome arc when one is plugged in), with `a.delta`,
+//! `a.key`, `a:led`, `a:all`, `a:segment` and `a:refresh`; connecting takes
+//! the arc. Turn it from the Arc app.
+//!
 //! Not there (yet): other SuperCollider engines (scripts that ask for one
-//! still run, with its sound commands ignored), grid and arc (scripts see
-//! unattached ports), crow, audio input into softcut, saving psets.
+//! still run, with its sound commands ignored), crow, audio input into softcut, saving psets.
 //!
 //! Controls -- norns has three encoders and three keys:
 //! - D-pad up/down (or knob 1) = E2, D-pad left/right (or knob 2) = E3;
@@ -137,6 +146,10 @@ pub struct NornsApp {
     roots: Vec<(PathBuf, bool)>,
     /// Where the script's MIDI notes go (set from Portal's Notes page).
     note_out: Option<crate::note_bus::NoteOut>,
+    /// The shared grid a script reaches with `grid.connect()`.
+    grid: Arc<crate::apps::grid_kit::Grid>,
+    /// The shared arc, `arc.connect()`.
+    arc: Arc<crate::apps::arc_kit::ArcHub>,
 }
 
 impl NornsApp {
@@ -159,6 +172,8 @@ impl NornsApp {
             peak: Arc::new(AtomicF32::new(0.0)),
             roots,
             note_out: None,
+            grid: crate::apps::grid_kit::grid(),
+            arc: crate::apps::arc_kit::arc(),
         };
         // Boot straight into a script (like norns resuming its last one).
         if !cfg!(test) {
@@ -226,7 +241,9 @@ impl NornsApp {
         }
         let code_dir = s.path.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_default();
         let path = s.path.clone();
-        let thread = std::thread::Builder::new().name(format!("norns:{}", s.name)).spawn(move || host::run(path, code_dir, queue, out, rx)).ok();
+        let grid = Arc::clone(&self.grid);
+        let arc = Arc::clone(&self.arc);
+        let thread = std::thread::Builder::new().name(format!("norns:{}", s.name)).spawn(move || host::run(path, code_dir, queue, out, rx, grid, arc)).ok();
         self.running = Some(Running { tx, thread, name: s.name });
         self.mode = Mode::Play;
     }
@@ -667,6 +684,156 @@ end
         assert_eq!(a.mode(), Mode::Select);
         assert!(a.out.lock().unwrap().error.is_none(), "{:?}", a.out.lock().unwrap().log);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_script_plays_the_grid_and_lets_go_of_it_when_it_stops() {
+        let root = tmp("grid");
+        write_script(
+            &root,
+            "gridprobe",
+            r#"
+local g = grid.connect()
+function init()
+  g:all(0)
+  g:led(2, 3, 9)
+  g:refresh()
+  redraw()
+end
+g.key = function(x, y, z)
+  if z == 1 then g:led(x, y, 15) g:refresh() end
+end
+function redraw()
+  screen.clear()
+  screen.move(0, 10)
+  screen.text(g.cols .. "x" .. g.rows .. " " .. g.name)
+  screen.update()
+end
+"#,
+        );
+        let mut a = app_with(&root);
+        let grid = Arc::clone(&a.grid);
+        grid.register("Other");
+        a.tick(&Input { knob1_press: true, ..Input::default() });
+        let lit = |x: usize, y: usize| {
+            let s = grid.snapshot();
+            s.leds[y * s.cols + x]
+        };
+        assert!(wait_until(|| lit(1, 2) == 9), "g:led(2, 3, 9) lights key (1, 2): {:?}", a.out.lock().unwrap().log);
+        assert_eq!(grid.focus().as_deref(), Some(host::GRID_CLIENT), "connecting takes the grid");
+        grid.press(5, 4, true);
+        assert!(wait_until(|| lit(5, 4) == 15), "g.key arrives 1-based and lights the key");
+        grid.press(5, 4, false);
+        a.stop();
+        assert!(wait_until(|| grid.snapshot().leds.iter().all(|&l| l == 0)), "a stopped script leaves the grid dark");
+        assert!(a.out.lock().unwrap().error.is_none(), "{:?}", a.out.lock().unwrap().log);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_script_turns_the_arc_and_draws_its_rings() {
+        let root = tmp("arc");
+        write_script(
+            &root,
+            "arcprobe",
+            r#"
+local a = arc.connect()
+local pos = {0, 0, 0, 0}
+local pushed = 0
+local function draw()
+  a:all(0)
+  for n = 1, 4 do a:led(n, pos[n] + 1, 15) end
+  a:segment(4, 0, math.pi, 5 + pushed)
+  a:refresh()
+end
+function init() draw() end
+a.delta = function(n, d) pos[n] = (pos[n] + d) % 64; draw() end
+a.key = function(n, z) pushed = z * 10; draw() end
+"#,
+        );
+        let mut a = app_with(&root);
+        let arc = Arc::clone(&a.arc);
+        arc.register("Other");
+        a.tick(&Input { knob1_press: true, ..Input::default() });
+        let led = |n: usize, i: usize| arc.snapshot().leds[n][i];
+        assert!(wait_until(|| led(0, 0) == 15), "a:led(1, 1, 15) lights ring 1's top LED: {:?}", a.out.lock().unwrap().log);
+        assert_eq!(arc.focus().as_deref(), Some(host::GRID_CLIENT), "connecting takes the arc");
+        assert_eq!((led(3, 10), led(3, 40)), (5, 0), "a half-ring segment on ring 4");
+        arc.turn(1, 3);
+        assert!(wait_until(|| led(1, 3) == 15), "a.delta(2, 3) moves ring 2's light");
+        arc.turn(1, -5);
+        assert!(wait_until(|| led(1, 62) == 15), "and back past the top");
+        arc.key(3, true);
+        assert!(wait_until(|| led(3, 10) == 15), "a.key arrives");
+        a.stop();
+        assert!(wait_until(|| arc.snapshot().leds.iter().flatten().all(|&l| l == 0)), "a stopped script leaves the arc dark");
+        assert!(a.out.lock().unwrap().error.is_none(), "{:?}", a.out.lock().unwrap().log);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The bundled grid and arc scripts light their hardware and take
+    /// presses and turns without a Lua error, at a small and a big size.
+    #[test]
+    fn the_grid_and_arc_scripts_play_their_hardware() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/norns/code");
+        let grid_scripts = ["gridsteps", "bouncers", "automata", "plinko", "charge", "isogrid", "strumharp", "quickhands", "blocks"];
+        let arc_scripts = ["arcarp", "shoals", "scrubber"];
+        for (name, size) in grid_scripts.iter().flat_map(|n| [(*n, (8, 16)), (*n, (16, 16))]).chain(arc_scripts.iter().map(|n| (*n, (8, 16)))) {
+            let mut a = app_with(&root);
+            a.grid.set_size(size.0, size.1);
+            a.selected = a.scripts.iter().position(|s| s.name == name).unwrap();
+            a.tick(&Input { knob1_press: true, ..Input::default() });
+            let grid = Arc::clone(&a.grid);
+            let arc = Arc::clone(&a.arc);
+            let is_arc = arc_scripts.contains(&name);
+            let lit = || if is_arc { arc.snapshot().leds.iter().flatten().any(|&l| l > 0) } else { grid.snapshot().leds.iter().any(|&l| l > 0) };
+            assert!(wait_until(lit), "{name} {size:?}: lights its {}: {:?}", if is_arc { "arc" } else { "grid" }, a.out.lock().unwrap().log);
+            for k in 0..12usize {
+                if is_arc {
+                    arc.turn(k % 4, if k % 2 == 0 { 40 } else { -25 });
+                    arc.key(k % 4, k % 3 == 0);
+                } else {
+                    let (x, y) = ((k * 5) % size.1, (k * 3) % size.0);
+                    grid.press(x, y, true);
+                    std::thread::sleep(Duration::from_millis(5));
+                    grid.press(x, y, false);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            let o = a.out.lock().unwrap();
+            assert!(o.error.is_none(), "{name} {size:?}: {:?}\n{:?}", o.error, o.log);
+            drop(o);
+            a.stop();
+        }
+    }
+
+    /// Writes the Grid / Arc app's screen with each bundled grid and arc
+    /// script running to the folder in PORTAMAX_NORNS_GRID_SHOT.
+    #[test]
+    #[ignore = "writes screenshots to the folder in PORTAMAX_NORNS_GRID_SHOT"]
+    fn grid_and_arc_script_screenshots() {
+        let Ok(dir) = std::env::var("PORTAMAX_NORNS_GRID_SHOT") else { return };
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/norns/code");
+        let save = |fb: &crate::display::FrameBuffer, name: &str| {
+            let mut out = b"P6\n640 360\n255\n".to_vec();
+            out.extend(fb.buffer().iter().flat_map(|px| [(px >> 16) as u8, (px >> 8) as u8, *px as u8]));
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}.ppm")), out).unwrap();
+        };
+        for name in ["bouncers", "automata", "plinko", "charge", "isogrid", "strumharp", "quickhands", "blocks", "shoals", "scrubber", "arcarp"] {
+            let mut a = app_with(&root);
+            a.selected = a.scripts.iter().position(|s| s.name == name).unwrap();
+            a.tick(&Input { knob1_press: true, ..Input::default() });
+            std::thread::sleep(Duration::from_millis(2500));
+            let mut fb = crate::display::FrameBuffer::new();
+            if ["shoals", "scrubber", "arcarp"].contains(&name) {
+                crate::apps::arc::ArcApp::new(Arc::clone(&a.arc), Arc::new(AtomicF32::new(3.0))).draw(&mut fb);
+            } else {
+                crate::apps::grid::GridApp::new(Arc::clone(&a.grid), Arc::new(AtomicF32::new(3.0))).draw(&mut fb);
+            }
+            save(&fb, name);
+            a.stop();
+        }
     }
 
     #[test]

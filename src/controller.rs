@@ -68,6 +68,11 @@ pub struct ControllerState {
     pub pitch_bend: AtomicF32,
     pub mod_wheel: AtomicF32,
     pub aftertouch: AtomicF32,
+    /// Per-pad firmness 0..1 from whatever reports it (the pad driver on
+    /// hardware; a Push 2's velocity and polyphonic aftertouch). 0 means
+    /// "no data", not "light touch" -- `Input::poll` substitutes a default
+    /// for a held pad that has none.
+    pub pad_pressure: [AtomicF32; 16],
 }
 
 impl ControllerState {
@@ -93,6 +98,7 @@ impl ControllerState {
             pitch_bend: AtomicF32::new(0.0),
             mod_wheel: AtomicF32::new(0.0),
             aftertouch: AtomicF32::new(0.0),
+            pad_pressure: std::array::from_fn(|_| AtomicF32::new(0.0)),
         }
     }
 

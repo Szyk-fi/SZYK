@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas: the complete how-to</title>
+<style>
+  @page { size: Letter; margin: 0.65in 0.7in 0.7in 0.7in; }
+  :root { --ink:#1b2430; --mute:#5b6675; --rule:#d6dce5; --accent:#2c4a8a; --call:#ffb830; --bg:#f4f6fa; }
+  * { box-sizing: border-box; }
+  body { font: 10.5pt/1.5 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ink); margin: 0; }
+  h1 { font-size: 30pt; line-height: 1.1; margin: 0 0 6pt; letter-spacing: -0.5pt; }
+  h2 { font-size: 17pt; margin: 22pt 0 6pt; padding-top: 10pt; border-top: 2px solid var(--accent); color: var(--accent); break-after: avoid; }
+  h3 { font-size: 12pt; margin: 14pt 0 3pt; break-after: avoid; }
+  p { margin: 0 0 7pt; }
+  .sub { font-size: 13pt; color: var(--mute); margin-bottom: 14pt; }
+  .meta { font-size: 9pt; color: var(--mute); }
+  figure { margin: 8pt 0 10pt; break-inside: avoid; }
+  figure img { display: block; width: 100%; border: 1px solid var(--rule); border-radius: 4px; }
+  figure.screen img { width: 6.5in; max-width: 100%; margin: 0 auto; }
+  figcaption { font-size: 9pt; color: var(--mute); margin-top: 3pt; }
+  table { border-collapse: collapse; width: 100%; margin: 6pt 0 10pt; font-size: 9.5pt; break-inside: avoid; }
+  th, td { border: 1px solid var(--rule); padding: 4pt 6pt; text-align: left; vertical-align: top; }
+  th { background: var(--bg); }
+  td.k { white-space: nowrap; font-weight: 600; }
+  kbd { font: 600 9pt ui-monospace, Menlo, monospace; background: var(--bg); border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 3px; padding: 0 4pt; white-space: nowrap; }
+  .n { text-indent: 0; display: inline-block; min-width: 15pt; height: 15pt; line-height: 15pt; text-align: center; border-radius: 50%; background: var(--call); color: #141820; font-weight: 700; font-size: 8.5pt; margin-right: 4pt; }
+  .legend { columns: 2; column-gap: 20pt; margin: 4pt 0 8pt; padding: 0; list-style: none; font-size: 9.5pt; }
+  .legend li { margin-bottom: 3pt; break-inside: avoid; padding-left: 21pt; text-indent: -21pt; }
+  .box { background: var(--bg); border-left: 4px solid var(--accent); padding: 7pt 10pt; margin: 8pt 0 10pt; break-inside: avoid; }
+  .box.warn { border-left-color: #c77d00; }
+  .box b.t { display: block; margin-bottom: 2pt; }
+  ol.steps { margin: 4pt 0 10pt; padding-left: 18pt; } ol.steps li { margin-bottom: 3pt; }
+  .cover { min-height: 8.6in; }
+  .cover figure img { border: none; border-radius: 10px; }
+  .pb { break-before: page; }
+  .small { font-size: 9pt; color: var(--mute); }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <p class="meta">PORTAMAX &nbsp;·&nbsp; INSTRUMENT GUIDE</p>
+  <h1>Atlas</h1>
+  <p class="sub">The complete how-to: play it, shape it with no dials, and keep what you make.</p>
+  <figure><img src="screen-01-play.png" alt="Atlas play view"><figcaption>Atlas on its Play view. Every screen in this guide is a real render of the app, driven by real input.</figcaption></figure>
+  <p>Atlas is a library of designed sounds on one surface. Each sound is a full synthesizer patch, but you never have to open it up: every sound answers to the same seven performance controls, plus a MORPH that glides the whole sound from one stored state to another. Learn the surface once and it works the same on every sound.</p>
+  <p>This guide is for the Portamax device and its simulator. The device has <b>no knobs</b>, so everything here is done with the pads, the D-pad, the joystick, the two hand sensors, the shoulder buttons and the four F buttons.</p>
+  <p class="meta">Describes the build on the <code>claude/atlas-play</code> branch, October 2026.</p>
+</section>
+
+<h2 class="pb">1. The seven controls and MORPH</h2>
+<p>Whatever sound is loaded, these are the controls you play. A sound decides what each one <i>does</i>; the name and place never change.</p>
+<table>
+  <tr><th>Control</th><th>It is for</th><th>What it moves in the factory sounds</th></tr>
+  <tr><td class="k">CHARACTER</td><td>The sound's main identity</td><td>Breath, Fold, Table Position · Shape · Vowel</td></tr>
+  <tr><td class="k">COLOR</td><td>Brightness and tone</td><td>Cutoff, Resonance, Tone, Edge</td></tr>
+  <tr><td class="k">MOTION</td><td>How much it moves by itself</td><td>Table and Grain Drift, Wobble, Vowel Walk</td></tr>
+  <tr><td class="k">SPACE</td><td>Room, depth, width</td><td>Reverb, Delay, Hall, Size, Width</td></tr>
+  <tr><td class="k">SHAPE</td><td>Body and decay</td><td>Body, Damping, Filter Decay, Vibrato</td></tr>
+  <tr><td class="k">ENERGY</td><td>Intensity</td><td>Level, Drive, Distortion, Edge</td></tr>
+  <tr><td class="k">TEXTURE</td><td>Grain and detail</td><td>Grain Density, Grit, Breath, Ensemble</td></tr>
+  <tr><td class="k">MORPH</td><td>Glides through the sound's stored states, A to B (up to D)</td><td>Every parameter at once</td></tr>
+</table>
+<p class="small">Each sound's designer decides exactly what a control moves, and one control usually moves several parameters at once. The right-hand column is what the factory sounds do. A control a sound doesn't use is simply not listed in its menu.</p>
+
+<h3>The factory sounds</h3>
+<table>
+  <tr><th>Sound</th><th>Kind</th><th>States</th></tr>
+  <tr><td>Evolving Glass</td><td>Texture</td><td>A, B</td></tr>
+  <tr><td>Init</td><td>Keys</td><td>A, B</td></tr>
+  <tr><td>Sub Pressure</td><td>Bass (plays one note at a time)</td><td>A, B</td></tr>
+  <tr><td>Hum Choir</td><td>Pad</td><td>A, B</td></tr>
+  <tr><td>Modal Garden</td><td>Pluck</td><td>A, B</td></tr>
+  <tr><td>Ghost Strings</td><td>Acoustic</td><td>A, B</td></tr>
+  <tr><td>Dust Drone</td><td>Drone</td><td>A, B</td></tr>
+</table>
+<p>Anything you save later appears after these in the same list (see section 9).</p>
+
+<h2>2. Your controls</h2>
+<figure><img src="fig-controls.png" alt="The device with numbered controls"><figcaption>The device. Numbers match the list below.</figcaption></figure>
+<ul class="legend">
+  <li><span class="n">1</span><b>L1</b>: hold to peek at the Controls layer; with the joystick it sets the selected dial.</li>
+  <li><span class="n">2</span><b>R1</b>: flip between the Play view and the full menu.</li>
+  <li><span class="n">3</span><b>Left hand sensor</b>: hold a hand over it; closer is more.</li>
+  <li><span class="n">4</span><b>Right hand sensor</b>: same.</li>
+  <li><span class="n">5</span><b>D-pad</b>: ▲▼ browse, ◄► change a value.</li>
+  <li><span class="n">6</span><b>SELECT</b> (centre of the D-pad): tap or hold.</li>
+  <li><span class="n">7</span><b>Joystick</b>: springs to centre; click it to keep a sound. With L1 held it sets a dial.</li>
+  <li><span class="n">8</span><b>Screen</b>: Play view or menu.</li>
+  <li><span class="n">9</span><b>16 pads</b>: pressure sensitive. Their job depends on the pad layer.</li>
+  <li><span class="n">10</span><b>F1–F4</b>: Home, pad layer, (transport), Mixer.</li>
+</ul>
+
+<h3>What each control does in Atlas</h3>
+<table>
+  <tr><th>Control</th><th>On the Play view</th><th>In the menu (R1)</th></tr>
+  <tr><td class="k">D-pad ▲ ▼</td><td>Next / previous sound</td><td>Move up / down a row</td></tr>
+  <tr><td class="k">D-pad ◄ ►</td><td>Turn the focused dial down / up (1% a press; hold to repeat)</td><td>Change the highlighted value</td></tr>
+  <tr><td class="k">SELECT, tap</td><td>Move focus to the next dial</td><td>Run an action row (Store, Mutate, Revert, Save)</td></tr>
+  <tr><td class="k">SELECT, hold ½ s</td><td>Reset the focused dial</td><td>Reset the highlighted value</td></tr>
+  <tr><td class="k">R1</td><td>Open the menu</td><td>Back to the Play view</td></tr>
+  <tr><td class="k">L1 (held)</td><td>Show the Controls layer while held; with the joystick, set the selected dial (7.2)</td><td>&mdash;</td></tr>
+  <tr><td class="k">F1</td><td colspan="2">Home (from Home itself, Settings)</td></tr>
+  <tr><td class="k">F2</td><td colspan="2">Next pad layer: PLAY → STATES → CONTROLS → MOMENTS</td></tr>
+  <tr><td class="k">F3</td><td colspan="2">Nothing in Atlas (it has no transport; the bar shows a dash)</td></tr>
+  <tr><td class="k">F4</td><td colspan="2">Jump to the Mixer</td></tr>
+  <tr><td class="k">Pads</td><td colspan="2">Depends on the layer: notes, states, controls or moments (sections 7 and 8)</td></tr>
+  <tr><td class="k">Joystick</td><td>X pushes MORPH, Y pushes COLOR (defaults). With L1 held it sets the selected dial instead</td><td>&mdash;</td></tr>
+  <tr><td class="k">Hand sensors</td><td>Left pushes MOTION, right pushes SPACE (defaults)</td><td>&mdash;</td></tr>
+  <tr><td class="k">Pad pressure</td><td>Pushes ENERGY (default)</td><td>&mdash;</td></tr>
+</table>
+
+<h2>3. Opening Atlas</h2>
+<figure class="screen"><img src="screen-00-home.png" alt="Home screen"><figcaption>Home. (This capture has only Atlas installed, so the list is short.)</figcaption></figure>
+<ol class="steps">
+  <li>On Home, press D-pad <b>◄ ►</b> to change the workspace (Instruments, Effects, Sequencing…). Atlas is under <b>Instruments</b>.</li>
+  <li>Press D-pad <b>▲ ▼</b> to pick the app.</li>
+  <li>Press <b>SELECT</b> or <b>R1</b> to open it ("R1 OPEN APPLICATION" is printed on the screen).</li>
+  <li>To leave, press <b>F1</b> (Home).</li>
+</ol>
+<p>Atlas always opens on its <b>Play view</b>.</p>
+
+<h2>4. The Play view</h2>
+<figure class="screen"><img src="fig-playview.png" alt="Play view with lettered parts"><figcaption>The Play view. Letters match the list below.</figcaption></figure>
+<ul class="legend">
+  <li><span class="n">A</span><b>Pad layer badge</b>: what the pads do right now (PLAY here).</li>
+  <li><span class="n">B</span><b>Hints</b>: F2 changes layer, R1 opens the menu.</li>
+  <li><span class="n">C</span><b>Four dials</b>: the pair you're on and its neighbour. The focused one has a lit centre.</li>
+  <li><span class="n">D</span><b>Pad map</b>: the note on each pad (this mirrors the physical pads). Root notes are shaded.</li>
+  <li><span class="n">E</span><b>Expression line</b>: what the joystick and hands push, with a one-line summary (kind · state · voices) or a message underneath.</li>
+  <li><span class="n">F</span><b>Sound name</b> and its kind, with its place in the list (1/7).</li>
+  <li><span class="n">G</span><b>Seven macro bars</b>: where each performance control sits right now, including anything your hands are adding.</li>
+  <li><span class="n">H</span><b>MORPH</b>: position between state A and B (it reads A→B 35% in between).</li>
+  <li><span class="n">I</span><b>Spectrum</b>: the sound you're making, low to high.</li>
+  <li><span class="n">J</span><b>Voices and CPU</b>: how many notes are sounding, and the load.</li>
+  <li><span class="n">K</span><b>F-button bar</b>: what F1–F4 do here.</li>
+</ul>
+<div class="box"><b class="t">Two views, one flip</b>The Play view is for playing; the menu (R1) holds everything else. Nothing is lost by staying on the Play view: every dial, pad layer and hand control works from here. The menu is for setting up, storing and saving (section 9).</div>
+
+<h2>5. Playing notes</h2>
+<p>On the <b>PLAY</b> layer the 16 pads are a keyboard in the current scale. The lowest note is the <b>bottom-left</b> pad (13) and notes rise left to right, then up a row, to the top-right (pad 4). Hold a pad for as long as you want the note; let go and it releases. Hold several for chords (how many can sound depends on the sound and the CPU budget; "3 of 6 voices" is shown on the screen).</p>
+<p>The pad map shows note names. The notes that are the root of the scale are shaded so you always know where "home" is. You can change the key and scale in the menu (Perform section): <b>Root</b>, <b>Scale</b> and <b>Transpose</b>. The 13 scales are Chromatic, Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Harmonic Minor, Pentatonic Major, Pentatonic Minor, Blues, Whole Tone and Hirajoshi. A MIDI keyboard also plays Atlas directly.</p>
+<p>The pads are <b>pressure sensitive</b>. Press harder and ENERGY rises (by up to 60%); ease off and it falls back exactly. On the simulator, which has no pressure, a held pad counts as medium pressure.</p>
+
+<h2>6. Choosing a sound</h2>
+<figure class="screen"><img src="screen-03-browse.png" alt="Browsing sounds"><figcaption>Two presses of D-pad ▲ from Evolving Glass lands on Sub Pressure (BASS 3/7).</figcaption></figure>
+<p>On the Play view press D-pad <b>▲</b> for the next sound and <b>▼</b> for the previous one; the list wraps. The name and its position (3/7) appear at the top of the right panel. Notes you are holding are released when the sound changes, and the new sound crossfades in, so there is no click or crash.</p>
+<p>You can also pick by name in the menu: the first row is <b>Preset</b>; D-pad ◄ ► steps through the same list.</p>
+
+<h2>7. Shaping a sound with no dials</h2>
+<p>There are five ways to change a sound, from slowest and most precise to fastest and most expressive.</p>
+
+<h3>7.1 Turn a control (D-pad ◄ ►)</h3>
+<figure class="screen"><img src="screen-04-focus.png" alt="COLOR focused and raised to 40%"><figcaption>SELECT moved the focus to COLOR (its centre is lit); D-pad ► raised it to 40%.</figcaption></figure>
+<p>One dial is <b>focused</b> at a time. D-pad <b>◄ ►</b> turns it down or up, 1% for each press, and holding the button repeats (about nine or ten a second). <b>SELECT</b> moves the focus on. Holding <b>SELECT</b> for half a second puts the focused dial back to zero.</p>
+<p>The focus walks through the controls in this order, two to a pair:</p>
+<table>
+  <tr><th>Screen of four dials</th><th>Order SELECT visits them</th></tr>
+  <tr><td>First screen</td><td>CHARACTER → COLOR → MOTION → TEXTURE</td></tr>
+  <tr><td>Second screen</td><td>SPACE → SHAPE → ENERGY → MORPH → back to CHARACTER</td></tr>
+</table>
+<p>The screen shows the current pair and its neighbour, so it doesn't jump on every tap.</p>
+
+<h3>7.2 Set a dial directly (hold L1, move the joystick)</h3>
+<figure class="screen"><img src="screen-04b-set.png" alt="L1 held, joystick right of centre: COLOR 75%"><figcaption>L1 held and the joystick pushed right of centre: the Controls layer shows, the lit pad is the dial being set (COLOR), and the status line reads "COLOR 75%".</figcaption></figure>
+<p>Select a dial as in 7.1, then <b>hold L1 and move the joystick</b>. The dial follows the stick left to right: <b>fully left is 0%, fully right is 100%</b>, and straight up or down is 50%. Push past the dead zone (about a third of the way out) and the value jumps to the stick's position; let go and the value <b>stays</b>. It never snaps back to the middle when the stick springs home.</p>
+<p>While L1 is held the joystick belongs to this: it doesn't also push MORPH and COLOR, and nothing jumps when you let go of L1. Holding L1 also shows the Controls layer, so you can <b>tap a control's pad</b> during the hold to set that control instead of the selected dial; the lit pad is always the one the joystick is setting. A choice (Preset, Voices, Depth) can't be set this way and says so; use the D-pad for those. This is the quickest way to make a big move while your other hand is playing.</p>
+
+<h3>7.3 Play it with your hands</h3>
+<figure class="screen"><img src="screen-02-expression.png" alt="Stick, hand and pressure all pushing controls"><figcaption>Joystick pushed up-right, a hand over the left sensor, one pad pressed hard: MORPH is part-way to B, COLOR and MOTION have risen, ENERGY has lifted.</figcaption></figure>
+<table>
+  <tr><th>Source</th><th>Pushes (Atlas default)</th><th>Range</th></tr>
+  <tr><td class="k">Joystick left / right</td><td>MORPH</td><td>up to ±50%</td></tr>
+  <tr><td class="k">Joystick up / down</td><td>COLOR</td><td>up to ±50%</td></tr>
+  <tr><td class="k">Left hand sensor</td><td>MOTION</td><td>up to +60% (closer = more)</td></tr>
+  <tr><td class="k">Right hand sensor</td><td>SPACE</td><td>up to +60%</td></tr>
+  <tr><td class="k">Pad pressure</td><td>ENERGY</td><td>up to +60% (firmest pad held)</td></tr>
+  <tr><td class="k">Mod wheel / aftertouch (MIDI keyboard)</td><td>Follow the joystick's Y / X</td><td></td></tr>
+</table>
+<p>These <b>add to</b> the dial's own setting; they never overwrite it. Let go, and every control returns <i>exactly</i> to where you had set it. If you've pushed somewhere you like, <b>click the joystick</b> to keep it: the pushed values become the new settings. The joystick is ignored after a click until it has returned to centre, so letting go doesn't push the sound back.</p>
+
+<h3>7.4 Glide to a state (pads)</h3>
+<figure class="screen"><img src="screen-05-states.png" alt="STATES layer"><figcaption>The STATES layer: the bottom row of pads is A, B (and C, D when a sound has them).</figcaption></figure>
+<figure class="screen"><img src="screen-06-states-gliding.png" alt="Gliding to state B"><figcaption>One tap on B: MORPH glides there (the pad shows yellow while it travels, green when it arrives).</figcaption></figure>
+<p>Press <b>F2</b> once to reach the <b>STATES</b> layer. The bottom row of pads (13–16) are states A, B, C and D, lit only for the states this sound has. Tap one and MORPH glides there in about a second. Nothing sounds when you tap these pads; they are for choosing, not playing, and any note you were holding is released. Press F2 until the badge says PLAY to play again.</p>
+
+<h3>7.5 Bind a control to your hands (the CONTROLS layer)</h3>
+<figure class="screen"><img src="screen-07-controls.png" alt="CONTROLS layer with SPACE grabbed"><figcaption>The CONTROLS layer: every control is a pad. SPACE is grabbed (highlighted).</figcaption></figure>
+<figure class="screen"><img src="screen-08-bind.png" alt="Stick X now pushes SPACE"><figcaption>After sweeping the joystick: "Stick X now pushes SPACE".</figcaption></figure>
+<p>The defaults won't suit every sound or every player, so you can rewire them:</p>
+<ol class="steps">
+  <li>Press <b>F2</b> until the badge says <b>CONTROLS</b>.</li>
+  <li><b>Tap the pad</b> of the control you want to play (it shows the control's name; pads are laid out below).</li>
+  <li><b>Move the thing you want to play it with:</b> sweep the joystick, wave a hand over a sensor, or <b>lean hard</b> into that same pad for about a third of a second to bind pressure.</li>
+  <li>The status line says what changed ("Stick X now pushes SPACE"). That source now drives that control and has <b>left the one it drove before</b>.</li>
+  <li>To <b>unbind</b>, repeat step 3 for a source already on that control. A source must return near centre before it can be used again, so one sweep never both binds and unbinds.</li>
+</ol>
+<p>A choice such as Preset, Voices or Depth can't be pushed by an expression source, so binding to one is refused with a message. Holding <b>L1</b> to peek at the Controls layer never changes any binding. Your bindings are saved with the app and are still there next time.</p>
+<table>
+  <tr><th>Pad row (bottom to top)</th><th>Pads (left → right)</th></tr>
+  <tr><td>Bottom (13–16)</td><td>CHARACTER, COLOR, MOTION, SPACE</td></tr>
+  <tr><td>Second (9–12)</td><td>SHAPE, ENERGY, TEXTURE, MORPH</td></tr>
+  <tr><td>Third (5–8)</td><td>Preset, Level, Voices, Depth</td></tr>
+  <tr><td>Top (1–4)</td><td>Unused</td></tr>
+</table>
+<p>On this layer D-pad ◄ ► also adjusts the grabbed control, so it doubles as a quick way to set any of the twelve.</p>
+
+<h2>8. The pad layers, and keeping a sound</h2>
+<p><b>F2</b> steps the pad layer. The badge on the screen always says which one you're on.</p>
+<table>
+  <tr><th>Layer</th><th>The pads are</th><th>Use it to</th></tr>
+  <tr><td class="k">PLAY</td><td>A scale keyboard</td><td>Play notes</td></tr>
+  <tr><td class="k">STATES</td><td>Bottom row = states A–D</td><td>Glide MORPH to a state</td></tr>
+  <tr><td class="k">CONTROLS</td><td>The 12 controls</td><td>Grab a control; bind sources to it</td></tr>
+  <tr><td class="k">MOMENTS</td><td>16 memories</td><td>Store and recall whole sounds</td></tr>
+</table>
+<p>Hold <b>L1</b> on any layer to see the CONTROLS layer for as long as you hold it; let go and you're back where you were. With L1 held, the joystick sets the selected dial (section 7.2).</p>
+
+<h3>Moments: remember a whole sound</h3>
+<figure class="screen"><img src="screen-09-moments.png" alt="MOMENTS layer, moment 1 stored"><figcaption>MOMENTS: moment 1 (bottom-left pad) stored. The dot marks a pad that holds something.</figcaption></figure>
+<ol class="steps">
+  <li>Set the sound the way you like it (sound, dials, states, settings).</li>
+  <li>Press F2 until the badge says <b>MOMENTS</b>.</li>
+  <li><b>Hold</b> a pad for about 0.6 seconds. "Stored moment 1" appears and a dot marks the pad. Moment 1 is the bottom-left pad.</li>
+  <li><b>Tap</b> a pad to recall it. Tapping an empty one tells you to hold to store.</li>
+</ol>
+<p>A moment remembers the whole sound: which sound it was, every state's parameters, the seven controls, MORPH and the settings. Storing ignores any pushing your hands are doing at that moment, so a moment never captures a passing gesture. Moments are saved to the device's storage and survive a restart.</p>
+
+<h2>9. The full menu (R1)</h2>
+<figure class="screen"><img src="screen-10-menu.png" alt="Menu at Play depth"><figcaption>The menu at its simplest depth (Play).</figcaption></figure>
+<p>Press <b>R1</b> to open the menu. D-pad <b>▲ ▼</b> moves between rows; D-pad <b>◄ ►</b> changes the highlighted value; <b>SELECT</b> runs an action row; holding SELECT resets the highlighted value. <b>R1</b> again returns to the Play view. A small arrow at the bottom says there are more rows below (or above).</p>
+<p>The <b>Depth</b> row decides how much the menu shows, so a beginner isn't buried:</p>
+<table>
+  <tr><th>Depth</th><th>Adds</th></tr>
+  <tr><td class="k">Play</td><td>Preset, Depth, the seven controls and MORPH, then Level, Voices, Root, Scale, Transpose.</td></tr>
+  <tr><td class="k">Edit</td><td>Every parameter of the sound, by page (the sound defines its pages); the voice settings Attack, Decay, Sustain, Release, Glide and Velocity; and the States tools: Store, Mutate, Revert, Save.</td></tr>
+  <tr><td class="k">Deep</td><td>The Engine section: CPU Budget, the Cost of the sound, and every block in its signal graph with live activity.</td></tr>
+</table>
+<figure class="screen"><img src="screen-11-menu-edit.png" alt="Depth set to Edit"><figcaption>Depth changed to Edit with D-pad ►. The extra rows are further down the list.</figcaption></figure>
+
+<h3>Making and saving your own sound</h3>
+<figure class="screen"><img src="screen-12-menu-states.png" alt="States tools"><figcaption>At Edit depth: the Store rows and the Mutate / Revert / Save actions.</figcaption></figure>
+<table>
+  <tr><th>Row</th><th>What pressing SELECT does</th></tr>
+  <tr><td class="k">Store → A / B / C / D</td><td>Stores the sound <i>as you hear it now</i> (including where MORPH is) into that state. "overwrite" replaces an existing state; "add" makes a new one, up to four. New states between the old last one and the one you store start as copies of the last.</td></tr>
+  <tr><td class="k">Mutate</td><td>Nudges every parameter of the state MORPH is nearest by a small random amount. Good for happy accidents; press again for more, or Revert to go back.</td></tr>
+  <tr><td class="k">Revert</td><td>Reloads the sound from its saved copy, undoing your edits.</td></tr>
+  <tr><td class="k">Save</td><td>Saves a copy of the whole sound as a new preset. It never overwrites a factory sound (a name that already exists gets _2, _3…). The copy is a plain file you can share, and it joins the sound list immediately.</td></tr>
+</table>
+<div class="box"><b class="t">Edits land in the nearest state</b>When you change a parameter at Edit depth, it changes the state MORPH is closest to. Leave MORPH at A to shape A, glide to B to shape B, and MORPH then blends your two sounds.</div>
+
+<figure class="screen"><img src="screen-13-menu-deep.png" alt="Deep depth: engine"><figcaption>Deep depth: CPU Budget, Cost, and the live graph (each block shows its activity).</figcaption></figure>
+<p>The <b>CPU Budget</b> caps how many notes can sound so a heavy sound plays fewer notes instead of glitching. The <b>Cost</b> row shows what the current sound costs (a fixed part plus a part for each note). Lower the budget to hear how a sound will behave on a slower target.</p>
+
+<h2>10. Recipes</h2>
+<h3>Find a sound and play it</h3>
+<ol class="steps"><li>Open Atlas (section 3).</li><li>D-pad ▲ ▼ until a name looks good.</li><li>Play the pads. Hold a few for a chord.</li><li>Lean harder into a pad: ENERGY rises.</li></ol>
+<h3>Make it yours in under a minute</h3>
+<ol class="steps"><li>Tap SELECT until the dial you want is lit.</li><li>Hold D-pad ► (or tap it) to raise it.</li><li>Hold SELECT for half a second if you overshoot: it resets.</li><li>F2 to MOMENTS, hold a pad: it's stored.</li></ol>
+<h3>Play it without touching the D-pad</h3>
+<ol class="steps"><li>Hold a chord with one hand.</li><li>Sweep the joystick (MORPH and COLOR) with your thumb, and lift a hand over the sensors (MOTION, SPACE).</li><li>If you land somewhere beautiful, click the joystick to keep it.</li></ol>
+<h3>Make a big change in one move</h3>
+<ol class="steps"><li>Tap SELECT until the dial you want is lit.</li><li>Hold L1 and push the joystick to where you want it, left for none, right for full.</li><li>Let go. The value stays.</li></ol>
+<h3>Wire your own hands</h3>
+<ol class="steps"><li>F2 to CONTROLS.</li><li>Tap the pad of the control you want to play.</li><li>Sweep the joystick or wave a hand: they now play it.</li></ol>
+<h3>Build a morph between two sounds you made</h3>
+<ol class="steps"><li>R1, set Depth to Edit.</li><li>With MORPH at A (hold SELECT on the MORPH row to reset it), edit parameters to make sound A.</li><li>Press F2 until STATES and tap B (MORPH glides there), press R1, and shape B the same way. Or shape A, then press <b>Store → B</b> and keep editing from there.</li><li>Use the joystick's X axis (or the STATES pads) to blend A and B while you play.</li><li>In the menu, <b>Save</b> to keep it as a new sound.</li></ol>
+
+<h2>11. If something isn't happening</h2>
+<table>
+  <tr><th>Symptom</th><th>Why, and what to do</th></tr>
+  <tr><td>Pads make no sound</td><td>Check the badge: only PLAY plays notes. Press F2 until it says PLAY. Also check Level and Voices in the menu.</td></tr>
+  <tr><td>A pad shows a note but the sound is thin</td><td>Some sounds are one-note (Sub Pressure). Look at "x of y voices".</td></tr>
+  <tr><td>◄ ► change a list row instead of the dial I wanted</td><td>You're in the menu. Press R1 to return to the Play view, where ◄ ► turn the focused dial.</td></tr>
+  <tr><td>I pushed the joystick and the sound jumped back</td><td>That's by design: pushing is temporary. Click the joystick to keep it.</td></tr>
+  <tr><td>"…is a choice: nothing can push it"</td><td>You tried to bind Preset, Voices or Depth. Choose a continuous control instead.</td></tr>
+  <tr><td>A sound won't load</td><td>The status line names the problem. Atlas keeps the previous sound rather than dropping out.</td></tr>
+  <tr><td>I held L1 and moved the joystick but nothing set</td><td>Push past the dead zone (about a third of the way out). Choices such as Preset, Voices and Depth refuse the joystick and say so; use the D-pad.</td></tr>
+  <tr><td>Notes cut off in a busy chord</td><td>CPU Budget is capping voices. Raise it (Deep depth) or play fewer notes.</td></tr>
+</table>
+
+<h2 class="pb">Appendix A. Keyboard (the <code>cargo run</code> simulator)</h2>
+<table>
+  <tr><th>Device control</th><th>Key</th></tr>
+  <tr><td class="k">Pads 1–16</td><td><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> / <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd> / <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd> / <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd> (top row to bottom row)</td></tr>
+  <tr><td class="k">F1–F4</td><td><kbd>F1</kbd> <kbd>F2</kbd> <kbd>F3</kbd> <kbd>F4</kbd></td></tr>
+  <tr><td class="k">D-pad ◄ ►</td><td><kbd>,</kbd> and <kbd>.</kbd></td></tr>
+  <tr><td class="k">SELECT, tap / hold</td><td><kbd>\</kbd> / <kbd>/</kbd></td></tr>
+  <tr><td class="k">Joystick</td><td>Arrow keys; <kbd>K</kbd> clicks it</td></tr>
+  <tr><td class="k">Hand sensors</td><td><kbd>O</kbd> (left), <kbd>P</kbd> (right), each at 70%</td></tr>
+  <tr><td class="k">L1 / R1</td><td>Hold <kbd>9</kbd> / <kbd>0</kbd>. With <kbd>9</kbd> held, the arrow keys set the selected dial: left is 0%, right is 100%, up or down is 50% (the keyboard has no in-between positions)</td></tr>
+  <tr><td class="k">D-pad ▲ ▼</td><td>No key is mapped in this simulator while Atlas is open (the arrow keys are the joystick). Use the on-screen D-pad in the Slint simulator (<code>cargo run --example slint_home_live</code>), a gamepad, or the menu.</td></tr>
+</table>
+
+<h2>Appendix B. PS5 DualSense (default layout)</h2>
+<p>This layout is the same on Home, in lists and in play apps like Atlas, so the controller never changes meaning between screens. It is set up for a controller whose left stick doesn't work: the left stick is unused and the <b>right stick is the device's joystick</b>. L2 and R2 are unbound. Any button can be changed in the Controller app.</p>
+<table>
+  <tr><th>DualSense</th><th>Does</th></tr>
+  <tr><td class="k">D-pad ▲ ▼</td><td>Browse (next / previous sound; rows in the menu)</td></tr>
+  <tr><td class="k">D-pad ◄ ►</td><td>Turn the focused dial down / up</td></tr>
+  <tr><td class="k">Touchpad click</td><td>SELECT: tap to select, hold half a second to reset</td></tr>
+  <tr><td class="k">Right stick</td><td>The joystick (expression; with L1 held, sets the selected dial)</td></tr>
+  <tr><td class="k">R3 (press right stick)</td><td>The joystick's click: keep the pushed sound</td></tr>
+  <tr><td class="k">L1 / R1</td><td>Peek at Controls and set a dial / open the menu</td></tr>
+  <tr><td class="k">Options / Create</td><td>F2 (change pad layer) / F3</td></tr>
+  <tr><td class="k">PS button</td><td>Home</td></tr>
+  <tr><td class="k">Square, Circle, Cross, Triangle</td><td>Pads 1, 5, 9 and 13 (the left column of pads), for quick tests</td></tr>
+  <tr><td class="k">L2, R2, left stick</td><td>Unused. The hand sensors are therefore not available from this controller</td></tr>
+  <tr><td class="k">Not bound in play apps</td><td>F1 (Home is on the PS button) and F4 (Mixer)</td></tr>
+</table>
+
+<h2>Appendix C. Rough edges in this version</h2>
+<div class="box warn"><b class="t">Known, and next on the list</b>
+<ul style="margin:2pt 0 0 14pt; padding:0">
+  <li>A D-pad press moves a value 1%, and holding repeats ten a second, so sweeping a dial from 0 to 100% takes about ten seconds. For big moves, hold L1 and use the joystick (7.2), or use the hands, STATES or MOMENTS. Faster holding is planned.</li>
+  <li>Some labels are cut off on screen (the expression line and status messages), for example "STICK MORPH / COLO…".</li>
+  <li>The menu's top hint reads "R1 OPEN", but R1 there returns you to the Play view.</li>
+  <li>Pad pressure drives one control from the firmest pad; it is not yet per note.</li>
+  <li>The PS5 pad has no hand-sensor stand-in now (L2 and R2 are unbound); use the keyboard (<kbd>O</kbd> and <kbd>P</kbd>) to try the hand controls.</li>
+  <li>Outside play apps, holding L1 does nothing special yet (it is still Home there), so setting a value with the joystick works in play apps only.</li>
+  <li>Screens in this guide say "OFFLINE / SOFTWARE RENDER" because they are rendered without audio hardware.</li>
+</ul></div>
+
+</body>
+</html>

@@ -1,0 +1,13 @@
+id = "airwindows"
+name = "Airwindows"
+category = "effect"
+description = "Chris Johnson's whole Airwindows effect library: ~500 real plugins in 20+ categories."
+audio_outputs = ["Airwindows"]
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Airwindows Level",
+    "Airwindows: Param 1",
+    "Airwindows: Param 2",
+    "Airwindows: Param 3",
+    "Airwindows: Param 4",
+]

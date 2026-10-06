@@ -82,6 +82,191 @@ fn main() {
     compile_cached("clouds_bridge", eurorack, &files);
 
     compile_listed_bridges(eurorack, bridge);
+    compile_airwindows(bridge);
+    compile_o_c_firmwares();
+}
+
+/// The O&C-family firmwares (stock Ornaments & Crimes, Hemisphere Suite,
+/// Phazerville Suite...), each built as a shared library the host loads a fresh
+/// copy of per module -- the firmwares keep their state in globals, so a copy
+/// per module is the isolation. Each variant's own source is compiled as published
+/// (patched files listed in its PATCHES.md) against the shared host stand-in for the
+/// Teensy and the module (vendor/o_c/host); `sketch.cpp` is an Arduino sketch's
+/// .ino files in one translation unit. The libraries land in OUT_DIR/ocfw and
+/// the Rust side finds them through `PORTAMAX_OCFW_DIR`.
+fn compile_o_c_firmwares() {
+    let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    println!("cargo:rerun-if-changed=vendor/o_c");
+    for v in O_C_VARIANTS {
+        println!("cargo:rerun-if-changed=vendor/{}", v.dir);
+    }
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("ocfw");
+    std::fs::create_dir_all(&out).unwrap();
+    println!("cargo:rustc-env=PORTAMAX_OCFW_DIR={}", out.display());
+    fn newest(dir: &std::path::Path) -> u128 {
+        let mut t = 0;
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            t = t.max(if p.is_dir() { newest(&p) } else { e.metadata().and_then(|m| m.modified()).ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0) });
+        }
+        t
+    }
+    let ext = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+    let shared_host = root.join("vendor/o_c/host");
+    for v in O_C_VARIANTS {
+        let base = root.join("vendor").join(v.dir);
+        if !base.is_dir() {
+            continue;
+        }
+        let lib = out.join(format!("libocfw_{}.{ext}", v.id));
+        let stamp = out.join(format!("{}.stamp", v.id));
+        let fingerprint = format!("{}-{}", newest(&base), newest(&shared_host));
+        if lib.exists() && std::fs::read_to_string(&stamp).ok().as_deref() == Some(fingerprint.as_str()) {
+            continue;
+        }
+        let mut build = cc::Build::new();
+        build.cpp(true).std(v.cxx_std).warnings(false).flag("-w").flag("-Wno-c++11-narrowing").flag("-fno-rtti"); // the Teensy build has no RTTI
+        build.define("F_CPU", Some("120000000")).define("typeof", Some("__typeof__"));
+        for inc in std::iter::once(shared_host.display().to_string()).chain(v.includes.iter().map(|d| base.join(d).display().to_string())) {
+            build.include(inc);
+        }
+        build.file(shared_host.join("oc_host_core.cpp"));
+        for f in v.sources {
+            build.file(base.join(f));
+        }
+        for (k, val) in v.defines {
+            build.define(k, *val);
+        }
+        let objects = build.compile_intermediates();
+        let mut link = build.get_compiler().to_command();
+        link.arg(if cfg!(target_os = "macos") { "-dynamiclib" } else { "-shared" }).arg("-o").arg(&lib);
+        for o in &objects {
+            link.arg(o);
+        }
+        if cfg!(target_os = "macos") {
+            link.arg("-lc++");
+        } else {
+            link.arg("-lstdc++").arg("-lpthread");
+        }
+        let status = link.status().expect("run the linker");
+        assert!(status.success(), "linking {} failed", lib.display());
+        std::fs::write(&stamp, fingerprint).unwrap();
+    }
+}
+
+struct OcVariant {
+    id: &'static str,
+    dir: &'static str,
+    includes: &'static [&'static str],
+    sources: &'static [&'static str],
+    defines: &'static [(&'static str, Option<&'static str>)],
+    cxx_std: &'static str,
+}
+
+const O_C_VARIANTS: &[OcVariant] = &[OcVariant {
+    id: "stock",
+    dir: "o_c",
+    includes: &["host", "fw", "fw/src/drivers", "fw/extern"],
+    sources: &[
+        "sketch.cpp", "host/oc_host_fw.cpp", "fw/OC_autotune.cpp", "fw/OC_bitmaps.cpp", "fw/OC_chords.cpp", "fw/OC_debug.cpp", "fw/OC_digital_inputs.cpp", "fw/OC_input_map.cpp",
+        "fw/OC_menus.cpp", "fw/OC_patterns.cpp", "fw/OC_scales.cpp", "fw/OC_strings.cpp", "fw/OC_ui.cpp", "fw/bjorklund.cpp", "fw/braids_quantizer.cpp", "fw/frames_poly_lfo.cpp",
+        "fw/frames_resources.cpp", "fw/peaks_bytebeat.cpp", "fw/peaks_multistage_envelope.cpp", "fw/peaks_resources.cpp", "fw/streams_lorenz_generator.cpp",
+        "fw/streams_resources.cpp", "fw/src/drivers/weegfx.cpp", "fw/src/util/util_misc.cpp",
+    ],
+    defines: &[],
+    cxx_std: "c++14",
+},
+OcVariant {
+    id: "hemi",
+    dir: "o_c_hemi",
+    includes: &["host", "fw", "fw/src/drivers", "fw/extern", "."],
+    sources: &[
+        "sketch.cpp", "host/oc_host_fw.cpp", "fw/OC_autotune.cpp", "fw/OC_bitmaps.cpp", "fw/OC_debug.cpp", "fw/OC_digital_inputs.cpp", "fw/OC_input_map.cpp",
+        "fw/OC_menus.cpp", "fw/OC_patterns.cpp", "fw/OC_scales.cpp", "fw/OC_strings.cpp", "fw/OC_ui.cpp", "fw/bjorklund.cpp", "fw/braids_quantizer.cpp",
+        "fw/peaks_bytebeat.cpp", "fw/peaks_multistage_envelope.cpp", "fw/peaks_resources.cpp", "fw/streams_lorenz_generator.cpp",
+        "fw/streams_resources.cpp", "fw/src/drivers/weegfx.cpp", "fw/src/util/util_misc.cpp",
+    ],
+    defines: &[],
+    cxx_std: "c++14",
+},
+OcVariant {
+    id: "phaz",
+    dir: "o_c_phaz",
+    includes: &["host", "fw", "fw/src/drivers", "fw/extern", "fw/src"],
+    sources: &["host/oc_host_fw.cpp", "fw/HSIOFrame.cpp", "fw/HSUtils.cpp", "fw/HemisphereApplet.cpp", "fw/Main.cpp", "fw/OC_apps.cpp", "fw/OC_autotune.cpp", "fw/OC_bitmaps.cpp", "fw/OC_calibration.cpp", "fw/OC_chords.cpp", "fw/OC_core.cpp", "fw/OC_debug.cpp", "fw/OC_digital_inputs.cpp", "fw/OC_gpio.cpp", "fw/OC_input_map.cpp", "fw/OC_menus.cpp", "fw/OC_patterns.cpp", "fw/OC_scales.cpp", "fw/OC_strings.cpp", "fw/OC_ui.cpp", "fw/bjorklund.cpp", "fw/braids_quantizer.cpp", "fw/frames_poly_lfo.cpp", "fw/frames_resources.cpp", "fw/peaks_bytebeat.cpp", "fw/peaks_multistage_envelope.cpp", "fw/peaks_resources.cpp", "fw/src/drivers/weegfx.cpp", "fw/src/util/util_misc.cpp", "fw/streams_lorenz_generator.cpp", "fw/streams_resources.cpp", "fw/tideslite.cpp"],
+    cxx_std: "c++17",
+    defines: &[("USB_MIDI", None), ("ENABLE_APP_CALIBR8OR", None), ("ENABLE_APP_SCENES", None), ("ENABLE_APP_PONG", None), ("ENABLE_APP_PIQUED", None), ("PEWPEWPEW", None)],
+}];
+
+/// Airwindows' ~500 effects (vendor/airwindows, MIT) as one static lib.
+/// Each plugin is a VST2 class; vendor/airwindows/shim/audioeffectx.h
+/// stands in for the SDK. Every effect defines the same global
+/// `createEffectInstance`, so each gets its own generated translation unit
+/// that renames it (`aw_make_<Name>`) and includes the effect's own .cpp
+/// files; a generated registry lists them all for vendor/bridge/
+/// airwindows_bridge.cc. Adding an effect is dropping its folder into
+/// vendor/airwindows/src.
+fn compile_airwindows(bridge: &str) {
+    let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let src = root.join("vendor/airwindows/src");
+    println!("cargo:rerun-if-changed=vendor/airwindows");
+    let Ok(entries) = std::fs::read_dir(&src) else { return };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !n.starts_with(|c: char| c.is_ascii_digit()))
+        .collect();
+    names.sort();
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("airwindows");
+    std::fs::create_dir_all(&out).unwrap();
+    let write_if_changed = |path: &std::path::Path, text: &str| {
+        if std::fs::read_to_string(path).ok().as_deref() != Some(text) {
+            std::fs::write(path, text).unwrap();
+        }
+    };
+    let mut files = Vec::new();
+    // Only the generated wrappers are listed files; a change to the shim or
+    // to any plugin source reaches the fingerprint through the registry's text.
+    fn newest(dir: &std::path::Path) -> u128 {
+        let mut t = 0;
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            t = t.max(if p.is_dir() { newest(&p) } else { e.metadata().and_then(|m| m.modified()).ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0) });
+        }
+        t
+    }
+    let stamp = newest(&root.join("vendor/airwindows"));
+    let mut registry = format!("// sources {stamp}\n#include \"audioeffectx.h\"\nstruct AwEntry {{ const char* id; AudioEffect* (*make)(audioMasterCallback); }};\n");
+    let mut table = String::new();
+    let mut count = 0;
+    for name in &names {
+        let dir = src.join(name);
+        let mut cpps: Vec<String> = std::fs::read_dir(&dir)
+            .map(|d| d.flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|f| f.ends_with(".cpp")).collect())
+            .unwrap_or_default();
+        // The effect's own file first: it declares the class the Proc file extends.
+        cpps.sort_by_key(|f| (f != &format!("{name}.cpp"), f.clone()));
+        if cpps.is_empty() || !cpps[0].starts_with(name.as_str()) {
+            continue;
+        }
+        let mut tu = format!("#define createEffectInstance aw_make_{name}\n");
+        for f in &cpps {
+            tu.push_str(&format!("#include \"{}/{f}\"\n", dir.display()));
+        }
+        let path = out.join(format!("aw_{name}.cc"));
+        write_if_changed(&path, &tu);
+        files.push(path.display().to_string());
+        registry.push_str(&format!("AudioEffect* aw_make_{name}(audioMasterCallback);\n"));
+        table.push_str(&format!("  {{\"{name}\", aw_make_{name}}},\n"));
+        count += 1;
+    }
+    registry.push_str(&format!("extern const AwEntry aw_registry[] = {{\n{table}}};\nextern const int aw_registry_len = {count};\n"));
+    let reg = out.join("aw_registry.cc");
+    write_if_changed(&reg, &registry);
+    files.push(reg.display().to_string());
+    files.push(format!("{bridge}/airwindows_bridge.cc"));
+    compile_cached_with("airwindows_bridge", &[&format!("{}", root.join("vendor/airwindows/shim").display())], &[], &[], &files);
 }
 
 /// Every other bridge is self-describing: `vendor/bridge/<name>.sources`
@@ -105,7 +290,37 @@ fn compile_listed_bridges(eurorack: &str, bridge: &str) {
             .map(|l| format!("{eurorack}/{l}"))
             .collect();
         files.push(format!("{bridge}/{name}_bridge.cc"));
-        compile_cached(&format!("{name}_bridge"), eurorack, &files);
+        // Optional `<name>.includes`: extra include directories, relative to the repo root.
+        let extra: Vec<String> = std::fs::read_to_string(list.with_extension("includes"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(String::from)
+            .collect();
+        let mut includes: Vec<&str> = vec![eurorack];
+        includes.extend(extra.iter().map(String::as_str));
+        // Optional `<name>.defines`: one `NAME` or `NAME=VALUE` per line (replacing
+        // the default -DTEST); a line starting with `-` is passed as a raw compiler flag.
+        let text = std::fs::read_to_string(list.with_extension("defines")).ok();
+        let (mut defines, mut flags): (Vec<(String, Option<String>)>, Vec<String>) = (Vec::new(), Vec::new());
+        match &text {
+            None => defines.push(("TEST".into(), None)),
+            Some(t) => {
+                for l in t.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+                    if l.starts_with('-') {
+                        flags.push(l.to_string());
+                    } else if let Some((k, v)) = l.split_once('=') {
+                        defines.push((k.to_string(), Some(v.to_string())));
+                    } else {
+                        defines.push((l.to_string(), None));
+                    }
+                }
+            }
+        }
+        let define_refs: Vec<(&str, Option<&str>)> = defines.iter().map(|(k, v)| (k.as_str(), v.as_deref())).collect();
+        let flag_refs: Vec<&str> = flags.iter().map(String::as_str).collect();
+        compile_cached_with(&format!("{name}_bridge"), &includes, &define_refs, &flag_refs, &files);
     }
 }
 
@@ -115,6 +330,20 @@ fn compile_listed_bridges(eurorack: &str, bridge: &str) {
 /// `generate_app_modules`), and recompiling the DSP libs every time would
 /// cost a minute per edit.
 fn compile_cached(lib: &str, include: &str, files: &[String]) {
+    compile_cached_with(lib, &[include], &[("TEST", None)], &[], files);
+}
+
+fn compile_cached_with(lib: &str, includes: &[&str], defines: &[(&str, Option<&str>)], flags: &[&str], files: &[String]) {
+    // Plain C files (a vendored library's one .c file) can't go through the
+    // C++ compiler; they get a C static lib of their own.
+    let (c_files, cpp_files): (Vec<String>, Vec<String>) = files.iter().cloned().partition(|f| f.ends_with(".c"));
+    if !c_files.is_empty() {
+        compile_one(&format!("{lib}_c"), false, includes, defines, flags, &c_files);
+    }
+    compile_one(lib, true, includes, defines, flags, &cpp_files);
+}
+
+fn compile_one(lib: &str, cpp: bool, includes: &[&str], defines: &[(&str, Option<&str>)], flags: &[&str], files: &[String]) {
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-env-changed=CXXFLAGS");
     let mut fingerprint = std::env::var("CXXFLAGS").unwrap_or_default();
@@ -133,7 +362,19 @@ fn compile_cached(lib: &str, include: &str, files: &[String]) {
         return;
     }
     let mut build = cc::Build::new();
-    build.cpp(true).std("c++14").define("TEST", None).include(include).warnings(false);
+    build.cpp(cpp).warnings(false);
+    if cpp {
+        build.std("c++14");
+    }
+    for (k, v) in defines {
+        build.define(k, *v);
+    }
+    for i in includes {
+        build.include(i);
+    }
+    for f in flags {
+        build.flag(f);
+    }
     for f in files {
         build.file(f);
     }

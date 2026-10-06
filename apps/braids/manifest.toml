@@ -1,0 +1,18 @@
+id = "braids"
+name = "Braids"
+category = "instrument"
+description = "The real Mutable Instruments Braids macro oscillator: 47 models from saws to physical models."
+audio_outputs = ["Braids"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Braids Level",
+    "Braids: Timbre",
+    "Braids: Color",
+    "Braids: FM",
+    "Braids: Attack",
+    "Braids: Decay",
+    "Braids: Env > Timbre",
+    "Braids: Env > Color",
+    "Braids: Env > Pitch",
+]

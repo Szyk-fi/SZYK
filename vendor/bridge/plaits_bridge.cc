@@ -38,7 +38,7 @@ void plaits_voice_destroy(void* handle) {
 // Renders `size` samples (mono, the "out" channel) at Plaits' fixed
 // internal 48kHz -- the Rust side resamples to the device's actual rate.
 // `size` may be any length; internally chunked into kMaxBlockSize pieces.
-void plaits_voice_render(
+static void render_impl(
     void* handle,
     int engine,
     float note,
@@ -50,7 +50,8 @@ void plaits_voice_render(
     float trigger,
     float level,
     float* out,
-    int size) {
+    int size,
+    bool level_patched) {
   Handle* h = static_cast<Handle*>(handle);
 
   plaits::Patch patch;
@@ -78,7 +79,7 @@ void plaits_voice_render(
   modulations.timbre_patched = false;
   modulations.morph_patched = false;
   modulations.trigger_patched = true;
-  modulations.level_patched = false;
+  modulations.level_patched = level_patched;
 
   int remaining = size;
   float* dst = out;
@@ -94,6 +95,26 @@ void plaits_voice_render(
     dst += chunk;
     remaining -= chunk;
   }
+}
+
+void plaits_voice_render(
+    void* handle, int engine, float note, float harmonics, float timbre,
+    float morph, float decay, float lpg_colour, float trigger, float level,
+    float* out, int size) {
+  render_impl(handle, engine, note, harmonics, timbre, morph, decay,
+              lpg_colour, trigger, level, out, size, false);
+}
+
+// The same voice with its LEVEL input patched, which is how a held note is
+// made to sustain: the low-pass gate then follows `level` instead of
+// plucking from the trigger (see plaits/dsp/voice.cc). The trigger still
+// strikes the engine.
+void plaits_voice_render_held(
+    void* handle, int engine, float note, float harmonics, float timbre,
+    float morph, float decay, float lpg_colour, float trigger, float level,
+    float* out, int size) {
+  render_impl(handle, engine, note, harmonics, timbre, morph, decay,
+              lpg_colour, trigger, level, out, size, true);
 }
 
 }  // extern "C"

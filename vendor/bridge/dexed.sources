@@ -1,0 +1,13 @@
+# Sources for dexed_bridge.cc, relative to vendor/eurorack: Dexed's msfa engine
+# (vendor/dexed) plus the few host pieces in vendor/dexed/shim.
+../dexed/msfa/dx7note.cc
+../dexed/msfa/env.cc
+../dexed/msfa/exp2.cc
+../dexed/msfa/fm_core.cc
+../dexed/msfa/fm_op_kernel.cc
+../dexed/msfa/freqlut.cc
+../dexed/msfa/lfo.cc
+../dexed/msfa/pitchenv.cc
+../dexed/msfa/porta.cpp
+../dexed/msfa/sin.cc
+../dexed/shim/portamax_dexed_support.cc

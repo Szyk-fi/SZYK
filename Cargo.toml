@@ -133,6 +133,8 @@ ymfm-sys = "0.2"
 # The Norns cartridge (src/apps/norns) runs norns scripts, which are Lua
 # 5.3 -- the same version norns uses. `vendored` builds Lua itself from
 # source (MIT), so nothing needs installing on the host.
+# .vgz (gzipped VGM) files are unpacked before Game_Music_Emu sees them.
+flate2 = "1"
 mlua = { version = "0.10", features = ["lua53", "vendored"] }
 
 
@@ -144,6 +146,11 @@ mlua = { version = "0.10", features = ["lua53", "vendored"] }
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-game-controller = "0.3"
+
+# The USB serial driver for a monome grid (src/apps/grid_kit.rs): raw termios.
+# Already in the lockfile through other crates.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [build-dependencies]
 cc = "1.4.6"

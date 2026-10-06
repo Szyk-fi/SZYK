@@ -8,14 +8,19 @@
 //! about what a button *does* lives here, in two maps:
 //!
 //! - **Navigate**: used on the home screen and in apps without a play
-//!   view. The defaults reproduce the hand-tuned DualSense layout this
-//!   project shipped with (D-pad left/right browse, up/down edit, face
-//!   buttons as select/F1-F3 and Retro's SNES pad, right stick browses,
-//!   left stick unused because of drift on the original controller).
+//!   view.
 //! - **Play**: used while a play-view app is on screen (`App::play_surface`).
-//!   The defaults make the pad an instrument controller: right stick =
-//!   joystick, L2/R2 = the two depth sensors, L1/R1 = the shoulders, face
-//!   buttons = the bottom row of pads.
+//!
+//! Both defaults follow the control contract (docs/CONTROL_CONTRACT.md) and
+//! agree with each other: D-pad up/down browse, left/right change a value,
+//! the touchpad click is SELECT (tap to select, hold half a second to reset,
+//! exactly like the device's D-pad centre), the PS button is Home. The right
+//! stick is the device's joystick (the left stick is unused: it is broken on
+//! the test controller), L2 and R2 are unbound, and the four face buttons
+//! play pads 1, 5, 9 and 13 (the left column) so small functions can be
+//! tried quickly. In play apps L1/R1 are the app's shoulders and Options and
+//! Create are F2 and F3; elsewhere the D-pad, shoulders and Options/Create
+//! keep doubling as Retro's pad.
 //!
 //! An element can drive several actions (the default Cross is both
 //! "select" and Retro's B button); learning an action rebinds it to one
@@ -220,8 +225,8 @@ impl Action {
             Action::Pad(i) => format!("Pad {}", i + 1),
             Action::F(i) => format!("F{}", i + 1),
             Action::Home => "Home".into(),
-            Action::Select => "Select (knob 1 press)".into(),
-            Action::Reset => "Reset (knob 2 press)".into(),
+            Action::Select => "Select (tap) / Reset (hold)".into(),
+            Action::Reset => "Reset only (knob 2 press)".into(),
             Action::NavUp => "Up (row / browse)".into(),
             Action::NavDown => "Down (row / browse)".into(),
             Action::ValueUp => "Right (value +)".into(),
@@ -293,41 +298,43 @@ impl ControllerMap {
         use Action::*;
         use Element::*;
         let mut navigate: Bindings = vec![
-            // Retro's SNES pad on pads 0-11 (see apps/retro.rs).
+            // Retro's pad, on the buttons that are not face buttons: the
+            // D-pad (pads 0-3), shoulders (8, 9) and Create/Options (10, 11).
+            // The face buttons are the test pads below, so Retro's A/B/X/Y
+            // are no longer on them; learn them in the Controller app.
             (Button(b::UP), Pad(0)),
             (Button(b::DOWN), Pad(1)),
             (Button(b::LEFT), Pad(2)),
             (Button(b::RIGHT), Pad(3)),
-            (Button(b::SOUTH), Pad(4)),
-            (Button(b::EAST), Pad(5)),
-            (Button(b::WEST), Pad(6)),
-            (Button(b::NORTH), Pad(7)),
             (Button(b::L1), Pad(8)),
             (Button(b::R1), Pad(9)),
             (Button(b::SELECT), Pad(10)),
             (Button(b::START), Pad(11)),
-            // Shell controls: left/right browse, up/down edit.
-            (Button(b::LEFT), NavUp),
-            (Button(b::RIGHT), NavDown),
-            (Button(b::UP), ValueUp),
-            (Button(b::DOWN), ValueDown),
-            (Button(b::SOUTH), Select),
-            (Button(b::EAST), F(0)),
-            (Button(b::WEST), F(1)),
-            (Button(b::NORTH), F(2)),
-            (Button(b::L2), F(1)),
-            (Button(b::R2), F(2)),
+            // Face buttons: pads 1, 5, 9 and 13, for quick tests.
+            (Button(b::WEST), Pad(0)),
+            (Button(b::EAST), Pad(4)),
+            (Button(b::SOUTH), Pad(8)),
+            (Button(b::NORTH), Pad(12)),
+            // The device's D-pad: up/down browse, left/right change a value.
+            (Button(b::UP), NavUp),
+            (Button(b::DOWN), NavDown),
+            (Button(b::RIGHT), ValueUp),
+            (Button(b::LEFT), ValueDown),
+            (Button(b::TOUCHPAD), Select),
             (Button(b::L1), Home),
             (Button(b::R1), F(3)),
             (Button(b::START), Home),
             (Button(b::HOME), Home),
-            (Button(b::TOUCHPAD), Home),
-            // Right stick browses: pushing up/right moves down the list
-            // (the direction asked for on the original controller).
+            // F2 and F3 on the stick clicks (the face buttons used to be F1-F3).
+            (Button(b::R3), F(1)),
+            (Button(b::L3), F(2)),
+            // The right stick is the device's joystick, which in a list
+            // moves rows up/down and changes the value left/right. Up is
+            // "down the list", the direction asked for originally.
             (AxisPos(ax::RY), NavDown),
             (AxisNeg(ax::RY), NavUp),
-            (AxisPos(ax::RX), NavDown),
-            (AxisNeg(ax::RX), NavUp),
+            (AxisPos(ax::RX), ValueUp),
+            (AxisNeg(ax::RX), ValueDown),
         ];
         navigate.shrink_to_fit();
         let play: Bindings = vec![
@@ -335,23 +342,20 @@ impl ControllerMap {
             (Button(b::DOWN), NavDown),
             (Button(b::RIGHT), ValueUp),
             (Button(b::LEFT), ValueDown),
-            // Face buttons play the bottom row (pitch ranks 0-3).
-            (Button(b::SOUTH), Pad(12)),
-            (Button(b::EAST), Pad(13)),
-            (Button(b::WEST), Pad(14)),
-            (Button(b::NORTH), Pad(15)),
+            // Face buttons: pads 1, 5, 9 and 13, for quick tests.
+            (Button(b::WEST), Pad(0)),
+            (Button(b::EAST), Pad(4)),
+            (Button(b::SOUTH), Pad(8)),
+            (Button(b::NORTH), Pad(12)),
             (Button(b::L1), L1),
             (Button(b::R1), R1),
-            (AxisPos(ax::L2), HandL),
-            (AxisPos(ax::R2), HandR),
             (Axis(ax::RX), StickX),
             (Axis(ax::RY), StickY),
             (Button(b::R3), StickClick),
-            (Button(b::L3), Select),
+            (Button(b::TOUCHPAD), Select),
             (Button(b::START), F(1)),
             (Button(b::SELECT), F(2)),
             (Button(b::HOME), Home),
-            (Button(b::TOUCHPAD), Home),
         ];
         ControllerMap { navigate, play }
     }
@@ -423,8 +427,22 @@ const PRESS_THRESHOLD: f32 = 0.5;
 /// Analog stick dead zone: sticks rest slightly off-centre.
 const ANALOG_DEADZONE: f32 = 0.08;
 /// Repeat timing for held navigation, matching the on-screen D-pad.
+/// Holding SELECT this long resets instead of selecting.
+const SELECT_HOLD: Duration = Duration::from_millis(500);
 const REPEAT_DELAY: Duration = Duration::from_millis(250);
 const REPEAT_EVERY: Duration = Duration::from_millis(100);
+
+/// How many steps one repeat of a held ◄/► is worth: x1, x5 after 0.75 s,
+/// x20 after 1.75 s (the contract's schedule), so a long hold sweeps a whole
+/// range in about two seconds instead of crawling at 10 steps a second.
+/// Browsing (▲▼) never multiplies: skipping rows would lose your place.
+pub fn hold_multiplier(held: Duration) -> i32 {
+    match held.as_millis() {
+        0..=749 => 1,
+        750..=1749 => 5,
+        _ => 20,
+    }
+}
 
 /// Turns snapshots into Portamax input, tracking press edges and
 /// key-repeat per binding.
@@ -432,6 +450,12 @@ const REPEAT_EVERY: Duration = Duration::from_millis(100);
 pub struct Mapper {
     was_down: Vec<bool>,
     next_repeat: Vec<Option<Instant>>,
+    /// When each binding went down, for the hold multiplier.
+    down_since: Vec<Option<Instant>>,
+    /// When a SELECT binding went down, and whether holding it has
+    /// already fired Reset (so letting go doesn't also "tap").
+    select_since: Vec<Option<Instant>>,
+    select_held: Vec<bool>,
     last_ctx: Option<Context>,
 }
 
@@ -444,6 +468,9 @@ impl Mapper {
             // a button that was already held.
             self.was_down = list.iter().map(|(e, _)| e.amount(snap) > PRESS_THRESHOLD).collect();
             self.next_repeat = vec![None; list.len()];
+            self.down_since = vec![None; list.len()];
+            self.select_since = vec![None; list.len()];
+            self.select_held = vec![false; list.len()];
             self.last_ctx = Some(ctx);
         }
         let mut pads = [false; 16];
@@ -468,8 +495,32 @@ impl Mapper {
                 continue;
             }
             let down = el.amount(snap) > PRESS_THRESHOLD;
-            let edge = down && !self.was_down[i];
+            let was = self.was_down[i];
+            let edge = down && !was;
+            let released = was && !down;
             self.was_down[i] = down;
+            if action == Action::Select {
+                // Like the device's D-pad centre: a tap selects (on release),
+                // holding for half a second resets instead.
+                if edge {
+                    self.select_since[i] = Some(now);
+                    self.select_held[i] = false;
+                } else if down && !self.select_held[i] && self.select_since[i].is_some_and(|t| now.duration_since(t) >= SELECT_HOLD) {
+                    self.select_held[i] = true;
+                    c.set_knob2_press();
+                } else if released {
+                    if !self.select_held[i] && self.select_since[i].is_some() {
+                        c.set_knob1_press();
+                    }
+                    self.select_since[i] = None;
+                }
+            }
+            if edge {
+                self.down_since[i] = Some(now);
+            } else if !down {
+                self.down_since[i] = None;
+            }
+            let held = self.down_since[i].map_or(Duration::ZERO, |t| now.duration_since(t));
             let repeat = if edge {
                 self.next_repeat[i] = Some(now + REPEAT_DELAY);
                 true
@@ -492,7 +543,6 @@ impl Mapper {
                 match action {
                     Action::F(f) => c.set_top(f as usize % 4),
                     Action::Home => c.set_home(),
-                    Action::Select => c.set_knob1_press(),
                     Action::Reset => c.set_knob2_press(),
                     Action::L1 => c.set_shoulder_press(0),
                     Action::R1 => c.set_shoulder_press(1),
@@ -504,8 +554,8 @@ impl Mapper {
                 match action {
                     Action::NavUp => c.add_nav_delta(-1),
                     Action::NavDown => c.add_nav_delta(1),
-                    Action::ValueUp => c.add_nav_x(1),
-                    Action::ValueDown => c.add_nav_x(-1),
+                    Action::ValueUp => c.add_nav_x(hold_multiplier(held)),
+                    Action::ValueDown => c.add_nav_x(-hold_multiplier(held)),
                     _ => {}
                 }
             }
@@ -651,20 +701,108 @@ mod tests {
         s
     }
 
+    fn ms(t: Instant, n: u64) -> Instant {
+        t + Duration::from_millis(n)
+    }
+
     #[test]
-    fn defaults_keep_the_shipped_dualsense_layout() {
+    fn the_dpad_is_the_devices_dpad_in_every_context() {
+        for play in [false, true] {
+            let (m, c, mut mp) = (ControllerMap::defaults(), ControllerState::new(), Mapper::default());
+            c.set_play_surface(play);
+            let t = Instant::now();
+            mp.apply(&m, &Snapshot::default(), &c, t);
+            mp.apply(&m, &press(b::UP), &c, t);
+            assert_eq!(c.take_nav_delta(), -1, "up browses up (play: {play})");
+            mp.apply(&m, &Snapshot::default(), &c, ms(t, 10));
+            mp.apply(&m, &press(b::DOWN), &c, ms(t, 20));
+            assert_eq!(c.take_nav_delta(), 1, "down browses down (play: {play})");
+            mp.apply(&m, &Snapshot::default(), &c, ms(t, 30));
+            mp.apply(&m, &press(b::RIGHT), &c, ms(t, 40));
+            assert_eq!((c.take_nav_x(), c.take_knob2_delta()), (1, 1), "right raises the value (play: {play})");
+            mp.apply(&m, &Snapshot::default(), &c, ms(t, 50));
+            mp.apply(&m, &press(b::LEFT), &c, ms(t, 60));
+            assert_eq!(c.take_nav_x(), -1, "left lowers it (play: {play})");
+        }
+    }
+
+    #[test]
+    fn face_buttons_play_pads_1_5_9_and_13_and_the_triggers_are_dead() {
+        for play in [false, true] {
+            let (m, c, mut mp) = (ControllerMap::defaults(), ControllerState::new(), Mapper::default());
+            c.set_play_surface(play);
+            let t = Instant::now();
+            mp.apply(&m, &Snapshot::default(), &c, t);
+            for (button, pad) in [(b::WEST, 0), (b::EAST, 4), (b::SOUTH, 8), (b::NORTH, 12)] {
+                mp.apply(&m, &press(button), &c, t);
+                for (i, slot) in c.gamepad_grid.iter().enumerate() {
+                    assert_eq!(slot.load(Ordering::Relaxed), i == pad, "button {button} lights only pad {} (play: {play})", pad + 1);
+                }
+                mp.apply(&m, &Snapshot::default(), &c, t);
+            }
+            let mut triggers = Snapshot::default();
+            triggers.buttons[b::L2 as usize] = true;
+            triggers.buttons[b::R2 as usize] = true;
+            triggers.axes[ax::L2 as usize] = 1.0;
+            triggers.axes[ax::R2 as usize] = 1.0;
+            mp.apply(&m, &triggers, &c, t);
+            assert!((0..4).all(|i| !c.take_top(i)), "L2/R2 press no F button (play: {play})");
+            assert_eq!((c.hands[0].get(), c.hands[1].get()), (0.0, 0.0), "and are no hand sensors (play: {play})");
+            assert!(c.gamepad_grid.iter().all(|g| !g.load(Ordering::Relaxed)), "and play no pad (play: {play})");
+        }
+    }
+
+    #[test]
+    fn the_touchpad_is_select_tap_to_select_and_hold_to_reset() {
+        for play in [false, true] {
+            let (m, c, mut mp) = (ControllerMap::defaults(), ControllerState::new(), Mapper::default());
+            c.set_play_surface(play);
+            let t = Instant::now();
+            mp.apply(&m, &Snapshot::default(), &c, t);
+            mp.apply(&m, &press(b::TOUCHPAD), &c, t);
+            assert!(!c.take_knob1_press(), "nothing yet on the way down (play: {play})");
+            mp.apply(&m, &Snapshot::default(), &c, ms(t, 150));
+            assert!(c.take_knob1_press(), "a quick tap selects, on release (play: {play})");
+            assert!(!c.take_knob2_press());
+
+            mp.apply(&m, &press(b::TOUCHPAD), &c, ms(t, 1000));
+            mp.apply(&m, &press(b::TOUCHPAD), &c, ms(t, 1300));
+            assert!(!c.take_knob2_press(), "not yet half a second (play: {play})");
+            mp.apply(&m, &press(b::TOUCHPAD), &c, ms(t, 1520));
+            assert!(c.take_knob2_press(), "held half a second: reset (play: {play})");
+            mp.apply(&m, &Snapshot::default(), &c, ms(t, 1700));
+            assert!(!c.take_knob1_press(), "and letting go afterwards is not also a tap (play: {play})");
+        }
+    }
+
+    #[test]
+    fn home_is_the_ps_button_and_the_touchpad_no_longer_goes_home() {
         let (m, c, mut mp) = (ControllerMap::defaults(), ControllerState::new(), Mapper::default());
         let t = Instant::now();
         mp.apply(&m, &Snapshot::default(), &c, t);
-        mp.apply(&m, &press(b::SOUTH), &c, t);
-        assert!(c.take_knob1_press(), "Cross selects");
-        assert!(c.gamepad_grid[4].load(Ordering::Relaxed), "and is Retro's B on pad 4");
-        mp.apply(&m, &press(b::EAST), &c, t);
-        assert!(c.take_top(0), "Circle is F1");
-        mp.apply(&m, &press(b::LEFT), &c, t);
-        assert_eq!(c.take_nav_delta(), -1, "D-pad left browses up");
-        mp.apply(&m, &press(b::UP), &c, t);
-        assert_eq!(c.take_knob2_delta(), 1, "D-pad up edits");
+        mp.apply(&m, &press(b::HOME), &c, t);
+        assert!(c.take_home(), "the PS button is Home");
+        mp.apply(&m, &Snapshot::default(), &c, ms(t, 20));
+        mp.apply(&m, &press(b::TOUCHPAD), &c, ms(t, 40));
+        mp.apply(&m, &Snapshot::default(), &c, ms(t, 80));
+        assert!(!c.take_home(), "the touchpad is Select now");
+    }
+
+    #[test]
+    fn the_right_stick_is_the_devices_joystick_in_a_list_too() {
+        let (m, c, mut mp) = (ControllerMap::defaults(), ControllerState::new(), Mapper::default());
+        let t = Instant::now();
+        mp.apply(&m, &Snapshot::default(), &c, t);
+        let mut s = Snapshot::default();
+        s.axes[ax::RX as usize] = 1.0;
+        mp.apply(&m, &s, &c, t);
+        assert_eq!(c.take_nav_x(), 1, "right changes the value up");
+        s.axes[ax::RX as usize] = 0.0;
+        mp.apply(&m, &s, &c, ms(t, 20));
+        s.axes[ax::LX as usize] = 1.0;
+        s.axes[ax::LY as usize] = 1.0;
+        mp.apply(&m, &s, &c, ms(t, 40));
+        assert_eq!((c.take_nav_x(), c.take_nav_delta()), (0, 0), "the broken left stick does nothing");
     }
 
     #[test]
@@ -672,12 +810,35 @@ mod tests {
         let (m, c, mut mp) = (ControllerMap::defaults(), ControllerState::new(), Mapper::default());
         let t = Instant::now();
         mp.apply(&m, &Snapshot::default(), &c, t);
-        mp.apply(&m, &press(b::RIGHT), &c, t);
-        mp.apply(&m, &press(b::RIGHT), &c, t + Duration::from_millis(100));
+        mp.apply(&m, &press(b::DOWN), &c, t);
+        mp.apply(&m, &press(b::DOWN), &c, t + Duration::from_millis(100));
         assert_eq!(c.take_nav_delta(), 1, "one step, then a pause");
-        mp.apply(&m, &press(b::RIGHT), &c, t + Duration::from_millis(260));
-        mp.apply(&m, &press(b::RIGHT), &c, t + Duration::from_millis(370));
+        mp.apply(&m, &press(b::DOWN), &c, t + Duration::from_millis(260));
+        mp.apply(&m, &press(b::DOWN), &c, t + Duration::from_millis(370));
         assert_eq!(c.take_nav_delta(), 2, "then repeats");
+    }
+
+    #[test]
+    fn holding_right_sweeps_faster_and_releasing_starts_over() {
+        let (m, c, mut mp) = (ControllerMap::defaults(), ControllerState::new(), Mapper::default());
+        let t = Instant::now();
+        let ms = |n| t + Duration::from_millis(n);
+        mp.apply(&m, &Snapshot::default(), &c, t);
+        let mut total = 0;
+        for n in (0..=2000).step_by(20) {
+            mp.apply(&m, &press(b::RIGHT), &c, ms(n));
+            total += c.take_nav_x();
+        }
+        assert!(total >= 100, "two seconds of hold sweeps a 100-detent range, got {total}");
+        mp.apply(&m, &Snapshot::default(), &c, ms(2100));
+        mp.apply(&m, &press(b::RIGHT), &c, ms(2200));
+        assert_eq!(c.take_nav_x(), 1, "a fresh press is one plain step");
+        let mut nav = 0;
+        for n in (0..=2000).step_by(20) {
+            mp.apply(&m, &press(b::DOWN), &c, ms(3000 + n));
+            nav += c.take_nav_delta().abs();
+        }
+        assert!(nav <= 20, "browsing never multiplies, got {nav}");
     }
 
     #[test]
@@ -688,13 +849,11 @@ mod tests {
         mp.apply(&m, &s, &c, Instant::now());
         s.axes[ax::RX as usize] = 1.0;
         s.axes[ax::RY as usize] = -0.04; // inside the dead zone
-        s.axes[ax::R2 as usize] = 0.7;
         s.buttons[b::NORTH as usize] = true;
         s.buttons[b::R1 as usize] = true;
         mp.apply(&m, &s, &c, Instant::now());
-        assert!((c.stick[0].get() - 1.0).abs() < 1e-5 && c.stick[1].get() == 0.0);
-        assert!((c.hands[1].get() - 0.7).abs() < 1e-5, "R2 pressure is the right hand");
-        assert!(c.gamepad_grid[15].load(Ordering::Relaxed), "Triangle plays the bottom-right pad");
+        assert!((c.stick[0].get() - 1.0).abs() < 1e-5 && c.stick[1].get() == 0.0, "the right stick is the joystick");
+        assert!(c.gamepad_grid[12].load(Ordering::Relaxed), "Triangle plays pad 13");
         assert!(c.shoulders[1].load(Ordering::Relaxed));
         let i = c.play_surface_input(crate::app::Input::default());
         assert!(i.shoulder_press[1], "R1 press reaches the app (menu toggle)");
@@ -707,8 +866,8 @@ mod tests {
         m.learn(Context::Navigate, Action::F(3), Element::Button(b::SOUTH));
         let f4 = m.elements_for(Context::Navigate, Action::F(3));
         assert_eq!(f4, vec![Element::Button(b::SOUTH)], "R1 no longer F4");
-        assert!(m.elements_for(Context::Navigate, Action::Select).is_empty(), "Cross freed from select");
-        assert!(m.elements_for(Context::Navigate, Action::Pad(4)).is_empty(), "and from pad 4");
+        assert!(!m.elements_for(Context::Navigate, Action::Pad(8)).contains(&Element::Button(b::SOUTH)), "Cross freed from pad 9 (L1 still feeds Retro's L there)");
+        assert_eq!(m.elements_for(Context::Navigate, Action::Select), vec![Element::Button(b::TOUCHPAD)], "Select is untouched");
         m.learn(Context::Play, Action::StickY, Element::Axis(ax::LY));
         let back = ControllerMap::from_json(&m.to_json()).unwrap();
         assert_eq!(back, m);

@@ -1,0 +1,13 @@
+id = "soundfont"
+name = "SoundFont"
+category = "instrument"
+description = "Plays your SF2/SF3 banks with TinySoundFont: any General MIDI bank or single instrument."
+audio_outputs = ["SoundFont"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: SoundFont Level",
+    "SoundFont: Level",
+    "SoundFont: Bend",
+    "SoundFont: Pan",
+]
