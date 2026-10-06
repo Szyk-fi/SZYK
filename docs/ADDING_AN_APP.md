@@ -4,85 +4,85 @@ This is the exact, mechanical checklist for turning a new app's code into a
 real, installed one. Read [CLAUDE.md](../CLAUDE.md) first if you haven't —
 it covers the conventions this checklist assumes.
 
-## Why this isn't drag-and-drop
+## How an app gets installed
 
-`registry.rs` maps each app's manifest `id` to real Rust code through a
-compile-time `HashMap` of constructor closures — there's no plugin system,
-no dynamic loading, no `.zip`-and-drop mechanism. That's a deliberate
-architectural choice (see `registry.rs`'s own module doc comment): a
-`libloading`/WASM-style plugin runtime would be real, ongoing engineering
-risk, and it wouldn't carry over to the actual target hardware this whole
-simulator exists to validate (an STM32N6 board, which will load apps some
-other way entirely — almost certainly not a dynamic loader). So every new
-app needs a short, manual wiring step and a recompile. This checklist makes
-that step as close to mechanical as it can be.
+Dropping a file in is the whole job. Nothing central is edited:
+
+- `build.rs` scans `src/apps/` on every build. Each `<id>.rs` (or
+  `<id>/mod.rs`) becomes a module, and every module that exports
+  `pub fn create(&AppContext, &str) -> Box<dyn App>` is added to the
+  generated `FACTORIES` table. A file pulled into another module with
+  `#[path = ...]` or `include!` is that module's private part, not an app.
+- At startup `manifest::discover` reads every `apps/<id>/manifest.toml`
+  (and the SD card's `apps/` folder). `Registry` pairs each manifest with a
+  factory by `module` (default: the id). A manifest with no code is skipped
+  with a warning, so nothing breaks the menu.
+- Everything else comes from the manifest and the shared buses, so an app
+  gets it for free:
+
+| You write in the manifest | The app gets |
+|---|---|
+| `category`, `name`, `description` | a place in the launcher |
+| `audio_outputs = ["Name"]` | a mixer channel, and a pick in every effect's Source row |
+| `notes_in = true` | it appears in every sequencer's "Plays" picker and receives their notes like a MIDI keyboard, on screen or not |
+| `note_outputs = ["Name"]` | its notes can be routed to any instrument (see `NoteRoute` in `src/note_bus.rs`) |
+| `mod_inputs = [...]` | its knobs are patchable from every modulation source before the app has ever been opened |
 
 ## What a tester's agent should hand back
 
-One self-contained `.rs` file implementing the `App` trait (copy
-[`src/apps/template.rs`](../src/apps/template.rs) as the starting point —
-it's real, compiling, tested code, not pseudocode), plus:
+One self-contained `src/apps/<id>.rs` (copy
+[`src/apps/template.rs`](../src/apps/template.rs): real, compiling, tested
+code, not pseudocode) and its `apps/<id>/manifest.toml`, plus:
 
-- The app's chosen `id` (lowercase, `snake_case`, must not collide with an
-  existing one — check `src/registry.rs`'s constructor map) and display
-  `name`.
-- A one-paragraph description of what it does and why (goes in the file's
-  own module doc comment, and ideally in a message alongside the file).
-- Confirmation it builds clean (`cargo build`, zero new warnings) and, if it
-  makes sound, a test proving real audio comes out and stops when expected
-  (see `template.rs`'s own test for the shape this should take).
+- The app's `id` (lowercase `snake_case`, unique) and display `name`.
+- A one-paragraph description of what it does, in the file's module doc
+  comment.
+- Confirmation `cargo build` is clean (no new warnings) and, if it makes
+  sound, a test proving audio comes out and stops when expected (see
+  `template.rs`).
 
-Nothing else is required. Don't touch `registry.rs`, `apps/mod.rs`, or any
-`apps/*.toml` file — that's the integration step below, done once the file
-comes back.
+## Steps
 
-## Integrating it (what you do when a tester sends a file back)
-
-1. **Drop the file in.** Save it as `src/apps/<id>.rs`.
-2. **Declare the module.** Add `pub mod <id>;` to `src/apps/mod.rs` (order
-   doesn't strictly matter — the existing list isn't perfectly
-   alphabetical — but keeping it roughly sorted helps readability).
-3. **Write the manifest.** Create `apps/<id>/manifest.toml`:
+1. **Add `src/apps/<id>.rs`** with a `pub fn create` at the bottom:
+   ```rust
+   pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
+       Box::new(MyApp::new(ctx.try_get()))   // ask ctx for what you need
+   }
+   ```
+   `ctx.get::<T>()` / `ctx.try_get::<T>()` hand you the shared services
+   (`NoteBus`, `AudioBus`, `ModBus`, ...). `ctx.named("sensitivity")` gives
+   the shared Settings values. Look at `turing_machine.rs` for a real one.
+2. **Add `apps/<id>/manifest.toml`:**
    ```toml
    id = "<id>"
    name = "<Display Name>"
+   category = "instrument"   # instrument, effect, sequencer, library, utility, game, kids, ai
+   description = "One sentence."
+   notes_in = true           # if other apps can play it
+   note_outputs = ["<Name>"] # if it sends notes
+   audio_outputs = ["<Name>"] # if it publishes audio
    ```
-   If the app registers modulation inputs (`modbus.register("<Name>:
-   <Param>")`), list them in the manifest too, so every source can patch to
-   them before the app has ever been opened:
-   ```toml
-   mod_inputs = ["<Name>: <Param>", "Mixer: <Name> Level"]
-   ```
-   You don't have to write that list by hand: `PORTAMAX_WRITE_MANIFESTS=1
-   cargo test manifest_contract` fills it in from what the code registers,
-   and plain `cargo test` fails if the two drift apart. Name inputs
-   `"<App>: <Param>"` — the part before `: ` is the app a source's picker
-   files it under.
-4. **Register the constructor** in `src/registry.rs`:
-   - Add the app's type to the big `use crate::apps::{...}` import list near
-     the top of the file.
-   - Add an entry to the `constructors` map, following whichever existing
-     entry most closely matches what your new app's `new()` takes as
-     arguments — `constructors.insert("synth".into(), ...)` is the simplest
-     real example (a `Synth`-style app needing nothing shared with other
-     apps); apps taking `Arc<...>` state shared with other apps (a global
-     cutoff, the audio bus, etc.) look more like the `"plaits"` or `"warps"`
-     entries just below it.
-   - If the display-name lookup near the bottom of the file
-     (`fn ... { let name = match id { ... } }`) is used anywhere your new
-     app needs to show up in, add its `id => "Display Name"` arm there too
-     — check whether this actually matters for your case; several newer
-     apps read their name from the manifest instead and don't need this.
-5. **Build and smoke-test.**
+3. **Fill in `mod_inputs`.** If the app registers modulation inputs
+   (`modbus.register("<Name>: <Param>")`), run
+   `PORTAMAX_WRITE_MANIFESTS=1 cargo test --bin portamax-sim every_manifest_declares`
+   once. It rewrites the list from what the code registers, and a plain
+   `cargo test` fails if the two drift apart. Name inputs `"<App>: <Param>"`.
+4. **Build and test.**
    ```sh
    cargo build
-   cargo test
+   cargo test --bin portamax-sim
    cargo run
    ```
-   Confirm the new app appears in the launcher, its screen draws, its
-   controls respond, and (if it makes sound) audio actually comes out.
-6. **Commit.** One commit per app is fine; mention the tester's name in the
-   commit message if you want the credit trail.
+   The `every_installed_app_*` tests in `src/registry.rs` build every
+   manifest through the real registry, so a missing `create`, a manifest
+   with no code, a duplicate id or a note output that can't be routed fails
+   there, with the app's name.
+5. **Commit.** One commit per app is fine.
+
+Not drag-and-drop in one respect: the code is compiled in, so a new `.rs`
+file needs a rebuild. A data-only instrument (an Atlas patch) needs no code
+or rebuild: a folder with a manifest (`module = "atlas"`, `data = "..."`).
+See `a_cartridge_folder_is_a_new_playable_instrument`.
 
 ## Common ways a handed-back app won't build cleanly
 

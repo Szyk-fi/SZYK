@@ -259,6 +259,64 @@ mod manifest_contract_tests {
         assert!(write || wrong.is_empty(), "manifests out of date (rerun with PORTAMAX_WRITE_MANIFESTS=1):\n{}", wrong.join("\n"));
     }
 
+    /// The drop-in promise, checked for the whole `apps/` folder: every
+    /// manifest has code behind it, ids and names are unique (the buses key
+    /// on names, so two apps sharing one would share a slot), everything a
+    /// manifest offers other apps is really declared, and every app can be
+    /// entered, ticked, drawn and run without panicking or emitting NaN.
+    #[test]
+    fn every_installed_app_is_wired_up_and_runs() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let manifests = crate::manifest::discover(dir);
+        assert!(!manifests.is_empty());
+        let ctx = test_context(Arc::new(ModBus::new()));
+        let notes = ctx.get::<NoteBus>();
+        let registry = Registry::new(ctx);
+
+        let missing: Vec<_> = manifests.iter().filter(|m| !registry.implements(m)).map(|m| format!("{} (module {:?})", m.id, m.module())).collect();
+        assert!(missing.is_empty(), "manifests with no `pub fn create` in src/apps: {missing:?}");
+        let mut seen = HashSet::new();
+        for m in &manifests {
+            assert!(seen.insert(("id", m.id.clone())), "duplicate app id {}", m.id);
+            assert!(seen.insert(("name", m.name.clone())), "duplicate app name {:?} (the buses key on names)", m.name);
+            assert!(!m.category.is_empty() && !m.description.is_empty(), "{}: the launcher needs a category and a description", m.id);
+        }
+
+        let mut apps = registry.build(&manifests);
+        assert_eq!(apps.len(), manifests.len(), "every manifest becomes an app");
+        let instruments = notes.instruments();
+        let sources = notes.sources();
+        for m in &manifests {
+            if m.notes_in {
+                assert!(instruments.iter().any(|(_, n, owner)| n == &m.name && owner == &m.id), "{}: notes_in but not an instrument on the note bus", m.id);
+            }
+            for out in &m.note_outputs {
+                assert!(sources.iter().any(|(n, owner, _)| n == out && owner == &m.id), "{}: note output {out:?} is not declared", m.id);
+            }
+        }
+
+        let engine = crate::audio::new_engine(Arc::new(AtomicF32::new(1.0)));
+        for (_, app) in apps.iter_mut() {
+            if let Some(p) = app.audio_processor() {
+                engine.add(p);
+            }
+        }
+        let mut fb = crate::display::FrameBuffer::new();
+        for (name, app) in apps.iter_mut() {
+            app.on_enter();
+            app.tick(&crate::app::Input::default());
+            app.background_tick();
+            app.draw(&mut fb);
+            let _ = app.slint_rows();
+            let _ = name;
+        }
+        let mut out = [0.0f32; 1024];
+        for _ in 0..4 {
+            engine.process(&mut out, 2, 48_000.0);
+            assert!(out.iter().all(|x| x.is_finite()), "an app produced NaN or infinity");
+        }
+    }
+
     /// The whole point: an app nobody has opened still shows its inputs,
     /// a source can write into them, and that write wakes the app, which
     /// picks up the very handle the source was writing.

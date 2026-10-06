@@ -11,6 +11,7 @@
 
 fn main() {
     generate_app_modules();
+    apply_vendor_patches();
     let eurorack = "vendor/eurorack";
     let bridge = "vendor/bridge";
 
@@ -440,5 +441,26 @@ fn generate_app_modules() {
     let dest = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("apps_gen.rs");
     if std::fs::read_to_string(&dest).ok().as_deref() != Some(out.as_str()) {
         std::fs::write(dest, out).unwrap();
+    }
+}
+
+/// Reapplies the fixes `vendor/PATCHES.md` lists for `vendor/eurorack`, which
+/// is an upstream git submodule: a fix made inside it can't be committed here,
+/// so a fresh checkout would otherwise build the unpatched source. Each patch
+/// is a literal replacement that does nothing once applied (or if upstream
+/// changed that code), so it is safe to run on every build.
+fn apply_vendor_patches() {
+    // tides2/ramp/ramp_extractor.cc: wrapping `expected_phase` below 1 never
+    // terminates when `period` is 0 (it is infinite), which hung Stages' PLL
+    // oscillator. fmodf gives the same value for every finite input.
+    let path = "vendor/eurorack/tides2/ramp/ramp_extractor.cc";
+    let old = "            while (expected_phase >= 1.0f) {\n              expected_phase -= 1.0f;\n            }\n";
+    let new = "            expected_phase = std::isfinite(expected_phase) ? fmodf(expected_phase, 1.0f) : 0.0f;\n";
+    if let Ok(text) = std::fs::read_to_string(path) {
+        if text.contains(old) {
+            let text = text.replace(old, new);
+            let text = if text.contains("#include <cmath>") { text } else { text.replacen("#include <algorithm>", "#include <algorithm>\n#include <cmath>", 1) };
+            std::fs::write(path, text).expect("patching vendor/eurorack");
+        }
     }
 }

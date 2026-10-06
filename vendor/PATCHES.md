@@ -4,7 +4,9 @@ Everything under `vendor/` is used as published, with the fewest changes that
 make it safe to run at any setting. Each change is listed so a re-sync can
 reapply or drop it. (Airwindows has its own list in `airwindows/PATCHES.md`.)
 
-- `eurorack/tides2/ramp/ramp_extractor.cc`: the loop that wraps
+- `eurorack/tides2/ramp/ramp_extractor.cc` (applied by `apply_vendor_patches` in
+  `build.rs`, because `vendor/eurorack` is an upstream submodule and a fix made
+  inside it can't be committed here): the loop that wraps
   `expected_phase` below 1 never terminates when `period` is 0, which makes the
   value infinite. That happens when a gate rises on the first sample after a
   reset, and it hung Stages' PLL oscillator on the audio thread. It is now

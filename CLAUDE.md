@@ -11,7 +11,7 @@ compiling, tested, minimal app. Copy it, don't start from a blank file.
 ## What this project actually is
 
 Portamax is a software simulation of a hardware groovebox/instrument that
-doesn't exist yet (an STM32N6-based device). 63 installed apps — synths,
+doesn't exist yet (an STM32N6-based device). Over a hundred installed apps (one `apps/<id>/manifest.toml` each) — synths,
 effects, sequencers, recorders — share one real-time audio engine, one
 modulation bus, and one control surface (4x4 pad grid, D-pad, two
 knobs/encoders, four top buttons F1-F4). See
@@ -116,8 +116,10 @@ another app's output, that's what a Source row is for.
 
 ## What you don't need to touch
 
-Don't edit `src/registry.rs`, `src/apps/mod.rs`, or create an
-`apps/<id>/manifest.toml` — that's the project owner's integration step
-(see [docs/ADDING_AN_APP.md](docs/ADDING_AN_APP.md)), done once your file
-is handed back. Your job is one self-contained `.rs` file plus a short
-description of what it does.
+Don't edit `src/registry.rs` or `src/apps/mod.rs`: `build.rs` finds your
+module and builds the factory table, and `Registry` pairs it with your
+manifest. An app is two files: `src/apps/<id>.rs` (with a
+`pub fn create(&AppContext, &str)`) and `apps/<id>/manifest.toml`. The
+manifest is what gives it a launcher entry, a mixer channel, a place in
+every "Plays" picker (`notes_in`) and patchable inputs (`mod_inputs`). See
+[docs/ADDING_AN_APP.md](docs/ADDING_AN_APP.md) for the exact steps.

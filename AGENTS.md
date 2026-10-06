@@ -101,6 +101,28 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: drop-in app contract checked, docs and build fixed
+- Branch: claude/dropin-cleanup
+- Changed: docs/ADDING_AN_APP.md (rewritten: nothing central to edit, the
+  manifest table says what each field gives an app), CLAUDE.md and
+  docs/app-independence.md (stale: told agents to leave registry.rs/mod.rs and
+  the manifest to the owner, and quoted old app/test counts), src/registry.rs
+  (new test every_installed_app_is_wired_up_and_runs: every manifest has code,
+  unique ids and names, notes_in/note_outputs really declared, every app can be
+  entered, ticked, drawn and run with finite audio), build.rs
+  (apply_vendor_patches: the Tides ramp-extractor fix from vendor/PATCHES.md,
+  which lives in an upstream submodule and so was missing from fresh checkouts;
+  without it Stages' every_preset_runs_without_blowing_up spins forever),
+  vendor/PATCHES.md.
+- Status: done. The drop-in promise already held (build.rs generates the module
+  list and factory table; the manifest installs the app).
+- Tests: cargo test --bin portamax-sim: 1031 passed, 25 failed. 19 need
+  samples/ (sample_drum, sequencer); 6 in apps::oc ("the firmware was started")
+  fail in this Linux container, not diagnosed.
+- Notes for the other assistant: src/apps/{cascade,synth,analyzer}.rs have a
+  `create` but no manifest (cascade was uninstalled for Dexed on purpose); I
+  left them. On newer GCC the eurorack C++ needs CXXFLAGS="-include cstdio".
+
 ### 2026-10-06: Claude: grid and arc pieces after monome-community/collected
 - Branch: claude/teletype
 - Changed: new bundled norns scripts in assets/norns/code (all new code,
