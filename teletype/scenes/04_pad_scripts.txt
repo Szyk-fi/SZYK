@@ -1,0 +1,112 @@
+PAD SCRIPTS
+Nothing runs on its own: play scripts 1-8 from the SCRIPTS pads.
+1-3 and 5 are notes, 4 is an arpeggio, 6 a random bass,
+7 changes the note length and 8 starts and stops the metro.
+
+#1
+CV 1 N 48; TR.P 1
+
+#2
+CV 1 N 55; TR.P 1
+
+#3
+CV 1 N 60; TR.P 1
+
+#4
+$ 1
+DEL 120: $ 2
+DEL 240: $ 3
+DEL 360: $ 5
+
+#5
+CV 1 N 64; TR.P 1
+
+#6
+CV 2 N RRAND 36 48
+TR.P 2
+
+#7
+TR.TIME 1 RRAND 40 400
+
+#8
+M.ACT EZ M.ACT
+
+#M
+PROB 40: $ 6
+
+#I
+M 250
+TR.TIME 1 150
+TR.TIME 2 400
+M.ACT 0
+
+#P
+0	0	0	0
+1	1	1	1
+0	0	0	0
+63	63	63	63
+
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
+0	0	0	0
