@@ -877,7 +877,7 @@ fn bloom_petal_color(frac: f32) -> Rgb565 {
     PETAL_BANDS[idx.min(PETAL_BANDS.len() - 1)]
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Selection {
     MasterBpm,
     /// Where Bloom's notes go: its own Plaits voices, another app (any
@@ -885,7 +885,11 @@ enum Selection {
     /// CV outputs below are all that matters.
     Plays,
     /// A setting of the instrument Plays points at, listed under Plays.
-    InstSetting(usize),
+    /// Shape `.0` plays its notes on an instrument, none, or its own Plaits voice
+    /// (shown as "Engine" under Pattern).
+    ShapePlays(usize),
+    /// Setting `.1` of the instrument shape `.0` plays, listed under its Engine.
+    InstSetting(usize, usize),
     /// Gate CV: high while a note sounds (Decay sets how long). App, then
     /// input, like every other modulation output.
     GateApp,
@@ -1145,10 +1149,15 @@ pub struct BloomApp {
     /// The shared play view (play_kit.rs).
     kit: PlayKit,
     modbus: Arc<ModBus>,
-    /// Where the notes go (see `Selection::Plays`); the sending end goes
-    /// to the audio thread with the processor.
-    note_route: NoteRoute,
-    note_out: Option<NoteOut>,
+    /// Where each shape's notes go (see `Selection::ShapePlays`); the
+    /// sending ends go to the audio thread with the processor.
+    note_routes: Vec<NoteRoute>,
+    note_outs: Option<Vec<NoteOut>>,
+}
+
+/// One note route per shape: shape 1's is "Bloom Shape 1" on the note bus.
+fn shape_routes(bus: Option<Arc<NoteBus>>) -> (Vec<NoteRoute>, Vec<NoteOut>) {
+    (0..NUM_SHAPES).map(|s| NoteRoute::new(bus.clone(), &format!("Bloom Shape {}", s + 1), "bloom", true)).unzip()
 }
 
 /// Play-view control indexes (see `BloomApp::kit_sel`). Every one acts
@@ -1214,7 +1223,7 @@ impl BloomApp {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos())
             .unwrap_or(24681);
-        let (note_route, note_out) = NoteRoute::new(None, "Bloom", "bloom", true);
+        let (note_routes, note_outs) = shape_routes(None);
         Self {
             params: Arc::new(Params::new(&modbus, &audio_bus, &mixer_bus)),
             sensitivity,
@@ -1227,16 +1236,16 @@ impl BloomApp {
             prev_grid: [false; 16],
             kit: PlayKit::new(kit_config(), !cfg!(test)),
             modbus,
-            note_route,
-            note_out: Some(note_out),
+            note_routes,
+            note_outs: Some(note_outs),
         }
     }
 
     /// Lets Bloom play other apps (see note_bus.rs).
     pub fn with_notes(mut self, bus: Option<Arc<NoteBus>>) -> Self {
-        let (route, out) = NoteRoute::new(bus, "Bloom", "bloom", true);
-        self.note_route = route;
-        self.note_out = Some(out);
+        let (routes, outs) = shape_routes(bus);
+        self.note_routes = routes;
+        self.note_outs = Some(outs);
         self
     }
 
@@ -1317,7 +1326,6 @@ impl BloomApp {
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         if g == 0 {
             let mut v = vec![Selection::Plays];
-            v.extend((0..self.note_route.settings().len()).map(Selection::InstSetting));
             v.extend([Selection::GateApp, Selection::GateInput, Selection::PitchApp, Selection::PitchInput, Selection::MasterBpm, Selection::RandomizeAll]);
             return v;
         }
@@ -1326,7 +1334,17 @@ impl BloomApp {
         // Pattern right after it -- a curated starting shape (dots,
         // outer count/layout, speed curve, offsets) to build from,
         // distinct from Randomize's fully chaotic reassignment below.
-        let mut v = vec![Selection::Running(s), Selection::Pattern(s), Selection::Dots(s), Selection::OuterDots(s)];
+        let mut v = vec![Selection::Running(s), Selection::Pattern(s), Selection::ShapePlays(s)];
+        // The engine: Bloom's own Plaits voice (with its parameters), or an
+        // instrument, whose settings (patch, plugin, ...) then list right here.
+        if self.note_routes[s].route() == crate::note_bus::INTERNAL {
+            v.extend([Selection::Engine(s), Selection::Harmonics(s), Selection::Timbre(s), Selection::Decay(s)]);
+        } else {
+            v.extend((0..self.note_routes[s].settings().len()).map(|i| Selection::InstSetting(s, i)));
+            // Notes sent elsewhere still need a length: Decay sets it.
+            v.push(Selection::Decay(s));
+        }
+        v.extend([Selection::Dots(s), Selection::OuterDots(s)]);
         let num_outer = self.params.shapes[s].outer.load(Ordering::Relaxed).clamp(MIN_OUTER, MAX_OUTER);
         for o in 0..num_outer {
             v.push(Selection::OuterActive(s, o));
@@ -1356,10 +1374,6 @@ impl BloomApp {
         v.push(Selection::Probability(s));
         v.push(Selection::VelMin(s));
         v.push(Selection::VelMax(s));
-        v.push(Selection::Engine(s));
-        v.push(Selection::Harmonics(s));
-        v.push(Selection::Timbre(s));
-        v.push(Selection::Decay(s));
         v.push(Selection::Randomize(s));
         v.push(Selection::Retrigger(s));
         v.push(Selection::RandomStart(s));
@@ -1381,7 +1395,7 @@ impl BloomApp {
 
     fn selection_shape(sel: Selection) -> Option<usize> {
         match sel {
-            Selection::MasterBpm | Selection::RandomizeAll | Selection::Plays | Selection::InstSetting(_) | Selection::GateApp | Selection::GateInput | Selection::PitchApp | Selection::PitchInput => None,
+            Selection::MasterBpm | Selection::RandomizeAll | Selection::Plays | Selection::GateApp | Selection::GateInput | Selection::PitchApp | Selection::PitchInput => None,
             Selection::Running(s)
             | Selection::Pattern(s)
             | Selection::Dots(s)
@@ -1407,6 +1421,8 @@ impl BloomApp {
             | Selection::Probability(s)
             | Selection::VelMin(s)
             | Selection::VelMax(s)
+            | Selection::ShapePlays(s)
+            | Selection::InstSetting(s, _)
             | Selection::Engine(s)
             | Selection::Harmonics(s)
             | Selection::Timbre(s)
@@ -1429,7 +1445,8 @@ impl BloomApp {
         match sel {
             Selection::MasterBpm => "BPM".into(),
             Selection::Plays => "Plays".into(),
-            Selection::InstSetting(i) => format!("  {}", self.note_route.settings().get(i).map_or(String::new(), |s| s.label.clone())),
+            Selection::ShapePlays(_) => "Engine".into(),
+            Selection::InstSetting(sh, i) => format!("  {}", self.note_routes[sh].settings().get(i).map_or(String::new(), |s| s.label.clone())),
             Selection::GateApp => "Gate CV".into(),
             Selection::GateInput => "  Gate input".into(),
             Selection::PitchApp => "Pitch CV".into(),
@@ -1460,10 +1477,10 @@ impl BloomApp {
             Selection::Probability(_) => "Probability".into(),
             Selection::VelMin(_) => "Vel Min".into(),
             Selection::VelMax(_) => "Vel Max".into(),
-            Selection::Engine(_) => "Engine".into(),
+            Selection::Engine(_) => "  Voice".into(),
             Selection::Harmonics(_) => "Harmonics".into(),
             Selection::Timbre(_) => "Timbre".into(),
-            Selection::Decay(_) => "Decay".into(),
+            Selection::Decay(s) => if self.note_routes[s].route() == crate::note_bus::INTERNAL { "  Decay".into() } else { "  Note length".into() },
             Selection::Randomize(_) => "Randomize".into(),
             Selection::Retrigger(_) => "Retrigger".into(),
             Selection::RandomStart(_) => "Random Start".into(),
@@ -1473,8 +1490,12 @@ impl BloomApp {
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
             Selection::MasterBpm => format!("{:.0}", self.params.master_bpm.get()),
-            Selection::Plays => self.note_route.label(),
-            Selection::InstSetting(i) => self.note_route.settings().get(i).map_or(String::new(), |s| s.value.clone()),
+            Selection::Plays => {
+                let first = self.note_routes[0].route();
+                if self.note_routes.iter().all(|r| r.route() == first) { self.note_routes[0].label() } else { "mixed (per shape)".into() }
+            }
+            Selection::ShapePlays(s) => self.note_routes[s].label(),
+            Selection::InstSetting(sh, i) => self.note_routes[sh].settings().get(i).map_or(String::new(), |s| s.value.clone()),
             Selection::GateApp => crate::modbus::Patch::app_label(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed)),
             Selection::GateInput => crate::modbus::Patch::input_label(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed)),
             Selection::PitchApp => crate::modbus::Patch::app_label(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed)),
@@ -1565,8 +1586,16 @@ impl BloomApp {
         let sensitivity = self.sensitivity.get();
         let step = delta.signum();
         match sel {
-            Selection::Plays => self.note_route.step(step),
-            Selection::InstSetting(i) => self.note_route.adjust(i, step),
+            Selection::Plays => {
+                // Every shape plays the same next thing.
+                self.note_routes[0].step(step);
+                let next = self.note_routes[0].route();
+                for r in &self.note_routes[1..] {
+                    r.set(next);
+                }
+            }
+            Selection::ShapePlays(s) => self.note_routes[s].step(step),
+            Selection::InstSetting(sh, i) => self.note_routes[sh].adjust(i, step),
             Selection::GateApp => self.params.gate_cv.store(crate::modbus::Patch::step_app(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::GateInput => self.params.gate_cv.store(crate::modbus::Patch::step_input(&self.modbus, self.params.gate_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
             Selection::PitchApp => self.params.pitch_cv.store(crate::modbus::Patch::step_app(&self.modbus, self.params.pitch_cv.load(Ordering::Relaxed), step), Ordering::Relaxed),
@@ -1689,8 +1718,9 @@ impl BloomApp {
     fn reset(&mut self, sel: Selection) {
         match sel {
             Selection::MasterBpm => self.params.master_bpm.set(DEFAULT_BPM),
-            Selection::Plays => self.note_route.reset(),
-            Selection::InstSetting(_) => {}
+            Selection::Plays => self.note_routes.iter().for_each(|r| r.reset()),
+            Selection::ShapePlays(s) => self.note_routes[s].reset(),
+            Selection::InstSetting(..) => {}
             Selection::GateApp | Selection::GateInput => self.params.gate_cv.store(0, Ordering::Relaxed),
             Selection::PitchApp | Selection::PitchInput => self.params.pitch_cv.store(0, Ordering::Relaxed),
             Selection::Pattern(s) => self.apply_pattern(s, 0),
@@ -2225,7 +2255,10 @@ impl App for BloomApp {
             params: Arc::clone(&self.params),
             shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)),
             mono_buf: Vec::new(),
-            notes: self.note_out.take().unwrap_or_else(NoteOut::detached),
+            notes: {
+                let mut outs = self.note_outs.take().unwrap_or_default().into_iter();
+                std::array::from_fn(|_| outs.next().unwrap_or_else(NoteOut::detached))
+            },
             modbus: Arc::clone(&self.modbus),
             gate_left: 0.0,
             pitch: 0.0,
@@ -2446,7 +2479,8 @@ struct BloomProcessor {
     params: Arc<Params>,
     shapes: [ShapeRuntime; NUM_SHAPES],
     mono_buf: Vec<f32>,
-    notes: NoteOut,
+    /// One sending end per shape.
+    notes: [NoteOut; NUM_SHAPES],
     modbus: Arc<ModBus>,
     /// Seconds the Gate CV stays high.
     gate_left: f32,
@@ -2565,10 +2599,10 @@ impl AudioProcessor for BloomProcessor {
                             let velocity = vmin + rt.next_rand01() * (vmax - vmin);
                             // Own voices, another app, or nothing but the CVs.
                             let gate_s = 0.05 + sp.decay.get() * 0.95;
-                            if self.notes.internal() {
+                            if self.notes[s].internal() {
                                 rt.trigger_note(note, velocity);
-                            } else if self.notes.external() {
-                                self.notes.trigger(note.clamp(0.0, 127.0) as u8, (velocity * 127.0).clamp(1.0, 127.0) as u8, (gate_s * sample_rate) as u32);
+                            } else if self.notes[s].external() {
+                                self.notes[s].trigger(note.clamp(0.0, 127.0) as u8, (velocity * 127.0).clamp(1.0, 127.0) as u8, (gate_s * sample_rate) as u32);
                             }
                             self.gate_left = self.gate_left.max(gate_s);
                             self.pitch = (note / 127.0).clamp(0.0, 1.0);
@@ -2623,7 +2657,9 @@ impl AudioProcessor for BloomProcessor {
         }
 
         // Notes sent elsewhere end on time; the CVs follow the last note.
-        self.notes.advance(frames as u32);
+        for n in self.notes.iter_mut() {
+            n.advance(frames as u32);
+        }
         let gate = if self.gate_left > 0.0 { 1.0 } else { 0.0 };
         self.gate_left = (self.gate_left - dt).max(0.0);
         for (route, v) in [(self.params.gate_cv.load(Ordering::Relaxed), gate), (self.params.pitch_cv.load(Ordering::Relaxed), self.pitch)] {
@@ -2670,7 +2706,7 @@ mod tests {
         params.shapes[0].running.store(true, Ordering::Relaxed);
         params.shapes[0].speed_hz.set(2.0); // fast, so the test doesn't need many blocks
 
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
 
         let dot0_start = params.shapes[0].dot_phases[0].get();
         let gen_start = proc.shapes[0].voice_gen;
@@ -2773,7 +2809,7 @@ mod tests {
             params.shapes[s].vel_max.set(1.0);
         }
 
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
 
         for s in 0..NUM_SHAPES {
             for _ in 0..NUM_VOICES {
@@ -2920,7 +2956,7 @@ mod tests {
             params.shapes[0].running.store(true, Ordering::Relaxed);
             params.shapes[0].speed_hz.set(4.0);
             params.shapes[0].octave_transpose.store(octave_transpose_index, Ordering::Relaxed);
-            let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+            let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
             let mut buffer = vec![0.0f32; 512 * 2];
             for _ in 0..400 {
                 proc.process(&mut buffer, 2, 48000.0);
@@ -2956,7 +2992,7 @@ mod tests {
         params.shapes[0].octave_range.store(MAX_OCTAVE_RANGE, Ordering::Relaxed); // wide native range
         params.shapes[0].min_note.store(60, Ordering::Relaxed);
         params.shapes[0].max_note.store(61, Ordering::Relaxed); // deliberately narrow
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
 
         let mut buffer = vec![0.0f32; 512 * 2];
         let mut saw_a_trigger = false;
@@ -2993,7 +3029,7 @@ mod tests {
         params.shapes[0].outer.store(2, Ordering::Relaxed);
         params.shapes[0].outer_octave[0].store(0, Ordering::Relaxed);
         params.shapes[0].outer_octave[1].store(2, Ordering::Relaxed); // +2 octaves = +24 semitones
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
 
         let mut notes_by_outer: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
         let mut buffer = vec![0.0f32; 512 * 2];
@@ -3194,7 +3230,7 @@ mod tests {
     #[test]
     fn every_pattern_applies_and_runs_without_panicking() {
         let mut app = new_app();
-        let mut proc = BloomProcessor { params: Arc::clone(&app.params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: NoteOut::detached(), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&app.params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
         let mut buffer = vec![0.0f32; 128 * 2];
         for idx in 0..PATTERN_PRESETS.len() {
             app.apply_pattern(0, idx);
@@ -3285,6 +3321,36 @@ mod tests {
         app.edit(Selection::MinNote(0), 1);
         assert_eq!(app.params.shapes[0].min_note.load(Ordering::Relaxed), 52);
         assert_eq!(app.params.shapes[0].max_note.load(Ordering::Relaxed), 61, "Max must follow Min by the same +1 while Link is on");
+    }
+
+    /// Each shape picks its own engine right under Pattern: its own Plaits
+    /// voice (with the voice's parameters), nothing, or any instrument, whose
+    /// own settings then list there. The Plaits rows are gone from the bottom.
+    #[test]
+    fn each_shape_picks_its_engine_under_pattern() {
+        let bus = Arc::new(NoteBus::new());
+        let voltage = bus.declare_instrument("voltage", "Voltage").unwrap();
+        let mut app = new_app().with_notes(Some(Arc::clone(&bus)));
+        let leaves = |app: &BloomApp, s: usize| app.group_leaves(s + 1);
+        let l = leaves(&app, 0);
+        let pos = |v: &[Selection], x: Selection| v.iter().position(|y| *y == x);
+        assert_eq!(&l[..3], &[Selection::Running(0), Selection::Pattern(0), Selection::ShapePlays(0)], "Engine sits right under Pattern");
+        assert_eq!(&l[3..7], &[Selection::Engine(0), Selection::Harmonics(0), Selection::Timbre(0), Selection::Decay(0)], "its own voice and parameters follow");
+        assert!(pos(&l, Selection::Engine(0)) < pos(&l, Selection::Dots(0)), "the engine is not at the bottom any more");
+        assert_eq!(l.iter().filter(|x| **x == Selection::Engine(0)).count(), 1);
+        // Shape 2 plays Voltage: the voice rows give way to the instrument's.
+        app.note_routes[1].set(voltage);
+        let l = leaves(&app, 1);
+        assert_eq!(&l[..3], &[Selection::Running(1), Selection::Pattern(1), Selection::ShapePlays(1)]);
+        assert!(!l.contains(&Selection::Engine(1)) && !l.contains(&Selection::Harmonics(1)), "no Plaits rows for an instrument");
+        assert!(l.contains(&Selection::Decay(1)), "the note length stays");
+        assert_eq!(app.leaf_value(Selection::ShapePlays(1)), "Voltage");
+        assert_eq!(app.leaf_value(Selection::ShapePlays(0)), "Own sound", "shape 1 is untouched");
+        assert_eq!(app.leaf_value(Selection::Plays), "mixed (per shape)");
+        // The top Plays row sets every shape at once.
+        app.edit(Selection::Plays, 1);
+        let first = app.note_routes[0].route();
+        assert!(app.note_routes.iter().all(|r| r.route() == first));
     }
 }
 

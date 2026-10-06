@@ -375,10 +375,13 @@ mod manifest_contract_tests {
             engine.add(app.audio_processor().unwrap());
         }
         let voltage = notes.instrument_index("Voltage").expect("Voltage is declared as an instrument");
-        let bloom_route = notes.sources().into_iter().find(|(n, _, _)| n == "Bloom").expect("Bloom's output is declared").2;
+        let bloom_routes: Vec<_> = notes.sources().into_iter().filter(|(n, _, _)| n.starts_with("Bloom Shape ")).map(|(_, _, r)| r).collect();
+        assert_eq!(bloom_routes.len(), 8, "each of Bloom's eight shapes has its own output");
         let bloom = apps.iter().position(|(n, _)| n == "Bloom").unwrap();
         apps[bloom].1.on_enter();
-        bloom_route.store(voltage, std::sync::atomic::Ordering::Relaxed);
+        for r in &bloom_routes {
+            r.store(voltage, std::sync::atomic::Ordering::Relaxed);
+        }
         apps[bloom].1.toggle_running();
         let mut heard = 0.0f32;
         let mut voltage_woke = false;

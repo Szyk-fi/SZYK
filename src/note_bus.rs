@@ -411,6 +411,12 @@ impl NoteRoute {
         self.route.store(if self.has_internal { INTERNAL } else { NONE }, Ordering::Relaxed);
     }
 
+    /// Points the route at `route` as it was read from another source's `route()`
+    /// (for "set every shape the same").
+    pub fn set(&self, route: usize) {
+        self.route.store(route, Ordering::Relaxed);
+    }
+
     /// Sends somewhere other than its own voices.
     pub fn external(&self) -> bool {
         self.route() < MAX_INSTRUMENTS

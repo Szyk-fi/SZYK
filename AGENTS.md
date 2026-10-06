@@ -101,6 +101,23 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: Bloom: each shape picks its own engine
+- Branch: claude/picker-and-cleanup
+- Changed: src/apps/bloom.rs, apps/bloom/manifest.toml, src/note_bus.rs
+  (NoteRoute::set), src/registry.rs (test). Bloom had one note route for all
+  eight shapes and a Plaits engine at the bottom of every shape. Now each shape
+  has its own route ("Bloom Shape 1".."8" on the note bus) and an Engine row
+  right under Pattern: Own sound (the Plaits voice, with its Voice/Harmonics/
+  Timbre/Decay rows listed under it), None, or any instrument, whose own
+  settings (patch, plugin...) list there through the instrument-settings
+  bridge; for an instrument the Plaits rows give way to its settings and Decay
+  becomes the note length. The top-level Plays row sets every shape at once.
+- Status: done. Not built: a "now playing" overview app.
+- Tests: each_shape_picks_its_engine_under_pattern; full suite: only the 25
+  environmental failures.
+- Notes for the other assistant: anything that named the note source "Bloom"
+  now needs "Bloom Shape N".
+
 ### 2026-10-06: Claude: Grid and Teletype: the grid is playable and says how
 - Branch: claude/picker-and-cleanup
 - Why it was dark: an app joined the grid only when it was built, and apps are
