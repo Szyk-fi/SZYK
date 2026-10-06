@@ -8,6 +8,7 @@
 
 use super::engine::{Cmd, Queue};
 use super::screen::Screen;
+use crate::apps::arc_kit::{self, ArcHub, Rings};
 use crate::apps::grid_kit::{Grid, Leds};
 use mlua::{Function, Lua, MultiValue, Table, Value, Variadic};
 use std::cell::RefCell;
@@ -63,20 +64,39 @@ impl HostOut {
 /// `leds` and `g:refresh()` shows it; presses come back through
 /// `_px_grid_key`. `g:rotation(r)` turns the script's view a quarter turn
 /// at a time, so a script made for a vertical grid still fits.
+///
+/// The arc the same way: vport 1 is Portamax's arc, `a:refresh()` shows
+/// `rings`, turns and pushes come back through `_px_arc_delta` / `_px_arc_key`.
 pub struct GridHost {
     grid: Arc<Grid>,
     leds: Leds,
     rot: u8,
     connected: bool,
+    arc: Arc<ArcHub>,
+    rings: Rings,
+    arc_connected: bool,
 }
 
 /// The name the grid knows a running script by.
 pub const GRID_CLIENT: &str = "Norns";
 
 impl GridHost {
-    pub fn new(grid: Arc<Grid>) -> GridHost {
+    pub fn new(grid: Arc<Grid>, arc: Arc<ArcHub>) -> GridHost {
         let (rows, cols) = grid.size();
-        GridHost { grid, leds: Leds::new(rows, cols), rot: 0, connected: false }
+        GridHost { grid, leds: Leds::new(rows, cols), rot: 0, connected: false, arc, rings: [[0; arc_kit::LEDS]; arc_kit::MAX_ENCODERS], arc_connected: false }
+    }
+
+    /// A 1-based ring number -> its index, if the arc has it.
+    fn ring(&self, n: f64) -> Option<usize> {
+        let i = n as i64 - 1;
+        (0..self.arc.encoders() as i64).contains(&i).then_some(i as usize)
+    }
+
+    fn arc_name(&self) -> String {
+        match self.arc.device() {
+            Some(d) => format!("{} {}", d.kind, d.id),
+            None => "portamax arc".into(),
+        }
     }
 
     /// (columns, rows) as the script sees them.
@@ -243,6 +263,50 @@ pub fn setup(lua: &Lua, script: &Path, code_dir: &Path, queue: Arc<Queue>, out: 
             Ok((c, r))
         })?)?;
     }
+    // arc: _px.arc_* back the vport methods in prelude.lua.
+    {
+        let gh = Rc::clone(&grid);
+        px.set("arc_connect", lua.create_function(move |_, ()| {
+            let mut g = gh.borrow_mut();
+            g.arc_connected = true;
+            g.arc.register(GRID_CLIENT);
+            g.arc.set_focus(GRID_CLIENT);
+            Ok((g.arc.encoders(), g.arc_name()))
+        })?)?;
+        let gh = Rc::clone(&grid);
+        px.set("arc_led", lua.create_function(move |_, (n, x, l): (f64, f64, Option<f64>)| {
+            let mut g = gh.borrow_mut();
+            if let Some(r) = g.ring(n) {
+                // LED 1 is at the top; 65 is 1 again, as on norns.
+                let i = (x as i64 - 1).rem_euclid(arc_kit::LEDS as i64) as usize;
+                g.rings[r][i] = l.unwrap_or(0.0).clamp(0.0, 15.0) as u8;
+            }
+            Ok(())
+        })?)?;
+        let gh = Rc::clone(&grid);
+        px.set("arc_all", lua.create_function(move |_, l: Option<f64>| {
+            let mut g = gh.borrow_mut();
+            let l = l.unwrap_or(0.0).clamp(0.0, 15.0) as u8;
+            g.rings = [[l; arc_kit::LEDS]; arc_kit::MAX_ENCODERS];
+            Ok(())
+        })?)?;
+        let gh = Rc::clone(&grid);
+        px.set("arc_segment", lua.create_function(move |_, (n, a1, a2, l): (f64, f64, f64, Option<f64>)| {
+            let mut g = gh.borrow_mut();
+            if let Some(r) = g.ring(n) {
+                arc_kit::draw::segment(&mut g.rings[r], a1, a2, l.unwrap_or(0.0).clamp(0.0, 15.0) as u8);
+            }
+            Ok(())
+        })?)?;
+        let gh = Rc::clone(&grid);
+        px.set("arc_refresh", lua.create_function(move |_, ()| {
+            let g = gh.borrow();
+            if g.arc_connected {
+                g.arc.show(GRID_CLIENT, &g.rings);
+            }
+            Ok(())
+        })?)?;
+    }
     let dirs = lua.create_table()?;
     let script_dir = script.parent().unwrap_or(Path::new(".")).to_path_buf();
     for (i, d) in [script_dir.clone(), code_dir.to_path_buf(), code_dir.parent().unwrap_or(code_dir).to_path_buf()].iter().enumerate() {
@@ -374,10 +438,10 @@ fn params_rows(lua: &Lua) -> mlua::Result<Vec<(String, String, String, usize)>> 
 }
 
 /// Runs a script until `Quit` (or the UI goes away), then its `cleanup`.
-pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex<HostOut>>, rx: Receiver<Event>, grid: Arc<Grid>) {
+pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex<HostOut>>, rx: Receiver<Event>, grid: Arc<Grid>, arc: Arc<ArcHub>) {
     let lua = Lua::new();
     let screen = Rc::new(RefCell::new(Screen::new()));
-    let gh = Rc::new(RefCell::new(GridHost::new(grid)));
+    let gh = Rc::new(RefCell::new(GridHost::new(grid, arc)));
     queue.push(Cmd::Reset);
     {
         let mut o = out.lock().unwrap();
@@ -457,6 +521,9 @@ pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex
         if let Err(e) = grid_turn(&lua, &gh) {
             fail(e);
         }
+        if let Err(e) = arc_turn(&lua, &gh) {
+            fail(e);
+        }
         if let Some(t) = &tick {
             if let Err(e) = t.call::<()>(start.elapsed().as_secs_f64()) {
                 fail(e);
@@ -476,6 +543,9 @@ pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex
         let g = gh.borrow();
         if g.connected {
             g.grid.show(GRID_CLIENT, &Leds::new(g.leds.rows, g.leds.cols));
+        }
+        if g.arc_connected {
+            g.arc.show(GRID_CLIENT, &[[0; arc_kit::LEDS]; arc_kit::MAX_ENCODERS]);
         }
     }
     queue.push(Cmd::Reset);
@@ -511,6 +581,24 @@ fn grid_turn(lua: &Lua, gh: &Rc<RefCell<GridHost>>) -> mlua::Result<()> {
     Ok(())
 }
 
+/// Arc turns into the script's `a.delta`, pushes into `a.key` (1-based).
+fn arc_turn(lua: &Lua, gh: &Rc<RefCell<GridHost>>) -> mlua::Result<()> {
+    let events = {
+        let g = gh.borrow();
+        if !g.arc_connected {
+            return Ok(());
+        }
+        g.arc.events(GRID_CLIENT)
+    };
+    for e in events {
+        match e {
+            arc_kit::Event::Delta { n, d } => lua.globals().get::<Function>("_px_arc_delta")?.call::<()>((n + 1, d))?,
+            arc_kit::Event::Key { n, down } => lua.globals().get::<Function>("_px_arc_key")?.call::<()>((n + 1, down as i32))?,
+        }
+    }
+    Ok(())
+}
+
 fn wait_for_quit(rx: &Receiver<Event>) {
     while let Ok(e) = rx.recv() {
         if matches!(e, Event::Quit) {
@@ -527,7 +615,7 @@ mod tests {
     fn a_rotated_script_maps_every_key_and_led_both_ways() {
         let grid = Arc::new(Grid::new());
         grid.set_size(8, 16);
-        let mut gh = GridHost::new(grid);
+        let mut gh = GridHost::new(grid, Arc::new(ArcHub::new()));
         for rot in 0..4u8 {
             gh.rot = rot;
             let (c, r) = gh.dims();

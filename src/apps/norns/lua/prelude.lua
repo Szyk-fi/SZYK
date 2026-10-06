@@ -618,20 +618,40 @@ function _px_grid_resize(cols, rows)
   end
 end
 
--- No arc is attached: an unattached norns vport (drawing goes nowhere, no
--- turns arrive).
-local function device(rows, cols)
-  local d = { rows = rows, cols = cols, name = "none", device = nil }
-  function d:all() end
-  function d:led() end
-  function d:segment() end
-  function d:refresh() end
-  function d:rotation() end
-  function d:intensity() end
-  return d
+-- arc: port 1 is Portamax's arc (the Arc app on screen, and a real monome
+-- arc when one is plugged in); ports 2-4 are empty. Rings and LEDs count
+-- from 1 (LED 1 at the top, going clockwise), levels 0-15, segment angles
+-- in radians from the top. The host keeps the rings and calls
+-- _px_arc_delta / _px_arc_key.
+arc = { vports = {}, devices = {} }
+local function arc_vport(i)
+  local v = { name = "none", device = nil, port = i, delta = nil, key = nil }
+  function v:led(ring, x, val) if self.device then _px.arc_led(ring, x, val) end end
+  function v:all(val) if self.device then _px.arc_all(val) end end
+  function v:segment(ring, from, to, level) if self.device then _px.arc_segment(ring, from, to, level) end end
+  function v:refresh() if self.device then _px.arc_refresh() end end
+  function v:intensity() end
+  return v
 end
-arc = { vports = {} }
-function arc.connect() return device(0, 0) end
+for i = 1, 4 do arc.vports[i] = arc_vport(i) end
+function arc.connect(n)
+  local v = arc.vports[n or 1] or arc.vports[1]
+  if v.port == 1 and not v.device then
+    local encoders, name = _px.arc_connect()
+    local dev = { id = 1, serial = "portamax", name = name, port = 1, encoders = encoders }
+    v.device, v.name = dev, name
+    arc.devices[1] = dev
+  end
+  return v
+end
+function _px_arc_delta(n, d)
+  local v = arc.vports[1]
+  if v.delta then v.delta(n, d) end
+end
+function _px_arc_key(n, z)
+  local v = arc.vports[1]
+  if v.key then v.key(n, z) end
+end
 
 -- crow: absorbs anything (no crow is attached)
 local function sink()

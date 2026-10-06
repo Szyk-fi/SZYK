@@ -362,15 +362,16 @@ impl Grid {
 }
 
 /// The one grid. Opening it the first time also starts looking for a real
-/// grid, through serialosc and on the USB serial ports.
+/// grid (and arc, arc_kit.rs), through serialosc and on the USB serial ports.
 #[cfg(not(test))]
 pub fn grid() -> Arc<Grid> {
     static GRID: std::sync::OnceLock<Arc<Grid>> = std::sync::OnceLock::new();
     Arc::clone(GRID.get_or_init(|| {
         let g = Arc::new(Grid::new());
-        serialosc::start(Arc::clone(&g));
+        let arc = super::arc_kit::hub();
+        serialosc::start(Arc::clone(&g), Arc::clone(&arc));
         #[cfg(unix)]
-        serial::start(Arc::clone(&g));
+        serial::start(Arc::clone(&g), arc);
         g
     }))
 }
@@ -474,6 +475,7 @@ pub mod osc {
 pub mod serialosc {
     use super::osc::{self, Arg};
     use super::*;
+    use crate::apps::arc_kit::{self, ArcHub};
 
     /// serialosc's discovery port.
     #[cfg_attr(test, allow(dead_code))] // tests talk to a stand-in instead
@@ -495,9 +497,9 @@ pub mod serialosc {
     }
 
     #[cfg_attr(test, allow(dead_code))] // tests never go looking for hardware
-    pub fn start(grid: Arc<Grid>) {
+    pub fn start(grid: Arc<Grid>, arc: Arc<ArcHub>) {
         let spawned = std::thread::Builder::new().name("serialosc".into()).spawn(move || {
-            let Ok(mut c) = Client::new(grid, SocketAddr::from(([127, 0, 0, 1], PORT))) else { return };
+            let Ok(mut c) = Client::new(grid, arc, SocketAddr::from(([127, 0, 0, 1], PORT))) else { return };
             loop {
                 c.poll();
             }
@@ -521,8 +523,14 @@ pub mod serialosc {
         }
     }
 
+    /// An arc's encoder count from the name serialosc gives it.
+    fn encoders_for(kind: &str) -> usize {
+        if kind.contains('2') { 2 } else { 4 }
+    }
+
     pub struct Client {
         grid: Arc<Grid>,
+        arc: Arc<ArcHub>,
         sock: UdpSocket,
         serialosc: SocketAddr,
         dev: Option<SocketAddr>,
@@ -530,13 +538,31 @@ pub mod serialosc {
         asked: Option<Instant>,
         sent_gen: u64,
         sent_at: Instant,
+        arc_dev: Option<SocketAddr>,
+        arc_id: Option<String>,
+        arc_sent_gen: u64,
+        arc_sent_at: Instant,
     }
 
     impl Client {
-        pub fn new(grid: Arc<Grid>, serialosc: SocketAddr) -> std::io::Result<Client> {
+        pub fn new(grid: Arc<Grid>, arc: Arc<ArcHub>, serialosc: SocketAddr) -> std::io::Result<Client> {
             let sock = UdpSocket::bind((HOST, 0))?;
             sock.set_read_timeout(Some(Duration::from_millis(5)))?;
-            Ok(Client { grid, sock, serialosc, dev: None, dev_id: None, asked: None, sent_gen: u64::MAX, sent_at: Instant::now() })
+            Ok(Client {
+                grid,
+                arc,
+                sock,
+                serialosc,
+                dev: None,
+                dev_id: None,
+                asked: None,
+                sent_gen: u64::MAX,
+                sent_at: Instant::now(),
+                arc_dev: None,
+                arc_id: None,
+                arc_sent_gen: u64::MAX,
+                arc_sent_at: Instant::now(),
+            })
         }
 
         pub fn port(&self) -> u16 {
@@ -558,10 +584,10 @@ pub mod serialosc {
             self.send(self.serialosc, "/serialosc/notify", &self.me());
         }
 
-        /// One turn: ask for a grid if there isn't one, take in one message
-        /// (waiting up to 5 ms), and send the LEDs if they changed.
+        /// One turn: ask for a grid and an arc if either is missing, take in
+        /// one message (waiting up to 5 ms), and send the LEDs if they changed.
         pub fn poll(&mut self) {
-            if self.dev.is_none() && self.asked.map_or(true, |t| t.elapsed() >= ASK_EVERY) {
+            if (self.dev.is_none() || self.arc_dev.is_none()) && self.asked.map_or(true, |t| t.elapsed() >= ASK_EVERY) {
                 self.send(self.serialosc, "/serialosc/list", &self.me());
                 self.notify();
                 self.asked = Some(Instant::now());
@@ -573,6 +599,7 @@ pub mod serialosc {
                 }
             }
             self.leds();
+            self.rings();
         }
 
         fn handle(&mut self, addr: &str, args: &[Arg]) {
@@ -581,9 +608,13 @@ pub mod serialosc {
             }
             match (addr, args) {
                 ("/serialosc/device", [Arg::S(id), Arg::S(kind), Arg::I(port), ..]) => {
-                    // The first grid wins (one opened over USB serial too);
-                    // an arc isn't a grid.
-                    if self.dev.is_none() && self.grid.device().is_none() && !kind.to_ascii_lowercase().contains("arc") {
+                    // The first grid and the first arc win (one opened over
+                    // USB serial too).
+                    if kind.to_ascii_lowercase().contains("arc") {
+                        if self.arc_dev.is_none() && self.arc.device().is_none() {
+                            self.attach_arc(id, kind, *port);
+                        }
+                    } else if self.dev.is_none() && self.grid.device().is_none() {
                         self.attach(id, kind, *port);
                     }
                 }
@@ -596,6 +627,11 @@ pub mod serialosc {
                         self.dev = None;
                         self.dev_id = None;
                         self.grid.set_device(None);
+                    }
+                    if self.arc_id.as_deref() == Some(id.as_str()) {
+                        self.arc_dev = None;
+                        self.arc_id = None;
+                        self.arc.set_device(None);
                     }
                     self.asked = None;
                     self.notify();
@@ -610,6 +646,16 @@ pub mod serialosc {
                 (a, [Arg::I(x), Arg::I(y), Arg::I(s), ..]) if a.strip_prefix(PREFIX) == Some("/grid/key") => {
                     if *x >= 0 && *y >= 0 {
                         self.grid.device_press(*x as usize, *y as usize, *s != 0);
+                    }
+                }
+                (a, [Arg::I(n), Arg::I(d), ..]) if a.strip_prefix(PREFIX) == Some("/enc/delta") => {
+                    if *n >= 0 {
+                        self.arc.turn(*n as usize, *d);
+                    }
+                }
+                (a, [Arg::I(n), Arg::I(s), ..]) if a.strip_prefix(PREFIX) == Some("/enc/key") => {
+                    if *n >= 0 {
+                        self.arc.key(*n as usize, *s != 0);
                     }
                 }
                 _ => {}
@@ -628,6 +674,39 @@ pub mod serialosc {
             self.dev_id = Some(id.to_string());
             self.grid.set_device(Some(Device { id: id.into(), kind: kind.into(), rows, cols }));
             self.sent_gen = u64::MAX;
+        }
+
+        fn attach_arc(&mut self, id: &str, kind: &str, port: i32) {
+            let Ok(port) = u16::try_from(port) else { return };
+            let dev = SocketAddr::from(([127, 0, 0, 1], port));
+            self.send(dev, "/sys/port", &[Arg::I(self.port() as i32)]);
+            self.send(dev, "/sys/host", &[Arg::S(HOST.into())]);
+            self.send(dev, "/sys/prefix", &[Arg::S(PREFIX.into())]);
+            self.arc_dev = Some(dev);
+            self.arc_id = Some(id.to_string());
+            self.arc.set_device(Some(arc_kit::Device { id: id.into(), kind: kind.into(), encoders: encoders_for(kind) }));
+            self.arc_sent_gen = u64::MAX;
+        }
+
+        /// The rings, each as one `/ring/map`.
+        fn rings(&mut self) {
+            let Some(dev) = self.arc_dev else { return };
+            if self.arc_sent_at.elapsed() < LED_EVERY {
+                return;
+            }
+            let Some((n, rings, gen)) = self.arc.hardware_frame() else { return };
+            if gen == self.arc_sent_gen {
+                return;
+            }
+            let addr = format!("{PREFIX}/ring/map");
+            for (k, ring) in rings.iter().enumerate().take(n) {
+                let mut args = Vec::with_capacity(65);
+                args.push(Arg::I(k as i32));
+                args.extend(ring.iter().map(|&l| Arg::I(l as i32)));
+                self.send(dev, &addr, &args);
+            }
+            self.arc_sent_gen = gen;
+            self.arc_sent_at = Instant::now();
         }
 
         fn leds(&mut self) {
@@ -673,19 +752,36 @@ pub mod serialosc {
 ///   (x, y), two levels a byte with the first of each pair in the high nibble;
 /// - from the grid: `0x00 a b` query reply, `0x01 id[32]`, `0x02 n x y`
 ///   offset, `0x03 x y` size (columns, rows), `0x0F v[8]` firmware,
-///   `0x20 x y` key up, `0x21 x y` key down (plus arc and tilt messages,
-///   which are read past).
+///   `0x20 x y` key up, `0x21 x y` key down, and from an arc `0x50 n d`
+///   encoder n turned d (a signed byte), `0x51 n` / `0x52 n` its push up /
+///   down (tilt messages are read past);
+/// - to an arc: `0x91 n l` light ring n at level l, `0x92 n d0..d31` ring n's
+///   64 levels packed like a grid's map;
+/// - `0x00` asks what a device has and is answered by a `0x00 s n` per
+///   subsystem: n of subsystem s (5 = encoders, which is how an arc is
+///   told from a grid).
 pub mod mext {
+    pub const QUERY: u8 = 0x00;
     pub const GET_ID: u8 = 0x01;
     pub const GET_SIZE: u8 = 0x05;
     pub const LEVEL_ALL: u8 = 0x19;
     pub const LEVEL_MAP: u8 = 0x1A;
+    pub const RING_ALL: u8 = 0x91;
+    pub const RING_MAP: u8 = 0x92;
+    /// The encoder subsystem, in a query answer.
+    pub const SS_ENCODER: u8 = 5;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Event {
         Key { x: u8, y: u8, down: bool },
         Size { cols: u8, rows: u8 },
         Id([u8; 32]),
+        /// "I have `count` of subsystem `sub`."
+        Query { sub: u8, count: u8 },
+        /// Encoder `n` turned `d` steps.
+        Delta { n: u8, d: i8 },
+        /// Encoder `n`'s push.
+        EncKey { n: u8, down: bool },
         /// Anything else the grid said, by header.
         Other(u8),
     }
@@ -742,6 +838,9 @@ pub mod mext {
             Some(match self.buf[0] {
                 0x20 | 0x21 => Event::Key { x: p[0], y: p[1], down: self.buf[0] == 0x21 },
                 0x03 => Event::Size { cols: p[0], rows: p[1] },
+                0x00 => Event::Query { sub: p[0], count: p[1] },
+                0x50 => Event::Delta { n: p[0], d: p[1] as i8 },
+                0x51 | 0x52 => Event::EncKey { n: p[0], down: self.buf[0] == 0x52 },
                 0x01 => {
                     let mut id = [0u8; 32];
                     id.copy_from_slice(p);
@@ -761,6 +860,17 @@ pub mod mext {
         m[2] = y;
         for i in 0..32 {
             m[3 + i] = (levels[2 * i].min(15) << 4) | levels[2 * i + 1].min(15);
+        }
+        m
+    }
+
+    /// Ring `n`'s 64 levels, two a byte, the first of each pair high.
+    pub fn ring_map(n: u8, levels: &[u8; 64]) -> [u8; 34] {
+        let mut m = [0u8; 34];
+        m[0] = RING_MAP;
+        m[1] = n;
+        for i in 0..32 {
+            m[2 + i] = (levels[2 * i].min(15) << 4) | levels[2 * i + 1].min(15);
         }
         m
     }
@@ -786,6 +896,7 @@ pub mod mext {
 pub mod serial {
     use super::mext::{self, Event};
     use super::*;
+    use crate::apps::arc_kit::{self, ArcHub};
     use std::ffi::CString;
     use std::io;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -904,35 +1015,67 @@ pub mod serial {
         v
     }
 
-    /// Asks the port at `path` whether it's a grid: its size (and id).
-    pub fn probe(path: &str) -> io::Result<(Port, Device)> {
+    /// What answered on a port.
+    pub enum Found {
+        Grid(Port, Device),
+        Arc(Port, arc_kit::Device),
+    }
+
+    /// Asks the port at `path` what it is: a grid gives its size, an arc
+    /// says it has encoders (and either gives its id).
+    pub fn probe(path: &str) -> io::Result<Found> {
         let port = Port::open(path)?;
-        port.write_all(&[mext::GET_SIZE, mext::GET_ID])?;
+        port.write_all(&[mext::QUERY, mext::GET_SIZE, mext::GET_ID])?;
         let mut parser = mext::Parser::new();
-        let (mut size, mut id) = (None, None);
+        let (mut size, mut id, mut encoders, mut queried) = (None, None, None, false);
         let t0 = Instant::now();
         let mut buf = [0u8; 256];
-        while t0.elapsed() < ANSWER_WITHIN && (size.is_none() || id.is_none()) {
+        // An arc may answer the size question too, so a grid is only sure
+        // once the query has been answered (or the time is up).
+        while t0.elapsed() < ANSWER_WITHIN && !(id.is_some() && (encoders.is_some() || (size.is_some() && queried))) {
             let n = port.read(&mut buf, 20)?;
             for &b in &buf[..n] {
                 match parser.feed(b) {
                     Some(Event::Size { cols, rows }) if cols > 0 && rows > 0 => size = Some((rows as usize, cols as usize)),
                     Some(Event::Id(i)) => id = Some(mext::id_text(&i)),
+                    Some(Event::Query { sub, count }) => {
+                        queried = true;
+                        if sub == mext::SS_ENCODER && count > 0 {
+                            encoders = Some(count as usize);
+                        }
+                    }
                     _ => {}
                 }
             }
         }
-        let Some((rows, cols)) = size else {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "not a grid"));
-        };
         let name = path.rsplit('/').next().unwrap_or(path).to_string();
         let id = id.filter(|s| !s.is_empty()).unwrap_or(name);
-        Ok((port, Device { id, kind: "monome grid (USB)".into(), rows: rows.min(MAX_ROWS), cols: cols.min(MAX_COLS) }))
+        if let Some(n) = encoders {
+            let n = n.min(arc_kit::MAX_ENCODERS);
+            return Ok(Found::Arc(port, arc_kit::Device { id, kind: format!("monome arc {n} (USB)"), encoders: n }));
+        }
+        let Some((rows, cols)) = size else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "not a grid or an arc"));
+        };
+        Ok(Found::Grid(port, Device { id, kind: "monome grid (USB)".into(), rows: rows.min(MAX_ROWS), cols: cols.min(MAX_COLS) }))
+    }
+
+    /// An arc opened over USB.
+    struct ArcPort {
+        port: Port,
+        path: String,
+        parser: mext::Parser,
+        sent: [[u8; 64]; arc_kit::MAX_ENCODERS],
+        sent_gen: u64,
+        sent_at: Instant,
     }
 
     pub struct Driver {
         grid: Arc<Grid>,
+        arc: Arc<ArcHub>,
         port: Option<Port>,
+        path: Option<String>,
+        arc_port: Option<ArcPort>,
         parser: mext::Parser,
         /// What each 8 x 8 block last showed, so only changed blocks are sent.
         sent: Vec<[u8; 64]>,
@@ -945,37 +1088,89 @@ pub mod serial {
     }
 
     impl Driver {
-        pub fn new(grid: Arc<Grid>) -> Driver {
-            Driver { grid, port: None, parser: mext::Parser::new(), sent: Vec::new(), sent_dims: (0, 0), sent_gen: u64::MAX, sent_at: Instant::now(), failed: Vec::new(), started: Instant::now(), scanned: None }
+        pub fn new(grid: Arc<Grid>, arc: Arc<ArcHub>) -> Driver {
+            Driver {
+                grid,
+                arc,
+                port: None,
+                path: None,
+                arc_port: None,
+                parser: mext::Parser::new(),
+                sent: Vec::new(),
+                sent_dims: (0, 0),
+                sent_gen: u64::MAX,
+                sent_at: Instant::now(),
+                failed: Vec::new(),
+                started: Instant::now(),
+                scanned: None,
+            }
         }
 
         pub fn attached(&self) -> bool {
             self.port.is_some()
         }
 
-        /// Opens the grid at `path` and hands it to the grid.
+        pub fn arc_attached(&self) -> bool {
+            self.arc_port.is_some()
+        }
+
+        /// Opens the device at `path` and hands it to the grid or the arc.
         pub fn attach(&mut self, path: &str) -> io::Result<()> {
-            let (port, dev) = probe(path)?;
-            // Start dark: whatever the grid showed before isn't ours.
-            port.write_all(&[mext::LEVEL_ALL, 0])?;
-            self.port = Some(port);
-            self.parser = mext::Parser::new();
-            self.sent.clear();
-            self.sent_gen = u64::MAX;
-            self.grid.set_device(Some(dev));
+            match probe(path)? {
+                Found::Grid(port, dev) => {
+                    if self.port.is_some() {
+                        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "a grid is already open"));
+                    }
+                    // Start dark: whatever the grid showed before isn't ours.
+                    port.write_all(&[mext::LEVEL_ALL, 0])?;
+                    self.port = Some(port);
+                    self.path = Some(path.to_string());
+                    self.parser = mext::Parser::new();
+                    self.sent.clear();
+                    self.sent_gen = u64::MAX;
+                    self.grid.set_device(Some(dev));
+                }
+                Found::Arc(port, dev) => {
+                    if self.arc_port.is_some() {
+                        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "an arc is already open"));
+                    }
+                    for n in 0..dev.encoders as u8 {
+                        port.write_all(&[mext::RING_ALL, n, 0])?;
+                    }
+                    self.arc_port = Some(ArcPort { port, path: path.to_string(), parser: mext::Parser::new(), sent: [[0; 64]; arc_kit::MAX_ENCODERS], sent_gen: u64::MAX, sent_at: Instant::now() });
+                    self.arc.set_device(Some(dev));
+                }
+            }
             Ok(())
         }
 
         fn detach(&mut self) {
             self.port = None;
+            self.path = None;
             self.grid.set_device(None);
         }
 
-        /// One turn: look for a grid if there isn't one, read its keys
-        /// (waiting up to 5 ms), and send the LEDs that changed.
+        fn detach_arc(&mut self) {
+            self.arc_port = None;
+            self.arc.set_device(None);
+        }
+
+        /// One turn: look for a grid or arc that's missing, read keys and
+        /// turns (waiting up to 5 ms), and send the LEDs that changed.
         pub fn step(&mut self) {
-            if self.port.is_none() {
+            if self.port.is_none() || self.arc_port.is_none() {
                 self.scan();
+            }
+            if self.arc_port.is_some() {
+                let wait = if self.port.is_some() { 0 } else { 5 };
+                if self.arc_step(wait).is_err() {
+                    self.detach_arc();
+                }
+            }
+            if self.port.is_none() {
+                if self.arc_port.is_none() {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
                 return;
             }
             let mut buf = [0u8; 256];
@@ -1003,22 +1198,55 @@ pub mod serial {
         }
 
         fn scan(&mut self) {
-            let quiet = self.started.elapsed() >= WAIT_FOR_SERIALOSC && !serialosc::heard() && self.grid.device().is_none();
+            let want = (self.port.is_none() && self.grid.device().is_none()) || (self.arc_port.is_none() && self.arc.device().is_none());
+            let quiet = self.started.elapsed() >= WAIT_FOR_SERIALOSC && !serialosc::heard() && want;
             if !quiet || self.scanned.is_some_and(|t| t.elapsed() < SCAN_EVERY) {
-                std::thread::sleep(Duration::from_millis(20));
                 return;
             }
             self.scanned = Some(Instant::now());
             self.failed.retain(|(_, t)| t.elapsed() < RETRY_AFTER);
             for path in candidates() {
-                if self.failed.iter().any(|(p, _)| *p == path) {
+                let open = self.path.as_deref() == Some(path.as_str()) || self.arc_port.as_ref().is_some_and(|a| a.path == path);
+                if open || self.failed.iter().any(|(p, _)| *p == path) {
                     continue;
                 }
-                if self.attach(&path).is_ok() {
+                if self.attach(&path).is_err() {
+                    self.failed.push((path, Instant::now()));
+                }
+                if self.port.is_some() && self.arc_port.is_some() {
                     return;
                 }
-                self.failed.push((path, Instant::now()));
             }
+        }
+
+        /// The arc's turns in, its changed rings out.
+        fn arc_step(&mut self, wait_ms: i32) -> io::Result<()> {
+            let Some(a) = self.arc_port.as_mut() else { return Ok(()) };
+            let mut buf = [0u8; 256];
+            let n = a.port.read(&mut buf, wait_ms)?;
+            for &b in &buf[..n] {
+                match a.parser.feed(b) {
+                    Some(Event::Delta { n, d }) => self.arc.turn(n as usize, d as i32),
+                    Some(Event::EncKey { n, down }) => self.arc.key(n as usize, down),
+                    _ => {}
+                }
+            }
+            if a.sent_at.elapsed() < LED_EVERY {
+                return Ok(());
+            }
+            let Some((count, rings, gen)) = self.arc.hardware_frame() else { return Ok(()) };
+            if gen == a.sent_gen {
+                return Ok(());
+            }
+            for k in 0..count {
+                if a.sent[k] != rings[k] || a.sent_gen == u64::MAX {
+                    a.port.write_all(&mext::ring_map(k as u8, &rings[k]))?;
+                    a.sent[k] = rings[k];
+                }
+            }
+            a.sent_gen = gen;
+            a.sent_at = Instant::now();
+            Ok(())
         }
 
         fn leds(&mut self) -> io::Result<()> {
@@ -1061,9 +1289,9 @@ pub mod serial {
     }
 
     #[cfg_attr(test, allow(dead_code))] // tests never go looking for hardware
-    pub fn start(grid: Arc<Grid>) {
+    pub fn start(grid: Arc<Grid>, arc: Arc<ArcHub>) {
         let spawned = std::thread::Builder::new().name("grid-serial".into()).spawn(move || {
-            let mut d = Driver::new(grid);
+            let mut d = Driver::new(grid, arc);
             loop {
                 d.step();
             }
@@ -1172,7 +1400,7 @@ mod tests {
         }
         let g = Arc::new(Grid::new());
         g.register("a");
-        let mut c = serialosc::Client::new(Arc::clone(&g), sosc.local_addr().unwrap()).unwrap();
+        let mut c = serialosc::Client::new(Arc::clone(&g), Arc::new(crate::apps::arc_kit::ArcHub::new()), sosc.local_addr().unwrap()).unwrap();
         let recv = |s: &UdpSocket| {
             let mut b = [0u8; 2048];
             let (n, from) = s.recv_from(&mut b).expect("a message");
@@ -1327,7 +1555,7 @@ mod tests {
         let g = Arc::new(Grid::new());
         g.set_size(16, 32);
         g.register("Kria");
-        let mut d = serial::Driver::new(Arc::clone(&g));
+        let mut d = serial::Driver::new(Arc::clone(&g), Arc::new(crate::apps::arc_kit::ArcHub::new()));
         d.attach(&path).expect("the pretend grid answers");
         let dev = g.device().unwrap();
         assert_eq!((dev.id.as_str(), dev.rows, dev.cols), ("m0000042", 8, 16));
@@ -1360,5 +1588,155 @@ mod tests {
         }
         assert!(left && right, "both 8 x 8 blocks went out with their levels");
         assert!(d.attached());
+    }
+
+    #[test]
+    fn an_arc_found_through_serialosc_turns_and_lights() {
+        use crate::apps::arc_kit::{self, ArcHub};
+        let sosc = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let dev = UdpSocket::bind("127.0.0.1:0").unwrap();
+        for s in [&sosc, &dev] {
+            s.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+        }
+        let g = Arc::new(Grid::new());
+        let a = Arc::new(ArcHub::new());
+        a.register("s");
+        let mut c = serialosc::Client::new(Arc::clone(&g), Arc::clone(&a), sosc.local_addr().unwrap()).unwrap();
+        c.poll();
+        let mut b = [0u8; 2048];
+        let (_, from) = sosc.recv_from(&mut b).unwrap();
+        let port = dev.local_addr().unwrap().port() as i32;
+        sosc.send_to(&encode("/serialosc/device", &[Arg::S("m0000777".into()), Arg::S("monome arc 2".into()), Arg::I(port)]), from).unwrap();
+        for _ in 0..5 {
+            c.poll();
+        }
+        assert_eq!(g.device(), None, "an arc isn't a grid");
+        assert_eq!(a.device().map(|d| d.encoders), Some(2));
+        assert_eq!(a.encoders(), 2, "the arc follows the hardware");
+        dev.send_to(&encode("/portamax/enc/delta", &[Arg::I(1), Arg::I(-3)]), from).unwrap();
+        dev.send_to(&encode("/portamax/enc/key", &[Arg::I(0), Arg::I(1)]), from).unwrap();
+        for _ in 0..10 {
+            c.poll();
+        }
+        assert_eq!(a.events("s"), [arc_kit::Event::Delta { n: 1, d: -3 }, arc_kit::Event::Key { n: 0, down: true }]);
+        let mut r = [[0u8; 64]; 4];
+        r[1][63] = 12;
+        a.show("s", &r);
+        std::thread::sleep(Duration::from_millis(15));
+        let mut ring1 = None;
+        dev.set_read_timeout(Some(Duration::from_millis(20))).unwrap();
+        for _ in 0..40 {
+            c.poll();
+            while let Ok((n, _)) = dev.recv_from(&mut b) {
+                if let Some((addr, args)) = decode(&b[..n]) {
+                    if addr == "/portamax/ring/map" && args.first() == Some(&Arg::I(1)) {
+                        ring1 = Some(args);
+                    }
+                }
+            }
+            if ring1.as_ref().is_some_and(|r| r[64] == Arg::I(12)) {
+                break;
+            }
+        }
+        let ring1 = ring1.expect("ring 2's map went out");
+        assert_eq!((ring1.len(), &ring1[64]), (65, &Arg::I(12)));
+    }
+
+    #[test]
+    fn mext_arc_messages_parse_and_rings_pack() {
+        let mut p = mext::Parser::new();
+        let stream = [0x00, 0x05, 0x04, 0x50, 2, 0xFD, 0x52, 3, 0x51, 3];
+        let got: Vec<mext::Event> = stream.iter().filter_map(|&b| p.feed(b)).collect();
+        assert_eq!(got, [mext::Event::Query { sub: 5, count: 4 }, mext::Event::Delta { n: 2, d: -3 }, mext::Event::EncKey { n: 3, down: true }, mext::Event::EncKey { n: 3, down: false }]);
+        let mut levels = [0u8; 64];
+        levels[0] = 15;
+        levels[63] = 4;
+        let m = mext::ring_map(1, &levels);
+        assert_eq!((m[0], m[1], m[2], m[33]), (0x92, 1, 0xF0, 0x04));
+    }
+
+    /// A pretend arc 4 on a pseudo-terminal: it says it has four encoders,
+    /// turns one, pushes another, and hands back its ring messages.
+    #[cfg(unix)]
+    #[test]
+    fn an_arc_on_a_serial_port_turns_and_lights() {
+        use crate::apps::arc_kit::{self, ArcHub};
+        use std::io::{Read, Write};
+        use std::os::fd::FromRawFd;
+        let (mut m, mut s) = (0, 0);
+        // SAFETY: openpty fills in two fds we then own.
+        let ok = unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        assert_eq!(ok, 0, "openpty");
+        let path = unsafe { std::ffi::CStr::from_ptr(libc::ttyname(s)) }.to_string_lossy().into_owned();
+        let master = unsafe { std::fs::File::from_raw_fd(m) };
+        let mut turns = master.try_clone().unwrap();
+        let mut reader = master.try_clone().unwrap();
+        let mut writer = master;
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            let (mut pending, mut buf) = (Vec::new(), [0u8; 512]);
+            loop {
+                let n = match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => n,
+                };
+                pending.extend_from_slice(&buf[..n]);
+                while let Some(&h) = pending.first() {
+                    let len = match h {
+                        0x91 => 3,
+                        0x92 => 34,
+                        _ => 1,
+                    };
+                    if pending.len() < len {
+                        break;
+                    }
+                    let msg: Vec<u8> = pending.drain(..len).collect();
+                    match h {
+                        0x00 => writer.write_all(&[0x00, 0x05, 0x04, 0x00, 0x09, 0x04]).unwrap(),
+                        0x01 => {
+                            let mut id = vec![0x01];
+                            id.extend_from_slice(b"m0000901");
+                            id.resize(33, 0);
+                            writer.write_all(&id).unwrap();
+                        }
+                        0x05 => {}
+                        _ => {
+                            let _ = tx.send(msg);
+                        }
+                    }
+                }
+            }
+        });
+        let g = Arc::new(Grid::new());
+        let a = Arc::new(ArcHub::new());
+        a.set_encoders(2);
+        a.register("s");
+        let mut d = serial::Driver::new(Arc::clone(&g), Arc::clone(&a));
+        d.attach(&path).expect("the pretend arc answers");
+        assert!(d.arc_attached() && !d.attached());
+        let dev = a.device().unwrap();
+        assert_eq!((dev.id.as_str(), dev.encoders), ("m0000901", 4));
+        assert_eq!((a.encoders(), g.device()), (4, None));
+        turns.write_all(&[0x50, 2, 0x05, 0x52, 1]).unwrap();
+        let mut got = Vec::new();
+        let t0 = Instant::now();
+        while got.len() < 2 && t0.elapsed() < Duration::from_secs(2) {
+            d.step();
+            got.extend(a.events("s"));
+        }
+        assert_eq!(got, [arc_kit::Event::Delta { n: 2, d: 5 }, arc_kit::Event::Key { n: 1, down: true }]);
+        let mut r = [[0u8; 64]; 4];
+        r[3][1] = 9;
+        a.show("s", &r);
+        let mut lit = false;
+        let t0 = Instant::now();
+        while !lit && t0.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(12));
+            d.step();
+            while let Ok(msg) = rx.try_recv() {
+                lit |= msg[0] == 0x92 && msg[1] == 3 && msg[2] == 0x09;
+            }
+        }
+        assert!(lit, "ring 4's map went out with LED 2 at 9");
     }
 }

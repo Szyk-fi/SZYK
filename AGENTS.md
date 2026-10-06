@@ -101,6 +101,24 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: the arc (on-screen + real monome arc), norns arc API
+- Branch: claude/teletype
+- Changed: new src/apps/arc_kit.rs (shared arc hub like grid_kit: 2 or 4
+  rings of 64 LEDs, turns/pushes to the focused app, draw helpers), new
+  src/apps/arc.rs + apps/arc/manifest.toml (Arc app: drag round a ring to
+  turn it, 1024 steps a turn; click its middle to push; knobs and pads too),
+  src/apps/grid_kit.rs (serialosc client also attaches an arc: /enc/delta,
+  /enc/key in, /ring/map out; mext gains the query answer, encoder 0x50,
+  push 0x51/0x52 and ring map 0x92; the serial driver tells an arc from a
+  grid by its encoder count in the query answer and can hold one of each),
+  src/apps/norns/{host.rs,mod.rs,lua/prelude.lua} (arc.connect, a.delta,
+  a.key, a:led, a:all, a:segment, a:refresh), new bundled norns script
+  assets/norns/code/arcarp.
+- Status: done in the sim; not tried on a real arc (none here). The query
+  answer layout (0x00 subsystem count, encoders = 5) is from libmonome's
+  headers; if an arc ever answers differently, `serial::probe` is where to look.
+- Tests: cargo test --bin portamax-sim -- arc grid_kit norns.
+
 ### 2026-10-06: Claude: Teletype's grid ops (G.*) on the shared grid
 - Branch: claude/teletype
 - Changed: new src/apps/teletype_grid.rs (the grid integration: 256 buttons,
@@ -156,8 +174,7 @@ Newest at the top. Keep each entry short. Use this format:
   slint_pointer_pick for that kind, so nothing else changes.
 - Status: done. Grid 8x16 by default, 1x1..64x128; Follow hardware sizes it to a
   plugged-in grid; the hardware shows a movable window of a bigger grid.
-  Not done: arc (prelude.lua still
-  reports no grid).
+  The arc, Teletype's G.* ops and the norns grid API came after (entries above).
 - Tests: cargo test --bin portamax-sim (incl. a loopback serialosc exchange).
 - Notes for the other assistant: apps that want the grid call
   grid_kit::grid().register(name), read keys(name) and show(name, &Leds) on the

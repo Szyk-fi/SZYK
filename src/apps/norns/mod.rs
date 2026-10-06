@@ -15,9 +15,13 @@
 //! `g:led`, `g:all`, `g:refresh`, `g:rotation` and `g.cols` / `g.rows`; the
 //! script takes the grid when it connects. Play it from the Grid app.
 //!
+//! Arc: `arc.connect()` gives a script Portamax's arc (the Arc app on
+//! screen, and a real monome arc when one is plugged in), with `a.delta`,
+//! `a.key`, `a:led`, `a:all`, `a:segment` and `a:refresh`; connecting takes
+//! the arc. Turn it from the Arc app.
+//!
 //! Not there (yet): other SuperCollider engines (scripts that ask for one
-//! still run, with its sound commands ignored), arc (scripts see an
-//! unattached port), crow, audio input into softcut, saving psets.
+//! still run, with its sound commands ignored), crow, audio input into softcut, saving psets.
 //!
 //! Controls -- norns has three encoders and three keys:
 //! - D-pad up/down (or knob 1) = E2, D-pad left/right (or knob 2) = E3;
@@ -144,6 +148,8 @@ pub struct NornsApp {
     note_out: Option<crate::note_bus::NoteOut>,
     /// The shared grid a script reaches with `grid.connect()`.
     grid: Arc<crate::apps::grid_kit::Grid>,
+    /// The shared arc, `arc.connect()`.
+    arc: Arc<crate::apps::arc_kit::ArcHub>,
 }
 
 impl NornsApp {
@@ -167,6 +173,7 @@ impl NornsApp {
             roots,
             note_out: None,
             grid: crate::apps::grid_kit::grid(),
+            arc: crate::apps::arc_kit::arc(),
         };
         // Boot straight into a script (like norns resuming its last one).
         if !cfg!(test) {
@@ -235,7 +242,8 @@ impl NornsApp {
         let code_dir = s.path.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_default();
         let path = s.path.clone();
         let grid = Arc::clone(&self.grid);
-        let thread = std::thread::Builder::new().name(format!("norns:{}", s.name)).spawn(move || host::run(path, code_dir, queue, out, rx, grid)).ok();
+        let arc = Arc::clone(&self.arc);
+        let thread = std::thread::Builder::new().name(format!("norns:{}", s.name)).spawn(move || host::run(path, code_dir, queue, out, rx, grid, arc)).ok();
         self.running = Some(Running { tx, thread, name: s.name });
         self.mode = Mode::Play;
     }
@@ -718,6 +726,47 @@ end
         grid.press(5, 4, false);
         a.stop();
         assert!(wait_until(|| grid.snapshot().leds.iter().all(|&l| l == 0)), "a stopped script leaves the grid dark");
+        assert!(a.out.lock().unwrap().error.is_none(), "{:?}", a.out.lock().unwrap().log);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_script_turns_the_arc_and_draws_its_rings() {
+        let root = tmp("arc");
+        write_script(
+            &root,
+            "arcprobe",
+            r#"
+local a = arc.connect()
+local pos = {0, 0, 0, 0}
+local pushed = 0
+local function draw()
+  a:all(0)
+  for n = 1, 4 do a:led(n, pos[n] + 1, 15) end
+  a:segment(4, 0, math.pi, 5 + pushed)
+  a:refresh()
+end
+function init() draw() end
+a.delta = function(n, d) pos[n] = (pos[n] + d) % 64; draw() end
+a.key = function(n, z) pushed = z * 10; draw() end
+"#,
+        );
+        let mut a = app_with(&root);
+        let arc = Arc::clone(&a.arc);
+        arc.register("Other");
+        a.tick(&Input { knob1_press: true, ..Input::default() });
+        let led = |n: usize, i: usize| arc.snapshot().leds[n][i];
+        assert!(wait_until(|| led(0, 0) == 15), "a:led(1, 1, 15) lights ring 1's top LED: {:?}", a.out.lock().unwrap().log);
+        assert_eq!(arc.focus().as_deref(), Some(host::GRID_CLIENT), "connecting takes the arc");
+        assert_eq!((led(3, 10), led(3, 40)), (5, 0), "a half-ring segment on ring 4");
+        arc.turn(1, 3);
+        assert!(wait_until(|| led(1, 3) == 15), "a.delta(2, 3) moves ring 2's light");
+        arc.turn(1, -5);
+        assert!(wait_until(|| led(1, 62) == 15), "and back past the top");
+        arc.key(3, true);
+        assert!(wait_until(|| led(3, 10) == 15), "a.key arrives");
+        a.stop();
+        assert!(wait_until(|| arc.snapshot().leds.iter().flatten().all(|&l| l == 0)), "a stopped script leaves the arc dark");
         assert!(a.out.lock().unwrap().error.is_none(), "{:?}", a.out.lock().unwrap().log);
         let _ = std::fs::remove_dir_all(&root);
     }
