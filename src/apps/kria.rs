@@ -36,7 +36,24 @@
 //! against the Ansible firmware's behaviour; no firmware code is copied
 //! (it is GPL-2.0, Portamax is MIT). Not here: the meta-sequencer, Kria's
 //! division-sync and division-cue options, the duration "tie" mode, the
-//! fine per-degree scale adjust, and the grid's exact key layout.
+//! fine per-degree scale adjust, Ansible's clock/config grid screens, and
+//! the second view on a 256's lower half.
+//!
+//! **On a grid** (the Grid app's screen grid, or a real monome grid): Kria
+//! plays with Ansible's layout on the top-left 16 x 8. Bottom row: keys 1-4
+//! pick the track (with LOOP held they mute it), 6 trigger/ratchet, 7 note/
+//! alt note, 8 octave/glide (press again for the second), 9 duration, 11
+//! LOOP, 12 TIME and 13 PROB (held), 15 scale, 16 pattern (held: taps cue).
+//! Rows 1-7 are the page: on trigger, a row per track; on note, alt note and
+//! glide the value is the height; octave and duration are bars, with the
+//! octave shift and the duration multiplier on the top row; ratchet toggles
+//! sub-triggers per step (top/bottom rows add/remove one). Held LOOP: press
+//! the first step and the last (one press sets the start, the start again
+//! makes a one-step loop). TIME: the column is the division. PROB: rows 3-6
+//! are 100/50/25/0 %. Scale: per track the direction and "notes on triggers
+//! only" (left), the 16 scales (bottom-left) and the selected scale's root
+//! and intervals (right). Pattern: top row picks (hold to copy), row 2 sets
+//! the cue length.
 //!
 //! **On Portamax**: the 16 pads are the 16 steps (top-left is step 1).
 //! F2 turns the pages; D-pad left/right picks the track, up/down changes the
@@ -58,6 +75,7 @@
 //! KR.CUE, KR.DIR, KR.DUR) reach this app through `Link`, the way Teletype
 //! reaches Ansible over I2C.
 
+use super::grid_kit::{self, Grid, Leds};
 use super::kids_kit;
 use crate::{
     app::play_kit::{self as kit, KitConfig, Layer, PlayHost, PlayKit, Routes},
@@ -820,6 +838,8 @@ enum UiCmd {
 struct View {
     pattern: usize,
     cue: Option<usize>,
+    /// Clocks since the last cue point.
+    cue_count: u32,
     pos: [[u8; PARAMS]; TRACKS],
     gate: [bool; TRACKS],
     semis: [f32; TRACKS],
@@ -899,6 +919,34 @@ pub struct KriaApp {
     route: NoteRoute,
     note_out: Option<NoteOut>,
     status: String,
+    grid: Arc<Grid>,
+    gk: GridKeys,
+}
+
+/// Ansible's modifier keys on the grid's bottom row (held).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum GridMod {
+    #[default]
+    None,
+    Loop,
+    Time,
+    Prob,
+}
+
+/// What the grid's held keys are in the middle of.
+#[derive(Clone, Debug, Default)]
+struct GridKeys {
+    modifier: GridMod,
+    /// Pattern key held: a pattern tap cues instead of switching.
+    cue: bool,
+    /// Keys down in the current loop gesture, its first and last step and
+    /// the row it started on (the track, on the trigger page).
+    loop_count: u8,
+    loop_first: usize,
+    loop_last: Option<usize>,
+    loop_row: usize,
+    /// When each key went down (row-major 8 x 16): taps vs holds.
+    down_at: Vec<Option<std::time::Instant>>,
 }
 
 impl KriaApp {
@@ -949,7 +997,10 @@ impl KriaApp {
             route,
             note_out: Some(out),
             status: String::new(),
+            grid: grid_kit::grid(),
+            gk: GridKeys { down_at: vec![None; GRID_ROWS * GRID_COLS], ..GridKeys::default() },
         };
+        app.grid.register(APP_NAME);
         app.publish_data();
         app
     }
@@ -1184,6 +1235,504 @@ impl KriaApp {
         if let Some(p) = self.kit_page() {
             self.link.page.store(p, Ordering::Relaxed);
         }
+    }
+}
+
+// ---------------------------------------------------------------- the grid
+
+const GRID_ROWS: usize = 8;
+const GRID_COLS: usize = 16;
+/// Ansible's three standard brightnesses.
+const L0: i32 = 4;
+const L1: i32 = 8;
+const L2: i32 = 12;
+/// A pattern key held this long copies instead of switching.
+const GRID_HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// The page that edits a parameter.
+fn param_page(p: usize) -> u8 {
+    match p {
+        TR => P_TRIG,
+        NOTE => P_NOTE,
+        OCT => P_OCT,
+        DUR => P_DUR,
+        RPT => P_RPT,
+        ALT => P_ALT,
+        _ => P_GLIDE,
+    }
+}
+
+/// A key's level on a value page: dimmer outside the loop, brighter while
+/// the loop is being set.
+fn in_loop_level(level: i32, inside: bool, m: GridMod) -> i32 {
+    if !inside {
+        level - 2
+    } else if m == GridMod::Loop {
+        level + 1
+    } else {
+        level
+    }
+}
+
+impl KriaApp {
+    /// The page the grid shows: the screen's page, or for the pad-only
+    /// LOOP / TIME / PROB pages the parameter they act on (on the grid
+    /// those are held modifiers instead).
+    fn grid_page(&self) -> u8 {
+        match self.kit_page() {
+            Some(p) if p != P_LOOP && p != P_TIME && p != P_PROB => p,
+            _ => param_page(self.target),
+        }
+    }
+
+    fn set_page(&mut self, page: u8) {
+        self.kit.set_native(page);
+        if let Some(p) = page_param(page) {
+            self.target = p;
+        }
+        self.loop_first = None;
+    }
+
+    /// Takes the grid's presses and draws it. Runs every frame whether
+    /// Kria is on screen or not, so it plays from the Grid app's screen or
+    /// a real grid while anything else is showing.
+    fn grid_frame(&mut self) {
+        if self.grid.focus().as_deref() != Some(APP_NAME) {
+            return;
+        }
+        for k in self.grid.keys(APP_NAME) {
+            if k.x < GRID_COLS && k.y < GRID_ROWS {
+                self.grid_key(k.x, k.y, k.down);
+            }
+        }
+        let leds = self.grid_leds();
+        self.grid.show(APP_NAME, &leds);
+    }
+
+    fn grid_key(&mut self, x: usize, y: usize, z: bool) {
+        let i = y * GRID_COLS + x;
+        let held_for = if z {
+            self.gk.down_at[i] = Some(std::time::Instant::now());
+            None
+        } else {
+            self.gk.down_at[i].take().map(|t| t.elapsed())
+        };
+        if y == 7 {
+            self.grid_nav(x, z);
+            return;
+        }
+        let page = self.grid_page();
+        let m = self.gk.modifier;
+        let t = self.track;
+        let row = 6 - y as u8; // a value counted up from the bottom of rows 1-7
+
+        if page == P_PATTERN {
+            if y == 0 {
+                if let Some(held) = held_for {
+                    if held >= GRID_HOLD {
+                        let from = self.pattern();
+                        self.edit(|d, _| d.p[x] = d.p[from]);
+                        self.status = format!("pattern {} copied to {}", from + 1, x + 1);
+                    } else if self.gk.cue {
+                        self.send(UiCmd::Cue(x));
+                    } else {
+                        self.send(UiCmd::Pattern(x));
+                    }
+                }
+            } else if y == 1 && z {
+                self.edit(|d, _| d.cue_steps = x as u8);
+            }
+            return;
+        }
+        if page == P_SCALE {
+            if z {
+                self.grid_scale_key(x, y);
+            }
+            return;
+        }
+        let Some(param) = page_param(page) else { return };
+        match m {
+            GridMod::Time => {
+                if z {
+                    self.edit(|d, pat| d.p[pat].t[t].tmul[param] = x as u8 + 1);
+                }
+            }
+            GridMod::Prob => {
+                if z && (2..=5).contains(&y) {
+                    self.edit(|d, pat| d.p[pat].t[t].prob[param][x] = 5 - y as u8);
+                }
+            }
+            GridMod::Loop => {
+                let note_sync = self.data().note_sync;
+                match param {
+                    // On the trigger page each row is a track.
+                    TR if y < 4 || !z => {
+                        let ps: &[usize] = if note_sync { &[TR, NOTE] } else { &[TR] };
+                        if z || self.gk.loop_row == y {
+                            self.grid_loop(x, y, z, y.min(TRACKS - 1), ps);
+                        }
+                    }
+                    TR => {}
+                    NOTE => {
+                        let ps: &[usize] = if note_sync { &[NOTE, TR] } else { &[NOTE] };
+                        self.grid_loop(x, y, z, t, ps);
+                    }
+                    DUR if y == 0 => {}
+                    p => self.grid_loop(x, y, z, t, &[p]),
+                }
+            }
+            GridMod::None => {
+                if z {
+                    self.grid_value_key(param, x, y, row);
+                }
+            }
+        }
+    }
+
+    /// The bottom row: tracks, pages and the held modifiers.
+    fn grid_nav(&mut self, x: usize, z: bool) {
+        let page = self.grid_page();
+        if !z {
+            match x {
+                10 | 11 | 12 => self.gk.modifier = GridMod::None,
+                15 => self.gk.cue = false,
+                _ => {}
+            }
+            return;
+        }
+        match x {
+            0..=3 => {
+                if self.gk.modifier == GridMod::Loop {
+                    self.link.mute[x].fetch_xor(true, Ordering::Relaxed);
+                } else {
+                    self.track = x;
+                    self.publish_data();
+                }
+            }
+            5 => self.set_page(if page == P_TRIG { P_RPT } else { P_TRIG }),
+            6 => self.set_page(if page == P_NOTE { P_ALT } else { P_NOTE }),
+            7 => self.set_page(if page == P_OCT { P_GLIDE } else { P_OCT }),
+            8 => self.set_page(P_DUR),
+            10 => {
+                self.gk.modifier = GridMod::Loop;
+                self.gk.loop_count = 0;
+            }
+            11 => self.gk.modifier = GridMod::Time,
+            12 => {
+                if page_param(page).is_some() {
+                    self.gk.modifier = GridMod::Prob;
+                }
+            }
+            14 => self.set_page(P_SCALE),
+            15 => {
+                self.set_page(P_PATTERN);
+                self.gk.cue = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// Held LOOP: press the first step, then the last. Let go after just
+    /// one and it becomes the loop's start (same length), or, if it already
+    /// was the start, a one-step loop.
+    fn grid_loop(&mut self, x: usize, y: usize, z: bool, track: usize, params: &[usize]) {
+        if z {
+            if self.gk.loop_count == 0 {
+                self.gk.loop_row = y;
+                self.gk.loop_first = x;
+                self.gk.loop_last = None;
+            } else {
+                let first = self.gk.loop_first;
+                self.gk.loop_last = Some(x);
+                let len = (x + STEPS - first) % STEPS + 1;
+                for &p in params {
+                    self.set_loop(track, p, first, len);
+                }
+            }
+            self.gk.loop_count += 1;
+            return;
+        }
+        self.gk.loop_count = self.gk.loop_count.saturating_sub(1);
+        if self.gk.loop_count == 0 && self.gk.loop_last.is_none() {
+            let first = self.gk.loop_first;
+            let tr = self.data().p[self.pattern() % PATTERNS].t[track];
+            let len = if tr.lstart[params[0]] as usize == first { 1 } else { tr.llen[params[0]] as usize };
+            for &p in params {
+                self.set_loop(track, p, first, len);
+            }
+        }
+    }
+
+    /// A key on a value page with no modifier held.
+    fn grid_value_key(&mut self, param: usize, x: usize, y: usize, row: u8) {
+        let t = self.track;
+        self.step = x;
+        self.edit(|d, pat| {
+            let note_sync = d.note_sync;
+            // On the trigger page each of the top four rows is a track.
+            if param == TR {
+                if y < TRACKS {
+                    d.p[pat].t[y].v[TR][x] ^= 1;
+                }
+                return;
+            }
+            let tr = &mut d.p[pat].t[t];
+            match param {
+                NOTE => {
+                    if note_sync {
+                        // Pressing a step's own note again silences it.
+                        if tr.v[TR][x] != 0 && tr.v[NOTE][x] == row {
+                            tr.v[TR][x] = 0;
+                        } else {
+                            tr.v[TR][x] = 1;
+                            tr.v[NOTE][x] = row;
+                        }
+                    } else {
+                        tr.v[NOTE][x] = row;
+                    }
+                }
+                ALT => tr.v[ALT][x] = row,
+                GLIDE => tr.v[GLIDE][x] = row,
+                OCT => {
+                    if y == 0 {
+                        if x <= 5 {
+                            tr.octshift = x as u8;
+                        }
+                    } else {
+                        // Ansible stores an octave below the shift as a
+                        // negative offset; here offsets are 0-5, so the
+                        // lowest a step goes is the shift itself.
+                        tr.v[OCT][x] = row.saturating_sub(tr.octshift);
+                    }
+                }
+                DUR => {
+                    if y == 0 {
+                        tr.dur_mul = x as u8 + 1;
+                    } else {
+                        tr.v[DUR][x] = y as u8 - 1;
+                    }
+                }
+                RPT => match y {
+                    0 => tr.v[RPT][x] = (tr.v[RPT][x] + 1).min(5),
+                    6 => tr.v[RPT][x] = tr.v[RPT][x].saturating_sub(1).max(1),
+                    _ => {
+                        // Rows 2-6 toggle sub-triggers 5..1; the count is
+                        // up to the highest one on.
+                        let bits = tr.rpt_bits[x] ^ (1 << (5 - y));
+                        tr.rpt_bits[x] = bits;
+                        tr.v[RPT][x] = (8 - bits.leading_zeros() as u8).max(1);
+                    }
+                },
+                _ => {}
+            }
+        });
+    }
+
+    fn grid_scale_key(&mut self, x: usize, y: usize) {
+        self.edit(|d, pat| {
+            if y < TRACKS && x <= 7 {
+                let tr = &mut d.p[pat].t[y];
+                match x {
+                    1 => tr.trigger_clocked = !tr.trigger_clocked,
+                    3..=7 => tr.dir = x as u8 - 3,
+                    _ => {} // key 1 is Teletype clocking; Kria here has none per track
+                }
+            } else if x < 8 {
+                if y > 4 {
+                    d.p[pat].scale = ((y - 5) * 8 + x) as u8;
+                }
+            } else {
+                // Right half: row 7 is the root, rows above it the six
+                // intervals, each a column 0-7.
+                let sc = d.p[pat].scale as usize % SCALES;
+                d.scales[sc][6 - y] = (x - 8) as u8;
+            }
+        });
+    }
+
+    /// Kria's picture for the grid, the way Ansible draws it.
+    fn grid_leds(&self) -> Leds {
+        let mut l = Leds::new(GRID_ROWS, GRID_COLS);
+        let view = self.view();
+        let d = self.data();
+        let pat = &d.p[view.pattern % PATTERNS];
+        let t = self.track;
+        let tr = &pat.t[t];
+        let page = self.grid_page();
+        let m = self.gk.modifier;
+        let pos = view.pos;
+
+        // Bottom row.
+        l.fill_row(7, 5..9, L0);
+        l.set(10, 7, L0);
+        l.set(11, 7, L0);
+        if page_param(page).is_some() {
+            l.set(12, 7, L0);
+        }
+        l.set(14, 7, L0);
+        l.set(15, 7, L0);
+        for i in 0..TRACKS {
+            let muted = self.link.mute[i].load(Ordering::Relaxed);
+            let lv = match (muted, i == t) {
+                (true, true) => L1,
+                (true, false) => 2,
+                (false, true) => L2,
+                (false, false) => L0,
+            };
+            l.set(i, 7, lv + if !muted && view.gate[i] { 2 } else { 0 });
+        }
+        let active = match page {
+            P_TRIG | P_RPT => 5,
+            P_NOTE | P_ALT => 6,
+            P_OCT | P_GLIDE => 7,
+            P_DUR => 8,
+            P_SCALE => 14,
+            _ => 15,
+        };
+        // The second page of a key blinks.
+        let alt = matches!(page, P_RPT | P_ALT | P_GLIDE);
+        let blink = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis()) / 300) % 2 == 0;
+        l.set(active, 7, if alt && blink { L1 } else { L2 });
+
+        let param = page_param(page);
+        match m {
+            GridMod::Loop => l.set(10, 7, L1),
+            GridMod::Time => {
+                l.set(11, 7, L1);
+                l.fill_row(1, 0..16, 3);
+                if let Some(p) = param {
+                    l.set(tr.tmul[p] as usize - 1, 1, L1);
+                }
+                return l;
+            }
+            GridMod::Prob => {
+                l.set(12, 7, L1);
+                l.fill_row(5, 0..16, 3);
+                if let Some(p) = param {
+                    for i in 0..STEPS {
+                        let pr = tr.prob[p][i] as usize;
+                        if pr > 0 {
+                            l.set(i, 5 - pr, if i == pos[t][p] as usize { 10 } else { 6 });
+                        }
+                    }
+                }
+                return l;
+            }
+            GridMod::None => {}
+        }
+
+        match page {
+            P_TRIG => {
+                for (row, lane) in pat.t.iter().enumerate() {
+                    for s in 0..STEPS {
+                        if lane.v[TR][s] != 0 {
+                            l.set(s, row, 3);
+                        }
+                        if lane.in_loop(TR, s) {
+                            l.add(s, row, 2 + (m == GridMod::Loop) as i32);
+                        }
+                    }
+                    l.add(pos[row][TR] as usize, row, 4);
+                }
+            }
+            P_NOTE | P_ALT => {
+                let p = if page == P_NOTE { NOTE } else { ALT };
+                for s in 0..STEPS {
+                    let y = 6 - tr.v[p][s].min(6) as usize;
+                    let lv = if p == NOTE && d.note_sync { tr.v[TR][s].min(1) as i32 * 3 } else { 3 };
+                    l.set(s, y, lv);
+                    if tr.in_loop(p, s) {
+                        l.add(s, y, 3 + 2 * (m == GridMod::Loop) as i32);
+                    }
+                }
+                let ph = pos[t][p] as usize;
+                l.add(ph, 6 - tr.v[p][ph].min(6) as usize, 4);
+            }
+            P_OCT => {
+                l.fill_row(0, 0..6, 2);
+                l.set(tr.octshift as usize, 0, L1);
+                for s in 0..STEPS {
+                    let sum = (tr.v[OCT][s] + tr.octshift).min(5) as usize;
+                    for j in tr.octshift as usize..=sum {
+                        l.set(s, 6 - j, in_loop_level(3, tr.in_loop(OCT, s), m));
+                    }
+                    if s == pos[t][OCT] as usize {
+                        l.add(s, 6 - sum, 4);
+                    }
+                }
+            }
+            P_DUR => {
+                l.set((tr.dur_mul as usize).saturating_sub(1), 0, L1);
+                for s in 0..STEPS {
+                    let v = tr.v[DUR][s].min(5) as usize;
+                    for j in 0..=v {
+                        l.set(s, 1 + j, in_loop_level(3, tr.in_loop(DUR, s), m));
+                    }
+                    if s == pos[t][DUR] as usize {
+                        l.add(s, 1 + v, 4);
+                    }
+                }
+            }
+            P_RPT => {
+                for s in 0..STEPS {
+                    let bits = tr.rpt_bits[s];
+                    for j in 0..5 {
+                        let mut lv = if bits & (1 << j) != 0 { L0 } else { 0 };
+                        if j < tr.v[RPT][s] as usize {
+                            lv = in_loop_level(lv + 2, tr.in_loop(RPT, s), m);
+                        }
+                        l.set(s, 5 - j, lv);
+                    }
+                    if s == pos[t][RPT] as usize {
+                        l.add(s, 5, 4);
+                    }
+                    // The add and remove rows.
+                    l.set(s, 0, 2);
+                    l.set(s, 6, 2);
+                }
+            }
+            P_GLIDE => {
+                for s in 0..STEPS {
+                    let g = tr.v[GLIDE][s].min(6) as usize;
+                    for j in 0..=g {
+                        l.set(s, 6 - j, in_loop_level(L1 - (g - j) as i32, tr.in_loop(GLIDE, s), m));
+                    }
+                    if s == pos[t][GLIDE] as usize {
+                        l.add(s, 6 - g, 4);
+                    }
+                }
+            }
+            P_SCALE => {
+                for (row, lane) in pat.t.iter().enumerate() {
+                    l.set(0, row, L0);
+                    l.set(1, row, if lane.trigger_clocked { L1 } else { L0 });
+                    for x in 3..=7 {
+                        l.set(x, row, if lane.dir as usize == x - 3 { 4 } else { 2 });
+                    }
+                }
+                for y in 0..7 {
+                    l.set(8, y, L0);
+                }
+                l.fill_row(5, 0..8, 2);
+                l.fill_row(6, 0..8, 2);
+                let sc = pat.scale as usize % SCALES;
+                l.set(sc % 8, 5 + sc / 8, L1);
+                for (i, &v) in d.scales[sc].iter().enumerate() {
+                    l.set(8 + v.min(7) as usize, 6 - i, L1);
+                }
+            }
+            _ => {
+                // Pattern.
+                l.fill_row(0, 0..16, 3);
+                l.set(view.pattern % PATTERNS, 0, L1);
+                if let Some(c) = view.cue {
+                    l.set(c, 0, L2);
+                }
+                l.set(d.cue_steps as usize, 1, L0);
+                l.set(view.cue_count as usize, 1, L1);
+            }
+        }
+        l
     }
 }
 
@@ -1481,6 +2030,7 @@ impl App for KriaApp {
     }
     fn background_tick(&mut self) {
         self.link_commands();
+        self.grid_frame();
     }
     fn tick(&mut self, input: &Input) {
         let mut play = std::mem::take(&mut self.kit);
@@ -1902,6 +2452,7 @@ impl Processor {
         if let Ok(mut v) = self.p.view.try_lock() {
             v.pattern = self.seq.pattern;
             v.cue = self.seq.cue_next;
+            v.cue_count = self.seq.cue_count;
             v.pos = std::array::from_fn(|t| self.seq.t[t].pos);
             v.gate = std::array::from_fn(|t| self.seq.t[t].gate);
             v.semis = std::array::from_fn(|t| self.seq.t[t].cv);
@@ -2307,5 +2858,133 @@ mod tests {
         a.edit(|d, _| d.p[0].t[0].v[TR] = [0; STEPS]);
         a.load_preset(0);
         assert_eq!(a.data().p[0].t[0].v[TR], [1; STEPS]);
+    }
+
+    /// Down and up on one grid key, a frame each.
+    fn key(a: &mut KriaApp, x: usize, y: usize) {
+        a.grid.press(x, y, true);
+        a.background_tick();
+        a.grid.press(x, y, false);
+        a.background_tick();
+    }
+
+    fn hold(a: &mut KriaApp, x: usize, y: usize, down: bool) {
+        a.grid.press(x, y, down);
+        a.background_tick();
+    }
+
+    #[test]
+    fn kria_plays_on_the_grid_with_ansibles_layout() {
+        let (mut a, _, link, _) = app();
+        let g = grid_kit::grid();
+        assert_eq!(g.focus().as_deref(), Some(APP_NAME), "the first grid app gets the grid");
+        a.background_tick();
+        let lit = |x: usize, y: usize| g.snapshot().leds[y * 16 + x];
+        assert_eq!(lit(5, 7), L2 as u8, "the trigger page key is the bright one");
+
+        // Trigger page: rows 1-4 are the four tracks.
+        let before = a.data().p[0].t[2].v[TR][6];
+        key(&mut a, 6, 2);
+        assert_eq!(a.data().p[0].t[2].v[TR][6], before ^ 1);
+
+        // Bottom row: track 2, then the note page; a note at row 2 is degree 5.
+        key(&mut a, 1, 7);
+        assert_eq!(a.track, 1);
+        key(&mut a, 6, 7);
+        assert_eq!(a.grid_page(), P_NOTE);
+        assert_eq!(a.kit_page(), Some(P_NOTE), "the screen follows the grid's page");
+        key(&mut a, 4, 1);
+        assert_eq!((a.data().p[0].t[1].v[NOTE][4], a.data().p[0].t[1].v[TR][4]), (5, 1), "note sync turns the step on");
+        assert!(lit(4, 1) >= 3);
+        key(&mut a, 6, 7);
+        assert_eq!(a.grid_page(), P_ALT, "pressing the note key again is alt note");
+        key(&mut a, 6, 7);
+
+        // Held LOOP: first step 3, last step 10.
+        hold(&mut a, 10, 7, true);
+        hold(&mut a, 2, 3, true);
+        hold(&mut a, 9, 3, true);
+        hold(&mut a, 9, 3, false);
+        hold(&mut a, 2, 3, false);
+        let tr = a.data().p[0].t[1];
+        assert_eq!((tr.lstart[NOTE], tr.llen[NOTE]), (2, 8));
+        // ...and with LOOP held, a track key mutes.
+        key(&mut a, 0, 7);
+        assert!(link.mute[0].load(Ordering::Relaxed));
+        hold(&mut a, 10, 7, false);
+
+        // Held TIME: the column is the division. Held PROB: row 5 is 25 %.
+        hold(&mut a, 11, 7, true);
+        key(&mut a, 3, 0);
+        hold(&mut a, 11, 7, false);
+        assert_eq!(a.data().p[0].t[1].tmul[NOTE], 4);
+        hold(&mut a, 12, 7, true);
+        assert_eq!(lit(0, 5), 3, "the 0 % row shows while PROB is held");
+        key(&mut a, 5, 4);
+        hold(&mut a, 12, 7, false);
+        assert_eq!(a.data().p[0].t[1].prob[NOTE][5], 1);
+
+        // Duration: the top row is the multiplier, the rest the length.
+        key(&mut a, 8, 7);
+        key(&mut a, 7, 0);
+        key(&mut a, 2, 4);
+        assert_eq!((a.data().p[0].t[1].dur_mul, a.data().p[0].t[1].v[DUR][2]), (8, 3));
+
+        // Ratchet: toggling sub-trigger rows sets the count to the highest.
+        key(&mut a, 5, 7);
+        key(&mut a, 5, 7);
+        assert_eq!(a.grid_page(), P_RPT);
+        key(&mut a, 0, 3);
+        assert_eq!((a.data().p[0].t[1].rpt_bits[0], a.data().p[0].t[1].v[RPT][0]), (0b101, 3));
+
+        // Scale page: direction per track, the scale, and its root.
+        key(&mut a, 14, 7);
+        key(&mut a, 4, 1);
+        key(&mut a, 2, 6);
+        key(&mut a, 10, 6);
+        let d = a.data();
+        assert_eq!((d.p[0].t[1].dir, d.p[0].scale, d.scales[10][0]), (1, 10, 2));
+
+        // Pattern page: row 2 is the cue length.
+        key(&mut a, 15, 7);
+        key(&mut a, 2, 1);
+        assert_eq!(a.data().cue_steps, 2);
+
+        // Another app takes the grid: Kria's keys stop.
+        // (Screenshots: see `grid_screenshots`.)
+        g.register("Other");
+        g.set_focus("Other");
+        key(&mut a, 5, 1);
+        assert_eq!(a.data().cue_steps, 2);
+    }
+
+    /// Writes the Grid app's screen, with Kria playing on it, to the
+    /// folder in PORTAMAX_GRID_SHOT.
+    #[test]
+    #[ignore = "writes screenshots to the folder in PORTAMAX_GRID_SHOT"]
+    fn grid_screenshots() {
+        let Ok(dir) = std::env::var("PORTAMAX_GRID_SHOT") else { return };
+        let (mut a, clock, _, _) = app();
+        let mut screen = crate::apps::grid::GridApp::new(grid_kit::grid(), Arc::new(AtomicF32::new(3.0)));
+        let mut p = a.audio_processor().unwrap();
+        a.toggle_running();
+        play(&mut p, &clock, 37);
+        let shoot = |screen: &mut crate::apps::grid::GridApp, name: &str| {
+            let mut fb = FrameBuffer::new();
+            screen.draw(&mut fb);
+            let mut out = b"P6\n640 360\n255\n".to_vec();
+            out.extend(fb.buffer().iter().flat_map(|px| [(px >> 16) as u8, (px >> 8) as u8, *px as u8]));
+            std::fs::write(Path::new(&dir).join(name), out).unwrap();
+        };
+        a.background_tick();
+        shoot(&mut screen, "grid_trig.ppm");
+        key(&mut a, 1, 7);
+        key(&mut a, 6, 7);
+        play(&mut p, &clock, 11);
+        a.background_tick();
+        shoot(&mut screen, "grid_note.ppm");
+        grid_kit::grid().set_size(64, 128);
+        a.background_tick();
+        shoot(&mut screen, "grid_64x128.ppm");
     }
 }

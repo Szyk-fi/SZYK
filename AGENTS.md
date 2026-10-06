@@ -101,8 +101,26 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: the grid (on-screen + real monome via serialosc), Kria on it
+- Branch: claude/teletype
+- Changed: new src/apps/grid_kit.rs (shared grid hub, OSC codec, serialosc
+  client thread), new src/apps/grid.rs + apps/grid/manifest.toml (Grid app),
+  src/apps/kria.rs (Ansible grid layout as a grid client), and
+  examples/slint_home_live.rs: a TouchArea on the full-screen picture
+  (active-kind 43) that sends clicks to the active app's slint_pointer_pick in
+  640x360 picture pixels, (-1,-1) on release. No other app implements
+  slint_pointer_pick for that kind, so nothing else changes.
+- Status: done. Grid 8x16 by default, 1x1..64x128; Follow hardware sizes it to a
+  plugged-in grid; the hardware shows a movable window of a bigger grid.
+  Not done: mext (USB serial) driver for the real hardware's USB host, arc,
+  Teletype G.* ops, norns `grid` API (prelude.lua still reports no grid).
+- Tests: cargo test --bin portamax-sim (incl. a loopback serialosc exchange).
+- Notes for the other assistant: apps that want the grid call
+  grid_kit::grid().register(name), read keys(name) and show(name, &Leds) on the
+  UI thread (background_tick). Never from the audio thread.
+
 ### 2026-10-06: Claude: Teletype and Kria (monome) apps, KR.* ops
-- Branch: claude/teletype   Commits: b048ebc (Teletype), next commit (Kria + KR ops)
+- Branch: claude/teletype   Commits: b048ebc (Teletype), d3fe370 (Kria + KR ops)
 - Changed: new src/apps/teletype.rs, src/apps/kria.rs, apps/teletype/, apps/kria/
   manifests, teletype/scenes/ + make_scenes.py. No shared files beyond the two
   new manifests (mod_inputs regenerated with PORTAMAX_WRITE_MANIFESTS).

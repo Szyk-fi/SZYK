@@ -694,6 +694,7 @@ slint::slint! {
         in-out property <color> theme-accent-swatch: #5CF07A;
         in-out property <color> theme-bg-swatch: #0B100C;
         callback theme-wheel-picked(float, float);
+        callback screen-touched(float, float);
 
         // --- Tonestack-specific state (active-kind == 26): the real
         // post-chain output waveform + level/gate telemetry. ---
@@ -3451,6 +3452,22 @@ slint::slint! {
                     image-fit: contain;
                     width: 100%; height: 100%;
                 }
+                // Clicks and touches, in the picture's own 640x360 pixels
+                // (undoing the contain-fit); (-1, -1) when let go. The Grid
+                // app presses keys with it; other full-screen apps ignore it.
+                TouchArea {
+                    property <float> sc: min(self.width / 640px, self.height / 360px);
+                    property <float> fx: (self.mouse-x - (self.width - 640px * sc) / 2) / 1px / sc;
+                    property <float> fy: (self.mouse-y - (self.height - 360px * sc) / 2) / 1px / sc;
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down {
+                            root.screen-touched(fx, fy);
+                        } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                            root.screen-touched(-1, -1);
+                        }
+                    }
+                    moved => { if self.pressed { root.screen-touched(fx, fy); } }
+                }
             }
 
             if !root.on-home && root.active-kind == 29 : BloomPanel {
@@ -4539,6 +4556,14 @@ fn main() {
     ui.on_theme_wheel_picked(move |x, y| {
         if let Some(idx) = *active_for_wheel.borrow() {
             apps_for_wheel.borrow_mut()[idx].1.slint_pointer_pick(x, y);
+        }
+    });
+    // Clicks on a full-screen app's picture (the Grid app's keys).
+    let apps_for_screen = Rc::clone(&apps);
+    let active_for_screen = Rc::clone(&active);
+    ui.on_screen_touched(move |x, y| {
+        if let Some(idx) = *active_for_screen.borrow() {
+            apps_for_screen.borrow_mut()[idx].1.slint_pointer_pick(x, y);
         }
     });
 
