@@ -1616,6 +1616,12 @@ impl PlayHost for TinkertoneApp {
 }
 
 impl App for TinkertoneApp {
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        crate::app::play_kit::settings_of(self)
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        crate::app::play_kit::adjust_in(self, index, delta)
+    }
     fn tick(&mut self, input: &Input) {
         // The play view takes the knobs and D-pad first; in the menu they
         // pass straight through. On KEYS/BASS the pads reach the keyboard

@@ -21,10 +21,18 @@
 //! pads) can hold the same note, and keep a strike counter, so a note that
 //! starts and ends between two polls still sounds.
 //!
+//! An instrument's settings travel the other way: its runtime wrapper
+//! (app_runtime.rs) publishes the app's `instrument_settings` here while
+//! a source is showing them, and applies the edits the source queues, so a
+//! sequencer can list and dial in the instrument it plays right under its
+//! "Plays" row without ever touching the other app (`NoteRoute::settings`,
+//! `NoteRoute::adjust`).
+//!
 //! Devices are just more endpoints: a MIDI output port registers an
 //! instrument ("MIDI Out: <port>") and a MIDI input port a source, so a new
 //! controller or synth shows up in every picker the moment it's plugged in.
 
+use crate::app::Setting;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
@@ -38,6 +46,9 @@ pub const NONE: usize = usize::MAX - 1;
 
 /// How long after the last note an instrument stays awake with no note held.
 const WAKE_MS: u64 = 1500;
+/// How long after a source last asked for them an instrument keeps
+/// publishing its settings.
+const ASK_MS: u64 = 1500;
 
 fn now_ms() -> u64 {
     static EPOCH: OnceLock<Instant> = OnceLock::new();
@@ -134,6 +145,15 @@ impl NoteView {
     }
 }
 
+/// One instrument's settings, as published for other apps to list, and
+/// the edits they have queued.
+#[derive(Default)]
+struct SettingsPort {
+    rows: Mutex<Vec<Setting>>,
+    edits: Mutex<Vec<(usize, i32)>>,
+    asked: AtomicU64,
+}
+
 struct InstrumentMeta {
     name: String,
     owner: String,
@@ -151,6 +171,7 @@ struct SourceMeta {
 
 pub struct NoteBus {
     inboxes: Arc<Vec<NoteInbox>>,
+    ports: Vec<SettingsPort>,
     instruments: Mutex<Vec<InstrumentMeta>>,
     sources: Mutex<Vec<SourceMeta>>,
 }
@@ -164,7 +185,7 @@ impl Default for NoteBus {
 #[allow(dead_code)] // the preview binaries use a subset
 impl NoteBus {
     pub fn new() -> Self {
-        Self { inboxes: Arc::new((0..MAX_INSTRUMENTS).map(|_| NoteInbox::default()).collect()), instruments: Mutex::new(Vec::new()), sources: Mutex::new(Vec::new()) }
+        Self { inboxes: Arc::new((0..MAX_INSTRUMENTS).map(|_| NoteInbox::default()).collect()), ports: (0..MAX_INSTRUMENTS).map(|_| SettingsPort::default()).collect(), instruments: Mutex::new(Vec::new()), sources: Mutex::new(Vec::new()) }
     }
 
     /// Declares an installed app's instrument before the app exists, so
@@ -207,6 +228,53 @@ impl NoteBus {
     /// (slot, name, owner app id) of every instrument, in slot order.
     pub fn instruments(&self) -> Vec<(usize, String, String)> {
         self.instruments.lock().unwrap().iter().enumerate().map(|(i, m)| (i, m.name.clone(), m.owner.clone())).collect()
+    }
+
+    /// The slots of the instruments owned by app `owner`.
+    pub fn slots_of(&self, owner: &str) -> Vec<usize> {
+        self.instruments.lock().unwrap().iter().enumerate().filter(|(_, m)| m.owner == owner).map(|(i, _)| i).collect()
+    }
+
+    /// Instrument `slot`'s settings as last published. Asking is what keeps
+    /// them coming (and builds the app if nothing has opened it yet), so a
+    /// source calls this every frame it is showing them.
+    pub fn instrument_settings(&self, slot: usize) -> Vec<Setting> {
+        let Some(port) = self.ports.get(slot) else { return Vec::new() };
+        port.asked.store(now_ms(), Ordering::Relaxed);
+        port.rows.lock().unwrap().clone()
+    }
+
+    /// Queues "step setting `index` by `delta`" for instrument `slot`.
+    pub fn adjust_instrument_setting(&self, slot: usize, index: usize, delta: i32) {
+        let Some(port) = self.ports.get(slot) else { return };
+        port.asked.store(now_ms(), Ordering::Relaxed);
+        let mut edits = port.edits.lock().unwrap();
+        if edits.len() < 64 {
+            edits.push((index, delta));
+        }
+    }
+
+    /// Whether a source has asked for the settings of any instrument owned
+    /// by `owner` lately (the runtime then keeps that app built and
+    /// publishing).
+    pub fn settings_wanted(&self, owner: &str) -> bool {
+        let now = now_ms();
+        self.slots_of(owner).into_iter().any(|i| {
+            let t = self.ports[i].asked.load(Ordering::Relaxed);
+            t != 0 && now.saturating_sub(t) < ASK_MS
+        })
+    }
+
+    /// The runtime side: publishes instrument `slot`'s current settings.
+    pub fn publish_settings(&self, slot: usize, rows: Vec<Setting>) {
+        if let Some(port) = self.ports.get(slot) {
+            *port.rows.lock().unwrap() = rows;
+        }
+    }
+
+    /// The runtime side: the edits queued for instrument `slot`, oldest first.
+    pub fn take_setting_edits(&self, slot: usize) -> Vec<(usize, i32)> {
+        self.ports.get(slot).map(|p| std::mem::take(&mut *p.edits.lock().unwrap())).unwrap_or_default()
     }
 
     /// Whether any instrument owned by `owner` has notes for it.
@@ -346,6 +414,25 @@ impl NoteRoute {
     /// Sends somewhere other than its own voices.
     pub fn external(&self) -> bool {
         self.route() < MAX_INSTRUMENTS
+    }
+
+    /// The settings of the instrument this source plays, for listing right
+    /// below its "Plays" row. Empty when it plays its own voices, nothing,
+    /// or an instrument that has not published any yet.
+    pub fn settings(&self) -> Vec<Setting> {
+        match (&self.bus, self.route()) {
+            (Some(b), r) if r < MAX_INSTRUMENTS => b.instrument_settings(r),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Steps setting `index` of `settings()` by `delta`.
+    pub fn adjust(&self, index: usize, delta: i32) {
+        if let (Some(b), r) = (&self.bus, self.route()) {
+            if r < MAX_INSTRUMENTS {
+                b.adjust_instrument_setting(r, index, delta);
+            }
+        }
     }
 }
 

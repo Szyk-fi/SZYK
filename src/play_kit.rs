@@ -133,6 +133,19 @@ pub struct KitConfig {
     pub own_expression: bool,
 }
 
+/// A kit app's controls as `App::instrument_settings`: the same labels and
+/// values its own dials show.
+pub fn settings_of(host: &dyn PlayHost) -> Vec<super::Setting> {
+    (0..host.kit_control_count()).map(|i| super::Setting { label: host.kit_label(i), value: host.kit_value(i) }).collect()
+}
+
+/// `App::adjust_setting` for a kit app.
+pub fn adjust_in(host: &mut dyn PlayHost, index: usize, delta: i32) {
+    if index < host.kit_control_count() {
+        host.kit_edit(index, delta);
+    }
+}
+
 /// What the app tells the kit about itself. Controls are indexed in order
 /// of importance: the first ones land on the knobs and the bottom pads.
 pub trait PlayHost {

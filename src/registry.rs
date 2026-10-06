@@ -390,6 +390,34 @@ mod manifest_contract_tests {
         assert!(heard > 0.01, "and Voltage sounded them ({heard})");
     }
 
+    /// A source lists and edits the settings of the instrument it plays
+    /// without touching the other app: asking builds and wakes the
+    /// instrument, which publishes its settings; an edit queued on the bus is
+    /// applied by the instrument's own wrapper on its next tick.
+    #[test]
+    fn a_source_lists_and_edits_the_settings_of_the_instrument_it_plays() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let manifests: Vec<_> = crate::manifest::discover(dir).into_iter().filter(|m| m.id == "synth").collect();
+        let ctx = test_context(Arc::new(ModBus::new()));
+        let notes = ctx.get::<NoteBus>();
+        let registry = Registry::new(ctx);
+        let mut apps = registry.build(&manifests);
+        let slot = notes.instrument_index("Synth").expect("Synth is an instrument");
+        assert!(notes.instrument_settings(slot).is_empty(), "nothing is published before the first ask");
+        for (_, app) in apps.iter_mut() {
+            app.background_tick();
+        }
+        let rows = notes.instrument_settings(slot);
+        assert!(rows.len() >= 2, "the instrument woke and published its settings: {rows:?}");
+        let (i, before) = rows.iter().enumerate().find(|(_, r)| r.label.to_lowercase().contains("cutoff")).map(|(i, r)| (i, r.value.clone())).expect("a cutoff setting");
+        notes.adjust_instrument_setting(slot, i, -5);
+        for (_, app) in apps.iter_mut() {
+            app.background_tick();
+        }
+        let after = notes.instrument_settings(slot)[i].value.clone();
+        assert_ne!(before, after, "the queued edit reached the instrument");
+    }
+
     /// Drag and drop: a folder holding a manifest and a patch is a new
     /// instrument -- no code, no rebuild -- with its own name and mixer
     /// channel, and other apps can play it at once.

@@ -1811,6 +1811,12 @@ impl PlayHost for SampleDrumApp {
 }
 
 impl App for SampleDrumApp {
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        crate::app::play_kit::settings_of(self)
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        crate::app::play_kit::adjust_in(self, index, delta)
+    }
     fn supports_pad_lock(&self) -> bool { true }
     fn play_surface(&self) -> bool {
         true

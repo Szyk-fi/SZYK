@@ -828,6 +828,12 @@ fn lfo_speed_hz(v: f32) -> f32 {
 }
 
 impl App for StarlabApp {
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        crate::app::play_kit::settings_of(self)
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        crate::app::play_kit::adjust_in(self, index, delta)
+    }
     fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE }
     fn supports_pad_lock(&self) -> bool { true }
     fn play_surface(&self) -> bool { true }

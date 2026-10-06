@@ -61,9 +61,26 @@ impl LazyApp {
         }
         self.instance.as_mut().unwrap().as_mut()
     }
+    /// Publishes this instrument's settings for the sources that list them,
+    /// and applies the edits they queued.
+    fn serve_settings(&mut self) {
+        let Some(notes) = self.notes.clone() else { return };
+        if !notes.settings_wanted(&self.id) {
+            return;
+        }
+        let slots = notes.slots_of(&self.id);
+        let app = self.ensure();
+        for slot in slots {
+            for (index, delta) in notes.take_setting_edits(slot) {
+                app.adjust_setting(index, delta);
+            }
+            notes.publish_settings(slot, app.instrument_settings());
+        }
+    }
     fn wake(&mut self) { self.last_input = Some(Instant::now()); self.enabled.store(true, Ordering::Release); }
     fn update_activity(&mut self) {
-        let requested=self.bus.requested(&self.id) || self.modbus.as_ref().is_some_and(|m| m.requested(&self.id)) || self.notes.as_ref().is_some_and(|n| n.requested(&self.id));
+        let settings_wanted = self.notes.as_ref().is_some_and(|n| n.settings_wanted(&self.id));
+        let requested=settings_wanted || self.bus.requested(&self.id) || self.modbus.as_ref().is_some_and(|m| m.requested(&self.id)) || self.notes.as_ref().is_some_and(|n| n.requested(&self.id));
         if requested {self.ensure();}
         let needed = self.instance.as_ref().is_some_and(|app| requested || self.screen_open || app.running() == Some(true) || app.needs_background_audio()
             || self.last_input.is_some_and(|t| t.elapsed() < Duration::from_secs(5)));
@@ -102,6 +119,7 @@ impl App for LazyApp {
     fn toggle_grid_mode(&mut self) { self.ensure().toggle_grid_mode(); self.wake(); }
     fn background_tick(&mut self) {
         self.update_activity();
+        self.serve_settings();
         // An instrument off screen still plays what other apps send it:
         // its notes arrive as keys on an otherwise empty frame.
         if !self.screen_open && self.inbox.is_some() {
