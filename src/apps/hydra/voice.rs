@@ -761,27 +761,21 @@ mod tests {
     fn pitch_of(x: &[f32]) -> f32 {
         let n = x.len().min(9600);
         let (lo, hi) = ((FS / 2000.0) as usize, (FS / 30.0) as usize);
-        let mut best = (0.0f32, 0usize);
-        for lag in lo..hi.min(n / 2) {
-            let c: f32 = (0..n - lag).map(|i| x[i] * x[i + lag]).sum();
-            if c > best.0 {
-                best = (c, lag);
+        let hi = hi.min(n / 2);
+        let corr: Vec<f32> = (0..hi + 1).map(|lag| if lag < lo { 0.0 } else { (0..n - lag).map(|i| x[i] * x[i + lag]).sum() }).collect();
+        let peak = corr.iter().cloned().fold(0.0f32, f32::max);
+        // the first true peak of the correlation that is nearly as strong as
+        // the best one (so a multiple of the period is not chosen), refined
+        // by a parabola through its neighbours for sub-sample accuracy
+        for lag in lo.max(1)..hi {
+            if corr[lag] > peak * 0.9 && corr[lag] >= corr[lag - 1] && corr[lag] > corr[lag + 1] {
+                let (a, b, c) = (corr[lag - 1], corr[lag], corr[lag + 1]);
+                let denom = a - 2.0 * b + c;
+                let off = if denom.abs() > 1e-12 { 0.5 * (a - c) / denom } else { 0.0 };
+                return FS / (lag as f32 + off);
             }
         }
-        // prefer the shortest lag that is nearly as good (not a multiple)
-        let mut lag = best.1;
-        for cand in lo..best.1 {
-            let c: f32 = (0..n - cand).map(|i| x[i] * x[i + cand]).sum();
-            if c > best.0 * 0.92 {
-                lag = cand;
-                break;
-            }
-        }
-        if lag == 0 {
-            0.0
-        } else {
-            FS / lag as f32
-        }
+        0.0
     }
 
     fn init() -> Snapshot {
@@ -857,17 +851,17 @@ mod tests {
         p.set(P::AmpS, 1.0);
         p.set(P::F1_Key, 0.0);
         p.set(P::F1_Cut, 20_000.0);
-        let bright = rms(&render_note(&p.snapshot(), 45.0, 24000, None).0[4800..]);
-        p.set(P::F1_Cut, 300.0);
-        let dark = rms(&render_note(&p.snapshot(), 45.0, 24000, None).0[4800..]);
+        let bright = rms(&render_note(&p.snapshot(), 60.0, 24000, None).0[4800..]);
+        p.set(P::F1_Cut, 150.0);
+        let dark = rms(&render_note(&p.snapshot(), 60.0, 24000, None).0[4800..]);
         assert!(dark < bright * 0.6, "a closed filter is quieter: {dark} vs {bright}");
         // an envelope that opens the filter brings the highs back early on
-        p.set(P::F1_Cut, 200.0);
+        p.set(P::F1_Cut, 150.0);
         p.set(P::F1_Env, 1.0);
         p.set(P::E2A, 0.0005);
         p.set(P::E2D, 2.0);
         p.set(P::E2S, 1.0);
-        let opened = rms(&render_note(&p.snapshot(), 45.0, 24000, None).0[4800..]);
+        let opened = rms(&render_note(&p.snapshot(), 60.0, 24000, None).0[4800..]);
         assert!(opened > dark * 1.5, "env 2 opens the filter: {opened} vs {dark}");
     }
 

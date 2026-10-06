@@ -414,7 +414,9 @@ mod tests {
         p.set(P::Drv_Type, 2.0);
         p.set(P::Drv_Amt, 1.0);
         let (hard, _) = run(&mut Fx::new(), &p.snapshot(), &x);
-        let flat = hard.iter().filter(|s| s.abs() > 0.95 * hard.iter().fold(0.0f32, |m, v| m.max(v.abs()))).count();
+        let settled = &hard[2048..];
+        let top = settled.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let flat = settled.iter().filter(|s| s.abs() > 0.95 * top).count();
         assert!(flat > 500, "hard clipping flattens the peaks: {flat}");
         p.set(P::Drv_Type, 4.0);
         let (crushed, _) = run(&mut Fx::new(), &p.snapshot(), &x);
