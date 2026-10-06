@@ -101,6 +101,24 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: ChatGPT: standalone Prophet-style virtual analogue with 64 sounds
+- Branch: gpt/prophet-instrument (isolated checkout from 78449f4)
+- Changed: src/apps/prophet/, apps/prophet/manifest.toml, docs/PROPHET.md.
+- Status: implemented and packaged. Active repo untouched (outside writable
+  roots); no central launcher, dependencies or synthesis-engine edits.
+- Tests: final focused suite 15 passed, 1 export test normally ignored;
+  export test passed (six PNGs, 64 JSONs, 32-second WAV). Simulator binary
+  build and Slint example check passed with no new app warnings. Full suite
+  before the final UI-only edits and extra note-bus regression: 1043 passed,
+  13 ignored, 2 failures from sandbox-blocked serialosc UDP binds. Norns,
+  Stages, Atlas factory patches and installation/manifest contracts passed.
+- Notes for the other assistant: original Rust DSP, not PikoPiko firmware.
+  Profree-4 is an analogue hardware concept; no licensed audio engine found.
+  Drop-in factory/manifest, 55 controls, 4/5/8 voices, Poly-Mod, sync, dual
+  ADSRs, mono/unison, chorus/delay and 16 versioned JSON user slots. Source
+  patch only adds the app and its manual. All factory sounds are original.
+  Sources/presets remain editable; no claimed STM32N6 CPU-budget validation.
+
 ### 2026-10-06: Claude: Plays first in every note source's menu, orphan apps, warnings
 - Branch: claude/picker-and-cleanup (on top of claude/dropin-cleanup)
 - Changed: Plays is now the first row in Kria, Teletype, Orca, O&C (constants

@@ -1,0 +1,47 @@
+id = "prophet"
+name = "Prophet"
+category = "instrument"
+description = "Prophet-inspired virtual analogue: two oscillators, sync, Poly-Mod, 4/5/8 voices and 64 original presets."
+notes_in = true
+audio_outputs = ["Prophet"]
+mod_inputs = [
+    "Prophet: A Tune",
+    "Prophet: A Pulse Width",
+    "Prophet: B Tune",
+    "Prophet: B Fine",
+    "Prophet: B Pulse Width",
+    "Prophet: Oscillator A",
+    "Prophet: Oscillator B",
+    "Prophet: Noise",
+    "Prophet: Cutoff",
+    "Prophet: Resonance",
+    "Prophet: Filter Env Amount",
+    "Prophet: Filter Key Track",
+    "Prophet: Drive",
+    "Prophet: Filter Attack",
+    "Prophet: Filter Decay",
+    "Prophet: Filter Sustain",
+    "Prophet: Filter Release",
+    "Prophet: Amp Attack",
+    "Prophet: Amp Decay",
+    "Prophet: Amp Sustain",
+    "Prophet: Amp Release",
+    "Prophet: LFO Rate",
+    "Prophet: Wheel Noise Mix",
+    "Prophet: Mod Amount",
+    "Prophet: Poly-Mod Env",
+    "Prophet: Poly-Mod B",
+    "Prophet: Unison Detune",
+    "Prophet: Glide",
+    "Prophet: Vintage",
+    "Prophet: Velocity",
+    "Prophet: Stereo Spread",
+    "Prophet: Volume",
+    "Prophet: Chorus",
+    "Prophet: Delay Time",
+    "Prophet: Delay Feedback",
+    "Prophet: Delay Mix",
+    "Prophet: Pad Octave",
+    "Prophet: Bend Range",
+    "Mixer: Prophet Level",
+]
