@@ -26,10 +26,13 @@
 //! SKIP OTHER PROB DEL S; DEL.CLR, S.ALL S.POP S.CLR S.L, SCRIPT/$, BREAK,
 //! KILL, SYNC; the pattern ops P/PN with .N .L .WRAP .START .END .I .HERE
 //! .NEXT .PREV .INS .RM .PUSH .POP .MIN .MAX .RND .REV .ROT .SHUF .+ .- .+W
-//! .-W. Scenes load and save in the module's own text format (the files its
+//! .-W; and Kria's ops, as Teletype has them for Ansible: KR.PAT, KR.POS,
+//! KR.L.ST, KR.L.LEN, KR.RES, KR.CV, KR.MUTE, KR.TMUTE, KR.CLK, KR.PG,
+//! KR.CUE, KR.DIR, KR.DUR, KR.PERIOD, KR.SCALE, KR.PRE (see kria.rs; they
+//! read 0 and do nothing when there is no Kria). Scenes load and save in the module's own text format (the files its
 //! USB stick reads and writes: `#1`..`#8`, `#M`, `#I`, `#P`).
 //!
-//! **Not implemented**: the I2C/expander ops (Ansible, Just Friends, ER-301,
+//! **Not implemented**: the other I2C/expander ops (Ansible's other apps, Just Friends, ER-301,
 //! TXo, crow, Disting...), grid and fader ops, MIDI ops, Q, the turtle,
 //! CHAOS, functions ($F, $L, $S), SCENE ops, DEL.X/R/G/B, P.MAP, SCALE0,
 //! EXP, the rotation ops, hex/binary literals, comment lines and
@@ -83,6 +86,7 @@ use crate::{
     spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12, SPLEEN_8X16},
     util::AtomicF32,
 };
+use super::kria::{self, KrOp};
 use embedded_graphics::{mono_font::MonoTextStyle, pixelcolor::Rgb565, prelude::*, primitives::{PrimitiveStyle, Rectangle}, text::Text};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -250,6 +254,8 @@ enum Op {
     P(PatOp),
     /// The same op with the pattern number as its first argument (PN...).
     PN(PatOp),
+    /// Kria's ops, as Teletype has them for Ansible.
+    Kr(KrOp),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -502,7 +508,29 @@ static OPS: &[OpDef] = &[
     act(Op::PN(PatOp::AddW), "PN.+W", 5),
     act(Op::P(PatOp::SubW), "P.-W", 4),
     act(Op::PN(PatOp::SubW), "PN.-W", 5),
+    kr(KrOp::Pre, "KR.PRE"),
+    kr(KrOp::Period, "KR.PERIOD"),
+    kr(KrOp::Pat, "KR.PAT"),
+    kr(KrOp::Scale, "KR.SCALE"),
+    kr(KrOp::Pos, "KR.POS"),
+    kr(KrOp::LSt, "KR.L.ST"),
+    kr(KrOp::LLen, "KR.L.LEN"),
+    kr(KrOp::Res, "KR.RES"),
+    kr(KrOp::Cv, "KR.CV"),
+    kr(KrOp::Mute, "KR.MUTE"),
+    kr(KrOp::TMute, "KR.TMUTE"),
+    kr(KrOp::Clk, "KR.CLK"),
+    kr(KrOp::Pg, "KR.PG"),
+    kr(KrOp::Cue, "KR.CUE"),
+    kr(KrOp::Dir, "KR.DIR"),
+    kr(KrOp::Dur, "KR.DUR"),
 ];
+
+/// A Kria op, shaped as Kria's link describes it.
+const fn kr(op: KrOp, name: &'static str) -> OpDef {
+    let (params, ret, set) = kria::Link::shape(op);
+    OpDef { op: Op::Kr(op), name, params, ret, set }
+}
 
 fn def(op: Op) -> &'static OpDef {
     OPS.iter().find(|d| d.op == op).expect("every op has a table entry")
@@ -920,6 +948,8 @@ struct Engine {
     metro_acc: i32,
     depth: u8,
     rng: u32,
+    /// Kria, as Teletype reaches Ansible.
+    kria: Arc<kria::Link>,
     /// IN and PARAM before scaling, 0..16383.
     in_raw: i16,
     param_raw: i16,
@@ -949,6 +979,7 @@ impl Engine {
             metro_acc: 0,
             depth: 0,
             rng: 0x2545_f491,
+            kria: kria::link(),
             in_raw: 0,
             param_raw: 0,
             transport: true,
@@ -1568,6 +1599,22 @@ impl Engine {
                 let pn = st.pop().clamp(0, 3) as usize;
                 self.pattern_op(pn, p, set, st);
             }
+            Op::Kr(k) => {
+                let (params, ret, _) = kria::Link::shape(k);
+                let mut args = [0i16; 2];
+                for a in args.iter_mut().take(params as usize) {
+                    *a = st.pop();
+                }
+                let args = &args[..params as usize];
+                if set {
+                    let v = st.pop();
+                    self.kria.set(k, args, v);
+                } else if ret {
+                    st.push(self.kria.get(k, args));
+                } else {
+                    self.kria.set(k, args, 0);
+                }
+            }
         }
     }
 
@@ -1928,9 +1975,9 @@ enum Pad {
 
 use Pad::{Digit as Dg, Word as W_};
 
-const P_TRACKER: usize = 8;
+const P_TRACKER: usize = 9;
 
-const PAGES: [(&str, [Pad; 16]); 9] = [
+const PAGES: [(&str, [Pad; 16]); 10] = [
     ("SCRIPTS", [Pad::Fire(0), Pad::Fire(1), Pad::Fire(2), Pad::Fire(3), Pad::Fire(4), Pad::Fire(5), Pad::Fire(6), Pad::Fire(7), Pad::Fire(8), Pad::Fire(9), Pad::PrevScript, Pad::NextScript, Pad::RunLine, Pad::ClearLine, Pad::Back, Pad::None]),
     ("NUMBERS", [Dg(1), Dg(2), Dg(3), Pad::Minus, Dg(4), Dg(5), Dg(6), W_(":"), Dg(7), Dg(8), Dg(9), W_(";"), Pad::Back, Dg(0), W_("ADD"), W_("I")]),
     ("VARS", [W_("A"), W_("B"), W_("C"), W_("D"), W_("X"), W_("Y"), W_("Z"), W_("T"), W_("I"), W_("J"), W_("K"), W_("O"), W_("DRUNK"), W_("FLIP"), W_("R"), W_("TIME")]),
@@ -1939,6 +1986,7 @@ const PAGES: [(&str, [Pad; 16]); 9] = [
     ("LOGIC", [W_("EQ"), W_("NE"), W_("LT"), W_("GT"), W_("LTE"), W_("GTE"), W_("AND"), W_("OR"), W_("EZ"), W_("NZ"), W_("?"), W_("ER"), W_("INR"), W_("OUTR"), W_("LSH"), W_("RSH")]),
     ("FLOW", [W_("IF"), W_("ELIF"), W_("ELSE"), W_("L"), W_("W"), W_("EVERY"), W_("SKIP"), W_("OTHER"), W_("PROB"), W_("DEL"), W_("S"), W_("S.ALL"), W_("$"), W_("BREAK"), W_("KILL"), W_("SYNC")]),
     ("PATTERN", [W_("P"), W_("P.N"), W_("P.L"), W_("P.I"), W_("P.HERE"), W_("P.NEXT"), W_("P.PREV"), W_("P.START"), W_("P.END"), W_("P.WRAP"), W_("P.INS"), W_("P.RM"), W_("P.PUSH"), W_("P.POP"), W_("PN"), W_("P.RND")]),
+    ("KRIA", [W_("KR.PAT"), W_("KR.POS"), W_("KR.L.ST"), W_("KR.L.LEN"), W_("KR.RES"), W_("KR.CV"), W_("KR.MUTE"), W_("KR.TMUTE"), W_("KR.CLK"), W_("KR.PG"), W_("KR.CUE"), W_("KR.DIR"), W_("KR.DUR"), W_("KR.PERIOD"), W_("KR.SCALE"), W_("KR.PRE")]),
     ("TRACKER", [Dg(1), Dg(2), Dg(3), Pad::Minus, Dg(4), Dg(5), Dg(6), Pad::Zero, Dg(7), Dg(8), Dg(9), Pad::LenHere, Pad::Back, Dg(0), Pad::Ins, Pad::Rm]),
 ];
 
@@ -3428,7 +3476,7 @@ mod screenshot {
             std::fs::write(Path::new(&dir).join(name), out).unwrap();
         };
         shoot(&mut a, "tt_editor.ppm");
-        for _ in 0..5 {
+        for _ in 0..6 {
             a.toggle_grid_mode();
         }
         shoot(&mut a, "tt_tracker.ppm");

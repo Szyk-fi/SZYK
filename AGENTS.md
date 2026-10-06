@@ -101,6 +101,20 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: Teletype and Kria (monome) apps, KR.* ops
+- Branch: claude/teletype   Commits: b048ebc (Teletype), next commit (Kria + KR ops)
+- Changed: new src/apps/teletype.rs, src/apps/kria.rs, apps/teletype/, apps/kria/
+  manifests, teletype/scenes/ + make_scenes.py. No shared files beyond the two
+  new manifests (mod_inputs regenerated with PORTAMAX_WRITE_MANIFESTS).
+- Status: done. Teletype: the scripting language, 8 scripts + M + I, patterns,
+  DEL/S/EVERY/SKIP, scenes in the module's text format, TR/CV routed to notes or
+  mod inputs. Kria: 4 tracks x 7 params with per-param loops, divisions,
+  probability, directions, scales, patterns + cue, presets. Teletype reaches it
+  through kria::Link (lock-free rings + atomics), like Ansible over I2C.
+  Not done: Kria meta-sequencer, div-sync/cue-div, duration tie, scale fine-adjust.
+- Tests: cargo test --bin portamax-sim, 1007 passed.
+- Notes for the other assistant: none.
+
 ### 2026-10-05: Claude: Dexed clipping and level clicks
 - Branch: claude/atlas-play
 - Changed: `src/apps/dexed.rs` only. The engine's voices are summed at full scale and went past 1.0 on chords (12 notes on a plain sine patch peaked over 1.0; real patches are louder), so the device clipped them hard. Output now goes through a soft limiter (untouched below 0.6, bends smoothly to 1.0), and the master level glides across each block instead of stepping.
