@@ -113,7 +113,8 @@ impl Fx {
                         self.crush_hold[ch]
                     }
                 };
-                let y = self.dc[ch].tick(y);
+                // the crusher is symmetric, and a DC blocker would smear its levels
+                let y = if kind == 4 { y } else { self.dc[ch].tick(y) };
                 let out = x + (y - x) * mix;
                 if ch == 0 {
                     l[i] = out;

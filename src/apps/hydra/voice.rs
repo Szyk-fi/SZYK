@@ -63,12 +63,15 @@ impl Pluck {
         let n = (delay as usize).clamp(2, LINE - 2);
         let a = 0.1 + 0.9 * bright;
         self.noise_lp = 0.0;
+        // `tick` reads `delay` samples behind the write position, so the burst
+        // goes in the `n` slots just behind it.
+        self.line.fill(0.0);
+        // Undo the low-pass's loss so every brightness plucks at the same level
+        // (a one-pole filter keeps sqrt(a / (2 - a)) of white noise's RMS).
+        let gain = 0.5 / (0.577 * (a / (2.0 - a)).sqrt());
         for i in 0..n {
             self.noise_lp += (rng.bipolar() - self.noise_lp) * a;
-            self.line[(self.pos + i) % LINE] = self.noise_lp * (1.0 + 2.0 * (1.0 - a));
-        }
-        for i in n..LINE.min(n + 64) {
-            self.line[(self.pos + i) % LINE] = 0.0;
+            self.line[(self.pos + LINE - n + i) % LINE] = self.noise_lp * gain;
         }
         self.last = 0.0;
     }
@@ -548,7 +551,11 @@ impl Voice {
                         }
                         OSC_TYPE_PLUCK => {
                             let osc = &mut self.osc[o];
-                            let y = osc.pluck.tick(rate / hz.max(10.0), oc.p1, 1.0 - 10.0f32.powf(-1.5 - 2.5 * oc.p3));
+                            // The loop gain applies once per trip round the string, so a given
+                            // decay time (T60, 0.5..20 s) means a gain that depends on pitch.
+                            let t60 = 0.5 * 40.0f32.powf(oc.p3);
+                            let decay = 10.0f32.powf(-3.0 / (hz.max(10.0) * t60));
+                            let y = osc.pluck.tick(rate / hz.max(10.0), oc.p1, decay);
                             mono = y;
                             let a = (oc.pan + 1.0) * FRAC_PI_4;
                             l = y * a.cos();
@@ -798,7 +805,10 @@ mod tests {
             p.set(P::AmpS, 1.0);
             let (l, _) = render_note(&p.snapshot(), 69.0, 24000, None);
             let body = &l[4800..];
-            assert!(rms(body) > 0.02, "{name} sounds: {}", rms(body));
+            // a plucked string spreads its burst over every partial, so what is
+            // left after the attack is quiet by nature
+            let floor = if kind == 3.0 { 0.004 } else { 0.02 };
+            assert!(rms(body) > floor, "{name} sounds: {}", rms(body));
             assert!(body.iter().all(|s| s.is_finite()));
             let hz = pitch_of(body);
             assert!((hz - 440.0).abs() < 8.0, "{name}: played A4, heard {hz:.1} Hz");

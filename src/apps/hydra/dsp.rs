@@ -54,14 +54,15 @@ pub fn poly_blep(t: f32, dt: f32) -> f32 {
 }
 
 /// PolyBLAMP residual for a kink (a slope change) at phase 0, scaled to a
-/// unit slope change per unit phase; multiply by `slope_change * dt`.
+/// unit slope change per unit phase (the integral of a unit-height BLEP step,
+/// hence the 1/6 rather than 1/3); multiply by `slope_change * dt`.
 pub fn poly_blamp(t: f32, dt: f32) -> f32 {
     if t < dt {
         let x = t / dt - 1.0;
-        -(x * x * x) / 3.0
+        -(x * x * x) / 6.0
     } else if t > 1.0 - dt {
         let x = (t - 1.0) / dt + 1.0;
-        (x * x * x) / 3.0
+        (x * x * x) / 6.0
     } else {
         0.0
     }
