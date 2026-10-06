@@ -771,6 +771,71 @@ a.key = function(n, z) pushed = z * 10; draw() end
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The bundled grid and arc scripts light their hardware and take
+    /// presses and turns without a Lua error, at a small and a big size.
+    #[test]
+    fn the_grid_and_arc_scripts_play_their_hardware() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/norns/code");
+        let grid_scripts = ["gridsteps", "bouncers", "automata", "plinko", "charge", "isogrid", "strumharp", "quickhands", "blocks"];
+        let arc_scripts = ["arcarp", "shoals", "scrubber"];
+        for (name, size) in grid_scripts.iter().flat_map(|n| [(*n, (8, 16)), (*n, (16, 16))]).chain(arc_scripts.iter().map(|n| (*n, (8, 16)))) {
+            let mut a = app_with(&root);
+            a.grid.set_size(size.0, size.1);
+            a.selected = a.scripts.iter().position(|s| s.name == name).unwrap();
+            a.tick(&Input { knob1_press: true, ..Input::default() });
+            let grid = Arc::clone(&a.grid);
+            let arc = Arc::clone(&a.arc);
+            let is_arc = arc_scripts.contains(&name);
+            let lit = || if is_arc { arc.snapshot().leds.iter().flatten().any(|&l| l > 0) } else { grid.snapshot().leds.iter().any(|&l| l > 0) };
+            assert!(wait_until(lit), "{name} {size:?}: lights its {}: {:?}", if is_arc { "arc" } else { "grid" }, a.out.lock().unwrap().log);
+            for k in 0..12usize {
+                if is_arc {
+                    arc.turn(k % 4, if k % 2 == 0 { 40 } else { -25 });
+                    arc.key(k % 4, k % 3 == 0);
+                } else {
+                    let (x, y) = ((k * 5) % size.1, (k * 3) % size.0);
+                    grid.press(x, y, true);
+                    std::thread::sleep(Duration::from_millis(5));
+                    grid.press(x, y, false);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            let o = a.out.lock().unwrap();
+            assert!(o.error.is_none(), "{name} {size:?}: {:?}\n{:?}", o.error, o.log);
+            drop(o);
+            a.stop();
+        }
+    }
+
+    /// Writes the Grid / Arc app's screen with each bundled grid and arc
+    /// script running to the folder in PORTAMAX_NORNS_GRID_SHOT.
+    #[test]
+    #[ignore = "writes screenshots to the folder in PORTAMAX_NORNS_GRID_SHOT"]
+    fn grid_and_arc_script_screenshots() {
+        let Ok(dir) = std::env::var("PORTAMAX_NORNS_GRID_SHOT") else { return };
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/norns/code");
+        let save = |fb: &crate::display::FrameBuffer, name: &str| {
+            let mut out = b"P6\n640 360\n255\n".to_vec();
+            out.extend(fb.buffer().iter().flat_map(|px| [(px >> 16) as u8, (px >> 8) as u8, *px as u8]));
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}.ppm")), out).unwrap();
+        };
+        for name in ["bouncers", "automata", "plinko", "charge", "isogrid", "strumharp", "quickhands", "blocks", "shoals", "scrubber", "arcarp"] {
+            let mut a = app_with(&root);
+            a.selected = a.scripts.iter().position(|s| s.name == name).unwrap();
+            a.tick(&Input { knob1_press: true, ..Input::default() });
+            std::thread::sleep(Duration::from_millis(2500));
+            let mut fb = crate::display::FrameBuffer::new();
+            if ["shoals", "scrubber", "arcarp"].contains(&name) {
+                crate::apps::arc::ArcApp::new(Arc::clone(&a.arc), Arc::new(AtomicF32::new(3.0))).draw(&mut fb);
+            } else {
+                crate::apps::grid::GridApp::new(Arc::clone(&a.grid), Arc::new(AtomicF32::new(3.0))).draw(&mut fb);
+            }
+            save(&fb, name);
+            a.stop();
+        }
+    }
+
     #[test]
     fn a_script_error_shows_on_screen_instead_of_crashing() {
         let root = tmp("err");

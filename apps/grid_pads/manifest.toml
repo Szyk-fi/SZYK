@@ -1,0 +1,8 @@
+id = "grid_pads"
+name = "Grid Pads"
+category = "utility"
+description = "The grid cut into 4 x 4 XY pads whose X and Y drive any app's mod inputs, with optional glide. After pad by Meng Qi."
+audio_outputs = []
+note_outputs = []
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = []

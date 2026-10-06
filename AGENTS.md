@@ -101,6 +101,26 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: grid and arc pieces after monome-community/collected
+- Branch: claude/teletype
+- Changed: new bundled norns scripts in assets/norns/code (all new code,
+  each header credits the app it's after): bouncers (Rebound), automata
+  (ricochet / Otomata), plinko (Plinkonome), charge (skr), isogrid
+  (mabalhabla), strumharp (autoharp), quickhands (react), blocks (Tetris)
+  for the grid; shoals (Shoal) and scrubber (plates) for the arc. New apps
+  src/apps/arc_knobs.rs (knobs/quadknobs: 16 arc knobs in 4 banks routed to
+  mod inputs) and src/apps/grid_pads.rs (pad: 4x4 XY pads routed to mod
+  inputs), with manifests. src/apps/norns/mod.rs: a test that plays every
+  grid/arc script from its hardware at two sizes, and an ignored screenshot
+  test (PORTAMAX_NORNS_GRID_SHOT).
+- Status: done. The collected repo is mostly Max/M4L patches with no
+  licence, so nothing was copied: these are re-made from the descriptions.
+  Left out: Live/Max utilities (derp, monomebridge, quadrants...), video and
+  webcam pieces, and the sample players (mlr, mash, tml, wedjat...), which
+  need sample loading into softcut first; theremin needs a sustaining
+  engine (only PolyPerc exists).
+- Tests: cargo test --bin portamax-sim -- norns arc_knobs grid_pads.
+
 ### 2026-10-06: Claude: the arc (on-screen + real monome arc), norns arc API
 - Branch: claude/teletype
 - Changed: new src/apps/arc_kit.rs (shared arc hub like grid_kit: 2 or 4
