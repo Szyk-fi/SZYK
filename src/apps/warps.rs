@@ -127,6 +127,7 @@ const VISUAL_SNAPSHOT_POINTS: usize = 96;
 /// since a vocoder's defining visual is its band spectrum rather than
 /// a plain waveform.
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct WarpsVisual {
     /// Name of the currently active (or currently-entering, while
     /// crossfading) algorithm slot -- one of `ALGORITHM_NAMES`.
@@ -222,6 +223,7 @@ enum Row {
 /// editable parameters -- so a 4th group would have nothing to hold.
 const NUM_GROUPS: usize = 3;
 
+#[allow(dead_code)] // not used by the main binary
 struct Params {
     source_a: AtomicUsize,
     source_b: AtomicUsize,
@@ -373,6 +375,7 @@ const WARPS_ACCENT: Rgb565 = Rgb565::new(31, 11, 10);
 const WARPS_DIM: Rgb565 = Rgb565::new(15, 18, 10);
 const WARPS_FAINT: Rgb565 = Rgb565::new(5, 6, 4);
 
+#[allow(dead_code)] // not used by the main binary
 impl WarpsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {
@@ -1394,7 +1397,7 @@ mod tests {
         let modulator_loud: Vec<f32> = (0..n).map(|i| (TAU * 110.0 * i as f32 / sample_rate).sin() * 0.9).collect();
 
         let run = |algo_knob: f32| -> f32 {
-            let (mut app, audio_bus) = new_app();
+            let (app, audio_bus) = new_app();
             let a_idx = audio_bus.len();
             let a = audio_bus.register("A");
             let b_idx = audio_bus.len();

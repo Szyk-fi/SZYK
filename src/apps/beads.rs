@@ -117,6 +117,7 @@ enum Row {
 
 const NUM_GROUPS: usize = 4;
 
+#[allow(dead_code)] // not used by the main binary
 struct Params {
     source: AtomicUsize,
     quality: AtomicU32,
@@ -257,6 +258,7 @@ const BEADS_ACCENT: Rgb565 = Rgb565::new(26, 34, 9);
 const BEADS_DIM: Rgb565 = Rgb565::new(17, 28, 11);
 const BEADS_FAINT: Rgb565 = Rgb565::new(8, 13, 5);
 
+#[allow(dead_code)] // not used by the main binary
 impl BeadsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {

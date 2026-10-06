@@ -647,6 +647,7 @@ struct Shared {
     ext: Arc<AtomicF32>,
 }
 #[derive(Default, Clone)]
+#[allow(dead_code)] // not used by the main binary
 struct View {
     wave: Vec<f32>,
     spectrum: Vec<f32>,
@@ -683,6 +684,7 @@ struct WorkerResult {
     recycle: Option<Vec<[f32; 2]>>,
     journal: Option<(PathBuf, bool, usize)>,
 }
+#[allow(dead_code)] // not used by the main binary
 pub struct CollectionApp {
     terrain: Vec<f32>,
     kind: Kind,
@@ -1016,7 +1018,8 @@ impl CollectionApp {
     }
     fn offset(&self) -> usize {
         if self.kind.synth() {
-            2
+            // Plays, Instrument, Source
+            3
         } else if self.kind == Kind::Master {
             2
         } else {
@@ -1026,6 +1029,8 @@ impl CollectionApp {
     fn rows(&self) -> Vec<(String, String, bool)> {
         let mut r = vec![];
         if self.kind.synth() {
+            // First, like every note source: where the generator's notes go.
+            r.push(("Plays".into(), self.note_route.label(), false));
             r.push((
                 "Instrument".into(),
                 VOICE_NAMES[self.p.voice.load(Ordering::Relaxed).min(7)].into(),
@@ -1157,9 +1162,6 @@ impl CollectionApp {
             r.push(("Root note".into(), ROOT_NAMES[self.root_note() as usize % 12].into(),false));
             r.push(("Pattern".into(),PATTERNS[self.p.pattern.load(Ordering::Relaxed)%6].into(),false));
             r.push(("Rhythm".into(),RHYTHMS[self.p.rhythm.load(Ordering::Relaxed)%5].into(),false));
-            // Last, so it never shifts the rows above: where the
-            // generator's notes go.
-            r.push(("Plays".into(), self.note_route.label(), false));
         } else if matches!(self.kind, Kind::Fracture | Kind::Ghosts | Kind::TapeMachine) {
             r.push((
                 "Freeze input buffer".into(),
@@ -1870,9 +1872,9 @@ impl CollectionApp {
             }
         }
     }
-    /// The synth kinds' "Plays" row (always last).
+    /// The synth kinds' "Plays" row (always first).
     fn plays_row(&self) -> Option<usize> {
-        self.kind.synth().then(|| self.rows().len() - 1)
+        self.kind.synth().then_some(0)
     }
     fn action(&mut self) {
         let row = self.list.selected;
@@ -1971,6 +1973,8 @@ impl App for CollectionApp {
             let i = self.list.selected;
             if i < off {
                 if self.kind.synth() && i == 0 {
+                    // Plays: stepped above
+                } else if self.kind.synth() && i == 1 {
                     self.edit_voice(d);
                 } else if self.kind.media() {
                     if !self.files.is_empty() {
@@ -2842,6 +2846,7 @@ fn scan_files(root: &Path, out: &mut Vec<PathBuf>, depth: usize, radio: bool) {
         }
     }
 }
+#[allow(dead_code)] // not used by the main binary
 fn load_wav(path: &Path) -> Result<Clip, String> {
     let mut r = hound::WavReader::open(path).map_err(|e| format!("WAV: {e}"))?;
     let s = r.spec();

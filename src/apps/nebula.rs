@@ -420,13 +420,14 @@ impl NebulaApp {
                 }
                 v
             }
-            1 => vec![Selection::Plays, Selection::Scale, Selection::Root, Selection::OctaveRange, Selection::VelMin, Selection::VelMax],
+            1 => vec![Selection::Scale, Selection::Root, Selection::OctaveRange, Selection::VelMin, Selection::VelMax],
             _ => vec![Selection::Engine, Selection::Harmonics, Selection::Timbre, Selection::Decay, Selection::Randomize],
         }
     }
 
     fn visible_rows(&self) -> Vec<Row> {
-        let mut rows = Vec::new();
+        // Plays leads the menu, as in every note source.
+        let mut rows = vec![Row::Leaf(Selection::Plays)];
         for g in 0..NUM_GROUPS {
             rows.push(Row::Group(g));
             if self.expanded[g] {
@@ -579,6 +580,7 @@ impl NebulaApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl NebulaApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building, exposed for an alternate

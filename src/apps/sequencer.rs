@@ -1203,7 +1203,7 @@ impl SequencerApp {
             Selection::StepAccent(t) => format!("Step {} Accent", self.last_touched_step[t] + 1),
             Selection::StepFlam(t) => format!("Step {} Flam", self.last_touched_step[t] + 1),
             Selection::StepProb(t) => format!("Step {} Chance", self.last_touched_step[t] + 1),
-            Selection::Accent(t) => "Accent Amount".into(),
+            Selection::Accent(_t) => "Accent Amount".into(),
             Selection::Decay(t) => if self.params.tracks[t].instrument.load(Ordering::Relaxed) == INSTRUMENT_EXTERNAL { "Gate".into() } else { "Decay".into() },
             Selection::Plays(_) => "Plays".into(),
             Selection::Volume(_) => "Volume".into(),
@@ -1894,6 +1894,7 @@ impl SequencerApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl SequencerApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building, exposed for an alternate
@@ -4046,7 +4047,7 @@ mod tests {
     #[test]
     fn saving_and_loading_a_kit_round_trips_by_sample_name() {
         let scratch = ScratchDir::new("kit_round_trip");
-        let mut app = new_app();
+        let app = new_app();
         assert!(app.params.samples.len() >= 2, "expected the real samples/ directory to have at least 2 samples for this test to mean anything");
 
         app.params.pad_sample[0].store(0, Ordering::Relaxed);
@@ -4084,7 +4085,7 @@ mod tests {
     #[test]
     fn loading_a_never_saved_kit_slot_does_not_panic_or_change_state() {
         let scratch = ScratchDir::new("kit_missing");
-        let mut app = new_app();
+        let app = new_app();
         app.params.pad_sample[0].store(0, Ordering::Relaxed);
 
         app.load_kit_from(&scratch.0); // nothing was ever saved here

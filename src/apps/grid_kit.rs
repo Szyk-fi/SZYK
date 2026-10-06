@@ -1087,6 +1087,7 @@ pub mod serial {
         scanned: Option<Instant>,
     }
 
+    #[allow(dead_code)] // not used by the main binary
     impl Driver {
         pub fn new(grid: Arc<Grid>, arc: Arc<ArcHub>) -> Driver {
             Driver {

@@ -85,6 +85,7 @@ fn symbol<T: Copy>(handle: *mut c_void, name: &str) -> Result<T, String> {
     Ok(unsafe { std::mem::transmute_copy::<*mut c_void, T>(&p) })
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl Firmware {
     /// Loads a fresh copy of variant `id`'s library. It is not running yet.
     pub fn load(id: &str) -> Result<Firmware, String> {

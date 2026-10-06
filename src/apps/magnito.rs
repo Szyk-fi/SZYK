@@ -104,6 +104,7 @@ use std::sync::{Arc, Mutex};
 /// loop visibly open up (wider at low BIAS/more "unlimited", narrower
 /// at high BIAS) instead of collapsing onto a single static curve.
 #[derive(Clone, Default)]
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct MagnitoVisual {
     /// Real (input, output) sample pairs across the most recent audio
     /// block, both in roughly -1..1 (post-wobble input to the
@@ -213,6 +214,7 @@ enum Row {
 
 const NUM_GROUPS: usize = 4;
 
+#[allow(dead_code)] // not used by the main binary
 struct Params {
     source: AtomicUsize,
     /// Pre-saturation gain / saturation intensity. At or above
@@ -359,6 +361,7 @@ const MAGNITO_DIM: Rgb565 = Rgb565::new(17, 26, 10);
 /// Just above the shell brown -- unlit pads and dial tracks.
 const MAGNITO_FAINT: Rgb565 = Rgb565::new(8, 12, 4);
 
+#[allow(dead_code)] // not used by the main binary
 impl MagnitoApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {
@@ -632,6 +635,7 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 /// `crate::app::polyline_segments` uses for a 1D waveform -- just
 /// driven by two real signals (input, output) instead of one sample
 /// stream against a synthetic time axis.
+#[allow(dead_code)] // not used by the main binary
 fn xy_segments(points: &[(f32, f32)], width_px: f32, height_px: f32) -> crate::app::CurveSegments {
     if points.len() < 2 {
         return crate::app::CurveSegments::default();

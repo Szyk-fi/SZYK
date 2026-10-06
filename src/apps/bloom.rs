@@ -1808,6 +1808,7 @@ impl BloomApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl BloomApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building, exposed for an alternate
@@ -3109,7 +3110,7 @@ mod tests {
     #[test]
     fn direction_modulation_adds_and_wraps() {
         let sp_direction = |app: &BloomApp| modulated_direction(&app.params.shapes[0]);
-        let mut app = new_app();
+        let app = new_app();
         assert_eq!(sp_direction(&app), 0, "Forward by default");
         app.params.shapes[0].ext_direction.set(1.0);
         assert_eq!(sp_direction(&app), 1, "external +1 should select Reverse");

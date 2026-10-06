@@ -1,0 +1,5 @@
+id = "synth"
+name = "Synth"
+category = "instrument"
+description = "The simplest instrument: the pad grid is a 16-note held keyboard; two knobs set cutoff and volume."
+notes_in = true

@@ -366,6 +366,15 @@ fn compile_one(lib: &str, cpp: bool, includes: &[&str], defines: &[(&str, Option
     build.cpp(cpp).warnings(false);
     if cpp {
         build.std("c++14");
+        // The vendored sources lean on <cstdio>/<cstring> arriving through other
+        // headers, which clang's libc++ does and GCC's libstdc++ no longer does,
+        // so a Linux build fails with "printf was not declared". Pulling them in
+        // everywhere costs nothing and needs no change to vendored files.
+        if std::env::var("TARGET").is_ok_and(|t| t.contains("linux")) {
+            for h in ["cstdio", "cstring", "cstdlib"] {
+                build.flag("-include").flag(h);
+            }
+        }
     }
     for (k, v) in defines {
         build.define(k, *v);

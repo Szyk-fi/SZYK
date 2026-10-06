@@ -301,6 +301,7 @@ const ENGINE_GROUP: usize = 0;
 const ENVELOPE_GROUP: usize = 1;
 const MOD_GROUP: usize = 3;
 const ANALYZER_GROUP: usize = 5;
+#[allow(dead_code)] // not used by the main binary
 const ARP_GROUP: usize = 6;
 
 fn group_name(g: usize) -> &'static str {
@@ -595,6 +596,7 @@ const PLAITS_FAINT: Rgb565 = Rgb565::new(25, 50, 22);
 /// -- used where a 3-step (off/mid/lit) ramp existed before.
 const PLAITS_MID: Rgb565 = Rgb565::new(13, 35, 15);
 
+#[allow(dead_code)] // not used by the main binary
 impl PlaitsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         let layout = LayoutWatcher::new();

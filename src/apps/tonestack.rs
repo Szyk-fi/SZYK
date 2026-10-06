@@ -584,6 +584,7 @@ const TONESTACK_DIM: Rgb565 = Rgb565::new(9, 15, 5);
 /// A shade darker than the cream panel, for unlit pads and dial tracks.
 const TONESTACK_FAINT: Rgb565 = Rgb565::new(19, 37, 15);
 
+#[allow(dead_code)] // not used by the main binary
 impl TonestackApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {

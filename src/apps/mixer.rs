@@ -55,6 +55,7 @@ enum Row {
 
 const NUM_GROUPS: usize = 2;
 
+#[allow(dead_code)] // not used by the main binary
 pub struct MixerApp {
     master_volume: Arc<AtomicF32>,
     mixer_bus: Arc<MixerBus>,
@@ -87,6 +88,7 @@ const MIXER_ACCENT: Rgb565 = Rgb565::new(9, 25, 17);
 const MIXER_DIM: Rgb565 = Rgb565::new(13, 31, 16);
 const MIXER_FADER_OUTLINE: Rgb565 = Rgb565::new(5, 10, 7);
 
+#[allow(dead_code)] // not used by the main binary
 impl MixerApp {
     pub fn new(master_volume: Arc<AtomicF32>, mixer_bus: Arc<MixerBus>, nav_speed: Arc<AtomicF32>, audio_bus: Arc<AudioBus>) -> Self {
         Self { master_volume, mixer_bus, nav_speed, audio_bus, list: ParamList::new(), expanded: [false; NUM_GROUPS] }
@@ -194,6 +196,7 @@ impl MixerApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl MixerApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building, exposed for an alternate

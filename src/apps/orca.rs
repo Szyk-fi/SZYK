@@ -229,9 +229,9 @@ fn kit_config() -> KitConfig {
     }
 }
 
-const C_PATTERN: usize = 0;
-const C_BPM: usize = 1;
-const C_ROUTE: usize = 2;
+const C_PATTERN: usize = 1;
+const C_BPM: usize = 2;
+const C_ROUTE: usize = 0;
 const C_WAVE: usize = 3;
 const C_RELEASE: usize = 4;
 const C_LEVEL: usize = 5;

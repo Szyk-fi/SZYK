@@ -110,6 +110,7 @@ const RANGE_NAMES: [&str; 2] = ["Unipolar", "Bipolar"];
 /// repeating motion -- exactly the qualitative story the module's own
 /// doc comment describes. Everything else here is the real, live
 /// CV/Gate/Delta output state, not fabricated.
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct QueenOfPentaclesVisual {
     /// Active map name ("Logistic"/"Tent"/"Sine"), for a panel label.
     pub map_name: String,
@@ -223,6 +224,7 @@ enum Row {
 const NUM_GROUPS: usize = 3;
 const CHAOS_GROUP: usize = 0;
 const GATE_GROUP: usize = 1;
+#[allow(dead_code)] // not used by the main binary
 const OUTPUTS_GROUP: usize = 2;
 
 struct OutputParams {
@@ -368,6 +370,7 @@ const QOP_ACCENT: Rgb565 = Rgb565::new(26, 43, 7);
 const QOP_DIM: Rgb565 = Rgb565::new(9, 26, 10);
 const QOP_SCOPE_OUTLINE: Rgb565 = Rgb565::new(4, 10, 5);
 
+#[allow(dead_code)] // not used by the main binary
 impl QueenOfPentaclesApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>) -> Self {
         Self {

@@ -162,6 +162,7 @@ fn read_interp(buffer: &[f32], pos: f32) -> f32 {
 /// field is read from `Params`' own Mutex/Atomic-guarded snapshots,
 /// written once per audio block by `NautilusProcessor::process`.
 /// Nothing here is fabricated for the panel's sake.
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct NautilusVisual {
     /// One of `DELAY_MODE_NAMES` -- Fade/Doppler/Shimmer/De-Shimmer.
     pub delay_mode_name: String,
@@ -386,6 +387,7 @@ const NAUTILUS_DIM: Rgb565 = Rgb565::new(7, 26, 13);
 const NAUTILUS_GATE_OFF: Rgb565 = Rgb565::new(2, 5, 4);
 const NAUTILUS_FAINT: Rgb565 = Rgb565::new(1, 9, 6);
 
+#[allow(dead_code)] // not used by the main binary
 impl NautilusApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {
@@ -1582,7 +1584,7 @@ mod tests {
     /// same atomics the rest of the app already reads/writes.
     #[test]
     fn output_visual_mirrors_freeze_and_sonar_state() {
-        let (mut app, _audio_bus) = new_app();
+        let (app, _audio_bus) = new_app();
         app.params.freeze.store(true, Ordering::Relaxed);
         app.params.feedback.set(0.42);
         let visual = app.output_visual();

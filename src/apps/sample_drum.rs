@@ -1634,6 +1634,7 @@ impl SampleDrumApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl SampleDrumApp {
     pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
         self.visible_rows()
@@ -2375,7 +2376,7 @@ mod tests {
         let scratch_root = std::env::temp_dir().join(format!("portamax_sample_drum_preset_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch_root);
 
-        let mut app = new_app();
+        let app = new_app();
         assert!(!app.params.samples.is_empty());
         let c = &app.params.channels[0];
         c.sample.store(0, Ordering::Relaxed);
@@ -2577,7 +2578,7 @@ mod tests {
     fn loading_a_never_saved_preset_slot_does_not_panic_or_change_state() {
         let scratch_root = std::env::temp_dir().join(format!("portamax_sample_drum_missing_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch_root);
-        let mut app = new_app();
+        let app = new_app();
         app.params.channels[0].tune.store(7, Ordering::Relaxed);
 
         app.load_preset_from(&scratch_root); // nothing was ever saved here
@@ -2744,7 +2745,7 @@ mod tests {
 
     #[test]
     fn fine_tune_is_in_cents() {
-        let mut app = new_app();
+        let app = new_app();
         let mut proc = new_processor(Arc::clone(&app.params));
         app.params.channels[0].env_decay.set(1.0);
         app.params.channels[0].env_range.store(2, Ordering::Relaxed);

@@ -211,23 +211,24 @@ impl Shared {
 
 // ------------------------------------------------------------ controls
 
-const CONTROLS: [&str; 16] = ["Timbre", "Morph", "Track", "Engine", "Tempo", "Swing", "Harmonics", "Decay", "Level", "Pattern", "Length", "Edit Octave", "Step Add", "Run", "Next Pattern", "Clear Pattern"];
-const C_TIMBRE: usize = 0;
-const C_MORPH: usize = 1;
-const C_TRACK: usize = 2;
-const C_ENGINE: usize = 3;
-const C_TEMPO: usize = 4;
-const C_SWING: usize = 5;
-const C_HARM: usize = 6;
-const C_DECAY: usize = 7;
-const C_LEVEL: usize = 8;
-const C_PATTERN: usize = 9;
-const C_LENGTH: usize = 10;
-const C_OCTAVE: usize = 11;
-const C_STEP: usize = 12;
-const C_RUN: usize = 13;
-const C_NEXT: usize = 14;
-const C_CLEAR: usize = 15;
+const CONTROLS: [&str; 17] = ["Plays", "Timbre", "Morph", "Track", "Engine", "Tempo", "Swing", "Harmonics", "Decay", "Level", "Pattern", "Length", "Edit Octave", "Step Add", "Run", "Next Pattern", "Clear Pattern"];
+const C_PLAYS: usize = 0;
+const C_TIMBRE: usize = 1;
+const C_MORPH: usize = 2;
+const C_TRACK: usize = 3;
+const C_ENGINE: usize = 4;
+const C_TEMPO: usize = 5;
+const C_SWING: usize = 6;
+const C_HARM: usize = 7;
+const C_DECAY: usize = 8;
+const C_LEVEL: usize = 9;
+const C_PATTERN: usize = 10;
+const C_LENGTH: usize = 11;
+const C_OCTAVE: usize = 12;
+const C_STEP: usize = 13;
+const C_RUN: usize = 14;
+const C_NEXT: usize = 15;
+const C_CLEAR: usize = 16;
 
 fn kit_config() -> KitConfig {
     KitConfig {
@@ -369,6 +370,7 @@ impl LedgerApp {
         let t = self.track();
         let pct = |a: &AtomicF32| format!("{:.0}%", a.get() * 100.0);
         match c {
+            C_PLAYS => self.track_routes.get(self.cur_track).map_or_else(|| "Own sound".to_string(), |r| r.label()),
             C_TIMBRE => pct(&t.timbre),
             C_MORPH => pct(&t.morph),
             C_HARM => pct(&t.harmonics),
@@ -415,6 +417,11 @@ impl LedgerApp {
         let t = &p.tracks[self.cur_track % TRACKS];
         let nudge = |a: &AtomicF32| a.set((a.get() + d as f32 * 0.01 * sens).clamp(0.0, 1.0));
         match c {
+            C_PLAYS => {
+                if let Some(r) = self.track_routes.get(self.cur_track) {
+                    r.step(d.signum());
+                }
+            }
             C_TIMBRE => nudge(&t.timbre),
             C_MORPH => nudge(&t.morph),
             C_HARM => nudge(&t.harmonics),
@@ -725,7 +732,7 @@ impl PlayHost for LedgerApp {
         })
     }
     fn kit_stepped(&self, i: usize) -> bool {
-        matches!(i, C_TRACK | C_ENGINE | C_PATTERN | C_LENGTH | C_OCTAVE | C_STEP | C_RUN | C_NEXT | C_CLEAR)
+        matches!(i, C_PLAYS | C_TRACK | C_ENGINE | C_PATTERN | C_LENGTH | C_OCTAVE | C_STEP | C_RUN | C_NEXT | C_CLEAR)
     }
     fn kit_edit(&mut self, i: usize, delta: i32) {
         self.edit(i, delta);
@@ -734,6 +741,11 @@ impl PlayHost for LedgerApp {
     fn kit_reset(&mut self, i: usize) {
         let t = self.track();
         match i {
+            C_PLAYS => {
+                if let Some(r) = self.track_routes.get(self.cur_track) {
+                    r.reset();
+                }
+            }
             C_TIMBRE | C_MORPH | C_HARM => self.knob(i).set(0.5),
             C_DECAY => t.decay.set(0.5),
             C_LEVEL => t.level.set(0.7),

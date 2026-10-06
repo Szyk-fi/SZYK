@@ -341,7 +341,7 @@ enum Row {
     Octave,
     Gate,
 }
-const ROWS: [Row; 8] = [Row::Input, Row::Plays, Row::Sound, Row::Mode, Row::Scale, Row::Key, Row::Octave, Row::Gate];
+const ROWS: [Row; 8] = [Row::Plays, Row::Input, Row::Sound, Row::Mode, Row::Scale, Row::Key, Row::Octave, Row::Gate];
 
 pub struct Hum {
     sound: Sound,

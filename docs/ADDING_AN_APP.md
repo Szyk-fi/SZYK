@@ -64,8 +64,7 @@ code, not pseudocode) and its `apps/<id>/manifest.toml`, plus:
    ```
 3. **Fill in `mod_inputs`.** If the app registers modulation inputs
    (`modbus.register("<Name>: <Param>")`), run
-   `PORTAMAX_WRITE_MANIFESTS=1 cargo test --bin portamax-sim every_manifest_declares`
-   once. It rewrites the list from what the code registers, and a plain
+   `tools/sync_manifests.sh` once. It rewrites the list from what the code registers, and a plain
    `cargo test` fails if the two drift apart. Name inputs `"<App>: <Param>"`.
 4. **Build and test.**
    ```sh

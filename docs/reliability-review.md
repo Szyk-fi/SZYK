@@ -44,7 +44,6 @@ Physical controller/MIDI behavior, device switching, speaker/headphone playback,
 
 ## Files touched in this pass
 
-- src/apps/cascade.rs: voice-lifecycle normalization, regression and listening export.
 - src/apps/collection.rs: Scope background-activity rule and regression.
 - src/apps/analyzer.rs, src/apps/visualizer.rs: monitoring activity rules and tests.
 - src/audio.rs: invalid master gain protection and test.

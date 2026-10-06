@@ -146,6 +146,8 @@ pub struct NornsApp {
     roots: Vec<(PathBuf, bool)>,
     /// Where the script's MIDI notes go (set from Portal's Notes page).
     note_out: Option<crate::note_bus::NoteOut>,
+    /// The "Plays" row: which instrument the script's notes go to.
+    note_route: Option<crate::note_bus::NoteRoute>,
     /// The shared grid a script reaches with `grid.connect()`.
     grid: Arc<crate::apps::grid_kit::Grid>,
     /// The shared arc, `arc.connect()`.
@@ -172,6 +174,7 @@ impl NornsApp {
             peak: Arc::new(AtomicF32::new(0.0)),
             roots,
             note_out: None,
+            note_route: None,
             grid: crate::apps::grid_kit::grid(),
             arc: crate::apps::arc_kit::arc(),
         };
@@ -194,8 +197,10 @@ impl NornsApp {
 
     /// Lets a script's MIDI notes play other apps (see note_bus.rs).
     pub fn with_notes(mut self, bus: Option<Arc<crate::note_bus::NoteBus>>) -> Self {
-        if let Some(bus) = bus {
-            self.note_out = Some(bus.register_source_routed("Norns", crate::note_bus::NONE));
+        if bus.is_some() {
+            let (route, out) = crate::note_bus::NoteRoute::new(bus, "Norns", "norns", false);
+            self.note_route = Some(route);
+            self.note_out = Some(out);
         }
         self
     }
@@ -281,6 +286,17 @@ impl NornsApp {
         s.px
     }
 
+    /// The PARAMS list: Plays first (like every note source), then the
+    /// script's own parameters. Plays carries `usize::MAX` for its index.
+    fn param_rows(&self) -> Vec<(String, String, String, usize)> {
+        let mut rows = Vec::new();
+        if let Some(r) = &self.note_route {
+            rows.push(("option".to_string(), "Plays".to_string(), r.label(), usize::MAX));
+        }
+        rows.extend(self.out.lock().unwrap().params.iter().cloned());
+        rows
+    }
+
     fn render_params(&self, rows: &[(String, String, String, usize)]) -> Vec<u8> {
         let mut s = Screen::new();
         s.level(4);
@@ -308,7 +324,7 @@ impl NornsApp {
         self.shown = match self.mode {
             Mode::Select => self.render_select(),
             Mode::Params => {
-                let rows = self.out.lock().unwrap().params.clone();
+                let rows = self.param_rows();
                 self.render_params(&rows)
             }
             Mode::Play => {
@@ -429,15 +445,21 @@ impl App for NornsApp {
                 self.handle_pads(&input.grid);
             }
             Mode::Params => {
-                let n = self.out.lock().unwrap().params.len();
+                let n = self.param_rows().len();
                 if n > 0 {
                     let d = input.knob1.signum() + input.navigation_steps.signum();
                     self.param_sel = (self.param_sel as i32 + d).clamp(0, n as i32 - 1) as usize;
                 }
                 if input.knob2 != 0 {
-                    let idx = self.out.lock().unwrap().params.get(self.param_sel).map(|r| r.3);
-                    if let Some(idx) = idx {
-                        self.send(Event::ParamDelta(idx, input.knob2));
+                    let idx = self.param_rows().get(self.param_sel).map(|r| r.3);
+                    match idx {
+                        Some(usize::MAX) => {
+                            if let Some(r) = &self.note_route {
+                                r.step(input.knob2.signum());
+                            }
+                        }
+                        Some(idx) => self.send(Event::ParamDelta(idx, input.knob2)),
+                        None => {}
                     }
                 }
                 if input.knob1_press {
@@ -542,7 +564,7 @@ impl App for NornsApp {
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         match self.mode {
             Mode::Select => self.scripts.iter().map(|s| (s.name.clone(), if s.bundled { "built in".into() } else { "SD card".into() }, false)).collect(),
-            Mode::Params => self.out.lock().unwrap().params.iter().map(|(k, n, v, _)| (n.clone(), v.clone(), k == "separator" || k == "group")).collect(),
+            Mode::Params => self.param_rows().into_iter().map(|(k, n, v, _)| (n, v, k == "separator" || k == "group")).collect(),
             Mode::Play => vec![(self.script_name(), String::new(), true)],
         }
     }

@@ -166,6 +166,7 @@ impl MidiLearnApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl MidiLearnApp {
     pub(crate) fn display_rows(&self) -> Vec<(String, String, bool)> {
         self.visible_rows()

@@ -419,7 +419,7 @@ enum SetupRow {
     Save,
     Load,
 }
-const SETUP: [SetupRow; 14] = [SetupRow::Track, SetupRow::Kind, SetupRow::Plays, SetupRow::Mute, SetupRow::Octave, SetupRow::LockApp, SetupRow::LockInput, SetupRow::ClipLength, SetupRow::Tempo, SetupRow::Swing, SetupRow::Clock, SetupRow::Slot, SetupRow::Save, SetupRow::Load];
+const SETUP: [SetupRow; 14] = [SetupRow::Track, SetupRow::Plays, SetupRow::Kind, SetupRow::Mute, SetupRow::Octave, SetupRow::LockApp, SetupRow::LockInput, SetupRow::ClipLength, SetupRow::Tempo, SetupRow::Swing, SetupRow::Clock, SetupRow::Slot, SetupRow::Save, SetupRow::Load];
 
 pub struct Session {
     pub sound: Sound,

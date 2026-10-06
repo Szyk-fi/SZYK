@@ -119,6 +119,7 @@ fn filter_hz(cutoff01: f32) -> f32 {
 /// derived from the same GRID/TIME/GROOVE + per-tap MUTE/LEVEL/PAN
 /// state `RainmakerProcessor::process` actually uses (see
 /// `RainmakerApp::output_visual`) -- nothing here is fabricated.
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct RainmakerVisual {
     /// Current GROOVE preset name (see `GROOVE_NAMES`).
     pub groove_name: String,
@@ -198,6 +199,7 @@ struct TapParams {
     filter_q: AtomicF32,     // 0..1
 }
 
+#[allow(dead_code)] // not used by the main binary
 struct Params {
     source: AtomicUsize,
     grid: AtomicUsize,       // index into GRID_VALUES
@@ -331,6 +333,7 @@ const RAINMAKER_ACCENT: Rgb565 = Rgb565::new(14, 42, 24);
 const RAINMAKER_DIM: Rgb565 = Rgb565::new(10, 26, 15);
 const RAINMAKER_FAINT: Rgb565 = Rgb565::new(4, 11, 7);
 
+#[allow(dead_code)] // not used by the main binary
 impl RainmakerApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {
@@ -1290,7 +1293,7 @@ mod tests {
     /// mute values that were set, and every time_fraction in 0..1.
     #[test]
     fn output_visual_reports_real_per_tap_state() {
-        let (mut app, _audio_bus) = new_app();
+        let (app, _audio_bus) = new_app();
         app.params.taps[0].level.set(0.42);
         app.params.taps[0].pan.set(-0.5);
         app.params.taps[1].mute.store(true, Ordering::Relaxed);
@@ -1317,7 +1320,7 @@ mod tests {
     /// audio level -- here checked via `output_visual` directly.
     #[test]
     fn output_visual_time_fractions_track_grid() {
-        let (mut app, _audio_bus) = new_app();
+        let (app, _audio_bus) = new_app();
         app.params.time.set(0.0); // shortest beat (MIN_BEAT_MS), so tap 16's delay never hits the MAX_TAP_MS clamp at either GRID below
         app.params.grid.store(0, Ordering::Relaxed); // 1 tap/beat: taps spread evenly, tap 1 = 1/16th of the way out
         let visual_grid1 = app.output_visual();
@@ -1337,7 +1340,7 @@ mod tests {
     /// pattern isn't uniform across taps.
     #[test]
     fn output_visual_time_fractions_respond_to_groove() {
-        let (mut app, _audio_bus) = new_app();
+        let (app, _audio_bus) = new_app();
         app.params.groove_type.store(2, Ordering::Relaxed); // Hard Swing
         app.params.groove_amount.set(0.0);
         let straight = app.output_visual();

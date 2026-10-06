@@ -32,6 +32,7 @@ pub struct ThemeColor {
     val: AtomicU32,
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl ThemeColor {
     pub fn new(default_hue: u32, default_sat: u32, default_val: u32) -> Self {
         Self {

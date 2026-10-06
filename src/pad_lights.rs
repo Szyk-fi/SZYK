@@ -34,6 +34,7 @@ pub fn compose(overlay: [PadColor; 16], held: [bool; 16]) -> [PadColor; 16] {
 }
 
 /// What each palette slot looks like on the Push, for the screen.
+#[allow(dead_code)] // not used by the main binary
 pub fn rgb(c: PadColor) -> (u8, u8, u8) {
     match c {
         PadColor::Off => (0x23, 0x23, 0x23),
@@ -56,6 +57,7 @@ pub struct LightSync {
     pub log: Vec<(u8, u8)>,
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl LightSync {
     pub fn new(leds: LedOutput) -> Self {
         LightSync {

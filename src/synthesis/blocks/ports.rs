@@ -311,6 +311,7 @@ pub struct Rotary {
     dp: f32,
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl Rotary {
     pub fn new(sr: f32) -> Self {
         Self { horn: Ring::new((0.005 * sr) as usize + 8), drum: Ring::new((0.005 * sr) as usize + 8), lp1: 0.0, lp2: 0.0, horn_rate: 0.8, drum_rate: 0.67, hp: 0.0, dp: 0.25 }

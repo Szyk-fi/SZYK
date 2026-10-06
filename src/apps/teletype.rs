@@ -2153,11 +2153,11 @@ fn kit_config() -> KitConfig {
 
 // ---------------------------------------------------------------- the app
 
-const C_SCENE: usize = 0;
-const C_METRO: usize = 1;
-const C_METRO_ON: usize = 2;
-const C_PARAM: usize = 3;
-const C_ROUTE: usize = 4;
+const C_SCENE: usize = 1;
+const C_METRO: usize = 2;
+const C_METRO_ON: usize = 3;
+const C_PARAM: usize = 4;
+const C_ROUTE: usize = 0;
 const C_WAVE: usize = 5;
 const C_RELEASE: usize = 6;
 const C_LEVEL: usize = 7;
@@ -2562,7 +2562,7 @@ impl TeletypeApp {
             C_METRO => ("Metro (M)".into(), format!("{} ms", self.view().m)),
             C_METRO_ON => ("Metro on (M.ACT)".into(), if self.view().m_act { "on" } else { "off" }.into()),
             C_PARAM => ("Param knob".into(), format!("{}", (self.p.param.get() * CV_MAX as f32) as i32)),
-            C_ROUTE => ("TR plays".into(), self.route.label()),
+            C_ROUTE => ("Plays".into(), self.route.label()),
             C_WAVE => ("Voice".into(), WAVES[self.p.wave.load(Ordering::Relaxed).min(3)].into()),
             C_RELEASE => ("Release".into(), format!("{:.0} ms", release_ms(self.p.release.get()))),
             C_LEVEL => ("Level".into(), format!("{:.0}%", self.p.level.get() * 100.0)),

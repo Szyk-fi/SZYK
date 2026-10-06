@@ -129,6 +129,7 @@ const NUM_GROUPS: usize = 4;
 const CORE_GROUP: usize = 0;
 const GATE_GROUP: usize = 1;
 const CV_GROUP: usize = 2;
+#[allow(dead_code)] // not used by the main binary
 const OUTPUT_GROUP: usize = 3;
 
 /// Live panel state for a bespoke Slint Turing Machine screen: the
@@ -140,6 +141,7 @@ const OUTPUT_GROUP: usize = 3;
 /// exact same formula the processor itself evaluates -- nothing here
 /// is invented for display purposes.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct TuringMachineVisual {
     /// The full 16-position ring, in the same display-index convention
     /// as `register_bits()`: index 0 is the bit about to shift out
@@ -336,6 +338,7 @@ const TURING_ACCENT: Rgb565 = Rgb565::new(0, 20, 18);
 const TURING_DIM: Rgb565 = Rgb565::new(9, 17, 7);
 const TURING_LED_OFF: Rgb565 = Rgb565::new(25, 50, 17);
 
+#[allow(dead_code)] // not used by the main binary
 impl TuringMachineApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>) -> Self {
         Self {
@@ -364,12 +367,13 @@ impl TuringMachineApp {
             CORE_GROUP => vec![Selection::Rate, Selection::Locks, Selection::Length, Selection::Write],
             GATE_GROUP => vec![Selection::GateBitA, Selection::GateBitB, Selection::GateMode],
             CV_GROUP => (0..NUM_VOLTS_WEIGHTS).map(Selection::VoltsWeight).collect(),
-            _ => [Selection::Plays, Selection::NoteScale].into_iter().chain((0..NUM_OUTPUTS).flat_map(|c| [Selection::OutputTarget(c), Selection::OutputInput(c), Selection::OutputLevel(c)])).collect(),
+            _ => [Selection::NoteScale].into_iter().chain((0..NUM_OUTPUTS).flat_map(|c| [Selection::OutputTarget(c), Selection::OutputInput(c), Selection::OutputLevel(c)])).collect(),
         }
     }
 
     fn visible_rows(&self) -> Vec<Row> {
-        let mut rows = Vec::new();
+        // Plays leads the menu, as in every note source.
+        let mut rows = vec![Row::Leaf(Selection::Plays)];
         for g in 0..NUM_GROUPS {
             rows.push(Row::Group(g));
             if self.expanded[g] {
@@ -1334,7 +1338,7 @@ mod tests {
     /// `locks_label` already document.
     #[test]
     fn output_visual_keep_probability_and_lock_side_track_the_locks_knob() {
-        let (mut app, _modbus) = new_app();
+        let (app, _modbus) = new_app();
 
         app.params.locks.set(1.0);
         let locked = app.output_visual();

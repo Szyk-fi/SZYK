@@ -54,6 +54,7 @@ pub struct MixBus {
     load_frac: AtomicF32,
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl MixBus {
     pub fn new(master_volume: Arc<AtomicF32>) -> Self {
         Self { processors: Mutex::new(Vec::new()), scratch: Mutex::new(Vec::new()), master_volume, load_frac: AtomicF32::new(0.0) }

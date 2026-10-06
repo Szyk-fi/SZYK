@@ -11,6 +11,7 @@ use serde::Deserialize;
 use std::path::Path;
 
 #[derive(Deserialize, Debug, Clone, Default)]
+#[allow(dead_code)] // not used by the main binary
 pub struct AppManifest {
     pub id: String,
     pub name: String,

@@ -101,6 +101,27 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: Plays first in every note source's menu, orphan apps, warnings
+- Branch: claude/picker-and-cleanup (on top of claude/dropin-cleanup)
+- Changed: Plays is now the first row in Kria, Teletype, Orca, O&C (constants
+  renumbered), Collection synths, Hum, Turing Machine, Nebula (a top-level
+  leaf), Session (SETUP) and Ledger (new Plays row: its tracks had routes but
+  no row to change them) and Norns (new, first row of PARAMS; it had no
+  picker). Sequencer keeps Plays first inside each track's group. Cascade
+  removed (replaced by Dexed); Synth reinstalled (apps/synth, the manual
+  documents it); Analyzer's `create` removed (it is Visualizer's helper).
+  build.rs adds -include cstdio/cstring/cstdlib on Linux. 112 compiler
+  warnings down to 0 (`#[allow(dead_code)]` where only the Slint examples use
+  an item). tools/sync_manifests.sh fills in mod_inputs.
+- Status: done, except the instrument's own settings listed under the Plays
+  row: that needs a shared mechanism (ModBus inputs by owner) and is not built.
+- Tests: cargo test --bin portamax-sim: 25 failed, all environmental (19 need
+  samples/; 6 in apps::oc: dlopen of the firmware library fails here with no
+  error text, undiagnosed, so the O&C renumber is only covered by the tests
+  that do not boot the firmware).
+- Notes for the other assistant: menu row numbers moved in those apps; any
+  script or doc that named a row by position needs checking.
+
 ### 2026-10-06: Claude: drop-in app contract checked, docs and build fixed
 - Branch: claude/dropin-cleanup
 - Changed: docs/ADDING_AN_APP.md (rewritten: nothing central to edit, the

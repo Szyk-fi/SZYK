@@ -1123,6 +1123,7 @@ fn cutoff_hz(knob: f32) -> f32 {
     MIN_CUTOFF_HZ * (MAX_CUTOFF_HZ / MIN_CUTOFF_HZ).powf(knob.clamp(0.0, 1.0))
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl VoltageApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building, exposed for an alternate
@@ -1310,6 +1311,7 @@ impl PlayHost for VoltageApp {
 }
 
 /// See `VoltageApp::voltage_panels`.
+#[allow(dead_code)] // not used by the main binary
 pub(crate) struct VoltagePanels {
     pub oscillator: Vec<f32>,
     pub filter: Vec<f32>,

@@ -182,6 +182,7 @@ const ALGORITHMS: [AlgoSpec; NUM_ALGORITHMS] = [
 /// of the 24-effect table -- purely a display grouping (index 0..8 are
 /// delays, 9..11 shimmer, etc), used for the Slint category badge.
 /// `(name, index into a fixed category-color palette)`.
+#[allow(dead_code)] // not used by the main binary
 fn algo_category(algo: usize) -> (&'static str, usize) {
     match algo {
         0..=8 => ("Delay", 0),
@@ -397,6 +398,7 @@ const BLACK_HOLE_DIM: Rgb565 = Rgb565::new(15, 18, 7);
 /// Barely-lit ember -- unlit pads and dial tracks on the play view.
 const BLACK_HOLE_FAINT: Rgb565 = Rgb565::new(5, 6, 2);
 
+#[allow(dead_code)] // not used by the main binary
 impl BlackHoleApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {

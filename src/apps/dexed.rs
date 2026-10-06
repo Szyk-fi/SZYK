@@ -235,7 +235,7 @@ impl DexedApp {
     pub fn with_dir(dir: &Path, sensitivity: Arc<AtomicF32>, nav: Arc<AtomicF32>, mods: Arc<ModBus>, bus: Arc<AudioBus>, mixer: Arc<MixerBus>) -> Self {
         let output = bus.register(APP_NAME);
         let (mix_level, ext_mix_level) = mixer.register(APP_NAME, &mods);
-        let mut app = Self {
+        let app = Self {
             p: Arc::new(Shared {
                 level: AtomicF32::new(0.8),
                 bend: AtomicF32::new(0.0),

@@ -1053,6 +1053,7 @@ impl PrismApp {
     }
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl PrismApp {
     /// Real, windowed `(name, value, is_group)` rows -- mirrors this
     /// app's own `draw()` row-building (including the preset-dependent

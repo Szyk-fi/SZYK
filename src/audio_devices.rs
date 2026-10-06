@@ -67,6 +67,7 @@ pub struct AudioHost {
     input_bridge: Option<Arc<InputBridge>>,
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl AudioHost {
     pub fn open_default(
         engine: ActiveProcessor,

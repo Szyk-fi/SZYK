@@ -256,7 +256,7 @@ mod manifest_contract_tests {
                 wrong.push(format!("{}: manifest {:?} vs code {:?}", m.id, m.mod_inputs, registered));
             }
         }
-        assert!(write || wrong.is_empty(), "manifests out of date (rerun with PORTAMAX_WRITE_MANIFESTS=1):\n{}", wrong.join("\n"));
+        assert!(write || wrong.is_empty(), "manifests out of date: run tools/sync_manifests.sh (it rewrites mod_inputs from the code) and commit:\n{}", wrong.join("\n"));
     }
 
     /// The drop-in promise, checked for the whole `apps/` folder: every
@@ -296,13 +296,23 @@ mod manifest_contract_tests {
         }
 
         let engine = crate::audio::new_engine(Arc::new(AtomicF32::new(1.0)));
-        for (_, app) in apps.iter_mut() {
+        // The O&C apps each claim a process-wide firmware slot while they are
+        // running, which their own tests (running in parallel) also need, so
+        // they are only checked as far as building and declaring above.
+        let exclusive = |i: usize| manifests[i].module() == "oc";
+        for (i, (_, app)) in apps.iter_mut().enumerate() {
+            if exclusive(i) {
+                continue;
+            }
             if let Some(p) = app.audio_processor() {
                 engine.add(p);
             }
         }
         let mut fb = crate::display::FrameBuffer::new();
-        for (name, app) in apps.iter_mut() {
+        for (i, (name, app)) in apps.iter_mut().enumerate() {
+            if exclusive(i) {
+                continue;
+            }
             app.on_enter();
             app.tick(&crate::app::Input::default());
             app.background_tick();

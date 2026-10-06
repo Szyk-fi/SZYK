@@ -93,7 +93,7 @@ use z80::{Z80, Z80_io};
 /// and Z80 buses are each only reachable through their own CPU's
 /// trait-object-free `&mut self` during a `step` call.
 #[derive(Clone)]
-struct SoundLatch {
+pub(crate) struct SoundLatch {
     /// Last command byte the 68k wrote, pending for the Z80 to read.
     command: Rc<Cell<u8>>,
     /// Last reply byte the Z80 wrote, pending for the 68k to read.
@@ -434,6 +434,7 @@ pub struct NeoGeoBus {
     bios_rom: Vec<u8>,
 }
 
+#[allow(dead_code)] // not used by the main binary
 impl NeoGeoBus {
     fn new(p1_rom: Vec<u8>, p2_rom: Vec<u8>, s1_rom: Vec<u8>, c_roms: &[Vec<u8>], sound_latch: SoundLatch, protection: Protection, bios_rom: Vec<u8>) -> Self {
         let (p1_rom, p2_rom) = match protection {
@@ -2403,7 +2404,7 @@ mod tests {
         m1_rom[0] = 0xAA; // bank 0's first byte at the $8000 window's own offset
         m1_rom[3 * 0x4000] = 0xBB; // bank 3's first byte
 
-        let mut bus = SoundBus::new(m1_rom, Vec::new(), SoundLatch::new());
+        let bus = SoundBus::new(m1_rom, Vec::new(), SoundLatch::new());
         assert_eq!(bus.read_byte(0x8000), 0xAA, "bank 0 must be selected by default");
 
         // Real hardware: `IN r,(C)` with B=3 (bank), C=0x0B (port) --
