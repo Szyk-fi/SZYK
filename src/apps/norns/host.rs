@@ -8,6 +8,7 @@
 
 use super::engine::{Cmd, Queue};
 use super::screen::Screen;
+use crate::apps::grid_kit::{Grid, Leds};
 use mlua::{Function, Lua, MultiValue, Table, Value, Variadic};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -57,6 +58,78 @@ impl HostOut {
     }
 }
 
+/// The grid as a script sees it: vport 1 is Portamax's grid (the screen
+/// one, and a real grid when one is plugged in). The script draws into
+/// `leds` and `g:refresh()` shows it; presses come back through
+/// `_px_grid_key`. `g:rotation(r)` turns the script's view a quarter turn
+/// at a time, so a script made for a vertical grid still fits.
+pub struct GridHost {
+    grid: Arc<Grid>,
+    leds: Leds,
+    rot: u8,
+    connected: bool,
+}
+
+/// The name the grid knows a running script by.
+pub const GRID_CLIENT: &str = "Norns";
+
+impl GridHost {
+    pub fn new(grid: Arc<Grid>) -> GridHost {
+        let (rows, cols) = grid.size();
+        GridHost { grid, leds: Leds::new(rows, cols), rot: 0, connected: false }
+    }
+
+    /// (columns, rows) as the script sees them.
+    fn dims(&self) -> (usize, usize) {
+        let (r, c) = (self.leds.rows, self.leds.cols);
+        if self.rot % 2 == 1 { (r, c) } else { (c, r) }
+    }
+
+    /// Script (0-based) -> grid coordinates.
+    fn to_grid(&self, x: usize, y: usize) -> Option<(usize, usize)> {
+        let (sc, sr) = self.dims();
+        if x >= sc || y >= sr {
+            return None;
+        }
+        let (c, r) = (self.leds.cols, self.leds.rows);
+        Some(match self.rot {
+            1 => (c - 1 - y, x),
+            2 => (c - 1 - x, r - 1 - y),
+            3 => (y, r - 1 - x),
+            _ => (x, y),
+        })
+    }
+
+    /// Grid -> script (0-based) coordinates.
+    fn from_grid(&self, gx: usize, gy: usize) -> (usize, usize) {
+        let (c, r) = (self.leds.cols, self.leds.rows);
+        match self.rot {
+            1 => (gy, c - 1 - gx),
+            2 => (c - 1 - gx, r - 1 - gy),
+            3 => (r - 1 - gy, gx),
+            _ => (gx, gy),
+        }
+    }
+
+    /// Follows a change of grid size (the Grid app, or a grid plugged in).
+    /// True when it changed.
+    fn follow_size(&mut self) -> bool {
+        let (rows, cols) = self.grid.size();
+        if (rows, cols) == (self.leds.rows, self.leds.cols) {
+            return false;
+        }
+        self.leds = Leds::new(rows, cols);
+        true
+    }
+
+    fn name(&self) -> String {
+        match self.grid.device() {
+            Some(d) => format!("{} {}", d.kind, d.id),
+            None => "portamax grid".into(),
+        }
+    }
+}
+
 fn nums(args: &Variadic<Value>) -> Vec<f32> {
     args.iter()
         .filter_map(|v| match v {
@@ -73,7 +146,7 @@ fn f(v: Option<f32>) -> f32 {
 }
 
 /// Builds the norns environment and loads `script` (not yet `init()`ed).
-pub fn setup(lua: &Lua, script: &Path, code_dir: &Path, queue: Arc<Queue>, out: Arc<Mutex<HostOut>>, screen: Rc<RefCell<Screen>>) -> mlua::Result<()> {
+pub fn setup(lua: &Lua, script: &Path, code_dir: &Path, queue: Arc<Queue>, out: Arc<Mutex<HostOut>>, screen: Rc<RefCell<Screen>>, grid: Rc<RefCell<GridHost>>) -> mlua::Result<()> {
     let g = lua.globals();
     let px = lua.create_table()?;
     let start = Instant::now();
@@ -119,6 +192,55 @@ pub fn setup(lua: &Lua, script: &Path, code_dir: &Path, queue: Arc<Queue>, out: 
                 }
             }
             Ok(())
+        })?)?;
+    }
+    // grid: _px.grid_* back the vport methods in prelude.lua.
+    {
+        let gh = Rc::clone(&grid);
+        px.set("grid_connect", lua.create_function(move |_, ()| {
+            let mut g = gh.borrow_mut();
+            g.connected = true;
+            g.follow_size();
+            g.grid.register(GRID_CLIENT);
+            // A script that asks for the grid gets it, as on norns.
+            g.grid.set_focus(GRID_CLIENT);
+            let (c, r) = g.dims();
+            Ok((c, r, g.name()))
+        })?)?;
+        let gh = Rc::clone(&grid);
+        px.set("grid_led", lua.create_function(move |_, (x, y, l): (f64, f64, Option<f64>)| {
+            let mut g = gh.borrow_mut();
+            if x >= 1.0 && y >= 1.0 {
+                if let Some((gx, gy)) = g.to_grid(x as usize - 1, y as usize - 1) {
+                    g.leds.set(gx, gy, l.unwrap_or(0.0).floor() as i32);
+                }
+            }
+            Ok(())
+        })?)?;
+        let gh = Rc::clone(&grid);
+        px.set("grid_all", lua.create_function(move |_, l: Option<f64>| {
+            let mut g = gh.borrow_mut();
+            let (r, c) = (g.leds.rows, g.leds.cols);
+            let l = l.unwrap_or(0.0).floor() as i32;
+            for y in 0..r {
+                g.leds.fill_row(y, 0..c, l);
+            }
+            Ok(())
+        })?)?;
+        let gh = Rc::clone(&grid);
+        px.set("grid_refresh", lua.create_function(move |_, ()| {
+            let g = gh.borrow();
+            if g.connected {
+                g.grid.show(GRID_CLIENT, &g.leds);
+            }
+            Ok(())
+        })?)?;
+        let gh = Rc::clone(&grid);
+        px.set("grid_rotation", lua.create_function(move |_, r: Option<f64>| {
+            let mut g = gh.borrow_mut();
+            g.rot = (r.unwrap_or(0.0) as i64).rem_euclid(4) as u8;
+            let (c, r) = g.dims();
+            Ok((c, r))
         })?)?;
     }
     let dirs = lua.create_table()?;
@@ -252,9 +374,10 @@ fn params_rows(lua: &Lua) -> mlua::Result<Vec<(String, String, String, usize)>> 
 }
 
 /// Runs a script until `Quit` (or the UI goes away), then its `cleanup`.
-pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex<HostOut>>, rx: Receiver<Event>) {
+pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex<HostOut>>, rx: Receiver<Event>, grid: Arc<Grid>) {
     let lua = Lua::new();
     let screen = Rc::new(RefCell::new(Screen::new()));
+    let gh = Rc::new(RefCell::new(GridHost::new(grid)));
     queue.push(Cmd::Reset);
     {
         let mut o = out.lock().unwrap();
@@ -270,7 +393,7 @@ pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex
         o.error = Some(short);
     };
 
-    if let Err(e) = setup(&lua, &script, &code_dir, Arc::clone(&queue), Arc::clone(&out), Rc::clone(&screen)) {
+    if let Err(e) = setup(&lua, &script, &code_dir, Arc::clone(&queue), Arc::clone(&out), Rc::clone(&screen), Rc::clone(&gh)) {
         fail(e);
         wait_for_quit(&rx);
         out.lock().unwrap().running = false;
@@ -331,6 +454,9 @@ pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex
         if quit {
             break;
         }
+        if let Err(e) = grid_turn(&lua, &gh) {
+            fail(e);
+        }
         if let Some(t) = &tick {
             if let Err(e) = t.call::<()>(start.elapsed().as_secs_f64()) {
                 fail(e);
@@ -345,8 +471,44 @@ pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex
         }
     }
     let _ = call_global(&lua, "cleanup", ());
+    // The script is gone: its picture goes dark.
+    {
+        let g = gh.borrow();
+        if g.connected {
+            g.grid.show(GRID_CLIENT, &Leds::new(g.leds.rows, g.leds.cols));
+        }
+    }
     queue.push(Cmd::Reset);
     out.lock().unwrap().running = false;
+}
+
+/// Grid presses into the script's `g.key`, and a new grid size into its
+/// `g.cols` / `g.rows`.
+fn grid_turn(lua: &Lua, gh: &Rc<RefCell<GridHost>>) -> mlua::Result<()> {
+    if !gh.borrow().connected {
+        return Ok(());
+    }
+    if gh.borrow_mut().follow_size() {
+        let (c, r) = gh.borrow().dims();
+        if let Ok(f) = lua.globals().get::<Function>("_px_grid_resize") {
+            f.call::<()>((c, r))?;
+        }
+    }
+    let keys = {
+        let g = gh.borrow();
+        g.grid.keys(GRID_CLIENT).into_iter().map(|k| {
+            let (x, y) = g.from_grid(k.x, k.y);
+            (x + 1, y + 1, k.down as i32)
+        }).collect::<Vec<_>>()
+    };
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let f: Function = lua.globals().get("_px_grid_key")?;
+    for k in keys {
+        f.call::<()>(k)?;
+    }
+    Ok(())
 }
 
 fn wait_for_quit(rx: &Receiver<Event>) {
@@ -354,5 +516,34 @@ fn wait_for_quit(rx: &Receiver<Event>) {
         if matches!(e, Event::Quit) {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rotated_script_maps_every_key_and_led_both_ways() {
+        let grid = Arc::new(Grid::new());
+        grid.set_size(8, 16);
+        let mut gh = GridHost::new(grid);
+        for rot in 0..4u8 {
+            gh.rot = rot;
+            let (c, r) = gh.dims();
+            assert_eq!((c, r), if rot % 2 == 1 { (8, 16) } else { (16, 8) }, "rotation {rot}");
+            let mut seen = std::collections::HashSet::new();
+            for y in 0..r {
+                for x in 0..c {
+                    let (gx, gy) = gh.to_grid(x, y).expect("on the grid");
+                    assert!(gx < 16 && gy < 8);
+                    assert!(seen.insert((gx, gy)), "each key once");
+                    assert_eq!(gh.from_grid(gx, gy), (x, y), "rotation {rot}: a press comes back where it was drawn");
+                }
+            }
+            assert!(gh.to_grid(c, 0).is_none());
+        }
+        gh.rot = 1;
+        assert_eq!(gh.to_grid(0, 0), Some((15, 0)), "a quarter turn: the script's top-left is the grid's top-right");
     }
 }

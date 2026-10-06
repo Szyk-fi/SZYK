@@ -575,8 +575,51 @@ function midi.to_data(m)
   return {}
 end
 
--- No grid or arc is attached: these behave like norns' unattached
--- virtual ports (drawing goes nowhere, no key events arrive).
+-- grid: port 1 is Portamax's grid (on screen, and a real monome grid when
+-- one is plugged in); ports 2-4 are empty, like unattached norns vports.
+-- Coordinates are 1-based, levels 0-15. The host (host.rs) keeps the
+-- picture and calls _px_grid_key / _px_grid_resize.
+grid = { vports = {}, devices = {} }
+local function grid_vport(i)
+  local v = { name = "none", device = nil, cols = 0, rows = 0, port = i, key = nil }
+  function v:led(x, y, val) if self.device then _px.grid_led(x, y, val) end end
+  function v:all(val) if self.device then _px.grid_all(val) end end
+  function v:refresh() if self.device then _px.grid_refresh() end end
+  function v:rotation(r)
+    if self.device then
+      self.cols, self.rows = _px.grid_rotation(r)
+      self.device.cols, self.device.rows = self.cols, self.rows
+    end
+  end
+  function v:intensity() end
+  function v:tilt_enable() end
+  return v
+end
+for i = 1, 4 do grid.vports[i] = grid_vport(i) end
+function grid.connect(n)
+  local v = grid.vports[n or 1] or grid.vports[1]
+  if v.port == 1 and not v.device then
+    local cols, rows, name = _px.grid_connect()
+    local dev = { id = 1, serial = "portamax", name = name, cols = cols, rows = rows, port = 1 }
+    v.device, v.name, v.cols, v.rows = dev, name, cols, rows
+    grid.devices[1] = dev
+  end
+  return v
+end
+function _px_grid_key(x, y, z)
+  local v = grid.vports[1]
+  if v.key then v.key(x, y, z) end
+end
+function _px_grid_resize(cols, rows)
+  local v = grid.vports[1]
+  if v.device then
+    v.cols, v.rows = cols, rows
+    v.device.cols, v.device.rows = cols, rows
+  end
+end
+
+-- No arc is attached: an unattached norns vport (drawing goes nowhere, no
+-- turns arrive).
 local function device(rows, cols)
   local d = { rows = rows, cols = cols, name = "none", device = nil }
   function d:all() end
@@ -587,8 +630,6 @@ local function device(rows, cols)
   function d:intensity() end
   return d
 end
-grid = { vports = {} }
-function grid.connect() return device(8, 16) end
 arc = { vports = {} }
 function arc.connect() return device(0, 0) end
 

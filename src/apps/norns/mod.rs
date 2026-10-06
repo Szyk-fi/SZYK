@@ -10,9 +10,14 @@
 //! lua/prelude.lua); no norns code is included, so scripts are
 //! user-supplied, like ROMs for Retro.
 //!
+//! Grid: `grid.connect()` gives a script Portamax's grid (the Grid app on
+//! screen, and a real monome grid when one is plugged in), with `g.key`,
+//! `g:led`, `g:all`, `g:refresh`, `g:rotation` and `g.cols` / `g.rows`; the
+//! script takes the grid when it connects. Play it from the Grid app.
+//!
 //! Not there (yet): other SuperCollider engines (scripts that ask for one
-//! still run, with its sound commands ignored), grid and arc (scripts see
-//! unattached ports), crow, audio input into softcut, saving psets.
+//! still run, with its sound commands ignored), arc (scripts see an
+//! unattached port), crow, audio input into softcut, saving psets.
 //!
 //! Controls -- norns has three encoders and three keys:
 //! - D-pad up/down (or knob 1) = E2, D-pad left/right (or knob 2) = E3;
@@ -137,6 +142,8 @@ pub struct NornsApp {
     roots: Vec<(PathBuf, bool)>,
     /// Where the script's MIDI notes go (set from Portal's Notes page).
     note_out: Option<crate::note_bus::NoteOut>,
+    /// The shared grid a script reaches with `grid.connect()`.
+    grid: Arc<crate::apps::grid_kit::Grid>,
 }
 
 impl NornsApp {
@@ -159,6 +166,7 @@ impl NornsApp {
             peak: Arc::new(AtomicF32::new(0.0)),
             roots,
             note_out: None,
+            grid: crate::apps::grid_kit::grid(),
         };
         // Boot straight into a script (like norns resuming its last one).
         if !cfg!(test) {
@@ -226,7 +234,8 @@ impl NornsApp {
         }
         let code_dir = s.path.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_default();
         let path = s.path.clone();
-        let thread = std::thread::Builder::new().name(format!("norns:{}", s.name)).spawn(move || host::run(path, code_dir, queue, out, rx)).ok();
+        let grid = Arc::clone(&self.grid);
+        let thread = std::thread::Builder::new().name(format!("norns:{}", s.name)).spawn(move || host::run(path, code_dir, queue, out, rx, grid)).ok();
         self.running = Some(Running { tx, thread, name: s.name });
         self.mode = Mode::Play;
     }
@@ -665,6 +674,50 @@ end
         assert!(a.out.lock().unwrap().params.iter().any(|r| r.1 == "tempo"), "system clock params are there");
         a.stop();
         assert_eq!(a.mode(), Mode::Select);
+        assert!(a.out.lock().unwrap().error.is_none(), "{:?}", a.out.lock().unwrap().log);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_script_plays_the_grid_and_lets_go_of_it_when_it_stops() {
+        let root = tmp("grid");
+        write_script(
+            &root,
+            "gridprobe",
+            r#"
+local g = grid.connect()
+function init()
+  g:all(0)
+  g:led(2, 3, 9)
+  g:refresh()
+  redraw()
+end
+g.key = function(x, y, z)
+  if z == 1 then g:led(x, y, 15) g:refresh() end
+end
+function redraw()
+  screen.clear()
+  screen.move(0, 10)
+  screen.text(g.cols .. "x" .. g.rows .. " " .. g.name)
+  screen.update()
+end
+"#,
+        );
+        let mut a = app_with(&root);
+        let grid = Arc::clone(&a.grid);
+        grid.register("Other");
+        a.tick(&Input { knob1_press: true, ..Input::default() });
+        let lit = |x: usize, y: usize| {
+            let s = grid.snapshot();
+            s.leds[y * s.cols + x]
+        };
+        assert!(wait_until(|| lit(1, 2) == 9), "g:led(2, 3, 9) lights key (1, 2): {:?}", a.out.lock().unwrap().log);
+        assert_eq!(grid.focus().as_deref(), Some(host::GRID_CLIENT), "connecting takes the grid");
+        grid.press(5, 4, true);
+        assert!(wait_until(|| lit(5, 4) == 15), "g.key arrives 1-based and lights the key");
+        grid.press(5, 4, false);
+        a.stop();
+        assert!(wait_until(|| grid.snapshot().leds.iter().all(|&l| l == 0)), "a stopped script leaves the grid dark");
         assert!(a.out.lock().unwrap().error.is_none(), "{:?}", a.out.lock().unwrap().log);
         let _ = std::fs::remove_dir_all(&root);
     }
