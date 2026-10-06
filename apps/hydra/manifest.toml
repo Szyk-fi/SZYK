@@ -4,4 +4,20 @@ category = "instrument"
 description = "An all-in-one hybrid synth: three oscillators (analog, wavetable, FM, pluck, noise), dual filters, 12-slot mod matrix, FX chain and arpeggiator."
 audio_outputs = ["Hydra"]
 notes_in = true
-mod_inputs = []
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Hydra Level",
+    "Hydra: Cutoff",
+    "Hydra: Ladder Cutoff",
+    "Hydra: Resonance",
+    "Hydra: Drive",
+    "Hydra: Pitch",
+    "Hydra: Mod Wheel",
+    "Hydra: Detune",
+    "Hydra: Delay Mix",
+    "Hydra: Reverb Mix",
+    "Hydra: Macro 1",
+    "Hydra: Macro 2",
+    "Hydra: Macro 3",
+    "Hydra: Macro 4",
+]

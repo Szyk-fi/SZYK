@@ -101,6 +101,23 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-06: Claude: New app: Hydra, an all-in-one hybrid synth
+- Branch: claude/hydra
+- Changed: new src/apps/hydra/ (params, store, dsp, tables, voice, fx, engine,
+  presets, mod, tests) and apps/hydra/manifest.toml. 16 voices; 3 oscillators
+  each Analog (PolyBLEP/BLAMP, unison to 7) / Wavetable (6 banks x 16 frames,
+  inverse-FFT band-limited) / FM / Karplus-Strong Pluck / Noise; sub, ring, cross-mod,
+  hard sync; two filters (TPT SVF modes, ZDF ladder) in series or parallel; 3 ADSRs,
+  2 LFOs, 12-slot mod matrix, 4 macros; drive/chorus/phaser/delay/FDN reverb;
+  arpeggiator; mono/legato/glide; 28 factory presets and 16 user slots
+  (saves/hydra/). One params! table (151 params) drives the menu, play dials,
+  Moments, settings bridge and presets. Plays through the note bus, mixer and
+  ModBus (14 CV inputs) like any instrument; no other file touched.
+- Status: done. Real-time-safe by design (atomics, try_lock, pre-sized buffers).
+- Tests: 48 hydra tests pass (pitch by autocorrelation for every oscillator type,
+  alias measurement vs naive, filters, FX, app-level pad/preset/Moments/arp/steal).
+- Notes for the other assistant: none. Dialogue (yours) left untouched.
+
 ### 2026-10-06: Claude: Bloom: each shape picks its own engine
 - Branch: claude/picker-and-cleanup
 - Changed: src/apps/bloom.rs, apps/bloom/manifest.toml, src/note_bus.rs
