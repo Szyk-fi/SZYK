@@ -573,8 +573,135 @@ fn the_first_character_rises_then_stays_on_the_high_note_rippling_until_release(
     assert_eq!(a.sh.fired.load(Ordering::Relaxed), 1);
 }
 
+/// Energy of a signal at one frequency (a single-bin DFT), for checking where the bass is.
+fn energy_at(x: &[f32], f: f32) -> f32 {
+    let n = x.len();
+    let w = std::f32::consts::TAU * f / FS;
+    let (mut re, mut im) = (0.0f32, 0.0f32);
+    for (i, s) in x.iter().enumerate() {
+        // a Hann window keeps a strong line from leaking into its neighbours' bins
+        let h = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos();
+        re += s * h * (w * i as f32).cos();
+        im += s * h * (w * i as f32).sin();
+    }
+    2.0 * (re * re + im * im).sqrt() / n as f32
+}
+
+#[test]
+fn the_sub_adds_bass_an_octave_below_the_charge_tone_and_is_off_by_default() {
+    let held = |sub: f32, octave: f32, wave: f32| {
+        let mut a = app();
+        clean(&a);
+        let p = &a.sh.params;
+        p.set(P::ChgPitch, 400.0);
+        p.set(P::ChirpDepth, 0.0);
+        p.set(P::Climb, 0.0);
+        p.set(P::ChargeTime, 0.1);
+        p.set(P::FullMode, 2.0);
+        p.set(P::RippleDepth, 0.0);
+        p.set(P::ChgVol, 1.0);
+        p.set(P::Level, 0.12); // low enough that the master soft clip stays linear
+        p.set(P::SubCharge, sub);
+        p.set(P::SubOctave, octave);
+        p.set(P::SubWave, wave);
+        let mut proc = a.audio_processor().unwrap();
+        a.tick(&keys(&[60]));
+        run(&mut proc, 0.3);
+        run(&mut proc, 0.5)
+    };
+    let off = held(0.0, 0.0, 0.0);
+    let on = held(1.0, 0.0, 0.0);
+    assert!(energy_at(&off, 200.0) < 0.001, "no sub unless asked for");
+    assert!(energy_at(&on, 200.0) > 0.03, "the sub sounds an octave below 400 Hz: {}", energy_at(&on, 200.0));
+    assert!(energy_at(&on, 400.0) > 0.03, "and the tone is still there");
+    let two = held(1.0, 1.0, 0.0);
+    assert!(energy_at(&two, 100.0) > 0.03 && energy_at(&two, 100.0) > 8.0 * energy_at(&two, 200.0), "-2 oct moves it down to 100 Hz: 100 Hz {} 200 Hz {}", energy_at(&two, 100.0), energy_at(&two, 200.0));
+    let square = held(1.0, 0.0, 2.0);
+    assert!(energy_at(&square, 600.0) > 0.008, "a square sub has its odd harmonics (3 x 200 Hz)");
+    assert!(energy_at(&on, 600.0) < 0.002, "a sine sub does not: 600 Hz {} (200 Hz {}, 400 Hz {}, square 600 Hz {})", energy_at(&on, 600.0), energy_at(&on, 200.0), energy_at(&on, 400.0), energy_at(&square, 600.0));
+    let tri = held(1.0, 0.0, 1.0);
+    assert!(energy_at(&tri, 600.0) > 0.002 && energy_at(&tri, 600.0) < energy_at(&square, 600.0), "a triangle sits between them");
+}
+
+#[test]
+fn the_blast_sub_follows_the_sweep_and_works_with_a_noise_only_blast() {
+    let mut a = app();
+    clean(&a);
+    let p = &a.sh.params;
+    p.set(P::ToneLevel, 0.0);
+    p.set(P::BlastWave, 5.0);
+    p.set(P::Noise, 0.0);
+    p.set(P::BlastStart, 800.0);
+    p.set(P::BlastEnd, 100.0);
+    p.set(P::SweepTime, 0.3);
+    p.set(P::Length, 0.6);
+    p.set(P::PowerLength, 0.0);
+    p.set(P::PowerPitch, 0.0);
+    p.set(P::ChargeTime, 0.2);
+    p.set(P::SubBlast, 1.0);
+    p.set(P::SubCharge, 0.0);
+    let mut proc = a.audio_processor().unwrap();
+    a.tick(&keys(&[60]));
+    run(&mut proc, 0.4);
+    a.tick(&keys(&[]));
+    let blast = run(&mut proc, 1.2);
+    assert!(peak(&blast) > 0.1, "the sub is heard even with the tone off and no noise");
+    let (early, late) = (freq(&blast[200..1800]), freq(&blast[(0.5 * FS) as usize..(0.6 * FS) as usize]));
+    assert!(early > late * 2.0, "the sub falls with the sweep: {early:.0} Hz then {late:.0} Hz");
+    assert!((late - 50.0).abs() < 12.0, "ending an octave under the end pitch: {late:.0} Hz");
+}
+
+#[test]
+fn the_sub_can_fatten_the_charge_without_touching_the_blast() {
+    let mut a = app();
+    let mut proc = a.audio_processor().unwrap();
+    a.load_preset(0);
+    a.sh.params.set(P::SubCharge, 0.8);
+    a.tick(&keys(&[60]));
+    run(&mut proc, 1.7);
+    let held = run(&mut proc, 0.5);
+    assert!(energy_at(&held, 251.0) > 0.5 * energy_at(&held, 502.0).max(1e-6) * 0.2, "bass under the 502 Hz hold");
+    a.tick(&keys(&[]));
+    let blast = run(&mut proc, 1.0);
+    // SubBlast is 0, and the character's tone is off: the blast is still just noise
+    assert!(peak(&blast[(0.75 * FS) as usize..]) < 0.003, "no sub tail in the blast");
+}
+
+fn write_wav(path: &std::path::Path, audio: &[f32]) {
+    let mut bytes = Vec::new();
+    let n = audio.len() as u32;
+    bytes.extend(b"RIFF");
+    bytes.extend((36 + n * 2).to_le_bytes());
+    bytes.extend(b"WAVEfmt ");
+    bytes.extend(16u32.to_le_bytes());
+    bytes.extend(1u16.to_le_bytes());
+    bytes.extend(1u16.to_le_bytes());
+    bytes.extend((FS as u32).to_le_bytes());
+    bytes.extend((FS as u32 * 2).to_le_bytes());
+    bytes.extend(2u16.to_le_bytes());
+    bytes.extend(16u16.to_le_bytes());
+    bytes.extend(b"data");
+    bytes.extend((n * 2).to_le_bytes());
+    for s in audio {
+        bytes.extend(((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// A hold of `hold` seconds, the release, and the tail.
+fn take(a: &mut BlasterApp, proc: &mut Box<dyn AudioProcessor>, hold: f32) -> Vec<f32> {
+    let mut audio = run(proc, 0.15);
+    a.tick(&keys(&[60]));
+    audio.extend(run(proc, hold));
+    a.tick(&keys(&[]));
+    audio.extend(run(proc, 3.0));
+    run(proc, 6.0);
+    audio
+}
+
 /// Writes a WAV of each character (hold, release, tail) so a person can listen:
 /// `BLASTER_WRITE_WAVS=/some/dir cargo test --bin portamax-sim render_demo_wavs`.
+/// Also writes the first character with and without its sub.
 #[test]
 fn render_demo_wavs() {
     let Ok(dir) = std::env::var("BLASTER_WRITE_WAVS") else { return };
@@ -584,30 +711,16 @@ fn render_demo_wavs() {
     for i in 0..a.presets.len() {
         a.load_preset(i);
         let hold = a.sh.params.get(P::ChargeTime) * 1.15;
-        let mut audio = run(&mut proc, 0.15);
-        a.tick(&keys(&[60]));
-        audio.extend(run(&mut proc, hold));
-        a.tick(&keys(&[]));
-        audio.extend(run(&mut proc, 3.0));
-        run(&mut proc, 6.0);
-        let mut bytes = Vec::new();
-        let n = audio.len() as u32;
-        bytes.extend(b"RIFF");
-        bytes.extend((36 + n * 2).to_le_bytes());
-        bytes.extend(b"WAVEfmt ");
-        bytes.extend(16u32.to_le_bytes());
-        bytes.extend(1u16.to_le_bytes());
-        bytes.extend(1u16.to_le_bytes());
-        bytes.extend((FS as u32).to_le_bytes());
-        bytes.extend((FS as u32 * 2).to_le_bytes());
-        bytes.extend(2u16.to_le_bytes());
-        bytes.extend(16u16.to_le_bytes());
-        bytes.extend(b"data");
-        bytes.extend((n * 2).to_le_bytes());
-        for s in &audio {
-            bytes.extend(((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
-        }
+        let audio = take(&mut a, &mut proc, hold);
         let name = format!("{:02}_{}.wav", i + 1, a.presets[i].name.replace(' ', "_"));
-        std::fs::write(std::path::Path::new(&dir).join(name), bytes).unwrap();
+        write_wav(&std::path::Path::new(&dir).join(name), &audio);
     }
+    a.load_preset(0);
+    a.sh.params.set(P::SubCharge, 0.7);
+    a.sh.params.set(P::SubBlast, 0.5);
+    a.sh.params.set(P::SubWave, 0.0);
+    let hold = a.sh.params.get(P::ChargeTime) * 1.15;
+    let audio = take(&mut a, &mut proc, hold);
+    write_wav(&std::path::Path::new(&dir).join("00_X_Charge_Shot_with_sub.wav"), &audio);
 }
+

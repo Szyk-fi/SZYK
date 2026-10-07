@@ -59,6 +59,7 @@ pub struct Voice {
     full_blend: f32,
     ph: [f32; 2],
     fm: [f32; 2],
+    sub_ph: f32,
     // fixed when the key is released, from how big the charge was
     t: f32,
     power: f32,
@@ -97,6 +98,7 @@ impl Voice {
             full_blend: 0.0,
             ph: [0.0; 2],
             fm: [0.0; 2],
+            sub_ph: 0.0,
             t: 0.0,
             power: 0.0,
             p0: 1000.0,
@@ -150,6 +152,7 @@ impl Voice {
         self.power = 0.0;
         self.ph = [0.0; 2];
         self.fm = [0.0; 2];
+        self.sub_ph = 0.0;
     }
 
     /// Lets go of the key: the charge becomes a blast.
@@ -182,6 +185,7 @@ impl Voice {
         self.t = 0.0;
         self.ph = [0.0; 2];
         self.fm = [0.0; 2];
+        self.sub_ph = 0.0;
         self.phase = Phase::Blasting;
     }
 
@@ -211,6 +215,23 @@ impl Voice {
                 self.fm[idx] = (self.fm[idx] + inc * 1.4142).fract();
                 (TAU * p + 2.8 * (TAU * self.fm[idx]).sin()).sin()
             }
+        }
+    }
+
+    /// The sub oscillator: a sine, triangle or square an octave or two below
+    /// the tone it follows, to bring out the bass. `f` is the tone's frequency.
+    #[inline]
+    fn sub(&mut self, s: &Snapshot, f: f32, dt: f32) -> f32 {
+        let ratio = if s[P::SubOctave as usize] >= 0.5 { 0.25 } else { 0.5 };
+        let inc = (f * ratio).max(20.0) * dt;
+        self.sub_ph += inc;
+        if self.sub_ph >= 1.0 {
+            self.sub_ph -= self.sub_ph.floor();
+        }
+        match s[P::SubWave as usize] as usize {
+            0 => (TAU * self.sub_ph).sin(),
+            1 => triangle(self.sub_ph, inc),
+            _ => pulse(self.sub_ph, inc, 0.5),
         }
     }
 
@@ -295,7 +316,8 @@ impl Voice {
         let vol = g(P::ChgVol) + (1.0 - g(P::ChgVol)) * self.charge;
         let boost = if full { 1.0 + 0.4 * g(P::FullBoost) } else { 1.0 };
         let vel_gain = (1.0 - g(P::VelSens)) + g(P::VelSens) * self.vel;
-        (tone + bed) * vol * amp * boost * vel_gain * g(P::ChgLevel) * 0.5
+        let sub = if g(P::SubCharge) > 0.0 { self.sub(s, f, dt) * g(P::SubCharge) } else { 0.0 };
+        (tone + sub + bed) * vol * amp * boost * vel_gain * g(P::ChgLevel) * 0.5
     }
 
     fn blast_sample(&mut self, s: &Snapshot, dt: f32, rate: f32) -> f32 {
@@ -329,6 +351,10 @@ impl Voice {
         };
         let tone = self.wave(0, kind, inc, g(P::Width), g(P::FmIndex) * 0.35 * body);
         let mut y = (tone + body_level * body) * env / (1.0 + body_level * 0.5) * g(P::ToneLevel);
+        // the sub follows the sweep an octave or two down, whatever the tone level
+        if g(P::SubBlast) > 0.0 {
+            y += self.sub(s, f, dt) * env * g(P::SubBlast);
+        }
         if self.noise_amt > 0.0 {
             let sweep_time = if g(P::NoiseSweepTime) > 0.0 { g(P::NoiseSweepTime) } else { self.noise_decay };
             let sweep = g(P::NoiseSweep) * (t / sweep_time.max(0.005)).min(1.0).powf(g(P::NoiseSweepCurve));
@@ -372,3 +398,4 @@ impl Voice {
         y
     }
 }
+
