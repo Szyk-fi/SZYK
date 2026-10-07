@@ -457,6 +457,25 @@ menu has every setting in groups:
 Randomize makes a usable random blast and Mutate nudges the current one.
 Blaster publishes three modulation inputs (Pitch, Charge Time, Blast Length).
 
+### 3.11 Rev2: native patches and a two-layer software synth
+
+**Rev2** is a working software instrument with native Prophet Rev2 `.syx`
+program/edit-buffer/bank import. Put files in `patches/prophet-rev2/`, then
+use **Programs → Rescan .syx → Program**. Both A/B layers, patch names,
+modulation, effects and sequencer data are retained. **Write SysEx** saves
+user programs under `saves/prophet-rev2/`.
+
+Pads and the note bus play it. L1 selects A/B, R1 selects a section, the
+encoders select/edit rows, and F3 starts/stops polyphonic sequencing. Direct
+MIDI input is optional under Performance. The app includes 16 original
+starting points; it does not bundle Sequential factory patches.
+
+This is a **draft implementation**, not the completed exact Rev2 clone.
+Chord-memory decoding and several recording/clock/MIDI workflows remain
+unfinished, and the audio model has not been calibrated against hardware.
+See [the implementation and compatibility guide](PROPHET.md) for controls,
+validation and the complete list of current limits.
+
 ## 4. Effects
 
 All effects tap another app's live audio via the shared bus (the **Source**

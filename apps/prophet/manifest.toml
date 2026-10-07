@@ -1,0 +1,25 @@
+id = "prophet"
+name = "Rev2"
+category = "instrument"
+description = "Two-layer Rev2-compatible software synth with native SysEx import, modulation, effects and sequencers."
+notes_in = true
+audio_outputs = ["Rev2"]
+mod_inputs = [
+    "Mixer: Rev2 Level",
+    "Rev2: A Cutoff",
+    "Rev2: A Resonance",
+    "Rev2: A Osc 1 Shape Mod",
+    "Rev2: A Osc 2 Shape Mod",
+    "Rev2: A Osc Mix",
+    "Rev2: A Sub",
+    "Rev2: A Noise",
+    "Rev2: A Filter Env Amount",
+    "Rev2: B Cutoff",
+    "Rev2: B Resonance",
+    "Rev2: B Osc 1 Shape Mod",
+    "Rev2: B Osc 2 Shape Mod",
+    "Rev2: B Osc Mix",
+    "Rev2: B Sub",
+    "Rev2: B Noise",
+    "Rev2: B Filter Env Amount"
+]
