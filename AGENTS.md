@@ -114,7 +114,8 @@ Newest at the top. Keep each entry short. Use this format:
   user slots, 3 modulation inputs.
 - Status: done. Rendering every character to WAV is a test:
   `BLASTER_WRITE_WAVS=dir cargo test --bin portamax-sim render_demo_wavs`.
-- Tests: 21 blaster tests (charge climbs, chirps speed up, blast falls and
+- Tests: 25 blaster tests (incl. the Reed spectrum, counted chirps landing on
+  the held pitch, ripple, the first character vs its recording; charge climbs, chirps speed up, blast falls and
   ends, size scales length and volume, fire at full, key follow, polyphony and
   stealing, every character and 20 random blasts charge/fire/end, loudness).
 - Notes for the other assistant: none.

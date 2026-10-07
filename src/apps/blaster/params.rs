@@ -8,8 +8,8 @@ pub use crate::apps::hydra::params::{ch, exp, int, lin, tog, Def, Kind, Unit};
 
 pub const GROUPS: [&str; 8] = ["Main", "Charge", "Climb", "Full charge", "Blast", "Size", "Noise", "Crush & Echo"];
 
-pub const WAVES: [&str; 7] = ["Square", "Saw", "Triangle", "Sine", "Pulse", "Noise", "Metal"];
-pub const FULL_MODES: [&str; 3] = ["Steady", "Flutter", "Pulse"];
+pub const WAVES: [&str; 8] = ["Square", "Saw", "Triangle", "Sine", "Pulse", "Noise", "Metal", "Reed"];
+pub const FULL_MODES: [&str; 3] = ["Keep chirping", "Flutter", "Ripple"];
 
 macro_rules! params {
     ($( $id:ident, $name:expr, $group:expr, $kind:expr, $def:expr; )*) => {
@@ -82,4 +82,13 @@ params! {
     EchoMix, "Echo", 7, lin(0.0, 1.0, Unit::Percent), 0.0;
     EchoTime, "Echo time", 7, exp(40.0, 800.0, Unit::Ms), 220.0;
     EchoFb, "Echo feedback", 7, lin(0.0, 0.9, Unit::Percent), 0.4;
+    ChirpCount, "Chirps per charge", 2, int(0, 16), 0.0;
+    ChirpGrow, "Chirps deepen", 2, lin(0.0, 1.0, Unit::Percent), 0.0;
+    HoldTop, "Hold at top", 3, lin(0.0, 1.0, Unit::Percent), 0.0;
+    RippleDepth, "Ripple depth", 3, lin(0.0, 1.0, Unit::Percent), 0.6;
+    ChgLevel, "Charge level", 1, lin(0.0, 1.0, Unit::Percent), 1.0;
+    ToneLevel, "Tone level", 4, lin(0.0, 1.0, Unit::Percent), 1.0;
+    NoiseSweepTime, "Noise sweep time", 6, lin(0.0, 3.0, Unit::Seconds), 0.0;
+    NoiseEnd, "Noise ends", 6, lin(0.0, 3.0, Unit::Seconds), 0.0;
+    NoiseSweepCurve, "Noise sweep curve", 6, exp(0.3, 4.0, Unit::None), 1.0;
 }

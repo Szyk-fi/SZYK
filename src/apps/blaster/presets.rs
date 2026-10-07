@@ -34,7 +34,19 @@ const PULSING: f32 = 2.0;
 pub fn factory() -> Vec<Preset> {
     use P::*;
     vec![
-        // The one to start with: a square tone that climbs in quickening
+        // Built from measurements of a recording of a classic charge shot: a 1.4 s
+        // pitch rise that accelerates (155 to 502 Hz, as u^2.2) and lands exactly
+        // at full charge on a held 502 Hz tone with an unusual spectrum (the Reed
+        // wave) that ripples at about 19 Hz; then, on release, no tone at all,
+        // just a noise burst that swells for about 0.1 s, sweeps from bright to
+        // dull and is gone in about 0.55 s.
+        pr!("X Charge Shot";
+            ChargeTime => 1.4, ChgWave => 7.0, ChgPitch => 155.0, Climb => 0.0, ChirpCount => 1, ChirpDepth => 1.7, ChirpCurve => 2.2, HoldTop => 1.0,
+            FullMode => PULSING, FlutterRate => 19.0, RippleDepth => 0.26, ChgVol => 0.25, FullBoost => 0.0, ChgWobble => 0.1, ChgLevel => 0.08,
+            ToneLevel => 0.0, BlastWave => NOISE, Body => 0.0, Length => 0.1, Attack => 0.10, Punch => 0.0, Drive => 0.0,
+            Noise => 0.72, NoiseDecay => 1.7, NoiseHP => 60.0, NoiseLP => 10500.0, NoiseSweep => -3.2, NoiseSweepTime => 0.4, NoiseSweepCurve => 2.0, NoiseEnd => 0.285,
+            PowerLength => 1.0, PowerNoise => 0.0, PowerPitch => 0.0, PowerVolume => 0.5),
+        // A synthetic take on the same idea, in 8-bit: a square tone that climbs in quickening
         // chirps while the key is held, flutters when it is full, and fires a
         // falling square blast with a puff of noise on release.
         pr!("Buster Charge";

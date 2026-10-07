@@ -403,6 +403,148 @@ fn it_draws() {
     a.draw(&mut fb);
 }
 
+/// The fundamental of a harmonic-rich tone, by autocorrelation (zero crossings
+/// would count the upper harmonics).
+fn pitch_ac(x: &[f32]) -> f32 {
+    let n = x.len().min(8192);
+    let (lo, hi) = ((FS / 1000.0) as usize, (FS / 100.0) as usize);
+    let corr: Vec<f32> = (0..=hi).map(|lag| if lag < lo { 0.0 } else { (0..n - lag).map(|i| x[i] * x[i + lag]).sum() }).collect();
+    let best = corr.iter().cloned().fold(0.0f32, f32::max);
+    for lag in lo.max(1)..hi {
+        if corr[lag] > best * 0.9 && corr[lag] >= corr[lag - 1] && corr[lag] > corr[lag + 1] {
+            let (a, b, c) = (corr[lag - 1], corr[lag], corr[lag + 1]);
+            let off = if (a - 2.0 * b + c).abs() > 1e-12 { 0.5 * (a - c) / (a - 2.0 * b + c) } else { 0.0 };
+            return FS / (lag as f32 + off);
+        }
+    }
+    0.0
+}
+
+/// Levels of harmonics 1..=12 of a steady tone near `f0`, in dB re the first.
+fn harmonics(x: &[f32], f0: f32) -> Vec<f32> {
+    let n = x.len();
+    let win: Vec<f32> = (0..n).map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos()).collect();
+    let level = |f: f32| {
+        // a direct DFT at the bin nearest f, over a few neighbours (no FFT needed for twelve lines)
+        let mut best = 0.0f32;
+        for df in [-3.0f32, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0] {
+            let w = std::f32::consts::TAU * (f + df) / FS;
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (i, (s, h)) in x.iter().zip(&win).enumerate() {
+                re += s * h * (w * i as f32).cos();
+                im += s * h * (w * i as f32).sin();
+            }
+            best = best.max((re * re + im * im).sqrt());
+        }
+        best
+    };
+    let h1 = level(f0);
+    (1..=12).map(|k| 20.0 * (level(f0 * k as f32) / h1).log10()).collect()
+}
+
+#[test]
+fn the_reed_wave_has_the_spectrum_measured_from_a_recording() {
+    let mut a = app();
+    clean(&a);
+    let p = &a.sh.params;
+    p.set(P::ChgWave, 7.0);
+    p.set(P::ChgPitch, 500.0);
+    p.set(P::ChirpCount, 0.0);
+    p.set(P::ChirpDepth, 0.0);
+    p.set(P::Climb, 0.0);
+    p.set(P::ChgVol, 1.0);
+    p.set(P::ChargeTime, 0.1);
+    p.set(P::FullMode, 1.0);
+    p.set(P::FlutterSemis, 1.0);
+    p.set(P::FlutterRate, 2.0);
+    // at full charge with Hold at top = 0, flutter would move the pitch; use a mode that holds still
+    p.set(P::FullMode, 2.0);
+    p.set(P::RippleDepth, 0.0);
+    let mut proc = a.audio_processor().unwrap();
+    a.tick(&keys(&[60]));
+    run(&mut proc, 0.3);
+    let tone = run(&mut proc, 0.5);
+    let measured = harmonics(&tone, 500.0);
+    for (k, (got, want)) in measured.iter().zip(voice::REED_DB.iter()).enumerate().take(12) {
+        assert!((got - want).abs() < if k < 8 { 3.5 } else { 5.0 }, "harmonic {}: {got:.1} dB, the recording has {want:.1}", k + 1);
+    }
+    assert!(measured[4] < -15.0 && measured[6] < -15.0, "the 5th and 7th are nearly absent, unlike a square wave");
+    assert!(measured[1] > -3.0, "and the 2nd is strong, unlike a square wave: {:.1}", measured[1]);
+}
+
+#[test]
+fn counted_chirps_end_at_the_top_exactly_when_the_charge_is_full() {
+    let mut a = app();
+    clean(&a);
+    let p = &a.sh.params;
+    p.set(P::ChargeTime, 1.0);
+    p.set(P::ChgPitch, 200.0);
+    p.set(P::Climb, 0.0);
+    p.set(P::ChirpCount, 1.0);
+    p.set(P::ChirpDepth, 1.0);
+    p.set(P::ChirpCurve, 1.0);
+    p.set(P::HoldTop, 1.0);
+    p.set(P::FullMode, 2.0);
+    p.set(P::RippleDepth, 0.0);
+    p.set(P::ChgVol, 1.0);
+    let mut proc = a.audio_processor().unwrap();
+    a.tick(&keys(&[60]));
+    let start = run(&mut proc, 0.1);
+    run(&mut proc, 0.78);
+    let before_full = run(&mut proc, 0.1);
+    run(&mut proc, 0.1);
+    let held = run(&mut proc, 0.3);
+    let (f_start, f_end, f_held) = (freq(&start), freq(&before_full), freq(&held));
+    assert!((185.0..225.0).contains(&f_start), "it starts at the base pitch: {f_start:.0}");
+    assert!(f_end > 340.0 && f_end < 400.0, "the ramp is nearly at the top just before full: {f_end:.0}");
+    assert!((f_held - 400.0).abs() < 8.0, "and the held tone sits at the top, one octave up: {f_held:.0}");
+}
+
+#[test]
+fn ripple_shimmers_the_held_tone_without_moving_its_pitch() {
+    let mut a = app();
+    clean(&a);
+    let p = &a.sh.params;
+    p.set(P::ChargeTime, 0.2);
+    p.set(P::ChgPitch, 400.0);
+    p.set(P::ChirpDepth, 0.0);
+    p.set(P::Climb, 0.0);
+    p.set(P::FullMode, 2.0);
+    p.set(P::FlutterRate, 19.0);
+    p.set(P::RippleDepth, 0.6);
+    p.set(P::ChgVol, 1.0);
+    let mut proc = a.audio_processor().unwrap();
+    a.tick(&keys(&[60]));
+    run(&mut proc, 0.5);
+    let held = run(&mut proc, 1.0);
+    let env: Vec<f32> = held.chunks(480).map(rms).collect();
+    let (lo, hi) = (env.iter().cloned().fold(f32::MAX, f32::min), env.iter().cloned().fold(0.0f32, f32::max));
+    assert!(lo < hi * 0.6, "the volume ripples: {lo:.3} to {hi:.3}");
+    assert!((freq(&held) - 400.0).abs() < 8.0, "the pitch does not move: {:.0}", freq(&held));
+}
+
+#[test]
+fn the_first_character_matches_the_recording_it_was_built_from() {
+    let mut a = app();
+    let mut proc = a.audio_processor().unwrap();
+    a.load_preset(0);
+    assert_eq!(a.presets[0].name, "X Charge Shot");
+    a.tick(&keys(&[60]));
+    let early = run(&mut proc, 0.6);
+    run(&mut proc, 0.9);
+    let held = run(&mut proc, 0.5);
+    // the recording holds 502 Hz at full charge, and its charge starts near 155 Hz
+    assert!((pitch_ac(&held) - 502.0).abs() < 12.0, "held tone {:.0} Hz", pitch_ac(&held));
+    assert!(pitch_ac(&early[..4800]) < 190.0, "it starts low: {:.0} Hz", pitch_ac(&early[..4800]));
+    // the release is a noise burst with no tone: it peaks within about 0.2 s, is gone by 0.7 s
+    a.tick(&keys(&[]));
+    let blast = run(&mut proc, 1.0);
+    let at = blast.iter().position(|s| s.abs() == peak(&blast)).unwrap() as f32 / FS;
+    assert!(at < 0.25, "the burst peaks quickly: {at:.2}s");
+    assert!(peak(&blast[(0.75 * FS) as usize..]) < 0.003, "and is gone by 0.75 s");
+    assert!(peak(&blast) > 4.0 * peak(&held), "and is much louder than the held charge ({:.3} vs {:.3})", peak(&blast), peak(&held));
+}
+
 /// Writes a WAV of each character (hold, release, tail) so a person can listen:
 /// `BLASTER_WRITE_WAVS=/some/dir cargo test --bin portamax-sim render_demo_wavs`.
 #[test]

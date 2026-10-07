@@ -8,7 +8,7 @@
 //! sweep, length and noise, how much a bigger charge changes the blast (its
 //! pitch, length, noise and volume), 8-bit crush and echo.
 //!
-//! Twenty-seven characters sit in the preset browser, from a pea shot to a
+//! Twenty-eight characters sit in the preset browser, from a pea shot to a
 //! meteor, as starting points for designing your own. Notes from any app
 //! play it too: a note-on starts a charge and the note-off fires it, so how
 //! long a sequencer holds a note is how big the blast is.
