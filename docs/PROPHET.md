@@ -55,8 +55,41 @@ Rev2 applies 12 dB of output makeup after the layer effects and before the
 mixer gain/soft ceiling. This compensates for the conservative internal voice
 and effect levels without changing filter drive, effect input levels, stored
 patch volumes or their relative balances. Program Volume and Mixer → Rev2
-Level still control loudness; dense chords are bounded by the existing soft
-ceiling. Output gain is a software calibration, not a hardware match.
+Level still control loudness; dense chords are bounded by a soft
+ceiling that stays linear below 0.3 and rounds overload peaks. Output gain is
+a software calibration, not a hardware match.
+
+## Sound audit, October 2026
+
+Corrected playback faults affecting imported patches and original sounds:
+
+- Pitch slop now moves slowly and independently per oscillator instead of
+  jumping at control rate. Unmodulated A4 remains 440 Hz. The conservative
+  slop range remains ±12 cents at maximum; hardware slop depth is uncalibrated.
+- Triangle/random LFOs are bipolar; saw/reverse/square are unipolar. Free LFOs
+  continue through silence. Key sync follows phrase starts. Independent layers
+  use different oscillator phases and random seeds.
+- Direct LFO pitch depth is 0.125 semitone per amount unit; matrix/auxiliary
+  pitch depth is 0.5. Matrix routing to LFO amount uses the measured 4:1 scale.
+  These depths follow published firsthand hardware measurements, not a claim
+  of firmware equivalence. Gated pitch steps retain their half-semitone scale.
+- Filter keyboard amount 64 tracks one semitone per key; audio modulation uses
+  oscillator 1 and retains envelope velocity response. The filter no longer
+  saturates its integrator memory every sample, restoring low-frequency gain.
+- The sub is a square. Shaped ramps/triangles have slope-discontinuity
+  corrections; shaped oscillators remove DC offsets. Hard sync and audio-rate
+  filter modulation still need oversampling and hardware comparison.
+- Auxiliary repeat cycles without an inserted release. Eight-voice fixed pan
+  is balanced, and pan modulation moves voices consistently.
+- Chorus supplies delayed wet taps without duplicating dry signal. Reverb uses
+  eight coupled delay lines with separate stereo outputs and damped decay.
+  These are original effects, not the Rev2's digital effect algorithms.
+
+Native patch bytes and parameter IDs are unchanged. Correcting these behaviours
+changes how existing patches sound. Before claiming hardware fidelity, compare
+matched recordings for absolute cutoff, resonance/drive, oscillator shaping,
+envelope/rate curves, slop depth and effects. Those are the main remaining sound
+calibration gaps.
 
 ## Implemented playback architecture
 
@@ -64,7 +97,7 @@ ceiling. Output gain is a software calibration, not a hardware match.
 |---|---|
 | Voices/layers | 8/16 voice allocation; A, stack and split; independent layer parameters/FX |
 | Oscillators | Two DCO-style oscillators; off/saw/saw+triangle/triangle/pulse; shape modulation; fine/coarse tuning; sync; sub; noise; slop; key/reset switches |
-| Filter | Resonant 2/4-pole low-pass, envelope, keyboard tracking, oscillator-2 audio modulation |
+| Filter | Resonant 2/4-pole low-pass, envelope, keyboard tracking, oscillator-1 audio modulation |
 | Envelopes | Three delayed ADSRs, velocity amounts, bipolar filter/aux amounts, auxiliary looping/destination |
 | LFOs | Four per voice; five waveforms; clock/key sync; independent rate, amount, destination |
 | Modulation | Eight slots; all 23 source IDs and 52 destination IDs; fixed controller routes; amount-to-amount routing |
@@ -111,7 +144,10 @@ clone.
 concatenated dumps, realtime interleaving, independent packing vectors,
 byte-for-byte export, save/recall, both-layer playback, pads/MIDI/release,
 all original starting points at 8–192 kHz, oscillator/filter changes, four
-LFOs/eight modulation slots, all effects, auxiliary looping, sequencing,
+LFOs/eight modulation slots, pitch/drift/depth/polarity, filter body/tracking,
+DC/triangle alias reduction, stereo reverb decay, chorus wet-only behaviour,
+independent layer seeds, free LFOs during silence, all effects, auxiliary
+looping, sequencing,
 ties, gated slew, polyphony/priority, tunings and lock contention.
 
 The optional external-reference test was run against Edisyn's
@@ -129,3 +165,4 @@ REV2_REFERENCE_SYX=/absolute/path/init.syx cargo test --offline \
 - [Sequential Rev2 guide 1.2.4](https://sequential.com/wp-content/uploads/2021/02/Prophet-Rev2-Users-Guide-1.2.4.pdf), especially Appendices A–E.
 - [Edisyn Rev2 editor and raw format notes](https://github.com/eclab/edisyn/blob/master/edisyn/synth/sequentialprophetrev2/SequentialProphetRev2.java), Wim Verheyen, Apache-2.0. Used to cross-check wire facts, not as the sound engine.
 - [Independent Rev2 parameter map](https://github.com/shimpe/sc-prophet-rev2/blob/master/Classes/ScProphetRev2.sc).
+- [Firsthand Rev2 modulation-depth measurements](https://forum.sequential.com/index.php?topic=3203.0), CreativeSpiral. Used for pitch-route resolution; other measured curves are not yet fitted.

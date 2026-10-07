@@ -101,6 +101,27 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: ChatGPT: Rev2 sound and modulation audit
+- Branch: gpt/rev2-sound-audit
+- Changed: src/apps/prophet/dsp.rs, docs/PROPHET.md, AGENTS.md.
+- Status: DSP corrections implemented; hardware sound calibration remains
+  incomplete. Publication uses Max's authenticated Terminal because this agent
+  cannot retrieve the GitHub keyring credential.
+- Tests: 20 DSP behavior tests passed in a harness importing actual modules;
+  final Cargo suite: 1193 passed, 0 failed, 14 ignored, excluding the previously
+  stalled unrelated Norns bundled-script test. Rendered all 16 original starting
+  points and 440 supplied native programs, single notes and four-note chords
+  at 48 kHz/velocity 100: imported peaks <=0.745, no samples above 0.95.
+  Unmodulated A4 = 440 Hz; slow independent drift, routing depth/polarity,
+  free LFOs, key sync, filter body/tracking, DC/alias reduction, layer seed
+  independence, chorus wet-only mix, reverb stereo/decay and overload verified.
+- Notes for the other assistant: standalone Rev2 DSP only. Preset bytes,
+  importer, dependencies and shared buses are unchanged. Restores filter body,
+  corrects square sub/audio-mod source/aux repeat/pan, replaces the sparse reverb
+  with an eight-line FDN. Pitch routes follow published hardware measurements;
+  original curves/effects are still uncalibrated. No listening A/B against
+  hardware was performed. Do not call this complete Rev2 fidelity.
+
 ### 2026-10-07: ChatGPT: correct low Rev2 output level
 - Branch: gpt/rev2-output-level
 - Changed: src/apps/prophet/dsp.rs, docs/PROPHET.md, AGENTS.md.
