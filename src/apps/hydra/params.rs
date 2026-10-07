@@ -97,6 +97,73 @@ pub const T_LFO2_RATE: usize = 29;
 pub const T_UNI_DETUNE: usize = 30;
 pub const T_XMOD: usize = 31;
 
+
+/// Chords a single played note can turn into (`Chord` parameter). The first
+/// entry is "no chord"; the fixed shapes are semitones above the played
+/// note, and the last three build the chord from the pad scale instead, so
+/// the same pad plays a major chord on one scale degree and a minor on the
+/// next.
+pub const CHORD_NAMES: [&str; 19] = ["Off", "Octave", "Power", "Major", "Minor", "Sus2", "Sus4", "Maj7", "Min7", "Dom7", "Dim", "Aug", "Add9", "Min9", "Maj9", "6th", "Scale triad", "Scale 7th", "Scale 9th"];
+pub const CHORD_SCALE_FIRST: usize = 16;
+pub const CHORD_SHAPES: [&[i32]; 16] = [
+    &[0],
+    &[0, 12],
+    &[0, 7, 12],
+    &[0, 4, 7],
+    &[0, 3, 7],
+    &[0, 2, 7],
+    &[0, 5, 7],
+    &[0, 4, 7, 11],
+    &[0, 3, 7, 10],
+    &[0, 4, 7, 10],
+    &[0, 3, 6],
+    &[0, 4, 8],
+    &[0, 4, 7, 14],
+    &[0, 3, 7, 10, 14],
+    &[0, 4, 7, 11, 14],
+    &[0, 4, 7, 9],
+];
+
+/// What a macro can move. Each is a parameter; a macro pushes it from where
+/// the sound has it by (macro position x amount), in the parameter's own
+/// scale (so a cutoff moves by octaves, not hertz).
+pub const MACRO_DEST_NAMES: [&str; 32] = [
+    "Off", "Cutoff", "Resonance", "Ladder cutoff", "Ladder res", "Filter env", "Filter drive", "Drive", "Osc A morph", "Osc A 2nd", "Osc B morph", "Osc B 2nd", "B level", "C level", "Sub", "Noise", "Ring", "Detune", "Spread", "Cross mod", "Attack", "Decay", "Release", "LFO 1 rate", "LFO 2 rate", "Chorus", "Phaser", "Delay mix", "Delay fb", "Reverb mix", "Reverb decay", "Level",
+];
+pub const MACRO_SLOTS: usize = 2;
+// Macro destinations by name, for the presets.
+pub const MD_CUTOFF: usize = 1;
+pub const MD_RES: usize = 2;
+pub const MD_LCUT: usize = 3;
+pub const MD_LRES: usize = 4;
+pub const MD_FENV: usize = 5;
+pub const MD_FDRIVE: usize = 6;
+pub const MD_DRIVE: usize = 7;
+pub const MD_A1: usize = 8;
+pub const MD_A2: usize = 9;
+pub const MD_B1: usize = 10;
+pub const MD_B2: usize = 11;
+pub const MD_BLEV: usize = 12;
+pub const MD_CLEV: usize = 13;
+pub const MD_SUB: usize = 14;
+pub const MD_NOISE: usize = 15;
+pub const MD_RING: usize = 16;
+pub const MD_DETUNE: usize = 17;
+pub const MD_SPREAD: usize = 18;
+pub const MD_XMOD: usize = 19;
+pub const MD_ATTACK: usize = 20;
+pub const MD_DECAY: usize = 21;
+pub const MD_RELEASE: usize = 22;
+pub const MD_LFO1: usize = 23;
+pub const MD_LFO2: usize = 24;
+pub const MD_CHORUS: usize = 25;
+pub const MD_PHASER: usize = 26;
+pub const MD_DELAY: usize = 27;
+pub const MD_DFB: usize = 28;
+pub const MD_REVERB: usize = 29;
+pub const MD_RDECAY: usize = 30;
+pub const MD_LEVEL: usize = 31;
+
 macro_rules! params {
     ($( $id:ident, $name:expr, $group:expr, $kind:expr, $def:expr; )*) => {
         /// A parameter's index into the table (and into a snapshot).
@@ -123,7 +190,7 @@ params! {
     Drift, "Drift", 0, lin(0.0, 1.0, Unit::Percent), 0.1;
     XMod, "Cross mod A>B", 0, lin(0.0, 1.0, Unit::Percent), 0.0;
     KeySync, "Key sync", 0, tog(), 0.0;
-    Scale, "Pad scale", 0, int(0, 15), 0.0;
+    Scale, "Pad scale", 0, int(0, 15), 1.0;
     Root, "Pad root", 0, int(0, 11), 0.0;
     ModWheel, "Mod wheel", 0, lin(0.0, 1.0, Unit::Percent), 0.0;
     A_Type, "Type", 1, ch(&["Analog", "Wavetable", "FM", "Pluck", "Noise"]), 0.0;
@@ -260,4 +327,62 @@ params! {
     Mac2, "Macro 2", 19, lin(0.0, 1.0, Unit::Percent), 0.0;
     Mac3, "Macro 3", 19, lin(0.0, 1.0, Unit::Percent), 0.0;
     Mac4, "Macro 4", 19, lin(0.0, 1.0, Unit::Percent), 0.0;
+    Chord, "Chord", 0, ch(&CHORD_NAMES), 0.0;
+    Hold, "Hold", 0, tog(), 0.0;
+    PadMode, "Pad layout", 0, ch(&["Scale", "Chromatic", "Fourths"]), 0.0;
+    Mac1_DA, "1 dest A", 19, ch(&MACRO_DEST_NAMES), 0.0;
+    Mac1_AA, "1 amount A", 19, lin(-1.0, 1.0, Unit::Signed), 0.0;
+    Mac1_DB, "1 dest B", 19, ch(&MACRO_DEST_NAMES), 0.0;
+    Mac1_AB, "1 amount B", 19, lin(-1.0, 1.0, Unit::Signed), 0.0;
+    Mac2_DA, "2 dest A", 19, ch(&MACRO_DEST_NAMES), 0.0;
+    Mac2_AA, "2 amount A", 19, lin(-1.0, 1.0, Unit::Signed), 0.0;
+    Mac2_DB, "2 dest B", 19, ch(&MACRO_DEST_NAMES), 0.0;
+    Mac2_AB, "2 amount B", 19, lin(-1.0, 1.0, Unit::Signed), 0.0;
+    Mac3_DA, "3 dest A", 19, ch(&MACRO_DEST_NAMES), 0.0;
+    Mac3_AA, "3 amount A", 19, lin(-1.0, 1.0, Unit::Signed), 0.0;
+    Mac3_DB, "3 dest B", 19, ch(&MACRO_DEST_NAMES), 0.0;
+    Mac3_AB, "3 amount B", 19, lin(-1.0, 1.0, Unit::Signed), 0.0;
+    Mac4_DA, "4 dest A", 19, ch(&MACRO_DEST_NAMES), 0.0;
+    Mac4_AA, "4 amount A", 19, lin(-1.0, 1.0, Unit::Signed), 0.0;
+    Mac4_DB, "4 dest B", 19, ch(&MACRO_DEST_NAMES), 0.0;
+    Mac4_AB, "4 amount B", 19, lin(-1.0, 1.0, Unit::Signed), 0.0;
+}
+
+/// The parameter a macro destination moves (`None` for "Off").
+pub fn macro_dest(choice: usize) -> Option<P> {
+    use P::*;
+    Some(match choice {
+        1 => F1_Cut,
+        2 => F1_Res,
+        3 => F2_Cut,
+        4 => F2_Res,
+        5 => F1_Env,
+        6 => F1_Drive,
+        7 => Drv_Amt,
+        8 => A_P1,
+        9 => A_P2,
+        10 => B_P1,
+        11 => B_P2,
+        12 => B_Level,
+        13 => C_Level,
+        14 => SubLevel,
+        15 => Noise,
+        16 => Ring,
+        17 => UniDetune,
+        18 => UniSpread,
+        19 => XMod,
+        20 => AmpA,
+        21 => AmpD,
+        22 => AmpR,
+        23 => L1_Rate,
+        24 => L2_Rate,
+        25 => Cho_Mix,
+        26 => Ph_Mix,
+        27 => Dly_Mix,
+        28 => Dly_Fb,
+        29 => Rev_Mix,
+        30 => Rev_Decay,
+        31 => Level,
+        _ => return None,
+    })
 }

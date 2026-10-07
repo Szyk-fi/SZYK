@@ -6,7 +6,8 @@
 use super::dsp::soft_clip;
 use super::fx::Fx;
 use super::params::*;
-use super::store::{Params, Snapshot};
+use super::store::{from_norm, to_norm, Params, Snapshot};
+use crate::app::music_scales;
 use super::tables::{tables, Tables};
 use super::voice::{NoteStart, Voice};
 use crate::apps::mi_kit::{NoteEvent, NoteQueue};
@@ -18,6 +19,8 @@ use std::sync::{Arc, Mutex};
 pub const MAX_VOICES: usize = 16;
 /// Notes the engine tracks as physically held (more are ignored).
 const HELD: usize = 32;
+/// Most notes one key can turn into (a scale ninth is five).
+const MAX_CHORD: usize = 6;
 /// The audio is rendered in chunks this long, which is also how finely the
 /// arpeggiator keeps time (about 1.3 ms at 48 kHz).
 const CHUNK: usize = 64;
@@ -73,6 +76,16 @@ pub struct Engine {
     clock: u64,
     held: [Held; HELD],
     held_n: usize,
+    /// Keys physically down (as opposed to `held`, which Hold keeps latched).
+    down: [bool; 128],
+    down_n: usize,
+    latched: [bool; 128],
+    /// What each struck key turned into, so letting go stops exactly those
+    /// notes even if the Chord setting has changed since.
+    chord_of: [[u8; MAX_CHORD]; 128],
+    chord_len: [u8; 128],
+    /// How many struck keys are sounding each note (chords overlap).
+    sounding: [u8; 128],
     // arpeggiator
     arp_pos: f64,
     arp_next: f64,
@@ -99,6 +112,12 @@ impl Engine {
             clock: 0,
             held: [Held::default(); HELD],
             held_n: 0,
+            down: [false; 128],
+            down_n: 0,
+            latched: [false; 128],
+            chord_of: [[0; MAX_CHORD]; 128],
+            chord_len: [0; 128],
+            sounding: [0; 128],
             arp_pos: 0.0,
             arp_next: 0.0,
             arp_step: 0,
@@ -115,7 +134,7 @@ impl Engine {
 
     /// The parameters this block renders with: the table's values plus what
     /// is patched into the external inputs.
-    fn snapshot(&self) -> Snapshot {
+    pub(super) fn snapshot(&self) -> Snapshot {
         let mut s = self.sh.params.snapshot();
         let cv = &self.sh.cv;
         let at = |p: P| p as usize;
@@ -131,6 +150,19 @@ impl Engine {
         for (i, m) in cv.macros.iter().enumerate() {
             let k = at(P::Mac1) + i;
             s[k] = (s[k] + m.get()).clamp(0.0, 1.0);
+        }
+        // Macros push their destinations from where the sound has them.
+        for m in 0..4 {
+            let pos = s[at(P::Mac1) + m];
+            if pos <= 0.0 {
+                continue;
+            }
+            for slot in 0..MACRO_SLOTS {
+                let base = at(P::Mac1_DA) + m * 4 + slot * 2;
+                let Some(dest) = macro_dest(s[base] as usize) else { continue };
+                let i = dest as usize;
+                s[i] = from_norm(&DEFS[i], to_norm(&DEFS[i], s[i]) + pos * s[base + 1]);
+            }
         }
         s
     }
@@ -232,20 +264,124 @@ impl Engine {
             }
         }
         self.held_n = 0;
+        self.down = [false; 128];
+        self.down_n = 0;
+        self.latched = [false; 128];
+        self.chord_len = [0; 128];
+        self.sounding = [0; 128];
         self.arp_note = None;
+    }
+
+    /// The notes a struck key plays: itself, or its chord.
+    pub(super) fn expand(note: u8, snap: &Snapshot, out: &mut [u8; MAX_CHORD]) -> usize {
+        let chord = snap[P::Chord as usize] as usize;
+        let mut offsets = [0i32; MAX_CHORD];
+        let mut n = 1;
+        if chord >= CHORD_SCALE_FIRST {
+            // Stack scale degrees (every other one) on the key's own degree.
+            let scale = snap[P::Scale as usize] as usize;
+            let root = snap[P::Root as usize] as i32;
+            let steps = music_scales::intervals(scale);
+            let rel = (note as i32 - root).rem_euclid(12);
+            let deg = steps.iter().rposition(|&i| i <= rel).unwrap_or(0);
+            let base = music_scales::degree(scale, deg);
+            n = 3 + (chord - CHORD_SCALE_FIRST).min(2);
+            for k in 0..n {
+                offsets[k] = music_scales::degree(scale, deg + 2 * k) - base;
+            }
+        } else if chord > 0 {
+            let shape = CHORD_SHAPES[chord.min(CHORD_SHAPES.len() - 1)];
+            n = shape.len().min(MAX_CHORD);
+            offsets[..n].copy_from_slice(&shape[..n]);
+        }
+        let mut count = 0;
+        for &o in &offsets[..n] {
+            let m = note as i32 + o;
+            if (0..128).contains(&m) {
+                out[count] = m as u8;
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Strikes a key: its chord plays when the voices are poly (a mono
+    /// voice has only one note to give).
+    fn strike(&mut self, note: u8, velocity: u8, snap: &Snapshot, rate: f32) {
+        let mut notes = [0u8; MAX_CHORD];
+        let n = if snap[P::Mode as usize] as usize == 0 { Self::expand(note, snap, &mut notes) } else { notes[0] = note; 1 };
+        self.chord_of[note as usize] = notes;
+        self.chord_len[note as usize] = n as u8;
+        for &m in &notes[..n] {
+            self.sounding[m as usize] = self.sounding[m as usize].saturating_add(1);
+            self.start_note(m, velocity, snap, rate);
+        }
+    }
+
+    fn let_go(&mut self, note: u8, snap: &Snapshot, rate: f32) {
+        let n = self.chord_len[note as usize] as usize;
+        if n == 0 {
+            self.release_note(note, snap, rate);
+            return;
+        }
+        self.chord_len[note as usize] = 0;
+        let notes = self.chord_of[note as usize];
+        for &m in &notes[..n] {
+            let c = &mut self.sounding[m as usize];
+            *c = c.saturating_sub(1);
+            if *c == 0 {
+                self.release_note(m, snap, rate);
+            }
+        }
+    }
+
+    /// Lets go of everything Hold has been keeping.
+    fn release_latched(&mut self, snap: &Snapshot, rate: f32) {
+        for note in 0..128u8 {
+            if self.latched[note as usize] {
+                self.latched[note as usize] = false;
+                self.remove_held(note);
+                if snap[P::Arp_On as usize] < 0.5 {
+                    self.let_go(note, snap, rate);
+                }
+            }
+        }
     }
 
     fn handle(&mut self, e: NoteEvent, snap: &Snapshot, rate: f32) {
         let arp = snap[P::Arp_On as usize] >= 0.5;
+        let hold = snap[P::Hold as usize] >= 0.5;
+        let k = (e.note as usize).min(127);
         if e.velocity > 0 {
+            // A fresh hand on the keys replaces what Hold was keeping.
+            if hold && self.down_n == 0 {
+                self.release_latched(snap, rate);
+            }
+            if !self.down[k] {
+                self.down[k] = true;
+                self.down_n += 1;
+            }
+            self.latched[k] = false;
             self.add_held(e.note, e.velocity);
             if !arp {
-                self.start_note(e.note, e.velocity, snap, rate);
+                // striking a key that is still sounding retriggers cleanly
+                if self.chord_len[k] > 0 {
+                    self.let_go(e.note, snap, rate);
+                }
+                self.strike(e.note, e.velocity, snap, rate);
             }
         } else {
+            if self.down[k] {
+                self.down[k] = false;
+                self.down_n -= 1;
+            }
+            if hold {
+                self.latched[k] = true;
+                return;
+            }
             self.remove_held(e.note);
             if !arp {
-                self.release_note(e.note, snap, rate);
+                self.let_go(e.note, snap, rate);
             }
         }
     }
@@ -255,10 +391,18 @@ impl Engine {
     fn arp_pool(&self, snap: &Snapshot, pool: &mut [u8; 128]) -> usize {
         let octaves = (snap[P::Arp_Oct as usize] as usize).clamp(1, 4);
         let mode = snap[P::Arp_Mode as usize] as usize;
-        let mut notes = [0u8; HELD];
-        let n = self.held_n;
-        for i in 0..n {
-            notes[i] = self.held[i].note;
+        // the held keys, each as its chord (so the arpeggio runs through it)
+        let mut notes = [0u8; HELD * MAX_CHORD];
+        let mut n = 0;
+        for i in 0..self.held_n {
+            let mut chord = [0u8; MAX_CHORD];
+            let c = Self::expand(self.held[i].note, snap, &mut chord);
+            for &m in &chord[..c] {
+                if !notes[..n].contains(&m) {
+                    notes[n] = m;
+                    n += 1;
+                }
+            }
         }
         if mode != 4 {
             notes[..n].sort_unstable();
@@ -331,9 +475,11 @@ impl Engine {
                 self.arp_release(snap, rate);
                 self.arp_was_on = false;
                 // anything still held plays as a normal chord
+                self.chord_len = [0; 128];
+                self.sounding = [0; 128];
                 for i in 0..self.held_n {
                     let h = self.held[i];
-                    self.start_note(h.note, h.velocity, snap, rate);
+                    self.strike(h.note, h.velocity, snap, rate);
                 }
             }
             return;
@@ -341,6 +487,8 @@ impl Engine {
         if !self.arp_was_on {
             // switching the arpeggiator on: stop the held chord, then arpeggiate it
             self.arp_was_on = true;
+            self.chord_len = [0; 128];
+            self.sounding = [0; 128];
             for v in self.voices.iter_mut() {
                 if v.active && v.gate {
                     v.note_off();
@@ -411,6 +559,9 @@ impl AudioProcessor for Engine {
         let snap = self.snapshot();
         while let Some(e) = self.sh.queue.pop() {
             self.handle(e, &snap, rate);
+        }
+        if snap[P::Hold as usize] < 0.5 && self.latched.iter().any(|&l| l) {
+            self.release_latched(&snap, rate);
         }
         let level = (self.sh.mix_level.get() + self.sh.ext_mix_level.get()).clamp(0.0, 2.0) * snap[P::Level as usize];
         let frames = out.len() / channels;
