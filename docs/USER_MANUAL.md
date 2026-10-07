@@ -891,4 +891,3 @@ Create = F3, D-pad = the device D-pad.
   suite is large (400+ tests) and covers real behavior, including
   hardware-derived timing and byte-for-byte ROM decode checks, not just
   "doesn't panic."
-

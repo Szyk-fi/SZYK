@@ -98,4 +98,3 @@ params! {
     SubWave, "Sub wave", 5, ch(&SUB_WAVES), 0.0;
     SubOctave, "Sub octave", 5, ch(&SUB_OCTAVES), 0.0;
 }
-

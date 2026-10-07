@@ -193,4 +193,3 @@ pub fn mutate(params: &Params, rng: &mut Rng) {
         params.set_at(i, from_norm(d, x.clamp(0.0, 1.0)));
     }
 }
-

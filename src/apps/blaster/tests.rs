@@ -723,4 +723,3 @@ fn render_demo_wavs() {
     let audio = take(&mut a, &mut proc, hold);
     write_wav(&std::path::Path::new(&dir).join("00_X_Charge_Shot_with_sub.wav"), &audio);
 }
-

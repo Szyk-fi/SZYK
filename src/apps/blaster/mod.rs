@@ -557,4 +557,3 @@ pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::Ap
 
 #[cfg(test)]
 mod tests;
-

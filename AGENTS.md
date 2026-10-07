@@ -720,4 +720,3 @@ Newest at the top. Keep each entry short. Use this format:
 2. Commit with a descriptive message that says *why*, not just *what*.
 3. Add your Work log entry, and clear your lock in section 4.
 4. Tell Max the branch name and anything the other assistant needs to know.
-
