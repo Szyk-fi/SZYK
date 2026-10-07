@@ -131,7 +131,7 @@ pub const FM_10: f32 = 0.933;
 
 /// The factory presets, folder by folder (levelled).
 pub fn factory() -> Vec<Preset> {
-    let mut all = vec![finish("Init", &INIT_MACROS, vec![pr!("Init";)])];
+    let mut all = finish("Init", &INIT_MACROS, vec![pr!("Init";)]);
     for list in [
         bass::presets(),
         lead::presets(),

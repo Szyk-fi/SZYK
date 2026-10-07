@@ -213,7 +213,8 @@ fn the_morph_dial_with_no_target_heads_for_the_next_sound_in_the_folder() {
     };
     a.set_morph(0.4);
     assert_eq!(a.morph.as_ref().unwrap().target, next);
-    a.kit_reset(a.bank_control_index_of_morph());
+    let morph = a.bank_control_index_of_morph();
+    a.kit_reset(morph);
     assert!(a.morph.is_none(), "resetting the dial puts the sound back");
 }
 
