@@ -545,6 +545,34 @@ fn the_first_character_matches_the_recording_it_was_built_from() {
     assert!(peak(&blast) > 4.0 * peak(&held), "and is much louder than the held charge ({:.3} vs {:.3})", peak(&blast), peak(&held));
 }
 
+#[test]
+fn the_first_character_rises_then_stays_on_the_high_note_rippling_until_release() {
+    let mut a = app();
+    let mut proc = a.audio_processor().unwrap();
+    a.load_preset(0);
+    a.tick(&keys(&[60]));
+    run(&mut proc, 1.6); // the rise (1.4 s) is over
+    // hold for a long time: the pitch stays put, the ripple keeps going, nothing fires
+    let mut windows = Vec::new();
+    for _ in 0..6 {
+        windows.push(run(&mut proc, 1.0));
+    }
+    for (i, w) in windows.iter().enumerate() {
+        assert!((pitch_ac(w) - 502.0).abs() < 12.0, "second {}: pitch {:.0} Hz", i + 2, pitch_ac(w));
+        let env: Vec<f32> = w.chunks(480).map(rms).collect();
+        let (lo, hi) = (env.iter().cloned().fold(f32::MAX, f32::min), env.iter().cloned().fold(0.0f32, f32::max));
+        assert!(lo < hi * 0.85, "second {}: the ripple is still there ({lo:.4} to {hi:.4})", i + 2);
+        assert!(peak(w) < 0.12, "second {}: no blast while the key is held ({:.3})", i + 2, peak(w));
+    }
+    assert_eq!(a.sh.fired.load(Ordering::Relaxed), 0, "nothing has fired");
+    assert_eq!(a.sh.charge.get(), 1.0, "and it is still fully charged");
+    // only letting go fires the noise burst
+    a.tick(&keys(&[]));
+    let blast = run(&mut proc, 0.5);
+    assert!(peak(&blast) > 4.0 * peak(&windows[5]), "the burst: {:.3} vs the hold {:.3}", peak(&blast), peak(&windows[5]));
+    assert_eq!(a.sh.fired.load(Ordering::Relaxed), 1);
+}
+
 /// Writes a WAV of each character (hold, release, tail) so a person can listen:
 /// `BLASTER_WRITE_WAVS=/some/dir cargo test --bin portamax-sim render_demo_wavs`.
 #[test]
