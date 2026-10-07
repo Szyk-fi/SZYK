@@ -675,8 +675,9 @@ own protection chips (CMC50, NEO-PVC, and the rest) aren't implemented —
 those will run real code for well under a second before hitting code this
 core can't decrypt yet, and cleanly report "emulation error, reload the ROM"
 the same way any other core's real crash does. A real BIOS, if you supply
-one (see below), lets a cartridge's calls into it run and return instead of
-reading back zeroed memory. This is documented in detail, including exactly
+one (`roms/neogeo/bios/`, above), lets a cartridge's calls into it run and
+return instead of reading back zeroed memory. This is documented in detail,
+including exactly
 what's verified against real cartridge bytes vs. still unverified, in
 `src/apps/neogeo_core.rs`'s own module doc comment.
 
