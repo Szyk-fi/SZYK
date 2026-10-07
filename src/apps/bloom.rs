@@ -960,6 +960,10 @@ enum Selection {
     Harmonics(usize),
     Timbre(usize),
     Decay(usize),
+    /// An audio source (any app's output on the audio bus) this shape
+    /// opens and closes with its notes, like a rhythmic gate.
+    GateSource(usize),
+    GateLevel(usize),
     Randomize(usize),
     /// Snaps every inner dot back to its start (12-o'clock, or a
     /// fresh random spread if `RandomStart` is on) on demand -- today
@@ -1032,6 +1036,9 @@ struct ShapeParams {
     harmonics: AtomicF32,
     timbre: AtomicF32,
     decay: AtomicF32,
+    /// 0 = off, else audio bus index + 1 (see `Selection::GateSource`).
+    gate_src: AtomicU32,
+    gate_level: AtomicF32,
     /// Each inner dot's own raw (unwrapped) phase accumulator. All
     /// start at 0.0 (the same 12-o'clock spot), or a random spread
     /// if `random_start` is on, and spin at their own multiple of the
@@ -1087,6 +1094,8 @@ impl ShapeParams {
             harmonics: AtomicF32::new(0.5),
             timbre: AtomicF32::new(0.5),
             decay: AtomicF32::new(0.4),
+            gate_src: AtomicU32::new(0),
+            gate_level: AtomicF32::new(0.8),
             dot_phases: std::array::from_fn(|_| AtomicF32::new(0.0)),
             random_start: AtomicBool::new(false),
             // usize::MAX, not 0 -- so nothing shows as "lit" before a
@@ -1153,6 +1162,8 @@ pub struct BloomApp {
     /// sending ends go to the audio thread with the processor.
     note_routes: Vec<NoteRoute>,
     note_outs: Option<Vec<NoteOut>>,
+    /// For the names of the audio sources a shape can gate.
+    audio_bus: Arc<AudioBus>,
 }
 
 /// One note route per shape: shape 1's is "Bloom Shape 1" on the note bus.
@@ -1238,6 +1249,7 @@ impl BloomApp {
             modbus,
             note_routes,
             note_outs: Some(note_outs),
+            audio_bus: Arc::clone(&audio_bus),
         }
     }
 
@@ -1247,6 +1259,29 @@ impl BloomApp {
         self.note_routes = routes;
         self.note_outs = Some(outs);
         self
+    }
+
+    /// The audio sources a shape's gate can open: every output on the audio
+    /// bus except Bloom's own (gating itself would feed back).
+    fn gate_choices(&self) -> Vec<usize> {
+        self.audio_bus.names().iter().enumerate().filter(|(_, n)| n.as_str() != "Bloom").map(|(i, _)| i + 1).collect()
+    }
+
+    fn gate_source_name(&self, s: usize) -> String {
+        match self.params.shapes[s].gate_src.load(Ordering::Relaxed) as usize {
+            0 => "Off".into(),
+            i => self.audio_bus.names().get(i - 1).cloned().unwrap_or_else(|| "?".into()),
+        }
+    }
+
+    /// Steps shape `s`'s gate through Off and each audio source.
+    fn step_gate_source(&self, s: usize, step: i32) {
+        let mut stops = vec![0usize];
+        stops.extend(self.gate_choices());
+        let cur = self.params.shapes[s].gate_src.load(Ordering::Relaxed) as usize;
+        let at = stops.iter().position(|&x| x == cur).unwrap_or(0) as i32;
+        let next = stops[(at + step.signum()).rem_euclid(stops.len() as i32) as usize];
+        self.params.shapes[s].gate_src.store(next as u32, Ordering::Relaxed);
     }
 
     /// The shape the screen, F3 and the play view act on -- whatever the
@@ -1344,6 +1379,11 @@ impl BloomApp {
             // Notes sent elsewhere still need a length: Decay sets it.
             v.push(Selection::Decay(s));
         }
+        // Any app's audio can be opened and closed by this shape's notes.
+        v.push(Selection::GateSource(s));
+        if self.params.shapes[s].gate_src.load(Ordering::Relaxed) > 0 {
+            v.push(Selection::GateLevel(s));
+        }
         v.extend([Selection::Dots(s), Selection::OuterDots(s)]);
         let num_outer = self.params.shapes[s].outer.load(Ordering::Relaxed).clamp(MIN_OUTER, MAX_OUTER);
         for o in 0..num_outer {
@@ -1427,6 +1467,8 @@ impl BloomApp {
             | Selection::Harmonics(s)
             | Selection::Timbre(s)
             | Selection::Decay(s)
+            | Selection::GateSource(s)
+            | Selection::GateLevel(s)
             | Selection::Randomize(s)
             | Selection::Retrigger(s)
             | Selection::RandomStart(s) => Some(s),
@@ -1480,6 +1522,8 @@ impl BloomApp {
             Selection::Engine(_) => "  Voice".into(),
             Selection::Harmonics(_) => "Harmonics".into(),
             Selection::Timbre(_) => "Timbre".into(),
+            Selection::GateSource(_) => "Gate audio".into(),
+            Selection::GateLevel(_) => "  Gate level".into(),
             Selection::Decay(s) => if self.note_routes[s].route() == crate::note_bus::INTERNAL { "  Decay".into() } else { "  Note length".into() },
             Selection::Randomize(_) => "Randomize".into(),
             Selection::Retrigger(_) => "Retrigger".into(),
@@ -1557,6 +1601,8 @@ impl BloomApp {
             Selection::Harmonics(s) => format!("{:.2}", self.params.shapes[s].harmonics.get()),
             Selection::Timbre(s) => format!("{:.2}", self.params.shapes[s].timbre.get()),
             Selection::Decay(s) => format!("{:.2}", self.params.shapes[s].decay.get()),
+            Selection::GateSource(s) => self.gate_source_name(s),
+            Selection::GateLevel(s) => format!("{:.0}%", self.params.shapes[s].gate_level.get() * 100.0),
             Selection::Randomize(_) => "hold SELECT".into(),
             Selection::Retrigger(_) => "hold SELECT".into(),
             Selection::RandomStart(s) => {
@@ -1710,6 +1756,8 @@ impl BloomApp {
             Selection::Harmonics(s) => bump(&self.params.shapes[s].harmonics, delta, sensitivity, 0.0, 1.0),
             Selection::Timbre(s) => bump(&self.params.shapes[s].timbre, delta, sensitivity, 0.0, 1.0),
             Selection::Decay(s) => bump(&self.params.shapes[s].decay, delta, sensitivity, 0.0, 1.0),
+            Selection::GateSource(s) => self.step_gate_source(s, step),
+            Selection::GateLevel(s) => bump(&self.params.shapes[s].gate_level, delta, sensitivity, 0.0, 1.0),
             Selection::RandomStart(s) => self.params.shapes[s].random_start.store(delta > 0, Ordering::Relaxed),
             Selection::Randomize(_) | Selection::RandomizeAll | Selection::Retrigger(_) => {} // action only fires on press -- see reset()
         }
@@ -1757,6 +1805,8 @@ impl BloomApp {
             Selection::Harmonics(s) => self.params.shapes[s].harmonics.set(0.5),
             Selection::Timbre(s) => self.params.shapes[s].timbre.set(0.5),
             Selection::Decay(s) => self.params.shapes[s].decay.set(0.4),
+            Selection::GateSource(s) => self.params.shapes[s].gate_src.store(0, Ordering::Relaxed),
+            Selection::GateLevel(s) => self.params.shapes[s].gate_level.set(0.8),
             Selection::Randomize(s) => self.randomize(s),
             Selection::RandomizeAll => {
                 for s in 0..NUM_SHAPES {
@@ -2262,6 +2312,9 @@ impl App for BloomApp {
             modbus: Arc::clone(&self.modbus),
             gate_left: 0.0,
             pitch: 0.0,
+            audio: Some(Arc::clone(&self.audio_bus)),
+            gate_mix: Vec::new(),
+            gate_scratch: Vec::new(),
         }))
     }
 
@@ -2443,6 +2496,9 @@ struct ShapeRuntime {
     voices: [PolyVoice; NUM_VOICES],
     voice_gen: u64,
     rng: u32,
+    /// Seconds the shape's audio gate stays open after its last note.
+    gate_hold: f32,
+    gate_env: f32,
 }
 
 impl ShapeRuntime {
@@ -2450,6 +2506,8 @@ impl ShapeRuntime {
         Self {
             voices: std::array::from_fn(|_| PolyVoice::new()),
             voice_gen: 0,
+            gate_hold: 0.0,
+            gate_env: 0.0,
             rng: 0x9E3779B9 ^ (seed.wrapping_mul(0x85EBCA6B) | 1),
         }
     }
@@ -2486,6 +2544,11 @@ struct BloomProcessor {
     gate_left: f32,
     /// Pitch CV, 0..1.
     pitch: f32,
+    /// Where the audio a shape gates comes from.
+    audio: Option<Arc<AudioBus>>,
+    /// The gated audio mixed so far this block, and a copy of a source's block.
+    gate_mix: Vec<f32>,
+    gate_scratch: Vec<f32>,
 }
 
 impl AudioProcessor for BloomProcessor {
@@ -2493,6 +2556,8 @@ impl AudioProcessor for BloomProcessor {
         let frames = buffer.len() / channels;
         self.mono_buf.clear();
         self.mono_buf.resize(frames, 0.0);
+        self.gate_mix.clear();
+        self.gate_mix.resize(frames, 0.0);
         let dt = frames as f32 / sample_rate;
         let master_bpm = self.params.master_bpm.get().max(1.0);
 
@@ -2604,6 +2669,7 @@ impl AudioProcessor for BloomProcessor {
                             } else if self.notes[s].external() {
                                 self.notes[s].trigger(note.clamp(0.0, 127.0) as u8, (velocity * 127.0).clamp(1.0, 127.0) as u8, (gate_s * sample_rate) as u32);
                             }
+                            rt.gate_hold = rt.gate_hold.max(gate_s);
                             self.gate_left = self.gate_left.max(gate_s);
                             self.pitch = (note / 127.0).clamp(0.0, 1.0);
                             sp.last_fired_dot.store(d, Ordering::Relaxed);
@@ -2649,11 +2715,39 @@ impl AudioProcessor for BloomProcessor {
                     *m += *sample * gain;
                 }
             }
+
+            // The shape's audio gate: another app's output, let through while
+            // this shape's notes are sounding (a short attack, and a release
+            // that follows Decay). It is not divided by the voice count, and
+            // a source that is busy being written this instant counts as silent
+            // rather than making the audio thread wait.
+            let gate_src = sp.gate_src.load(Ordering::Relaxed) as usize;
+            let level = sp.gate_level.get();
+            let attack = 1.0 - (-1.0 / (0.004 * sample_rate)).exp();
+            let release = 1.0 - (-1.0 / ((0.02 + decay * 0.6) * sample_rate)).exp();
+            let have_audio = gate_src > 0 && self.audio.as_ref().is_some_and(|audio| match audio.peek(gate_src - 1).as_ref().map(|b| b.try_lock()) {
+                Some(Ok(b)) => {
+                    self.gate_scratch.clear();
+                    self.gate_scratch.extend(b.iter().take(frames));
+                    self.gate_scratch.resize(frames, 0.0);
+                    true
+                }
+                _ => false,
+            });
+            for i in 0..frames {
+                let open = rt.gate_hold > 0.0;
+                rt.gate_hold = (rt.gate_hold - 1.0 / sample_rate).max(0.0);
+                let target = if open { 1.0 } else { 0.0 };
+                rt.gate_env += (target - rt.gate_env) * if target > rt.gate_env { attack } else { release };
+                if have_audio {
+                    self.gate_mix[i] += self.gate_scratch[i] * rt.gate_env * level;
+                }
+            }
         }
 
         let headroom = active_voices.max(1) as f32;
-        for m in self.mono_buf.iter_mut() {
-            *m /= headroom;
+        for (m, g) in self.mono_buf.iter_mut().zip(self.gate_mix.iter()) {
+            *m = *m / headroom + *g;
         }
 
         // Notes sent elsewhere end on time; the CVs follow the last note.
@@ -2706,7 +2800,7 @@ mod tests {
         params.shapes[0].running.store(true, Ordering::Relaxed);
         params.shapes[0].speed_hz.set(2.0); // fast, so the test doesn't need many blocks
 
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0, audio: None, gate_mix: Vec::new(), gate_scratch: Vec::new() };
 
         let dot0_start = params.shapes[0].dot_phases[0].get();
         let gen_start = proc.shapes[0].voice_gen;
@@ -2809,7 +2903,7 @@ mod tests {
             params.shapes[s].vel_max.set(1.0);
         }
 
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0, audio: None, gate_mix: Vec::new(), gate_scratch: Vec::new() };
 
         for s in 0..NUM_SHAPES {
             for _ in 0..NUM_VOICES {
@@ -2956,7 +3050,7 @@ mod tests {
             params.shapes[0].running.store(true, Ordering::Relaxed);
             params.shapes[0].speed_hz.set(4.0);
             params.shapes[0].octave_transpose.store(octave_transpose_index, Ordering::Relaxed);
-            let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+            let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0, audio: None, gate_mix: Vec::new(), gate_scratch: Vec::new() };
             let mut buffer = vec![0.0f32; 512 * 2];
             for _ in 0..400 {
                 proc.process(&mut buffer, 2, 48000.0);
@@ -2992,7 +3086,7 @@ mod tests {
         params.shapes[0].octave_range.store(MAX_OCTAVE_RANGE, Ordering::Relaxed); // wide native range
         params.shapes[0].min_note.store(60, Ordering::Relaxed);
         params.shapes[0].max_note.store(61, Ordering::Relaxed); // deliberately narrow
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0, audio: None, gate_mix: Vec::new(), gate_scratch: Vec::new() };
 
         let mut buffer = vec![0.0f32; 512 * 2];
         let mut saw_a_trigger = false;
@@ -3029,7 +3123,7 @@ mod tests {
         params.shapes[0].outer.store(2, Ordering::Relaxed);
         params.shapes[0].outer_octave[0].store(0, Ordering::Relaxed);
         params.shapes[0].outer_octave[1].store(2, Ordering::Relaxed); // +2 octaves = +24 semitones
-        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0, audio: None, gate_mix: Vec::new(), gate_scratch: Vec::new() };
 
         let mut notes_by_outer: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
         let mut buffer = vec![0.0f32; 512 * 2];
@@ -3230,7 +3324,7 @@ mod tests {
     #[test]
     fn every_pattern_applies_and_runs_without_panicking() {
         let mut app = new_app();
-        let mut proc = BloomProcessor { params: Arc::clone(&app.params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0 };
+        let mut proc = BloomProcessor { params: Arc::clone(&app.params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0, audio: None, gate_mix: Vec::new(), gate_scratch: Vec::new() };
         let mut buffer = vec![0.0f32; 128 * 2];
         for idx in 0..PATTERN_PRESETS.len() {
             app.apply_pattern(0, idx);
@@ -3351,6 +3445,76 @@ mod tests {
         app.edit(Selection::Plays, 1);
         let first = app.note_routes[0].route();
         assert!(app.note_routes.iter().all(|r| r.route() == first));
+    }
+
+    /// A shape can open and close any app's audio with its notes.
+    #[test]
+    fn a_shape_can_gate_any_audio_source_but_not_its_own_output() {
+        let audio = Arc::new(AudioBus::new());
+        let mut app = BloomApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(1.0)), Arc::new(ModBus::new()), Arc::clone(&audio), Arc::new(MixerBus::new()));
+        audio.register("Looper");
+        audio.register("Sampler");
+        assert_eq!(app.leaf_value(Selection::GateSource(0)), "Off");
+        assert!(!app.group_leaves(1).contains(&Selection::GateLevel(0)), "no level until there is a source");
+        app.edit(Selection::GateSource(0), 1);
+        assert_eq!(app.leaf_value(Selection::GateSource(0)), "Looper", "Bloom's own output is skipped");
+        assert!(app.group_leaves(1).contains(&Selection::GateLevel(0)));
+        app.edit(Selection::GateSource(0), 1);
+        assert_eq!(app.leaf_value(Selection::GateSource(0)), "Sampler");
+        app.edit(Selection::GateSource(0), 1);
+        assert_eq!(app.leaf_value(Selection::GateSource(0)), "Off", "and it wraps back to off");
+        app.edit(Selection::GateSource(0), -1);
+        assert_eq!(app.leaf_value(Selection::GateSource(0)), "Sampler");
+        app.reset(Selection::GateSource(0));
+        assert_eq!(app.leaf_value(Selection::GateSource(0)), "Off");
+    }
+
+    #[test]
+    fn a_gated_source_is_heard_only_while_the_shapes_notes_sound() {
+        let audio = Arc::new(AudioBus::new());
+        let source = audio.register("Looper");
+        let mut app = BloomApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(1.0)), Arc::new(ModBus::new()), Arc::clone(&audio), Arc::new(MixerBus::new()));
+        app.edit(Selection::GateSource(0), 1);
+        app.params.shapes[0].decay.set(0.0);
+        let mut proc = BloomProcessor { params: Arc::clone(&app.params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0, audio: Some(Arc::clone(&audio)), gate_mix: Vec::new(), gate_scratch: Vec::new() };
+        let mut buf = vec![0.0f32; 1024];
+        let mut block = |proc: &mut BloomProcessor| {
+            *source.lock().unwrap() = vec![0.5; 512];
+            buf.fill(0.0);
+            proc.process(&mut buf, 2, 48_000.0);
+            buf.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+        };
+        let idle = block(&mut proc);
+        assert!(idle < 0.01, "closed: nothing comes through ({idle})");
+        proc.shapes[0].gate_hold = 0.5;
+        let open = block(&mut proc);
+        assert!(open > 0.3 && open < 0.5, "open: the source at the gate level (80% of 0.5): {open}");
+        proc.shapes[0].gate_hold = 0.0;
+        let mut last = open;
+        for _ in 0..40 {
+            last = block(&mut proc);
+        }
+        assert!(last < 0.01, "it closes again once the notes end: {last}");
+        app.params.shapes[0].gate_level.set(0.25);
+        proc.shapes[0].gate_hold = 0.5;
+        for _ in 0..4 {
+            block(&mut proc);
+        }
+        let quiet = block(&mut proc);
+        assert!(quiet < open * 0.5, "the gate level scales it: {quiet} vs {open}");
+    }
+
+    #[test]
+    fn a_gate_with_no_source_or_a_vanished_one_stays_silent_and_safe() {
+        let audio = Arc::new(AudioBus::new());
+        let app = BloomApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(1.0)), Arc::new(ModBus::new()), Arc::clone(&audio), Arc::new(MixerBus::new()));
+        app.params.shapes[0].gate_src.store(9, Ordering::Relaxed); // no such source
+        let mut proc = BloomProcessor { params: Arc::clone(&app.params), shapes: std::array::from_fn(|i| ShapeRuntime::new(i as u32)), mono_buf: Vec::new(), notes: std::array::from_fn(|_| NoteOut::detached()), modbus: Arc::new(ModBus::new()), gate_left: 0.0, pitch: 0.0, audio: Some(Arc::clone(&audio)), gate_mix: Vec::new(), gate_scratch: Vec::new() };
+        proc.shapes[0].gate_hold = 1.0;
+        let mut buf = vec![0.0f32; 1024];
+        proc.process(&mut buf, 2, 48_000.0);
+        assert!(buf.iter().all(|s| s.abs() < 0.01), "a source that is not there adds nothing");
+        assert_eq!(app.leaf_value(Selection::GateSource(0)), "?");
     }
 }
 

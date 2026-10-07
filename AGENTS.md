@@ -101,6 +101,19 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: Claude: Bloom: shapes can gate any audio source
+- Branch: claude/bloom-audio-engines
+- Changed: src/apps/bloom.rs, docs/USER_MANUAL.md. Each shape gets a Gate
+  audio row (Off or any audio-bus output except Bloom's own) and a Gate level;
+  the shape's notes open that source (4 ms attack, release follows Decay) and
+  it is mixed in after the voice-count headroom division. The audio thread
+  uses `try_lock` on the source buffer, so a busy source counts as silent.
+- Status: done. Instruments (note bus) and audio sources (gate) are separate
+  choices per shape; both can be used at once.
+- Tests: 3 new bloom tests (choices skip Bloom's own output, gate opens and
+  closes with the notes and scales with level, missing source is silent).
+- Notes for the other assistant: none.
+
 ### 2026-10-07: Claude: New app: Now Playing (overview of sources, instruments, levels)
 - Branch: claude/now-playing
 - Changed: new src/apps/now_playing.rs + apps/now_playing/manifest.toml,
