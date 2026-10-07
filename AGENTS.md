@@ -101,6 +101,25 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: Claude: New app: Blaster (hold to charge, release to fire)
+- Branch: claude/blaster
+- Changed: new src/apps/blaster/ (params, store, voice, engine, presets, mod,
+  tests) + apps/blaster/manifest.toml, docs/USER_MANUAL.md (§3.10). Reuses
+  Hydra's Def/Kind helpers and DSP primitives (apps/hydra/params.rs, dsp.rs,
+  store.rs conversions); does not change them. Eight voices, each a state
+  machine: Charging (climbing, quickening chirps, a flutter at full) then
+  Blasting (pitch sweep, body oscillator, noise burst, size scaling, crush,
+  echo). Note-on charges and note-off fires, so it plays from the pads and from
+  any app's sequencer over the note bus. 27 characters, Randomize/Mutate, 8
+  user slots, 3 modulation inputs.
+- Status: done. Rendering every character to WAV is a test:
+  `BLASTER_WRITE_WAVS=dir cargo test --bin portamax-sim render_demo_wavs`.
+- Tests: 25 blaster tests (incl. the Reed spectrum, counted chirps landing on
+  the held pitch, ripple, the first character vs its recording; charge climbs, chirps speed up, blast falls and
+  ends, size scales length and volume, fire at full, key follow, polyphony and
+  stealing, every character and 20 random blasts charge/fire/end, loudness).
+- Notes for the other assistant: none.
+
 ### 2026-10-07: Claude: Fix: O&C firmware could not load on Linux
 - Branch: claude/bloom-audio-engines
 - Changed: src/apps/oc_firmware.rs. `RTLD_LOCAL` was 4 (the macOS value); on

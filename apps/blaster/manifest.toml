@@ -1,0 +1,13 @@
+id = "blaster"
+name = "Blaster"
+category = "instrument"
+description = "Hold a key to charge up, let go to fire. Design charge shots, beams and blasts like video-game weapons, with a library of characters."
+audio_outputs = ["Blaster"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Blaster Level",
+    "Blaster: Pitch",
+    "Blaster: Charge Time",
+    "Blaster: Blast Length",
+]
