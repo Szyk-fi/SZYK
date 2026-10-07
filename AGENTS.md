@@ -107,7 +107,10 @@ Newest at the top. Keep each entry short. Use this format:
   Linux 4 is RTLD_NOLOAD, so `dlopen` returned null with no message and every
   O&C firmware test failed with "dlopen failed". Now 0 on Linux. macOS is
   unchanged.
-- Status: done. The 6 apps::oc tests pass on Linux.
+- Also: vendor/o_c_phaz/fw/applets/EuclidX.h divided by (length + padding) = 0 at
+  boot. ARM (the module, Apple silicon) defines that as 0; x86 traps it (SIGFPE),
+  which killed the whole test process once the loader worked. Guarded in the source.
+- Status: done. All apps::oc tests pass on Linux.
 - Tests: apps::oc.
 - Notes for the other assistant: none.
 
