@@ -101,6 +101,20 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: Claude: New app: Now Playing (overview of sources, instruments, levels)
+- Branch: claude/now-playing
+- Changed: new src/apps/now_playing.rs + apps/now_playing/manifest.toml,
+  docs/USER_MANUAL.md (§2). Lists every note source with the instrument it
+  plays (lit while that instrument sounds), knob 2 re-routes it (note bus
+  `step_source`), press lists the instrument's own settings through the
+  instrument-settings bridge; second section lists channels that are making
+  sound with a live level and moves their Mixer fader. Reads/writes only the
+  existing buses; no other file touched.
+- Status: done.
+- Tests: 7 now_playing tests (routing, activity light, settings expand and
+  edit, sounding list and fader, empty world, draw).
+- Notes for the other assistant: none.
+
 ### 2026-10-07: Claude: Hydra playability: chords, Hold, macros, 250 presets in folders
 - Branch: claude/hydra-playability
 - Changed: src/apps/hydra/ only (+ docs/USER_MANUAL.md §3.9). Engine: Chord

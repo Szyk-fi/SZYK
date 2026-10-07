@@ -57,7 +57,7 @@ to the app's own panel. The layout is the same in every app:
 | **Throws layer** | Hold a pad to push a control somewhere (feedback up, freeze, octave...); release springs back |
 
 On a play-view app a MIDI keyboard plays the app's pads by pitch where the
-pads are pitched. Utilities (Settings, Mixer, MIDI Learn, CV Out, Portal,
+pads are pitched. Utilities (Settings, Mixer, Now Playing, MIDI Learn, CV Out, Portal,
 Scope, Analyzer, Visualizer, Retro, Controller) keep their menus.
 
 ## 2. How routing works
@@ -73,6 +73,16 @@ dry app's Mixer channel down.
 For an external microphone or interface: pick it in **Settings → Input**
 first, then select **Hardware input** as the receiving app's Source. Nothing
 opens the input device until you do that.
+
+**Now Playing** is a single window onto all of this. Its first section lists
+every note source (sequencers, Bloom, Hum, Session...) with the instrument it
+plays, and a `*` while that instrument is sounding; turn knob 2 on a row to send
+the source to another instrument, or press it to list that instrument's own
+settings underneath, ready to turn. Its second section lists every channel
+that is making sound this moment with a live level, and knob 2 on one moves its
+Mixer fader (press resets it to 100%). These are the note bus's own routes and
+the Mixer's own faders, so Portal's Notes page and each app's "Plays" row move
+with them.
 
 ### 2.1 Patching modulation
 

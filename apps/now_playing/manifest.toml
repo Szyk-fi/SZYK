@@ -1,0 +1,5 @@
+id = "now_playing"
+name = "Now Playing"
+category = "system"
+description = "See what is sounding right now: which instrument each sequencer plays, live levels, and change either from one screen."
+audio_outputs = []
