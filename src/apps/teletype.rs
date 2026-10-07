@@ -100,6 +100,7 @@ use super::kria::{self, KrOp};
 use super::teletype_grid::{self as tg, GOp, TtGrid};
 use embedded_graphics::{mono_font::MonoTextStyle, pixelcolor::Rgb565, prelude::*, primitives::{PrimitiveStyle, Rectangle}, text::Text};
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
@@ -617,6 +618,17 @@ const fn gr(op: GOp, name: &'static str) -> OpDef {
 }
 
 /// Does a line use the grid?
+/// The script a key of the default grid layout runs: keys 1-8 are scripts 1-8,
+/// then a gap, then M and I (the module's own script buttons).
+fn grid_script(x: usize) -> Option<usize> {
+    match x {
+        0..=7 => Some(x),
+        9 => Some(8),
+        10 => Some(9),
+        _ => None,
+    }
+}
+
 fn uses_grid(toks: &[Tok]) -> bool {
     toks.iter().any(|t| matches!(t, Tok::Op(Op::G(_))))
 }
@@ -2260,6 +2272,8 @@ pub struct TeletypeApp {
     /// The last picture shown on the grid, and which redraw it was.
     grid_leds: Leds,
     grid_gen: u64,
+    /// When each script key of the default grid layout stops lighting.
+    grid_fired: [Option<Instant>; SCRIPTS],
 }
 
 impl TeletypeApp {
@@ -2315,6 +2329,7 @@ impl TeletypeApp {
             grid: grid_kit::grid(),
             grid_leds: Leds::new(tg::DIM, tg::DIM),
             grid_gen: 0,
+            grid_fired: [None; SCRIPTS],
         };
         app.grid.register(APP_NAME);
         app.rescan();
@@ -2581,10 +2596,16 @@ impl TeletypeApp {
     }
 
     fn rows(&self) -> Vec<(String, String, bool)> {
-        (0..N_CONTROLS).map(|i| {
+        let mut r = Vec::new();
+        for i in 0..N_CONTROLS {
             let (n, v) = self.text(i);
-            (n, v, false)
-        }).collect()
+            r.push((n, v, false));
+            if i == 0 {
+                // The instrument it plays, dialled in right under Plays.
+                r.extend(self.route.settings().into_iter().map(|s| (format!("  {}", s.label), s.value, false)));
+            }
+        }
+        r
     }
 
     fn edit_control(&mut self, i: usize, d: i32) {
@@ -2736,11 +2757,21 @@ impl App for TeletypeApp {
         self.kit = play;
         if step.menu {
             let i = &step.input;
-            self.list.navigate_input(i, N_CONTROLS, self.nav.get() as i32);
-            let sel = self.list.selected.min(N_CONTROLS - 1);
-            self.kit_edit(sel, i.knob2);
-            if i.knob2_press {
-                self.kit_reset(sel);
+            let n = self.route.settings().len();
+            self.list.navigate_input(i, N_CONTROLS + n, self.nav.get() as i32);
+            let sel = self.list.selected.min(N_CONTROLS + n - 1);
+            match crate::app::play_kit::menu_row(sel, n) {
+                crate::app::play_kit::MenuRow::Setting(j) => {
+                    if i.knob2 != 0 {
+                        self.route.adjust(j, i.knob2.signum());
+                    }
+                }
+                crate::app::play_kit::MenuRow::Control(c) => {
+                    self.kit_edit(c, i.knob2);
+                    if i.knob2_press {
+                        self.kit_reset(c);
+                    }
+                }
             }
             self.pads_down = [false; 16];
             return;
@@ -2851,6 +2882,12 @@ impl TeletypeApp {
         if self.grid.focus().as_deref() != Some(APP_NAME) {
             return;
         }
+        let scene_draws = self.text.scripts.iter().flatten().any(|l| uses_grid(l));
+        if !scene_draws {
+            self.default_grid_frame();
+            return;
+        }
+        self.grid.set_hint(APP_NAME, "");
         for k in self.grid.keys(APP_NAME) {
             if k.x < tg::DIM && k.y < tg::DIM {
                 self.send(Edit::GridKey(k.x, k.y, k.down));
@@ -2867,6 +2904,29 @@ impl TeletypeApp {
             }
         }
         self.grid.show(APP_NAME, &self.grid_leds);
+    }
+
+    /// The grid for a scene with no G ops, so the grid always shows and does
+    /// something: the top row's first ten keys run scripts 1-8, M and I (the
+    /// module's own script buttons), each lighting while it runs. A scene
+    /// that uses G ops draws and reads the grid itself instead.
+    fn default_grid_frame(&mut self) {
+        self.grid.set_hint(APP_NAME, "Top row: keys 1-8 run scripts 1-8, key 10 runs M, key 11 runs I. G.* ops in a scene draw here instead (try scene 06).");
+        let now = Instant::now();
+        for k in self.grid.keys(APP_NAME) {
+            if let (true, 0, Some(script)) = (k.down, k.y, grid_script(k.x)) {
+                self.send(Edit::Fire(script));
+                self.grid_fired[script] = Some(now + Duration::from_millis(180));
+            }
+        }
+        let mut leds = Leds::new(tg::DIM, tg::DIM);
+        for x in 0..11 {
+            if let Some(script) = grid_script(x) {
+                let lit = self.grid_fired[script].is_some_and(|t| t > now);
+                leds.set(x, 0, if lit { 15 } else { 5 });
+            }
+        }
+        self.grid.show(APP_NAME, &leds);
     }
 
     fn draw_editor(&self, f: &mut FrameBuffer, view: &View) {

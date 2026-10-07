@@ -292,6 +292,11 @@ impl NornsApp {
         let mut rows = Vec::new();
         if let Some(r) = &self.note_route {
             rows.push(("option".to_string(), "Plays".to_string(), r.label(), usize::MAX));
+            // The instrument it plays, dialled in right under Plays; the
+            // index field carries MAX - 1 - i for setting i.
+            for (i, s) in r.settings().into_iter().enumerate() {
+                rows.push(("option".to_string(), format!("  {}", s.label), s.value, usize::MAX - 1 - i));
+            }
         }
         rows.extend(self.out.lock().unwrap().params.iter().cloned());
         rows
@@ -456,6 +461,11 @@ impl App for NornsApp {
                         Some(usize::MAX) => {
                             if let Some(r) = &self.note_route {
                                 r.step(input.knob2.signum());
+                            }
+                        }
+                        Some(idx) if idx > usize::MAX / 2 => {
+                            if let Some(r) = &self.note_route {
+                                r.adjust(usize::MAX - 1 - idx, input.knob2.signum());
                             }
                         }
                         Some(idx) => self.send(Event::ParamDelta(idx, input.knob2)),

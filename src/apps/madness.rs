@@ -138,6 +138,8 @@ enum Selection {
     MasterBpm,
     /// Where the notes go: Madness's own voices, another app, or nothing.
     Plays,
+    /// A setting of the instrument Plays points at, listed under Plays.
+    InstSetting(usize),
     Notes(usize),
     Scale(usize),
     Root(usize),
@@ -374,7 +376,10 @@ impl MadnessApp {
 
     fn group_leaves(&self, g: usize) -> Vec<Selection> {
         if g == 0 {
-            return vec![Selection::Plays, Selection::MasterBpm];
+            let mut v = vec![Selection::Plays];
+            v.extend((0..self.note_route.settings().len()).map(Selection::InstSetting));
+            v.push(Selection::MasterBpm);
+            return v;
         }
         let s = g - 1;
         // Running comes first -- the master on/off for this shape,
@@ -424,7 +429,7 @@ impl MadnessApp {
 
     fn selection_shape(sel: Selection) -> Option<usize> {
         match sel {
-            Selection::MasterBpm | Selection::Plays => None,
+            Selection::MasterBpm | Selection::Plays | Selection::InstSetting(_) => None,
             Selection::Notes(s)
             | Selection::Scale(s)
             | Selection::Root(s)
@@ -458,6 +463,7 @@ impl MadnessApp {
         match sel {
             Selection::MasterBpm => "BPM".into(),
             Selection::Plays => "Plays".into(),
+            Selection::InstSetting(i) => format!("  {}", self.note_route.settings().get(i).map_or(String::new(), |s| s.label.clone())),
             Selection::Notes(_) => "Notes".into(),
             Selection::Scale(_) => "Main scale".into(),
             Selection::Root(_) => "Root note".into(),
@@ -483,6 +489,7 @@ impl MadnessApp {
         match sel {
             Selection::MasterBpm => format!("{:.0}", self.params.master_bpm.get()),
             Selection::Plays => self.note_route.label(),
+            Selection::InstSetting(i) => self.note_route.settings().get(i).map_or(String::new(), |s| s.value.clone()),
             Selection::Notes(s) => format!("{}", self.params.shapes[s].notes.load(Ordering::Relaxed)),
             Selection::Scale(s) => {
                 let idx = self.params.shapes[s].scale.load(Ordering::Relaxed) as usize % SCALE_TYPES.len();
@@ -535,6 +542,7 @@ impl MadnessApp {
         let step = delta.signum();
         match sel {
             Selection::Plays => self.note_route.step(step),
+            Selection::InstSetting(i) => self.note_route.adjust(i, step),
             Selection::MasterBpm => {
                 let next = (self.params.master_bpm.get() + accelerate(delta) * sensitivity * 2.0).clamp(MIN_BPM, MAX_BPM);
                 self.params.master_bpm.set(next);
@@ -590,6 +598,7 @@ impl MadnessApp {
         match sel {
             Selection::MasterBpm => self.params.master_bpm.set(DEFAULT_BPM),
             Selection::Plays => self.note_route.reset(),
+            Selection::InstSetting(_) => {}
             Selection::Notes(s) => self.params.shapes[s].notes.store(DEFAULT_NOTES, Ordering::Relaxed),
             Selection::Speed(s) => self.params.shapes[s].speed_hz.set(DEFAULT_SPEED_HZ),
             Selection::ClockMod(s) => self.params.shapes[s].clock_mod.store(3, Ordering::Relaxed),

@@ -74,6 +74,9 @@ impl Registry {
             for name in &m.mod_inputs {
                 self.modbus.declare(&m.id, name);
             }
+            if let Some(client) = &m.grid_client {
+                crate::apps::grid_kit::grid().declare(&m.id, client);
+            }
             if m.notes_in {
                 self.notes.declare_instrument(&m.id, &m.name);
             }
@@ -92,7 +95,10 @@ impl Registry {
             .filter_map(|m| match self.constructor(m) {
                 Some(make) => {
                     let inbox = if m.notes_in { self.notes.instrument_index(&m.name).map(|i| self.notes.inbox_ref(i)) } else { None };
-                    let app = runtime::LazyApp::new(m.id.clone(), make, Arc::clone(&self.audio_bus)).with_modbus(Arc::clone(&self.modbus)).with_notes(Arc::clone(&self.notes), inbox);
+                    let mut app = runtime::LazyApp::new(m.id.clone(), make, Arc::clone(&self.audio_bus)).with_modbus(Arc::clone(&self.modbus)).with_notes(Arc::clone(&self.notes), inbox);
+                    if m.grid_client.is_some() {
+                        app = app.with_grid();
+                    }
                     Some((m.name.clone(), Box::new(app) as Box<dyn App>))
                 }
                 None => {
@@ -369,10 +375,13 @@ mod manifest_contract_tests {
             engine.add(app.audio_processor().unwrap());
         }
         let voltage = notes.instrument_index("Voltage").expect("Voltage is declared as an instrument");
-        let bloom_route = notes.sources().into_iter().find(|(n, _, _)| n == "Bloom").expect("Bloom's output is declared").2;
+        let bloom_routes: Vec<_> = notes.sources().into_iter().filter(|(n, _, _)| n.starts_with("Bloom Shape ")).map(|(_, _, r)| r).collect();
+        assert_eq!(bloom_routes.len(), 8, "each of Bloom's eight shapes has its own output");
         let bloom = apps.iter().position(|(n, _)| n == "Bloom").unwrap();
         apps[bloom].1.on_enter();
-        bloom_route.store(voltage, std::sync::atomic::Ordering::Relaxed);
+        for r in &bloom_routes {
+            r.store(voltage, std::sync::atomic::Ordering::Relaxed);
+        }
         apps[bloom].1.toggle_running();
         let mut heard = 0.0f32;
         let mut voltage_woke = false;
@@ -388,6 +397,111 @@ mod manifest_contract_tests {
         }
         assert!(voltage_woke, "Bloom's notes reached Voltage");
         assert!(heard > 0.01, "and Voltage sounded them ({heard})");
+    }
+
+    /// A source lists and edits the settings of the instrument it plays
+    /// without touching the other app: asking builds and wakes the
+    /// instrument, which publishes its settings; an edit queued on the bus is
+    /// applied by the instrument's own wrapper on its next tick.
+    #[test]
+    fn a_source_lists_and_edits_the_settings_of_the_instrument_it_plays() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let manifests: Vec<_> = crate::manifest::discover(dir).into_iter().filter(|m| m.id == "synth").collect();
+        let ctx = test_context(Arc::new(ModBus::new()));
+        let notes = ctx.get::<NoteBus>();
+        let registry = Registry::new(ctx);
+        let mut apps = registry.build(&manifests);
+        let slot = notes.instrument_index("Synth").expect("Synth is an instrument");
+        assert!(notes.instrument_settings(slot).is_empty(), "nothing is published before the first ask");
+        for (_, app) in apps.iter_mut() {
+            app.background_tick();
+        }
+        let rows = notes.instrument_settings(slot);
+        assert!(rows.len() >= 2, "the instrument woke and published its settings: {rows:?}");
+        let (i, before) = rows.iter().enumerate().find(|(_, r)| r.label.to_lowercase().contains("cutoff")).map(|(i, r)| (i, r.value.clone())).expect("a cutoff setting");
+        notes.adjust_instrument_setting(slot, i, -5);
+        for (_, app) in apps.iter_mut() {
+            app.background_tick();
+        }
+        let after = notes.instrument_settings(slot)[i].value.clone();
+        assert_ne!(before, after, "the queued edit reached the instrument");
+    }
+
+    /// The user-facing result: a source's own menu shows the settings of the
+    /// instrument it plays right under its Plays row, and editing one of
+    /// those rows changes the instrument.
+    #[test]
+    fn a_sources_menu_lists_the_instruments_settings_under_plays() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let manifests: Vec<_> = crate::manifest::discover(dir).into_iter().filter(|m| m.id == "hum" || m.id == "synth").collect();
+        let ctx = test_context(Arc::new(ModBus::new()));
+        let notes = ctx.get::<NoteBus>();
+        let registry = Registry::new(ctx);
+        let mut apps = registry.build(&manifests);
+        let synth = notes.instrument_index("Synth").expect("Synth is an instrument");
+        let route = notes.sources().into_iter().find(|(n, _, _)| n == "Hum").expect("Hum's output is declared").2;
+        route.store(synth, std::sync::atomic::Ordering::Relaxed);
+        let hum = apps.iter().position(|(n, _)| n == "Hum").unwrap();
+        apps[hum].1.on_enter();
+        let rows_of = |apps: &mut Vec<(String, Box<dyn App>)>| {
+            // The menu asking (every frame it is drawn) is what starts the
+            // instrument publishing, so ask first, then let the frames run.
+            let _ = apps[hum].1.slint_rows();
+            for _ in 0..3 {
+                for (_, app) in apps.iter_mut() {
+                    app.background_tick();
+                }
+            }
+            apps[hum].1.slint_rows()
+        };
+        let rows = rows_of(&mut apps);
+        let plays = rows.iter().position(|r| r.0 == "Plays").expect("a Plays row");
+        assert_eq!(plays, 0, "Plays leads the menu");
+        assert!(rows[plays + 1].0.starts_with("  "), "the instrument's settings come right under it: {rows:?}");
+        let cutoff = rows.iter().position(|r| r.0.trim().to_lowercase().contains("cutoff")).expect("Synth's cutoff is listed");
+        let before = rows[cutoff].1.clone();
+        // Select that row and turn knob 2 down.
+        for _ in 0..cutoff {
+            apps[hum].1.tick(&crate::app::Input { navigation_steps: 1, ..Default::default() });
+        }
+        for _ in 0..4 {
+            apps[hum].1.tick(&crate::app::Input { knob2: -1, ..Default::default() });
+            for (_, app) in apps.iter_mut() {
+                app.background_tick();
+            }
+        }
+        let after = rows_of(&mut apps)[cutoff].1.clone();
+        assert_ne!(before, after, "editing the listed row changed the instrument");
+    }
+
+    /// The grid is playable from the first frame: Teletype is chosen in the
+    /// Grid app without ever having been opened, handing it the grid builds
+    /// it, and with a scene that has no G ops it still shows (and runs)
+    /// something instead of staying dark.
+    #[test]
+    fn handing_the_grid_to_an_unopened_teletype_builds_it_and_lights_the_grid() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let manifests: Vec<_> = crate::manifest::discover(dir).into_iter().filter(|m| m.id == "teletype" || m.id == "kria").collect();
+        let ctx = test_context(Arc::new(ModBus::new()));
+        let registry = Registry::new(ctx);
+        let mut apps = registry.build(&manifests);
+        let grid = crate::apps::grid_kit::grid();
+        assert!(grid.clients().contains(&"Teletype".to_string()), "declared from its manifest, before it is built");
+        assert_eq!(grid.focus(), None, "declaring takes nothing");
+        grid.set_focus("Teletype");
+        for _ in 0..3 {
+            for (_, app) in apps.iter_mut() {
+                app.background_tick();
+            }
+        }
+        let s = grid.snapshot();
+        assert!(s.hint.is_some(), "Teletype was built and says how it uses the grid");
+        assert_eq!(s.leds[0], 5, "the first script key is lit dimly");
+        grid.press(0, 0, true);
+        for (_, app) in apps.iter_mut() {
+            app.background_tick();
+        }
+        assert_eq!(grid.snapshot().leds[0], 15, "pressing it lights it as the script runs");
     }
 
     /// Drag and drop: a folder holding a manifest and a patch is a new

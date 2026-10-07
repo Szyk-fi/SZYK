@@ -3,6 +3,7 @@ name = "Kria"
 category = "sequencer"
 description = "monome Kria: a four-track step sequencer where every parameter has its own loop, clock division and probability. Teletype drives it with KR ops."
 audio_outputs = ["Kria"]
+grid_client = "Kria"
 note_outputs = ["Kria"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [

@@ -340,6 +340,8 @@ enum Row {
     Key,
     Octave,
     Gate,
+    /// A setting of the instrument Plays points at, listed under Plays.
+    InstSetting(usize),
 }
 const ROWS: [Row; 8] = [Row::Plays, Row::Input, Row::Sound, Row::Mode, Row::Scale, Row::Key, Row::Octave, Row::Gate];
 
@@ -377,9 +379,23 @@ impl Hum {
         Hum { sound, listen, s, route, tracker: Some(tracker), worker: None, row: 0 }
     }
 
+    /// The menu: ROWS, with the settings of the instrument Plays points at
+    /// listed right under Plays.
+    fn rows(&self) -> Vec<Row> {
+        let mut rows = Vec::new();
+        for r in ROWS {
+            rows.push(r);
+            if r == Row::Plays {
+                rows.extend((0..self.route.settings().len()).map(Row::InstSetting));
+            }
+        }
+        rows
+    }
+
     fn value(&self, r: Row) -> String {
         let s = &self.s;
         match r {
+            Row::InstSetting(i) => self.route.settings().get(i).map_or(String::new(), |x| x.value.clone()),
             Row::Input => self.listen.name(),
             Row::Plays => self.route.label(),
             Row::Sound => TONES[s.tone.load(Ordering::Relaxed) % TONES.len()].name().into(),
@@ -391,16 +407,17 @@ impl Hum {
         }
     }
 
-    fn label(r: Row) -> &'static str {
+    fn label(&self, r: Row) -> String {
         match r {
-            Row::Input => "Input",
-            Row::Plays => "Plays",
-            Row::Sound => "Sound",
-            Row::Mode => "Mode",
-            Row::Scale => "Scale",
-            Row::Key => "Key",
-            Row::Octave => "Octave",
-            Row::Gate => "Sensitivity",
+            Row::InstSetting(i) => format!("  {}", self.route.settings().get(i).map_or(String::new(), |x| x.label.clone())),
+            Row::Input => "Input".into(),
+            Row::Plays => "Plays".into(),
+            Row::Sound => "Sound".into(),
+            Row::Mode => "Mode".into(),
+            Row::Scale => "Scale".into(),
+            Row::Key => "Key".into(),
+            Row::Octave => "Octave".into(),
+            Row::Gate => "Sensitivity".into(),
         }
     }
 }
@@ -415,7 +432,7 @@ impl App for Hum {
         kit::screen_extra(&fb)
     }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
-        ROWS.iter().map(|r| (Hum::label(*r).to_string(), self.value(*r), false)).collect()
+        self.rows().iter().map(|r| (self.label(*r), self.value(*r), false)).collect()
     }
     fn needs_background_audio(&self) -> bool {
         // Keeps listening (and playing another app) when you leave.
@@ -425,13 +442,15 @@ impl App for Hum {
     fn tick(&mut self, input: &Input) {
         self.listen.tick();
         if input.navigation_steps != 0 {
-            self.row = (self.row as i32 + input.navigation_steps).clamp(0, ROWS.len() as i32 - 1) as usize;
+            self.row = (self.row as i32 + input.navigation_steps).clamp(0, self.rows().len() as i32 - 1) as usize;
         }
         if input.knob2 != 0 {
             let d = input.knob2.signum();
             let s = &self.s;
             let bump = |a: &AtomicUsize, n: usize| a.store((a.load(Ordering::Relaxed) as i32 + d).rem_euclid(n as i32) as usize, Ordering::Relaxed);
-            match ROWS[self.row] {
+            let rows = self.rows();
+            match rows[self.row.min(rows.len() - 1)] {
+                Row::InstSetting(i) => self.route.adjust(i, d),
                 Row::Input => self.listen.step(d),
                 Row::Plays => self.route.step(d),
                 Row::Sound => bump(&s.tone, TONES.len()),
@@ -454,11 +473,15 @@ impl App for Hum {
         let dim = Rgb565::new(10, 26, 22);
         kit::clear(fb, bg);
         ai_header(fb, NAME, panel);
-        for (i, r) in ROWS.iter().enumerate() {
-            let y = 38 + i as i32 * 30;
+        let rows = self.rows();
+        // Eight rows fit; scroll to keep the selected one in view.
+        let first = self.row.saturating_sub(7).min(rows.len().saturating_sub(8));
+        for (n, r) in rows.iter().enumerate().skip(first).take(8) {
+            let i = n;
+            let y = 38 + (n - first) as i32 * 30;
             let sel = i == self.row;
             kit::round_rect(fb, 8, y, 210, 27, 6, if sel { kit::blend(panel, kit::WHITE, 0.15) } else { panel });
-            kit::text(fb, Hum::label(*r), 16, y + 7, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
+            kit::text(fb, &self.label(*r), 16, y + 7, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
             let v = self.value(*r);
             let v: String = v.chars().take(18).collect();
             kit::text(fb, &v, 210, y + 7, Size2::Small, ink, 1);

@@ -410,6 +410,8 @@ enum Selection {
     Decay(usize),
     /// An "Other app" track's instrument.
     Plays(usize),
+    /// Setting `.1` of the instrument track `.0` plays, listed under Plays.
+    InstSetting(usize, usize),
     Volume(usize),
     Probability(usize),
     Mute(usize),
@@ -520,6 +522,7 @@ impl Selection {
             | Selection::Accent(t)
             | Selection::Decay(t)
             | Selection::Plays(t)
+            | Selection::InstSetting(t, _)
             | Selection::Volume(t)
             | Selection::Probability(t)
             | Selection::Mute(t)
@@ -1117,6 +1120,7 @@ impl SequencerApp {
             }
             3 => {
                 leaves.push(Selection::Plays(t));
+                leaves.extend((0..self.track_routes[t].settings().len()).map(|i| Selection::InstSetting(t, i)));
                 leaves.push(Selection::Pitch(t));
                 leaves.push(Selection::StepPitch(t));
                 leaves.push(Selection::StepRolls(t));
@@ -1206,6 +1210,7 @@ impl SequencerApp {
             Selection::Accent(_t) => "Accent Amount".into(),
             Selection::Decay(t) => if self.params.tracks[t].instrument.load(Ordering::Relaxed) == INSTRUMENT_EXTERNAL { "Gate".into() } else { "Decay".into() },
             Selection::Plays(_) => "Plays".into(),
+            Selection::InstSetting(t, i) => format!("  {}", self.track_routes[t].settings().get(i).map_or(String::new(), |x| x.label.clone())),
             Selection::Volume(_) => "Volume".into(),
             Selection::Probability(_) => "Probability".into(),
             Selection::Mute(_) => "Mute".into(),
@@ -1299,6 +1304,7 @@ impl SequencerApp {
             }
             Selection::Decay(t) => format!("{:.2}", self.params.tracks[t].decay.get()),
             Selection::Plays(t) => self.track_routes[t].label(),
+            Selection::InstSetting(t, i) => self.track_routes[t].settings().get(i).map_or(String::new(), |x| x.value.clone()),
             Selection::Volume(t) => format!("{:.2}", self.params.tracks[t].volume.get()),
             Selection::Probability(t) => format!("{:.0}%", self.params.tracks[t].probability.get() * 100.0),
             Selection::StepVelocity(t) => format!("{:.0}%", self.params.tracks[t].step_vel[self.last_touched_step[t]].get() * 100.0),
@@ -1551,6 +1557,7 @@ impl SequencerApp {
             }
             Selection::Decay(t) => bump(&self.params.tracks[t].decay, delta, sensitivity),
             Selection::Plays(t) => self.track_routes[t].step(step),
+            Selection::InstSetting(t, i) => self.track_routes[t].adjust(i, step),
             Selection::Volume(t) => bump(&self.params.tracks[t].volume, delta, sensitivity),
             Selection::Probability(t) => bump(&self.params.tracks[t].probability, delta, sensitivity),
             Selection::StepVelocity(t) => {
@@ -1750,6 +1757,7 @@ impl SequencerApp {
             Selection::StepDelay(t) => self.params.tracks[t].step_delay[self.last_touched_step[t]].set(0.0),
             Selection::Decay(t) => self.params.tracks[t].decay.set(0.5),
             Selection::Plays(t) => self.track_routes[t].reset(),
+            Selection::InstSetting(..) => {}
             Selection::Volume(t) => self.params.tracks[t].volume.set(0.8),
             Selection::Probability(t) => self.params.tracks[t].probability.set(1.0),
             Selection::StepVelocity(t) => self.params.tracks[t].step_vel[self.last_touched_step[t]].set(1.0),

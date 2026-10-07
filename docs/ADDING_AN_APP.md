@@ -27,6 +27,7 @@ Dropping a file in is the whole job. Nothing central is edited:
 | `notes_in = true` | it appears in every sequencer's "Plays" picker and receives their notes like a MIDI keyboard, on screen or not |
 | `note_outputs = ["Name"]` | its notes can be routed to any instrument (see `NoteRoute` in `src/note_bus.rs`) |
 | `mod_inputs = [...]` | its knobs are patchable from every modulation source before the app has ever been opened |
+| `grid_client = "Name"` | it appears in the Grid app's list of apps that play the shared grid, before it is built; handing it the grid builds it (the app still calls `grid.register("Name")` when built) |
 
 ## What a tester's agent should hand back
 

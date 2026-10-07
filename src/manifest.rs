@@ -45,6 +45,11 @@ pub struct AppManifest {
     /// with the code by `registry::manifest_contract_tests`.
     #[serde(default)]
     pub mod_inputs: Vec<String>,
+    /// The name this app plays the shared grid under (grid_kit.rs). Declared
+    /// at startup so the Grid app can hand the grid to it before it has ever
+    /// been built; the grid then builds it.
+    #[serde(default)]
+    pub grid_client: Option<String>,
     /// A data file for the module (e.g. an Atlas patch), relative to the
     /// manifest's folder.
     #[serde(default)]

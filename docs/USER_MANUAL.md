@@ -57,7 +57,7 @@ to the app's own panel. The layout is the same in every app:
 | **Throws layer** | Hold a pad to push a control somewhere (feedback up, freeze, octave...); release springs back |
 
 On a play-view app a MIDI keyboard plays the app's pads by pitch where the
-pads are pitched. Utilities (Settings, Mixer, MIDI Learn, CV Out, Portal,
+pads are pitched. Utilities (Settings, Mixer, Now Playing, MIDI Learn, CV Out, Portal,
 Scope, Analyzer, Visualizer, Retro, Controller) keep their menus.
 
 ## 2. How routing works
@@ -73,6 +73,16 @@ dry app's Mixer channel down.
 For an external microphone or interface: pick it in **Settings → Input**
 first, then select **Hardware input** as the receiving app's Source. Nothing
 opens the input device until you do that.
+
+**Now Playing** is a single window onto all of this. Its first section lists
+every note source (sequencers, Bloom, Hum, Session...) with the instrument it
+plays, and a `*` while that instrument is sounding; turn knob 2 on a row to send
+the source to another instrument, or press it to list that instrument's own
+settings underneath, ready to turn. Its second section lists every channel
+that is making sound this moment with a live level, and knob 2 on one moves its
+Mixer fader (press resets it to 100%). These are the note bus's own routes and
+the Mixer's own faders, so Portal's Notes page and each app's "Plays" row move
+with them.
 
 ### 2.1 Patching modulation
 
@@ -109,6 +119,8 @@ way.
 | **StarLab** | Strymon StarLab-inspired: a Karplus-Strong string voice sharing a comb/allpass reverb tank with the effect side. |
 | **Atlas** | The meta-synth: a library of designed sounds (wavetable, granular, modal, Plaits, supersaw, ladder...) all played with the same eight controls — CHARACTER, COLOR, MOTION, SPACE, SHAPE, ENERGY, TEXTURE and MORPH (see §3.3). |
 | **Trio** | Three layered Plaits engines that split what you play: Full, Bass, Top or Arp per layer; pads play the scale or diatonic chords. |
+| **Hydra** | The all-in-one hybrid synth (see §3.9): 16 voices, three oscillators each Analog / Wavetable / FM / Pluck / Noise, two filters, a 12-slot mod matrix, effects, an arpeggiator, chords, Hold, and over 250 presets in 16 folders. |
+| **Blaster** | Hold a key and it charges up; let go and it fires. A charge-and-release sound designer for video-game blasts, with 28 characters (see §3.10). |
 | **Tinkertone** | An early-80s home keyboard with the MT-40's feature set (37 keys, 22 tones, 15-key bass, 6 rhythms) in an original look. Analog-modelled bass and drums, and you can record your own looping bass line (see §3.2). |
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
 | **Rings** | The real Mutable Instruments Rings resonator: modal bodies, sympathetic and inharmonic strings, FM voice, and the hidden "Disastrous Peace" string synth (see §3.5). |
@@ -312,6 +324,131 @@ committed to the repository:
 | `chiptunes/` | Chip Player | `.nsf` `.nsfe` `.spc` `.gbs` `.vgm` `.vgz` `.gym` `.hes` `.kss` `.ay` `.sap` |
 | `orca/` | Orca | `.orca`; bundled examples are under `orca/examples/`, saved patterns under `orca/saved/` |
 
+### 3.9 Hydra, the all-in-one synth
+
+Hydra is built to make almost any sound and to be played, not just edited.
+
+**What is in it.** Sixteen voices. Each has three oscillators, and each
+oscillator is Analog (band-limited saw / pulse / triangle / sine, with a
+wavefolder and up to seven unison voices), Wavetable (six banks of sixteen
+frames), two-operator FM, a Karplus-Strong plucked string, or Noise. Add a sub
+oscillator, ring modulation, cross modulation and hard sync. Two filters (a
+state-variable one with eight modes and a four-pole ladder) run in series or
+in parallel. There are three envelopes, two LFOs, a 12-slot mod matrix and
+four macros; then drive, chorus, phaser, ping-pong delay and a reverb. Poly,
+mono and legato modes with glide, and an arpeggiator.
+
+**The play view.** Hydra opens on 16 controls, on the pads (F2 → Controls) and
+the knobs:
+
+| Slot | Control |
+|---|---|
+| 1–2 | Cutoff, Resonance (the stick moves these) |
+| 3–4 | **Preset** and **Folder** browsers (D-pad ▲▼ steps the preset) |
+| 5–10 | Six controls that change with the **Page** (slot 11): Osc, Filter, Env, Mod, FX or Play |
+| 12 | Level |
+| 13–16 | **Macros 1–4**, named by the sound (the hand sensors move macros 1 and 2) |
+
+Turn the **Page** control to swap the six: *Osc* (the oscillators' main
+controls, named for their type), *Filter* (ladder cutoff and resonance, envelope
+amounts, drive, key track), *Env* (attack to release), *Mod* (LFO rates, cross
+mod, glide, velocity, Morph), *FX* (drive, chorus, delay, reverb) and *Play*
+(Chord, Hold, Arp, arp rate, octave, unison). Knob 2 turns the control you
+grabbed; hold **L1** and move the stick to set it directly; knob 2 press resets
+it. Resetting **Preset** puts the sound back as it was saved.
+
+**Macros.** Every preset names its four macros and wires each to two things
+(for example *Bright*: cutoff and resonance; *Swell*: attack and release;
+*Space*: reverb and delay). At zero a macro changes nothing, so the sound is
+exactly as designed; turn it up to push those controls from where the sound has
+them. In the menu, the **Macros** group lets you choose what each one moves and
+by how much (negative amounts push the other way).
+
+**Chords and Hold.** *Chord* turns every note you play, from the pads, a
+keyboard or another app's sequencer, into a chord: Octave, Power, Major, Minor,
+Sus2, Sus4, the 7ths and 9ths, or **Scale triad / 7th / 9th**, which builds the
+chord from the pad scale so each pad plays the right chord for its degree (on a
+major scale, a minor chord on the second degree and so on). With the
+arpeggiator on, it arpeggiates the chord. *Hold* keeps the notes sounding after
+you let go until you play again. *Pad layout* is the scale, every semitone, or
+rows a fourth apart.
+
+**Sounds.** The preset area is at the top of the menu. **Folder** picks one of
+16 folders (Favorites, Init, Bass, Lead, Pad, Keys, Pluck, Strings, Brass, Organ,
+Bells, Vocal, Atmosphere, Arp, Drums, FX, Retro, Wavetable); **Preset** steps
+through the folder, and **Browse** lists its sounds so you can pick one.
+**Favorite** stars the sound and collects it in the Favorites folder. **Save as
+new preset** writes it to `saves/hydra/presets/<Folder>/` as a small JSON file;
+a file dropped in a folder there shows up in that folder. **Randomize** makes a
+playable random patch and **Mutate** nudges a few settings. **Morph** slides
+every setting from the current sound toward another (the next in the folder, or
+the one you choose under *Morph toward*); on the Mod page it is a dial.
+
+Every factory sound is levelled so that moving through the library does not
+jump in volume (`HYDRA_WRITE_LEVELS=1 cargo test --bin portamax-sim
+calibrate_levels` rewrites the table if you add presets).
+
+Other apps' sequencers can play Hydra and list its controls under their "Plays"
+row. Hydra publishes 14 modulation inputs (cutoff, resonance, pitch, mod wheel,
+the four macros and more) for Portal to patch.
+
+### 3.10 Blaster: charge shots and blasts
+
+Hold a pad: a tone climbs and chirps faster the longer you hold, and
+flutters when the charge is full. Let go: it fires a blast, a pitch sweep with
+a burst of noise, as big as the charge was. A quick tap fires a small shot.
+Use it to design the shots, beams and bombs of video-game characters.
+
+**Playing.** The pads play the pad scale (each pad is its own charge, up to
+eight at once). Notes from another app's sequencer work the same way: a
+note-on starts the charge and the note-off fires it, so the length of the note
+is the size of the blast. **Fire at full** makes it shoot by itself the moment
+the charge is full, for rapid fire. The meter on the right fills with the
+charge, with a tick at each third, and flashes when you fire.
+
+**Characters.** Step through the 28 characters with the D-pad or the
+Character control. The first, *X Charge Shot*, was built by measuring a
+recording of a classic charge shot: a 1.4 s pitch rise that accelerates from
+155 to 502 Hz and lands exactly at full charge on a held 502 Hz tone that
+ripples at about 19 Hz, then a noise burst with no tone that swells for 0.1 s,
+sweeps from bright to dull and is gone in about 0.55 s. Its held tone uses the
+**Reed** wave, whose harmonics were measured from the same recording (strong
+evens, nearly missing 5th and 7th; no plain square or saw has that). Then a
+synthetic *Buster Charge* in 8-bit, a *Pea Shot*, *Plasma Beam*,
+*Fireball*, *Spin Rev*, *Laser Rifle*, *Ice Shot*, *Thunder Strike*, *Bomb*,
+*Wave Cannon*, *Magic Orb*, *Rail Gun*, *Meteor* and more. Each is a starting
+point: change anything, then **Save to slot** (8 slots).
+
+**Designing your own.** In the play view, the dials are Charge time, Blast
+length, Level, Charge pitch, Climb, Chirp speed, Chirp depth, Blast start and
+end pitch, Sweep time, Noise, Body, Crush bits, Echo and Fire at full. The
+menu has every setting in groups:
+
+- **Charge**: the wave (square, saw, triangle, sine, pulse, noise, metal, reed),
+  its pitch, how loud it starts, a noise bed, a wobble and the charge's overall
+  level (so it can sit well under the blast).
+- **Climb**: how many octaves the charge rises, whether it climbs in steps, and
+  the chirps (how fast they restart at the start and when full, how deep, their
+  curve). **Chirps per charge** counts a set number of ramps back from full, so
+  the last one ends exactly as the charge completes (1 gives a single smooth
+  rise, shaped by the curve); **Chirps deepen** makes them deeper as the charge
+  builds.
+- **Full charge**: what it does when full: keep chirping, flutter between two
+  pitches, or ripple (a smooth shimmer in the volume, **Ripple depth**). **Hold
+  at top** makes the held tone sit at the top of the chirp rather than the bottom.
+- **Blast**: the wave, the start and end pitch of its sweep (set the end above
+  the start for a rising zap), the sweep time and curve, length, a hold for
+  beams, attack, a second oscillator (the body) at an interval, FM, pulse width
+  and the click of the shot. **Tone level** at 0 leaves a noise-only blast.
+- **Size**: how a bigger charge changes the blast: its pitch, length, noise and
+  volume, and how quickly size builds (the tap threshold is under Main).
+- **Noise**: the burst's level, decay, filter and how the filter sweeps (its own
+  time and curve), and **Noise ends**, which cuts the burst off with a quick fade.
+- **Crush & Echo**: bit depth and sample rate for 8-bit grit, drive, and echo.
+
+Randomize makes a usable random blast and Mutate nudges the current one.
+Blaster publishes three modulation inputs (Pitch, Charge Time, Blast Length).
+
 ## 4. Effects
 
 All effects tap another app's live audio via the shared bus (the **Source**
@@ -343,9 +480,12 @@ row) rather than generating their own signal.
 |---|---|
 | **Session** | The song layer: 8 tracks × 8 scenes of clips, each track playing any instrument app or Session's own sounds (drum tracks on the built-in kit). LAUNCH (pads launch clips and scenes on the next bar), STEP (edit steps: note, velocity, length, chance, lock), PLAY (play and record from pads or MIDI), SONG (chain scenes into an arrangement), SETUP (routing, mute, octave, lock-lane target, tempo, swing, clock, 8 project slots). Each track's lock lane sends a value per step to any app's modulation input. |
 | **Tempo** | The device clock's front panel (see §5.1): tempo, tap tempo, play/stop, MIDI clock in and out, bar length, and a metronome. |
-| **Bloom** | Generative circular sequencer built from two groups of the same element ("dots"). |
+| **Bloom** | Generative circular sequencer built from two groups of the same element ("dots"). Each of its eight shapes picks its own engine right under Pattern: its own Plaits voice, nothing, or any instrument (whose patch and settings then list there). **Gate audio** (under the engine) takes any app's audio output (a Looper, a sampler, an effect) and opens it only while that shape's notes sound, so a shape also works as a rhythmic gate; **Gate level** sets how loud, and the shape's Decay sets how long it takes to close. |
 | **Pam's** | Clone of the core of Pamela's Pro Workout — multi-channel clock/gate generator with logic combinators between channels. |
 | **Turing Machine** | Music Thing Modular Turing Machine clone: clocked 16-bit shift register, "Locks" sets random-vs-repeat. |
+| **Teletype** | monome Teletype: eight trigger scripts (S1-S8), a metro (M) and an init script (I) in its own little language, with four patterns. Plays any instrument through its **Plays** row and drives the grid (see §5.3). |
+| **Kria** | monome Kria: a four-track step sequencer where every parameter has its own loop, clock division and probability. Plays on the grid (see §5.3); Teletype can drive it with KR ops. |
+| **Grid** | The on-screen monome grid (8 × 16 up to 64 × 128) that apps play on, and the way to hand the grid to an app (see §5.3). |
 | **Orca** | The Orca livecoding sequencer: a grid of letters that run as operators and play notes. Edited by pad (D-pad moves the cursor, pads type glyphs, F2 turns the pages, SELECT erases); bundled examples, Save. Plays its own plain voice or any instrument on the note bus (see §5.2). |
 | **Marbles** | The real Mutable Instruments Marbles: random rhythms and melodies with deja vu, played on any instrument (see §3.5). |
 | **Tides** | The real Mutable Instruments Tides (2018): four linked envelopes, LFOs or oscillators (see §3.5). |
@@ -395,6 +535,41 @@ Its settings persist in `saves/oc/`.
 The **Firmware** menu row picks what each module runs, as if reflashing it: **Ornaments & Crimes** (the stock firmware), **Hemisphere Suite** (Chysn's fork: two applets side by side, each a small module — clocks, quantizers, envelopes, logic, sequencers, scopes) or **Phazerville Suite** (a large fork of Hemisphere with many more applets). Each module remembers its choice and keeps separate settings per firmware, so four modules can run four different firmwares. Hemisphere and Phazerville take the same controls; MIDI in/out inside them does nothing (no MIDI path into the firmware yet), and Phazerville has no DrumMap applet (it depends on GPL Grids data).
 
 Four modules run at once: **O&C**, **O&C 2**, **O&C 3** and **O&C 4**, each its own firmware with its own screen, settings, inputs (`O&C 2: CV 1`...) and outputs. In the Slint shell, the menu's **Window** row opens a module in a window of its own, so all four can be on screen together; the window takes the keyboard: arrows turn the encoders (up/down the left, left/right the right), Return or R is the right button, U, D and L the other three, and 1–4 are the trigger inputs (held while the key is).
+
+### 5.3 The grid: Grid, Teletype and Kria
+
+The grid is one shared monome-style grid of keys that light. One app holds it
+at a time (its **focus**): that app reads the key presses and draws every LED.
+It shows on screen in the **Grid** app and, when one is plugged in, on a real
+monome grid at the same moment (through serialosc, or straight over USB).
+
+**Choosing who plays it.** Open **Grid** and press **SELECT** (or turn the
+**Plays** row): the grid goes to the next app. The title line says
+`plays: <app>`. Every app that can play the grid is on the list from the
+start, built or not (Kria, Teletype, Grid Pads, Norns); handing the grid to
+one builds it, so it draws and reads keys at once. A line under the grid says
+how the app uses it.
+
+**Teletype on the grid.** There are two cases:
+
+- A scene with **no `G.` ops** (the default scenes): the top row is the
+  module's script buttons. Keys 1-8 run scripts 1-8, key 10 runs M and key 11
+  runs I; each lights while it runs. You can play a scene's triggers and CV
+  from the grid without opening Teletype.
+- A scene that **uses `G.` ops** (for example scene `06 grid steps`): the
+  scene draws and reads the grid itself (`G.LED`, `G.BTN`, `G.FDR`, ...), in a
+  16 × 16 space at the grid's top-left, and takes the grid when it loads. Grid
+  presses run scripts whether or not the metro (F3) is running.
+
+If the grid stays dark: check the title says `plays: Teletype`, and read the
+line under the grid. Press F3 in Teletype if the scene needs the metro.
+
+**Kria on the grid** uses Ansible's layout (16 × 8): the keys are the steps of
+the current track and parameter. Switch the grid to Kria in the Grid app.
+
+**Adding your own app to the list:** put `grid_client = "Name"` in its
+manifest and `register` it with the grid when it is built (see
+`docs/ADDING_AN_APP.md`).
 
 ## 6. Recording & library
 

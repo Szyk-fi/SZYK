@@ -180,6 +180,8 @@ fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
 enum Selection {
     /// Where captures play: Nebula's own voices, another app, or nothing.
     Plays,
+    /// A setting of the instrument Plays points at, listed under Plays.
+    InstSetting(usize),
     Running,
     ParticleCount,
     Gravity,
@@ -428,6 +430,7 @@ impl NebulaApp {
     fn visible_rows(&self) -> Vec<Row> {
         // Plays leads the menu, as in every note source.
         let mut rows = vec![Row::Leaf(Selection::Plays)];
+        rows.extend((0..self.note_route.settings().len()).map(|i| Row::Leaf(Selection::InstSetting(i))));
         for g in 0..NUM_GROUPS {
             rows.push(Row::Group(g));
             if self.expanded[g] {
@@ -464,6 +467,7 @@ impl NebulaApp {
     fn leaf_name(&self, sel: Selection) -> String {
         match sel {
             Selection::Plays => "Plays".into(),
+            Selection::InstSetting(i) => format!("  {}", self.note_route.settings().get(i).map_or(String::new(), |s| s.label.clone())),
             Selection::Running => "Running".into(),
             Selection::ParticleCount => "Particles".into(),
             Selection::Gravity => "Gravity".into(),
@@ -486,6 +490,7 @@ impl NebulaApp {
     fn leaf_value(&self, sel: Selection) -> String {
         match sel {
             Selection::Plays => self.note_route.label(),
+            Selection::InstSetting(i) => self.note_route.settings().get(i).map_or(String::new(), |s| s.value.clone()),
             Selection::Running => {
                 if self.params.running.load(Ordering::Relaxed) { "running".into() } else { "stopped".into() }
             }
@@ -520,6 +525,7 @@ impl NebulaApp {
         let step = delta.signum();
         match sel {
             Selection::Plays => self.note_route.step(step),
+            Selection::InstSetting(i) => self.note_route.adjust(i, step),
             Selection::Running => self.params.running.store(delta > 0, Ordering::Relaxed),
             Selection::ParticleCount => {
                 let cur = self.params.particle_count.load(Ordering::Relaxed) as i32;
@@ -562,6 +568,7 @@ impl NebulaApp {
     fn reset(&mut self, sel: Selection) {
         match sel {
             Selection::Plays => self.note_route.reset(),
+            Selection::InstSetting(_) => {}
             Selection::Running => self.params.running.store(false, Ordering::Relaxed),
             Selection::ParticleCount => self.params.particle_count.store(DEFAULT_PARTICLES, Ordering::Relaxed),
             Selection::Gravity => self.params.gravity.set(DEFAULT_GRAVITY),

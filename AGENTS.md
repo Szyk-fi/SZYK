@@ -101,23 +101,162 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
-### 2026-10-07: ChatGPT: standalone Prophet-style virtual analogue with 64 sounds
-- Branch: gpt/prophet-instrument (isolated checkout from 78449f4)
-- Changed: src/apps/prophet/, apps/prophet/manifest.toml, docs/PROPHET.md.
-- Status: implemented and packaged. Active repo untouched (outside writable
-  roots); no central launcher, dependencies or synthesis-engine edits.
-- Tests: final focused suite 15 passed, 1 export test normally ignored;
-  export test passed (six PNGs, 64 JSONs, 32-second WAV). Simulator binary
-  build and Slint example check passed with no new app warnings. Full suite
-  before the final UI-only edits and extra note-bus regression: 1043 passed,
-  13 ignored, 2 failures from sandbox-blocked serialosc UDP binds. Norns,
-  Stages, Atlas factory patches and installation/manifest contracts passed.
-- Notes for the other assistant: original Rust DSP, not PikoPiko firmware.
-  Profree-4 is an analogue hardware concept; no licensed audio engine found.
-  Drop-in factory/manifest, 55 controls, 4/5/8 voices, Poly-Mod, sync, dual
-  ADSRs, mono/unison, chorus/delay and 16 versioned JSON user slots. Source
-  patch only adds the app and its manual. All factory sounds are original.
-  Sources/presets remain editable; no claimed STM32N6 CPU-budget validation.
+### 2026-10-07: Claude: New app: Blaster (hold to charge, release to fire)
+- Branch: claude/blaster
+- Changed: new src/apps/blaster/ (params, store, voice, engine, presets, mod,
+  tests) + apps/blaster/manifest.toml, docs/USER_MANUAL.md (§3.10). Reuses
+  Hydra's Def/Kind helpers and DSP primitives (apps/hydra/params.rs, dsp.rs,
+  store.rs conversions); does not change them. Eight voices, each a state
+  machine: Charging (climbing, quickening chirps, a flutter at full) then
+  Blasting (pitch sweep, body oscillator, noise burst, size scaling, crush,
+  echo). Note-on charges and note-off fires, so it plays from the pads and from
+  any app's sequencer over the note bus. 27 characters, Randomize/Mutate, 8
+  user slots, 3 modulation inputs.
+- Status: done. Rendering every character to WAV is a test:
+  `BLASTER_WRITE_WAVS=dir cargo test --bin portamax-sim render_demo_wavs`.
+- Tests: 25 blaster tests (incl. the Reed spectrum, counted chirps landing on
+  the held pitch, ripple, the first character vs its recording; charge climbs, chirps speed up, blast falls and
+  ends, size scales length and volume, fire at full, key follow, polyphony and
+  stealing, every character and 20 random blasts charge/fire/end, loudness).
+- Notes for the other assistant: none.
+
+### 2026-10-07: Claude: Fix: O&C firmware could not load on Linux
+- Branch: claude/bloom-audio-engines
+- Changed: src/apps/oc_firmware.rs. `RTLD_LOCAL` was 4 (the macOS value); on
+  Linux 4 is RTLD_NOLOAD, so `dlopen` returned null with no message and every
+  O&C firmware test failed with "dlopen failed". Now 0 on Linux. macOS is
+  unchanged.
+- Also: vendor/o_c_phaz/fw/applets/EuclidX.h divided by (length + padding) = 0 at
+  boot. ARM (the module, Apple silicon) defines that as 0; x86 traps it (SIGFPE),
+  which killed the whole test process once the loader worked. Guarded in the source.
+- Status: done. All apps::oc tests pass on Linux.
+- Tests: apps::oc.
+- Notes for the other assistant: none.
+
+### 2026-10-07: Claude: Bloom: shapes can gate any audio source
+- Branch: claude/bloom-audio-engines
+- Changed: src/apps/bloom.rs, docs/USER_MANUAL.md. Each shape gets a Gate
+  audio row (Off or any audio-bus output except Bloom's own) and a Gate level;
+  the shape's notes open that source (4 ms attack, release follows Decay) and
+  it is mixed in after the voice-count headroom division. The audio thread
+  uses `try_lock` on the source buffer, so a busy source counts as silent.
+- Status: done. Instruments (note bus) and audio sources (gate) are separate
+  choices per shape; both can be used at once.
+- Tests: 3 new bloom tests (choices skip Bloom's own output, gate opens and
+  closes with the notes and scales with level, missing source is silent).
+- Notes for the other assistant: none.
+
+### 2026-10-07: Claude: New app: Now Playing (overview of sources, instruments, levels)
+- Branch: claude/now-playing
+- Changed: new src/apps/now_playing.rs + apps/now_playing/manifest.toml,
+  docs/USER_MANUAL.md (§2). Lists every note source with the instrument it
+  plays (lit while that instrument sounds), knob 2 re-routes it (note bus
+  `step_source`), press lists the instrument's own settings through the
+  instrument-settings bridge; second section lists channels that are making
+  sound with a live level and moves their Mixer fader. Reads/writes only the
+  existing buses; no other file touched.
+- Status: done.
+- Tests: 7 now_playing tests (routing, activity light, settings expand and
+  edit, sounding list and fader, empty world, draw).
+- Notes for the other assistant: none.
+
+### 2026-10-07: Claude: Hydra playability: chords, Hold, macros, 250 presets in folders
+- Branch: claude/hydra-playability
+- Changed: src/apps/hydra/ only (+ docs/USER_MANUAL.md §3.9). Engine: Chord
+  (fixed shapes or built from the pad scale), Hold (latch), macro
+  destinations (each macro moves two parameters in their own scale), per-key
+  chord memory so letting go stops exactly what was started. Play view: 16
+  controls with a Page selector (Osc/Filter/Env/Mod/FX/Play), Folder + Preset
+  browsers, four macros named by the sound. Library: 257 factory presets in 16
+  folders (presets/<folder>.rs), loudness table levels.rs (written by
+  `HYDRA_WRITE_LEVELS=1 cargo test --bin portamax-sim calibrate_levels`),
+  user presets saved to saves/hydra/presets/<Folder>/*.json, favorites,
+  Morph. Level now 0-200%. Pad layouts (scale / chromatic / fourths).
+- Status: done. Not auditioned by ear (no audio device here); presets are
+  designed from the DSP's parameter meanings and levelled by measurement.
+- Tests: 75 hydra tests (chords, Hold, macros, pages, folders, morph, saved
+  and dropped-in presets, every preset finite and levelled).
+- Notes for the other assistant: none.
+
+### 2026-10-06: Claude: New app: Hydra, an all-in-one hybrid synth
+- Branch: claude/hydra
+- Changed: new src/apps/hydra/ (params, store, dsp, tables, voice, fx, engine,
+  presets, mod, tests) and apps/hydra/manifest.toml. 16 voices; 3 oscillators
+  each Analog (PolyBLEP/BLAMP, unison to 7) / Wavetable (6 banks x 16 frames,
+  inverse-FFT band-limited) / FM / Karplus-Strong Pluck / Noise; sub, ring, cross-mod,
+  hard sync; two filters (TPT SVF modes, ZDF ladder) in series or parallel; 3 ADSRs,
+  2 LFOs, 12-slot mod matrix, 4 macros; drive/chorus/phaser/delay/FDN reverb;
+  arpeggiator; mono/legato/glide; 28 factory presets and 16 user slots
+  (saves/hydra/). One params! table (151 params) drives the menu, play dials,
+  Moments, settings bridge and presets. Plays through the note bus, mixer and
+  ModBus (14 CV inputs) like any instrument; no other file touched.
+- Status: done. Real-time-safe by design (atomics, try_lock, pre-sized buffers).
+- Tests: 48 hydra tests pass (pitch by autocorrelation for every oscillator type,
+  alias measurement vs naive, filters, FX, app-level pad/preset/Moments/arp/steal).
+- Notes for the other assistant: none. Dialogue (yours) left untouched.
+
+### 2026-10-06: Claude: Bloom: each shape picks its own engine
+- Branch: claude/picker-and-cleanup
+- Changed: src/apps/bloom.rs, apps/bloom/manifest.toml, src/note_bus.rs
+  (NoteRoute::set), src/registry.rs (test). Bloom had one note route for all
+  eight shapes and a Plaits engine at the bottom of every shape. Now each shape
+  has its own route ("Bloom Shape 1".."8" on the note bus) and an Engine row
+  right under Pattern: Own sound (the Plaits voice, with its Voice/Harmonics/
+  Timbre/Decay rows listed under it), None, or any instrument, whose own
+  settings (patch, plugin...) list there through the instrument-settings
+  bridge; for an instrument the Plaits rows give way to its settings and Decay
+  becomes the note length. The top-level Plays row sets every shape at once.
+- Status: done. Not built: a "now playing" overview app.
+- Tests: each_shape_picks_its_engine_under_pattern; full suite: only the 25
+  environmental failures.
+- Notes for the other assistant: anything that named the note source "Bloom"
+  now needs "Bloom Shape N".
+
+### 2026-10-06: Claude: Grid and Teletype: the grid is playable and says how
+- Branch: claude/picker-and-cleanup
+- Why it was dark: an app joined the grid only when it was built, and apps are
+  built lazily, so Teletype was not on the Grid app's list until opened (and
+  the first app built, e.g. Kria, held the focus); and Teletype's default
+  scenes have no G ops, so even with focus it drew nothing.
+- Changed: manifest field `grid_client` (kria, teletype, grid_pads, norns),
+  declared at startup (Grid::declare, shared area src/apps/grid_kit.rs +
+  src/registry.rs + src/app_runtime.rs); handing the grid to an unbuilt app
+  builds it (LazyApp::with_grid, Grid::focus_owner). Grid::set_hint plus a line
+  under the Grid screen saying how the focused app uses the grid. Teletype with
+  a scene that has no G ops now shows and runs the module's script buttons on
+  the top row (keys 1-8 = S1-S8, 10 = M, 11 = I, lit while running); scenes
+  with G ops draw the grid themselves as before. docs/USER_MANUAL.md section
+  5.3 (Grid, Teletype, Kria; the manual had nothing on them),
+  docs/ADDING_AN_APP.md.
+- Status: done in the sim; not tried on a real grid.
+- Tests: handing_the_grid_to_an_unopened_teletype_builds_it_and_lights_the_grid;
+  full suite: only the 25 environmental failures.
+- Notes for the other assistant: an app that plays the grid should add
+  `grid_client = "<name it registers under>"` to its manifest.
+
+### 2026-10-06: Claude: instrument settings listed under a source's Plays row
+- Branch: claude/picker-and-cleanup
+- Changed: new shared mechanism. src/app.rs: `Setting`, and App gains
+  `instrument_settings()` / `adjust_setting()` (play-kit apps and the MI kit
+  answer from their controls via play_kit::settings_of/adjust_in; any other
+  app falls back to its menu rows, read-only: choir, chop, skins, timbre_map).
+  src/note_bus.rs: a settings port per instrument slot (shared area: a new
+  field and methods, nothing existing changed), `NoteRoute::settings()` and
+  `NoteRoute::adjust()`. src/app_runtime.rs: LazyApp publishes the instrument's
+  settings while a source is asking and applies the edits queued for it.
+  Source menus that now list them under Plays: Bloom, Madness, Nebula, Turing
+  Machine, Marbles, Norns, Hum, Chordsmith, Session (SETUP), Collection synths,
+  Sequencer (instrument tracks), Kria, Orca, Teletype, O&C.
+- Status: done except Ledger (its menu is the kit's own control list, so there
+  is nowhere to insert rows; Plays is there but without the settings) and
+  Dialogue (not mine to edit now).
+- Tests: registry tests a_source_lists_and_edits_the_settings_of_the_instrument_it_plays
+  and a_sources_menu_lists_the_instruments_settings_under_plays; full suite has
+  only the 25 environmental failures.
+- Notes for the other assistant: a source calls `note_route.settings()` every
+  frame it draws the rows (asking is what keeps the instrument publishing); to
+  list them in a new source, add rows after Plays from that call and send edits
+  with `note_route.adjust(i, delta)`.
 
 ### 2026-10-06: Claude: Plays first in every note source's menu, orphan apps, warnings
 - Branch: claude/picker-and-cleanup (on top of claude/dropin-cleanup)

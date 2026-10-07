@@ -218,6 +218,14 @@ impl Input {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SystemRole { Mixer, Settings }
 
+/// One line of an instrument's settings, as another app lists it under its
+/// own "Plays" row (see `NoteRoute::settings` in note_bus.rs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Setting {
+    pub label: String,
+    pub value: String,
+}
+
 pub trait App {
     /// Configured live routes, frozen buffers, or external control outputs that
     /// must continue after leaving this screen. Transport is handled separately.
@@ -360,6 +368,18 @@ pub trait App {
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         Vec::new()
     }
+
+    /// The settings a sequencer-like app lists under the instrument it plays,
+    /// so the instrument can be dialled in from there. Apps built on the
+    /// shared play kit and the Mutable Instruments kit answer from their
+    /// controls; any other app falls back to its menu rows, read-only.
+    fn instrument_settings(&self) -> Vec<Setting> {
+        self.slint_rows().into_iter().filter(|(_, _, group)| !group).map(|(label, value, _)| Setting { label, value }).collect()
+    }
+
+    /// Steps setting `index` of `instrument_settings` by `delta` clicks.
+    /// Nothing happens for an app whose settings are read-only.
+    fn adjust_setting(&mut self, _index: usize, _delta: i32) {}
 
     /// Which row `slint_rows` should show as selected.
     #[allow(dead_code)] // not used by the main binary

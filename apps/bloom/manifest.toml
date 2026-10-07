@@ -3,7 +3,7 @@ name = "Bloom"
 category = "sequencer"
 description = "Evolving melodies from intersecting orbits. Plays its own voices, any instrument, or just sends signals."
 audio_outputs = ["Bloom"]
-note_outputs = ["Bloom"]
+note_outputs = ["Bloom Shape 1", "Bloom Shape 2", "Bloom Shape 3", "Bloom Shape 4", "Bloom Shape 5", "Bloom Shape 6", "Bloom Shape 7", "Bloom Shape 8"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Bloom Level",

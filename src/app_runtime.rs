@@ -24,13 +24,21 @@ pub struct LazyApp {
     /// release gets delivered too).
     delivering: bool,
     outputs: Vec<usize>,
+    /// The app plays the shared grid (manifest `grid_client`): handing the
+    /// grid to it builds it, so it can draw and read keys at once.
+    grid_client: bool,
 }
 impl LazyApp {
     pub fn new(id: String, make: Rc<dyn Fn() -> Box<dyn App>>, bus: Arc<AudioBus>) -> Self {
-        Self { id, make, instance: None, processor: Arc::new(Mutex::new(None)), enabled: Arc::new(AtomicBool::new(false)), screen_open: false, last_input: None, bus, modbus: None, notes: None, inbox: None, view: Default::default(), delivering: false, outputs: Vec::new() }
+        Self { id, make, instance: None, processor: Arc::new(Mutex::new(None)), enabled: Arc::new(AtomicBool::new(false)), screen_open: false, last_input: None, bus, modbus: None, notes: None, inbox: None, view: Default::default(), delivering: false, outputs: Vec::new(), grid_client: false }
     }
     pub fn with_modbus(mut self, modbus: Arc<crate::modbus::ModBus>) -> Self {
         self.modbus = Some(modbus);
+        self
+    }
+    /// Marks the app as playing the shared grid (see `grid_client`).
+    pub fn with_grid(mut self) -> Self {
+        self.grid_client = true;
         self
     }
     pub fn with_notes(mut self, notes: Arc<crate::note_bus::NoteBus>, inbox: Option<crate::note_bus::NoteInboxRef>) -> Self {
@@ -61,9 +69,27 @@ impl LazyApp {
         }
         self.instance.as_mut().unwrap().as_mut()
     }
+    /// Publishes this instrument's settings for the sources that list them,
+    /// and applies the edits they queued.
+    fn serve_settings(&mut self) {
+        let Some(notes) = self.notes.clone() else { return };
+        if !notes.settings_wanted(&self.id) {
+            return;
+        }
+        let slots = notes.slots_of(&self.id);
+        let app = self.ensure();
+        for slot in slots {
+            for (index, delta) in notes.take_setting_edits(slot) {
+                app.adjust_setting(index, delta);
+            }
+            notes.publish_settings(slot, app.instrument_settings());
+        }
+    }
     fn wake(&mut self) { self.last_input = Some(Instant::now()); self.enabled.store(true, Ordering::Release); }
     fn update_activity(&mut self) {
-        let requested=self.bus.requested(&self.id) || self.modbus.as_ref().is_some_and(|m| m.requested(&self.id)) || self.notes.as_ref().is_some_and(|n| n.requested(&self.id));
+        let settings_wanted = self.notes.as_ref().is_some_and(|n| n.settings_wanted(&self.id));
+        let grid_wanted = self.grid_client && crate::apps::grid_kit::grid().focus_owner().as_deref() == Some(self.id.as_str());
+        let requested=settings_wanted || grid_wanted || self.bus.requested(&self.id) || self.modbus.as_ref().is_some_and(|m| m.requested(&self.id)) || self.notes.as_ref().is_some_and(|n| n.requested(&self.id));
         if requested {self.ensure();}
         let needed = self.instance.as_ref().is_some_and(|app| requested || self.screen_open || app.running() == Some(true) || app.needs_background_audio()
             || self.last_input.is_some_and(|t| t.elapsed() < Duration::from_secs(5)));
@@ -102,6 +128,7 @@ impl App for LazyApp {
     fn toggle_grid_mode(&mut self) { self.ensure().toggle_grid_mode(); self.wake(); }
     fn background_tick(&mut self) {
         self.update_activity();
+        self.serve_settings();
         // An instrument off screen still plays what other apps send it:
         // its notes arrive as keys on an otherwise empty frame.
         if !self.screen_open && self.inbox.is_some() {
