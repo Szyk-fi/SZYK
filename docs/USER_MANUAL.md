@@ -120,6 +120,7 @@ way.
 | **Atlas** | The meta-synth: a library of designed sounds (wavetable, granular, modal, Plaits, supersaw, ladder...) all played with the same eight controls — CHARACTER, COLOR, MOTION, SPACE, SHAPE, ENERGY, TEXTURE and MORPH (see §3.3). |
 | **Trio** | Three layered Plaits engines that split what you play: Full, Bass, Top or Arp per layer; pads play the scale or diatonic chords. |
 | **Hydra** | The all-in-one hybrid synth (see §3.9): 16 voices, three oscillators each Analog / Wavetable / FM / Pluck / Noise, two filters, a 12-slot mod matrix, effects, an arpeggiator, chords, Hold, and over 250 presets in 16 folders. |
+| **Blaster** | Hold a key and it charges up; let go and it fires. A charge-and-release sound designer for video-game blasts, with 27 characters (see §3.10). |
 | **Tinkertone** | An early-80s home keyboard with the MT-40's feature set (37 keys, 22 tones, 15-key bass, 6 rhythms) in an original look. Analog-modelled bass and drums, and you can record your own looping bass line (see §3.2). |
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
 | **Rings** | The real Mutable Instruments Rings resonator: modal bodies, sympathetic and inharmonic strings, FM voice, and the hidden "Disastrous Peace" string synth (see §3.5). |
@@ -390,6 +391,50 @@ calibrate_levels` rewrites the table if you add presets).
 Other apps' sequencers can play Hydra and list its controls under their "Plays"
 row. Hydra publishes 14 modulation inputs (cutoff, resonance, pitch, mod wheel,
 the four macros and more) for Portal to patch.
+
+### 3.10 Blaster: charge shots and blasts
+
+Hold a pad: a tone climbs and chirps faster the longer you hold, and
+flutters when the charge is full. Let go: it fires a blast, a pitch sweep with
+a burst of noise, as big as the charge was. A quick tap fires a small shot.
+Use it to design the shots, beams and bombs of video-game characters.
+
+**Playing.** The pads play the pad scale (each pad is its own charge, up to
+eight at once). Notes from another app's sequencer work the same way: a
+note-on starts the charge and the note-off fires it, so the length of the note
+is the size of the blast. **Fire at full** makes it shoot by itself the moment
+the charge is full, for rapid fire. The meter on the right fills with the
+charge, with a tick at each third, and flashes when you fire.
+
+**Characters.** Step through the 27 characters with the D-pad or the
+Character control: a classic *Buster Charge*, a *Pea Shot*, *Plasma Beam*,
+*Fireball*, *Spin Rev*, *Laser Rifle*, *Ice Shot*, *Thunder Strike*, *Bomb*,
+*Wave Cannon*, *Magic Orb*, *Rail Gun*, *Meteor* and more. Each is a starting
+point: change anything, then **Save to slot** (8 slots).
+
+**Designing your own.** In the play view, the dials are Charge time, Blast
+length, Level, Charge pitch, Climb, Chirp speed, Chirp depth, Blast start and
+end pitch, Sweep time, Noise, Body, Crush bits, Echo and Fire at full. The
+menu has every setting in groups:
+
+- **Charge**: the wave (square, saw, triangle, sine, pulse, noise, metal), its
+  pitch, how loud it starts, a noise bed and a wobble.
+- **Climb**: how many octaves the charge rises, whether it climbs in steps, and
+  the chirps (how fast they restart at the start and when full, how deep, and
+  their curve).
+- **Full charge**: what it does when full: keep chirping, flutter between two
+  pitches, or pulse.
+- **Blast**: the wave, the start and end pitch of its sweep (set the end above
+  the start for a rising zap), the sweep time and curve, length, a hold for
+  beams, attack, a second oscillator (the body) at an interval, FM, pulse width
+  and the click of the shot.
+- **Size**: how a bigger charge changes the blast: its pitch, length, noise and
+  volume, and how quickly size builds (the tap threshold is under Main).
+- **Noise**: the burst's level, decay, filter and how the filter sweeps.
+- **Crush & Echo**: bit depth and sample rate for 8-bit grit, drive, and echo.
+
+Randomize makes a usable random blast and Mutate nudges the current one.
+Blaster publishes three modulation inputs (Pitch, Charge Time, Blast Length).
 
 ## 4. Effects
 
