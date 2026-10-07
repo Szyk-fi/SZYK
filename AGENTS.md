@@ -101,6 +101,64 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: Claude: Fix: O&C firmware could not load on Linux
+- Branch: claude/bloom-audio-engines
+- Changed: src/apps/oc_firmware.rs. `RTLD_LOCAL` was 4 (the macOS value); on
+  Linux 4 is RTLD_NOLOAD, so `dlopen` returned null with no message and every
+  O&C firmware test failed with "dlopen failed". Now 0 on Linux. macOS is
+  unchanged.
+- Also: vendor/o_c_phaz/fw/applets/EuclidX.h divided by (length + padding) = 0 at
+  boot. ARM (the module, Apple silicon) defines that as 0; x86 traps it (SIGFPE),
+  which killed the whole test process once the loader worked. Guarded in the source.
+- Status: done. All apps::oc tests pass on Linux.
+- Tests: apps::oc.
+- Notes for the other assistant: none.
+
+### 2026-10-07: Claude: Bloom: shapes can gate any audio source
+- Branch: claude/bloom-audio-engines
+- Changed: src/apps/bloom.rs, docs/USER_MANUAL.md. Each shape gets a Gate
+  audio row (Off or any audio-bus output except Bloom's own) and a Gate level;
+  the shape's notes open that source (4 ms attack, release follows Decay) and
+  it is mixed in after the voice-count headroom division. The audio thread
+  uses `try_lock` on the source buffer, so a busy source counts as silent.
+- Status: done. Instruments (note bus) and audio sources (gate) are separate
+  choices per shape; both can be used at once.
+- Tests: 3 new bloom tests (choices skip Bloom's own output, gate opens and
+  closes with the notes and scales with level, missing source is silent).
+- Notes for the other assistant: none.
+
+### 2026-10-07: Claude: New app: Now Playing (overview of sources, instruments, levels)
+- Branch: claude/now-playing
+- Changed: new src/apps/now_playing.rs + apps/now_playing/manifest.toml,
+  docs/USER_MANUAL.md (§2). Lists every note source with the instrument it
+  plays (lit while that instrument sounds), knob 2 re-routes it (note bus
+  `step_source`), press lists the instrument's own settings through the
+  instrument-settings bridge; second section lists channels that are making
+  sound with a live level and moves their Mixer fader. Reads/writes only the
+  existing buses; no other file touched.
+- Status: done.
+- Tests: 7 now_playing tests (routing, activity light, settings expand and
+  edit, sounding list and fader, empty world, draw).
+- Notes for the other assistant: none.
+
+### 2026-10-07: Claude: Hydra playability: chords, Hold, macros, 250 presets in folders
+- Branch: claude/hydra-playability
+- Changed: src/apps/hydra/ only (+ docs/USER_MANUAL.md §3.9). Engine: Chord
+  (fixed shapes or built from the pad scale), Hold (latch), macro
+  destinations (each macro moves two parameters in their own scale), per-key
+  chord memory so letting go stops exactly what was started. Play view: 16
+  controls with a Page selector (Osc/Filter/Env/Mod/FX/Play), Folder + Preset
+  browsers, four macros named by the sound. Library: 257 factory presets in 16
+  folders (presets/<folder>.rs), loudness table levels.rs (written by
+  `HYDRA_WRITE_LEVELS=1 cargo test --bin portamax-sim calibrate_levels`),
+  user presets saved to saves/hydra/presets/<Folder>/*.json, favorites,
+  Morph. Level now 0-200%. Pad layouts (scale / chromatic / fourths).
+- Status: done. Not auditioned by ear (no audio device here); presets are
+  designed from the DSP's parameter meanings and levelled by measurement.
+- Tests: 75 hydra tests (chords, Hold, macros, pages, folders, morph, saved
+  and dropped-in presets, every preset finite and levelled).
+- Notes for the other assistant: none.
+
 ### 2026-10-06: Claude: New app: Hydra, an all-in-one hybrid synth
 - Branch: claude/hydra
 - Changed: new src/apps/hydra/ (params, store, dsp, tables, voice, fx, engine,

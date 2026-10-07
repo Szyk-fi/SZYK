@@ -33,6 +33,8 @@
 const int NUM_PARAMS = 5;
 const int PARAM_SIZE = 6;
 
+// PORTAMAX: every `% (length + padding)` below is guarded against a sum of 0 (as at
+// boot). An ARM core defines a zero divide as 0, but x86 traps it (SIGFPE).
 class EuclidX : public HemisphereApplet {
 public:
 
@@ -118,7 +120,7 @@ public:
 
             ForEachChannel(ch) {
                 // actually output the triggers
-                int sb = step % (actual_length[ch] + actual_padding[ch]);
+                int sb = step % ((actual_length[ch] + actual_padding[ch]) ? (actual_length[ch] + actual_padding[ch]) : 1);
                 if ((pattern[ch] >> sb) & 0x01) {
                   if (gate_mode)
                     GateOut(ch, true);
@@ -254,14 +256,14 @@ private:
         gfxLine(x, 62, x+w, 62);
         ForEachChannel(ch) {
             for (int i = 0; i < (fullscreen+1)*16; i++) {
-                if ((pattern[ch] >> ((i + step) % (actual_length[ch]+actual_padding[ch]) )) & 0x1) {
+                if ((pattern[ch] >> ((i + step) % ((actual_length[ch] + actual_padding[ch]) ? (actual_length[ch] + actual_padding[ch]) : 1) )) & 0x1) {
                     gfxRect(x + 4 * i + 1, 48 + 9 * ch, 3, 3);
                     //gfxLine(4 * i + 2, 47 + 9 * ch, 4 * i + 2, 47 + 9 * ch + 4);
                 } else {
                     gfxPixel(x + 4 * i + 2, 49 + 9 * ch);
                 }
 
-                if ((i + step) % (actual_length[ch]+actual_padding[ch]) == 0) {
+                if ((i + step) % ((actual_length[ch] + actual_padding[ch]) ? (actual_length[ch] + actual_padding[ch]) : 1) == 0) {
                     //gfxLine(4 * i, 46 + 9 * ch, 4 * i, 52 + 9 * ch);
                     const int xpos = x + 4*i;
                     gfxLine(xpos, 46 + 9 * ch, xpos, 46 + 9 * ch + 1);

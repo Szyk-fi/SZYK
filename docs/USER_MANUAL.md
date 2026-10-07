@@ -57,7 +57,7 @@ to the app's own panel. The layout is the same in every app:
 | **Throws layer** | Hold a pad to push a control somewhere (feedback up, freeze, octave...); release springs back |
 
 On a play-view app a MIDI keyboard plays the app's pads by pitch where the
-pads are pitched. Utilities (Settings, Mixer, MIDI Learn, CV Out, Portal,
+pads are pitched. Utilities (Settings, Mixer, Now Playing, MIDI Learn, CV Out, Portal,
 Scope, Analyzer, Visualizer, Retro, Controller) keep their menus.
 
 ## 2. How routing works
@@ -73,6 +73,16 @@ dry app's Mixer channel down.
 For an external microphone or interface: pick it in **Settings → Input**
 first, then select **Hardware input** as the receiving app's Source. Nothing
 opens the input device until you do that.
+
+**Now Playing** is a single window onto all of this. Its first section lists
+every note source (sequencers, Bloom, Hum, Session...) with the instrument it
+plays, and a `*` while that instrument is sounding; turn knob 2 on a row to send
+the source to another instrument, or press it to list that instrument's own
+settings underneath, ready to turn. Its second section lists every channel
+that is making sound this moment with a live level, and knob 2 on one moves its
+Mixer fader (press resets it to 100%). These are the note bus's own routes and
+the Mixer's own faders, so Portal's Notes page and each app's "Plays" row move
+with them.
 
 ### 2.1 Patching modulation
 
@@ -109,6 +119,7 @@ way.
 | **StarLab** | Strymon StarLab-inspired: a Karplus-Strong string voice sharing a comb/allpass reverb tank with the effect side. |
 | **Atlas** | The meta-synth: a library of designed sounds (wavetable, granular, modal, Plaits, supersaw, ladder...) all played with the same eight controls — CHARACTER, COLOR, MOTION, SPACE, SHAPE, ENERGY, TEXTURE and MORPH (see §3.3). |
 | **Trio** | Three layered Plaits engines that split what you play: Full, Bass, Top or Arp per layer; pads play the scale or diatonic chords. |
+| **Hydra** | The all-in-one hybrid synth (see §3.9): 16 voices, three oscillators each Analog / Wavetable / FM / Pluck / Noise, two filters, a 12-slot mod matrix, effects, an arpeggiator, chords, Hold, and over 250 presets in 16 folders. |
 | **Tinkertone** | An early-80s home keyboard with the MT-40's feature set (37 keys, 22 tones, 15-key bass, 6 rhythms) in an original look. Analog-modelled bass and drums, and you can record your own looping bass line (see §3.2). |
 | **Orbit / Swarm / Mutant / Constellation / Dream** | Five Collection-engine instruments — see §7. |
 | **Rings** | The real Mutable Instruments Rings resonator: modal bodies, sympathetic and inharmonic strings, FM voice, and the hidden "Disastrous Peace" string synth (see §3.5). |
@@ -312,6 +323,74 @@ committed to the repository:
 | `chiptunes/` | Chip Player | `.nsf` `.nsfe` `.spc` `.gbs` `.vgm` `.vgz` `.gym` `.hes` `.kss` `.ay` `.sap` |
 | `orca/` | Orca | `.orca`; bundled examples are under `orca/examples/`, saved patterns under `orca/saved/` |
 
+### 3.9 Hydra, the all-in-one synth
+
+Hydra is built to make almost any sound and to be played, not just edited.
+
+**What is in it.** Sixteen voices. Each has three oscillators, and each
+oscillator is Analog (band-limited saw / pulse / triangle / sine, with a
+wavefolder and up to seven unison voices), Wavetable (six banks of sixteen
+frames), two-operator FM, a Karplus-Strong plucked string, or Noise. Add a sub
+oscillator, ring modulation, cross modulation and hard sync. Two filters (a
+state-variable one with eight modes and a four-pole ladder) run in series or
+in parallel. There are three envelopes, two LFOs, a 12-slot mod matrix and
+four macros; then drive, chorus, phaser, ping-pong delay and a reverb. Poly,
+mono and legato modes with glide, and an arpeggiator.
+
+**The play view.** Hydra opens on 16 controls, on the pads (F2 → Controls) and
+the knobs:
+
+| Slot | Control |
+|---|---|
+| 1–2 | Cutoff, Resonance (the stick moves these) |
+| 3–4 | **Preset** and **Folder** browsers (D-pad ▲▼ steps the preset) |
+| 5–10 | Six controls that change with the **Page** (slot 11): Osc, Filter, Env, Mod, FX or Play |
+| 12 | Level |
+| 13–16 | **Macros 1–4**, named by the sound (the hand sensors move macros 1 and 2) |
+
+Turn the **Page** control to swap the six: *Osc* (the oscillators' main
+controls, named for their type), *Filter* (ladder cutoff and resonance, envelope
+amounts, drive, key track), *Env* (attack to release), *Mod* (LFO rates, cross
+mod, glide, velocity, Morph), *FX* (drive, chorus, delay, reverb) and *Play*
+(Chord, Hold, Arp, arp rate, octave, unison). Knob 2 turns the control you
+grabbed; hold **L1** and move the stick to set it directly; knob 2 press resets
+it. Resetting **Preset** puts the sound back as it was saved.
+
+**Macros.** Every preset names its four macros and wires each to two things
+(for example *Bright*: cutoff and resonance; *Swell*: attack and release;
+*Space*: reverb and delay). At zero a macro changes nothing, so the sound is
+exactly as designed; turn it up to push those controls from where the sound has
+them. In the menu, the **Macros** group lets you choose what each one moves and
+by how much (negative amounts push the other way).
+
+**Chords and Hold.** *Chord* turns every note you play, from the pads, a
+keyboard or another app's sequencer, into a chord: Octave, Power, Major, Minor,
+Sus2, Sus4, the 7ths and 9ths, or **Scale triad / 7th / 9th**, which builds the
+chord from the pad scale so each pad plays the right chord for its degree (on a
+major scale, a minor chord on the second degree and so on). With the
+arpeggiator on, it arpeggiates the chord. *Hold* keeps the notes sounding after
+you let go until you play again. *Pad layout* is the scale, every semitone, or
+rows a fourth apart.
+
+**Sounds.** The preset area is at the top of the menu. **Folder** picks one of
+16 folders (Favorites, Init, Bass, Lead, Pad, Keys, Pluck, Strings, Brass, Organ,
+Bells, Vocal, Atmosphere, Arp, Drums, FX, Retro, Wavetable); **Preset** steps
+through the folder, and **Browse** lists its sounds so you can pick one.
+**Favorite** stars the sound and collects it in the Favorites folder. **Save as
+new preset** writes it to `saves/hydra/presets/<Folder>/` as a small JSON file;
+a file dropped in a folder there shows up in that folder. **Randomize** makes a
+playable random patch and **Mutate** nudges a few settings. **Morph** slides
+every setting from the current sound toward another (the next in the folder, or
+the one you choose under *Morph toward*); on the Mod page it is a dial.
+
+Every factory sound is levelled so that moving through the library does not
+jump in volume (`HYDRA_WRITE_LEVELS=1 cargo test --bin portamax-sim
+calibrate_levels` rewrites the table if you add presets).
+
+Other apps' sequencers can play Hydra and list its controls under their "Plays"
+row. Hydra publishes 14 modulation inputs (cutoff, resonance, pitch, mod wheel,
+the four macros and more) for Portal to patch.
+
 ## 4. Effects
 
 All effects tap another app's live audio via the shared bus (the **Source**
@@ -343,7 +422,7 @@ row) rather than generating their own signal.
 |---|---|
 | **Session** | The song layer: 8 tracks × 8 scenes of clips, each track playing any instrument app or Session's own sounds (drum tracks on the built-in kit). LAUNCH (pads launch clips and scenes on the next bar), STEP (edit steps: note, velocity, length, chance, lock), PLAY (play and record from pads or MIDI), SONG (chain scenes into an arrangement), SETUP (routing, mute, octave, lock-lane target, tempo, swing, clock, 8 project slots). Each track's lock lane sends a value per step to any app's modulation input. |
 | **Tempo** | The device clock's front panel (see §5.1): tempo, tap tempo, play/stop, MIDI clock in and out, bar length, and a metronome. |
-| **Bloom** | Generative circular sequencer built from two groups of the same element ("dots"). |
+| **Bloom** | Generative circular sequencer built from two groups of the same element ("dots"). Each of its eight shapes picks its own engine right under Pattern: its own Plaits voice, nothing, or any instrument (whose patch and settings then list there). **Gate audio** (under the engine) takes any app's audio output (a Looper, a sampler, an effect) and opens it only while that shape's notes sound, so a shape also works as a rhythmic gate; **Gate level** sets how loud, and the shape's Decay sets how long it takes to close. |
 | **Pam's** | Clone of the core of Pamela's Pro Workout — multi-channel clock/gate generator with logic combinators between channels. |
 | **Turing Machine** | Music Thing Modular Turing Machine clone: clocked 16-bit shift register, "Locks" sets random-vs-repeat. |
 | **Teletype** | monome Teletype: eight trigger scripts (S1-S8), a metro (M) and an init script (I) in its own little language, with four patterns. Plays any instrument through its **Plays** row and drives the grid (see §5.3). |
