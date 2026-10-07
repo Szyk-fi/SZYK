@@ -49,6 +49,15 @@ marks those unavailable instead of silently discarding an edit.
 - Saving exports a file. No program is automatically transmitted back to or
   written into your hardware synthesizer.
 
+## Output level
+
+Rev2 applies 12 dB of output makeup after the layer effects and before the
+mixer gain/soft ceiling. This compensates for the conservative internal voice
+and effect levels without changing filter drive, effect input levels, stored
+patch volumes or their relative balances. Program Volume and Mixer → Rev2
+Level still control loudness; dense chords are bounded by the existing soft
+ceiling. Output gain is a software calibration, not a hardware match.
+
 ## Implemented playback architecture
 
 | Area | Software behavior |
@@ -92,9 +101,9 @@ lossless, but lossless import does not prove identical playback. In particular:
 - This branch does not migrate the older prototype's JSON presets. That
   prototype was not merged into main. Its archived code/files remain available.
 
-These gaps are explicit because the requested merge is conditional on finishing
-full feature parity. The working patch player is reviewable, but should not be
-represented as the completed exact clone.
+The current partial implementation was merged with Max's explicit approval.
+These remaining gaps still prevent it from being described as a completed exact
+clone.
 
 ## Validation
 
