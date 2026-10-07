@@ -653,6 +653,7 @@ roms/snes/       (.sfc, .smc, .swc, .fig)
 roms/arcade/     (one subfolder per game, named like the ROM set — e.g. roms/arcade/pacman/)
 roms/gb/         (.gb, .gbc)
 roms/neogeo/     (one subfolder per cartridge, containing its P1/P2/M1/S1/C1-C8 ROM files)
+roms/neogeo/bios/ (optional: a real SNK BIOS dump, any regional revision — see below)
 ```
 
 Save states, per console/game/slot, land in the matching `saves/` folder.
@@ -661,17 +662,23 @@ Save states, per console/game/slot, land in the matching `saves/` folder.
 complete Neo Geo emulator exists anywhere in the Rust ecosystem to vendor
 (checked; the only near-miss depends on the same dynamic-core-loading model
 this project can't use on real hardware). Its 68000 and Z80 CPU cores are
-real vendored crates, but the memory map, video (fix/text layer *and*
-sprites — tile decode, position, flip, shrink), and the 68k↔Z80 sound
-handshake are hand-written against public hardware documentation instead of
-borrowed, and are still missing: all sound (the YM2610 chip), and most real
-cartridges' protection-chip decryption (Metal Slug 3's "PVC" chip among
-them) — so a protected cartridge will run real code for well under a second
-before hitting code this core can't decrypt yet, and cleanly report
-"emulation error, reload the ROM" the same way any other core's real crash
-does. This is documented in detail, including exactly what's verified
-against real cartridge bytes vs. still unverified, in `src/apps/neogeo_core.rs`'s
-own module doc comment.
+real vendored crates; the memory map, video (fix/text layer *and* sprites —
+tile decode, position, flip, shrink, auto-animation), sound (the real YM2610
+chip), and the 68k↔Z80 sound handshake are hand-written against public
+hardware documentation instead of borrowed, and have been tested against a
+real Metal Slug 3 cartridge dump, including its own NEO-SMA (68000 program
+decryption and bankswitching) and CMC42 (sprite/fix-layer graphics
+decryption) protection chips, both reimplemented from MAME's own source.
+Cartridges that need no protection chip at all (most pre-1996 titles) should
+run on the same memory map and bankswitching. Most other real cartridges'
+own protection chips (CMC50, NEO-PVC, and the rest) aren't implemented —
+those will run real code for well under a second before hitting code this
+core can't decrypt yet, and cleanly report "emulation error, reload the ROM"
+the same way any other core's real crash does. A real BIOS, if you supply
+one (see below), lets a cartridge's calls into it run and return instead of
+reading back zeroed memory. This is documented in detail, including exactly
+what's verified against real cartridge bytes vs. still unverified, in
+`src/apps/neogeo_core.rs`'s own module doc comment.
 
 Save states aren't supported for Neo Geo yet.
 

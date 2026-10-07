@@ -557,7 +557,10 @@ impl NeoGeoBus {
     /// word = tile number's low 16 bits, odd word = palette in bits
     /// 15-12, tile number's high 4 bits in bits 11-8), positioned by
     /// SCB3 (Y + height, $8200+) and SCB4 (X, $8400+), shrunk by SCB2
-    /// ($8000+). Auto-animation is not implemented yet.
+    /// ($8000+). Auto-animation (bits 6-7 of SCB1's odd word, replacing
+    /// the tile number's low 2 or 3 bits with the real animation
+    /// counter) is implemented -- see `Lspc::anim_counter` and the
+    /// inline comment where it's applied below.
     ///
     /// Horizontal flip (bit 4 of SCB1's odd word) mirrors each tile's
     /// own pixels left-right; vertical flip (bit 5) mirrors each

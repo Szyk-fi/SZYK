@@ -1415,10 +1415,11 @@ impl App for RetroApp {
                     // comment) -- a fixed instruction budget per video
                     // frame stands in for it instead, close to a real
                     // 68000's actual per-frame instruction throughput
-                    // at this frame rate. Real YM2610 audio (see
-                    // `neogeo_core`'s own module doc comment); no
-                    // protection-chip decryption for cartridges that
-                    // need it yet.
+                    // at this frame rate. Real YM2610 audio; Metal Slug
+                    // 3's own protection chips are decrypted (see
+                    // `neogeo_core`'s own module doc comment) -- most
+                    // other real cartridges' own protection chips
+                    // still aren't, and those will fault instead.
                     Some(Deck::NeoGeo(machine)) => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         machine.vblank();
                         for _ in 0..50_000 {

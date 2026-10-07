@@ -101,6 +101,34 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: Claude: Neo Geo: status check and stale-doc fixes
+- Branch: claude/neogeo
+- Changed: src/apps/neogeo_core.rs, src/apps/retro.rs, docs/USER_MANUAL.md.
+  No logic changes. Picked this app up on request; it's further along than
+  its own docs said: `render_sprites_onto`'s doc comment claimed
+  "auto-animation is not implemented yet" directly above code that clearly
+  implements and unit-tests it; `retro.rs`'s `step()` comment and
+  USER_MANUAL.md's Neo Geo section both still said sound and all
+  protection-chip decryption were missing, when real YM2610 audio and Metal
+  Slug 3's NEO-SMA + CMC42 chips (reimplemented from MAME) are implemented
+  and tested against a real cartridge dump -- USER_MANUAL.md also named the
+  wrong chip (called it "PVC", which is a different, later chip). Fixed all
+  three to match the code, and documented the undocumented `roms/neogeo/bios/`
+  convention (`load_neogeo_bios` already reads it; nothing told a user it
+  existed). Couldn't go further: no ROM/BIOS is available in this sandbox to
+  run a real cartridge against (and I won't source one -- see `.gitignore`'s
+  stance), so I can't verify anything beyond what the existing tests already
+  cover.
+- Status: done, within the above limits. 39/39 neogeo tests still pass.
+- Tests: `cargo test --bin portamax-sim neogeo` (39 passed, 2 ignored --
+  human-inspection-only, need a real cartridge). Also ran the full suite:
+  the usual 19 sample-based failures, plus one `malloc(): unaligned tcache
+  chunk detected` SIGABRT partway through (in `apps::starlab`'s tests, not
+  neogeo) that doesn't reproduce with `--test-threads=1` -- looks like a
+  pre-existing parallel-test race somewhere, unrelated to this branch's
+  comment-only diff. Flagging it, not chasing it down here.
+- Notes for the other assistant: none.
+
 ### 2026-10-07: Claude: Blaster: sub oscillator
 - Branch: claude/blaster-sub
 - Changed: src/apps/blaster/ (params: new "Sub" group inserted before Size,
