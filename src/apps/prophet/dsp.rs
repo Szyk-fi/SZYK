@@ -6,6 +6,8 @@ use std::{
     f32::consts::{PI, TAU},
     sync::{atomic::Ordering, Arc},
 };
+const CONTROL_FRAMES: u32 = 8;
+
 fn seconds(x: f32) -> f32 {
     0.001 * 20000.0f32.powf((x / 127.).clamp(0., 1.))
 }
@@ -29,6 +31,40 @@ fn blep(t: f32, d: f32) -> f32 {
         0.
     }
 }
+// Integrated BLEP correction for slope discontinuities in shaped ramps.
+fn blamp(t: f32, d: f32) -> f32 {
+    if t < d {
+        d * (1. - t / d).powi(3) / 3.
+    } else if t > 1. - d {
+        d * (1. + (t - 1.) / d).powi(3) / 3.
+    } else {
+        0.
+    }
+}
+fn lfo_wave(phase: f32, shape: usize, held: f32) -> f32 {
+    match shape {
+        0 => 1. - 4. * (phase - 0.5).abs(),
+        1 => phase,
+        2 => 1. - phase,
+        3 => {
+            if phase < 0.5 {
+                1.
+            } else {
+                0.
+            }
+        }
+        _ => held,
+    }
+}
+fn soft_ceiling(x: f32) -> f32 {
+    // Leave normal instrument levels linear; round only overload peaks.
+    let a = x.abs();
+    if a <= 0.3 {
+        x
+    } else {
+        x.signum() * (0.3 + 0.7 * ((a - 0.3) / 0.7).tanh())
+    }
+}
 fn wave(t: f32, d: f32, shape: u8, modulation: f32) -> f32 {
     let pw = (modulation / 100.).clamp(0.02, 0.98);
     let phase = if shape == 4 {
@@ -41,13 +77,21 @@ fn wave(t: f32, d: f32, shape: u8, modulation: f32) -> f32 {
             0.5 + (t - s) * 0.5 / (1. - s)
         }
     };
-    let saw = 2. * phase - 1. - blep(t, d);
-    let tri = 1. - 4. * (phase - 0.5).abs();
+    let width = (modulation / 100.).clamp(0.02, 0.98);
+    let edge = (t - width).rem_euclid(1.);
+    let slope_jump = 1. / (1. - width) - 1. / width;
+    let saw = 2. * phase - 1. - blep(t, d) - (0.5 - width)
+        + 0.5 * slope_jump * (blamp(edge, d) - blamp(t, d));
+    let tri = 1. - 4. * (phase - 0.5).abs()
+        + (1. / width + 1. / (1. - width)) * (blamp(t, d) - blamp(edge, d));
     match shape {
         1 => saw,
         2 => (saw + tri) * 0.5,
         3 => tri,
-        4 => (if t < pw { 1. } else { -1. }) + blep(t, d) - blep((t - pw).rem_euclid(1.), d),
+        4 => {
+            (if t < pw { 1. } else { -1. }) - (2. * pw - 1.) + blep(t, d)
+                - blep((t - pw).rem_euclid(1.), d)
+        }
         _ => 0.,
     }
 }
@@ -108,7 +152,11 @@ impl Envelope {
             2 => {
                 self.v = c.s + (self.v - c.s) * c.d;
                 if (self.v - c.s).abs() < 0.001 {
-                    self.stage = if repeat { 4 } else { 3 };
+                    if repeat && self.held {
+                        self.on(c);
+                    } else {
+                        self.stage = 3;
+                    }
                 }
             }
             3 => self.v = c.s,
@@ -148,13 +196,13 @@ impl Filter {
             (1. - g) * (g * self.z[0] + self.z[1])
         };
         let mut u = (x - k * s) / (1. + k * g.powi(poles as i32));
+        // Saturate the loop drive, not the integrator memory. Clipping memory
+        // every sample caused an artificial loss of body and wrong filter decay.
+        u = 4. * (u / 4.).tanh();
         for z in &mut self.z[..poles] {
             let v = (u - *z) * g;
             u = v + *z;
             *z = (u + v).clamp(-8., 8.);
-            if four {
-                *z = (*z * 0.2).tanh() * 5.;
-            }
             if z.abs() < 1e-20 {
                 *z = 0.;
             }
@@ -220,7 +268,15 @@ fn route(m: &mut [f32; 256], dest: usize, amount: f32) {
         52 => &[119],
         _ => &[],
     };
-    let scale = if dest <= 3 { 24. } else { 127. };
+    // Published hardware measurements: matrix pitch amounts use half
+    // semitones; direct LFO pitch amounts have four times finer resolution.
+    let scale = if dest <= 3 {
+        63.5
+    } else if (20..=24).contains(&dest) {
+        508.
+    } else {
+        127.
+    };
     for &i in offsets {
         m[i] += amount * scale;
     }
@@ -235,6 +291,9 @@ struct Voice {
     sub: f32,
     pitch: [f32; 2],
     detune: f32,
+    drift: [f32; 2],
+    drift_target: [f32; 2],
+    drift_remaining: u32,
     pan: f32,
     env: [Envelope; 3],
     ec: [EnvCoeffs; 3],
@@ -261,11 +320,14 @@ impl Voice {
             sub: 0.,
             pitch: [60.; 2],
             detune: 0.,
+            drift: [0.; 2],
+            drift_target: [0.; 2],
+            drift_remaining: 0,
             pan: 0.,
             env: [Envelope::default(); 3],
             ec: [EnvCoeffs::default(); 3],
             filter: Filter::default(),
-            lfo_phase: [0.; 4],
+            lfo_phase: std::array::from_fn(|l| ((i * 7 + l * 11) as f32 * 0.137).fract()),
             lfo: [0.; 4],
             lfo_hold: [0.; 4],
             mod_previous: [0.; 256],
@@ -348,7 +410,12 @@ impl Voice {
             route(
                 &mut m,
                 p[65 + l] as usize,
-                self.lfo[l] * (p[61 + l] + self.mod_previous[61 + l]) / 127.,
+                self.lfo[l] * (p[61 + l] + self.mod_previous[61 + l]) / 127.
+                    * if (1..=3).contains(&(p[65 + l] as usize)) {
+                        0.25
+                    } else {
+                        1.
+                    },
             );
         }
         route(
@@ -359,13 +426,61 @@ impl Voice {
         for t in 0..4 {
             let dest = p[111 + t] as usize;
             if dest <= 3 && dest > 0 {
-                route(&mut m, dest, seq[t] * 125. / 48.);
+                route(&mut m, dest, seq[t] * 125. / 127.);
             } else {
                 route(&mut m, dest, seq[t]);
             }
         }
         self.mod_previous = m;
         self.params = std::array::from_fn(|i| p[i] + m[i]);
+        self.advance_lfos(p, &m, sr, bpm);
+        for e in 0..3 {
+            self.ec[e] = EnvCoeffs::new(&self.params, e, sr);
+        }
+        if self.drift_remaining == 0 {
+            self.drift_target = std::array::from_fn(|_| random(&mut self.rng));
+            self.drift_remaining = (sr * (0.5 + 1.5 * random(&mut self.rng).abs())) as u32;
+        }
+        self.drift_remaining = self.drift_remaining.saturating_sub(CONTROL_FRAMES);
+        let drift_slew = 1. - (-(CONTROL_FRAMES as f32) / (sr * 0.35)).exp();
+        for o in 0..2 {
+            self.drift[o] += (self.drift_target[o] - self.drift[o]) * drift_slew;
+        }
+        for o in 0..2 {
+            let target = state.tuning[self.note as usize];
+            let glide = seconds(p[8 + o]) * 0.2;
+            if p[19] < 0.5 || p[8 + o] <= 0. {
+                self.pitch[o] = target;
+            } else if p[18] < 2. {
+                let move_by = CONTROL_FRAMES as f32 * 12. / (glide * sr);
+                self.pitch[o] += (target - self.pitch[o]).clamp(-move_by, move_by);
+            } else {
+                self.pitch[o] += (target - self.pitch[o])
+                    * (1. - (-(CONTROL_FRAMES as f32) / (glide * sr)).exp());
+            }
+            let pitch = if p[10 + o] > 0.5 {
+                self.pitch[o] - 24.
+            } else {
+                0.
+            };
+            self.freq[o] = frequency(
+                pitch
+                    + self.params[o]
+                    + (p[2 + o] - 50.) / 100.
+                    + state.bend * p[20]
+                    + self.detune
+                    + self.drift[o] * self.params[21].clamp(0., 127.) / 127. * 0.12
+                    + state.master_coarse
+                    + state.master_fine / 100.,
+            )
+            .clamp(0.01, sr * 0.35);
+            self.shape_mod[o] = self.params[6 + o].clamp(0., 99.);
+        }
+        let env = self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel));
+        let cut = self.params[22] + env + p[24] / 64. * (self.note as f32 - 60.);
+        self.filter.tune(frequency(cut) * 0.5, sr);
+    }
+    fn advance_lfos(&mut self, p: &[f32; 256], m: &[f32; 256], sr: f32, bpm: f32) {
         for l in 0..4 {
             let rate = (p[53 + l] + m[53 + l]).clamp(0., 150.);
             let hz = if p[69 + l] > 0.5 || rate > 127. {
@@ -394,70 +509,29 @@ impl Voice {
                 };
                 bpm / 60. / (periods[idx.min(15)] * step_beats(p[131] as usize, 0))
             } else {
-                0.01 * 30000.0f32.powf(rate / 127.)
+                0.022 * (500.0f32 / 0.022).powf(rate / 127.)
             };
-            let next = self.lfo_phase[l] + 16. * hz / sr;
+            let next = self.lfo_phase[l] + CONTROL_FRAMES as f32 * hz / sr;
             if next >= 1. {
                 self.lfo_hold[l] = random(&mut self.rng);
             }
             self.lfo_phase[l] = next.fract();
             let t = self.lfo_phase[l];
-            self.lfo[l] = match p[57 + l] as usize {
-                0 => 1. - 4. * (t - 0.5).abs(),
-                1 => 2. * t - 1.,
-                2 => 1. - 2. * t,
-                3 => {
-                    if t < 0.5 {
-                        1.
-                    } else {
-                        -1.
-                    }
-                }
-                _ => self.lfo_hold[l],
-            };
+            self.lfo[l] = lfo_wave(t, p[57 + l] as usize, self.lfo_hold[l]);
         }
-        for e in 0..3 {
-            self.ec[e] = EnvCoeffs::new(&self.params, e, sr);
-        }
-        let drift = random(&mut self.rng) * self.params[21].clamp(0., 127.) / 127. * 0.12;
-        for o in 0..2 {
-            let target = state.tuning[self.note as usize];
-            let glide = seconds(p[8 + o]) * 0.2;
-            if p[19] < 0.5 || p[8 + o] <= 0. {
-                self.pitch[o] = target;
-            } else if p[18] < 2. {
-                let move_by = 16. * 12. / (glide * sr);
-                self.pitch[o] += (target - self.pitch[o]).clamp(-move_by, move_by);
-            } else {
-                self.pitch[o] += (target - self.pitch[o]) * (1. - (-16. / (glide * sr)).exp());
-            }
-            let pitch = if p[10 + o] > 0.5 {
-                self.pitch[o] - 24.
-            } else {
-                0.
-            };
-            self.freq[o] = frequency(
-                pitch
-                    + self.params[o]
-                    + (p[2 + o] - 50.) / 100.
-                    + state.bend * p[20]
-                    + self.detune
-                    + drift
-                    + state.master_coarse
-                    + state.master_fine / 100.,
-            )
-            .clamp(0.01, sr * 0.35);
-            self.shape_mod[o] = self.params[6 + o].clamp(0., 99.);
-        }
-        let env = self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel));
-        let cut = self.params[22] + env + p[24] / 127. * (self.note as f32 - 60.);
-        self.filter.tune(frequency(cut) * 0.5, sr);
     }
     fn sample(&mut self, p: &[f32; 256], state: &State, seq: [f32; 4], sr: f32, bpm: f32) -> f32 {
         if self.env[1].stage == 0 && p[27] <= 0. && !self.held {
+            // Free-running LFOs continue through silence. Key sync is handled
+            // when the next phrase begins, not by freezing unused voices.
+            if self.tick % CONTROL_FRAMES == 0 {
+                let m = self.mod_previous;
+                self.advance_lfos(p, &m, sr, bpm);
+            }
+            self.tick = self.tick.wrapping_add(1);
             return 0.;
         }
-        if self.tick % 16 == 0 {
+        if self.tick % CONTROL_FRAMES == 0 {
             self.control(p, state, seq, sr, bpm);
         }
         self.tick = self.tick.wrapping_add(1);
@@ -474,7 +548,7 @@ impl Voice {
             self.phase[0] = self.phase[1] / d[1] * d[0];
         }
         self.sub = (self.sub + d[0] * 0.5).fract();
-        let sub = 1. - 4. * (self.sub - 0.5).abs();
+        let sub = wave(self.sub, d[0] * 0.5, 4, 50.);
         let mix = (self.params[14] / 127.).clamp(0., 1.);
         let noise = random(&mut self.rng);
         let signal = a * (1. - mix)
@@ -483,9 +557,9 @@ impl Voice {
             + noise * self.params[16] / 127.;
         if self.params[25] > 0. {
             let cut = self.params[22]
-                + self.env[0].v * (self.params[32] - 127.)
-                + p[24] / 127. * (self.note as f32 - 60.)
-                + b * self.params[25] * 0.5;
+                + self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel))
+                + p[24] / 64. * (self.note as f32 - 60.)
+                + a * self.params[25] * 0.5;
             self.filter.tune(frequency(cut) * 0.5, sr);
         }
         let filtered = self
@@ -525,11 +599,15 @@ struct Effects {
     ring: Box<[[f32; 2]]>,
     pos: usize,
     phase: f32,
+    chorus_phase: f32,
     ap: [[f32; 6]; 2],
     last: [f32; 2],
     tone: [f32; 2],
     hp: [Filter; 2],
     kind: u8,
+    reverb: [Box<[f32]>; 8],
+    reverb_tone: [f32; 8],
+    reverb_age: usize,
 }
 impl Effects {
     fn new() -> Self {
@@ -537,11 +615,15 @@ impl Effects {
             ring: vec![[0.; 2]; 192002].into_boxed_slice(),
             pos: 0,
             phase: 0.,
+            chorus_phase: 0.,
             ap: [[0.; 6]; 2],
             last: [0.; 2],
             tone: [0.; 2],
             hp: [Filter::default(); 2],
             kind: 0,
+            reverb: std::array::from_fn(|_| vec![0.; 65536].into_boxed_slice()),
+            reverb_tone: [0.; 8],
+            reverb_age: 0,
         }
     }
     fn read(&self, delay: f32, c: usize) -> f32 {
@@ -569,8 +651,11 @@ impl Effects {
             self.ap = [[0.; 6]; 2];
             self.last = [0.; 2];
             self.kind = kind;
+            self.reverb_tone = [0.; 8];
+            self.reverb_age = 0;
         }
         self.phase = (self.phase + (0.03 + 8. * a * a) / sr).fract();
+        self.chorus_phase = (self.chorus_phase + (0.03 + 8. * a * a) * 0.73 / sr).fract();
         let lfo = (self.phase * TAU).sin();
         let mut wet = x;
         let mut write = [0.; 2];
@@ -626,7 +711,14 @@ impl Effects {
                         self.read(sr * 0.003, c)
                     };
                     wet[c] = if kind == 4 {
-                        (dry + delayed) * 0.5
+                        let second = self.read(
+                            sr * (0.022
+                                + 0.005
+                                    * b
+                                    * (self.chorus_phase * TAU + c as f32 * PI + 1.1).sin()),
+                            c,
+                        );
+                        (delayed + second) * 0.5
                     } else {
                         dry - delayed
                     };
@@ -654,17 +746,43 @@ impl Effects {
                 }
             }
             10 => {
-                let taps = [0.0297, 0.0371, 0.0411, 0.0437];
-                for c in 0..2 {
-                    let mut u = 0.;
-                    for (i, t) in taps.iter().enumerate() {
-                        u +=
-                            self.read(sr * t * (0.4 + 2.5 * a) + (c * 17 + i * 7) as f32, c) * 0.25;
-                    }
-                    self.tone[c] += (0.01 + 0.8 * b) * (u - self.tone[c]);
-                    wet[c] = self.tone[c];
-                    write[c] = x[c] + self.tone[1 - c] * (0.35 + 0.61 * a);
+                // Eight independent delay lines with an energy-preserving
+                // Householder feedback matrix, rather than a shared four-tap comb.
+                // Logical age invalidates old tails without clearing megabytes
+                // on the audio callback when the effect is selected.
+                let times = [
+                    0.0297, 0.0371, 0.0411, 0.0437, 0.0531, 0.0617, 0.0719, 0.0797,
+                ];
+                let size = 0.45 + 1.7 * a;
+                let decay = 0.3 + 7. * a;
+                let damping = 1. - (-TAU * (1000. + 15000. * b * b) / sr).exp();
+                let mut taps = [0.; 8];
+                let mut lengths = [0; 8];
+                let pos = self.reverb_age & 65535;
+                for i in 0..8 {
+                    let len = (times[i] * size * sr).round().clamp(1., 65535.) as usize;
+                    lengths[i] = len;
+                    let delayed = if self.reverb_age >= len {
+                        self.reverb[i][pos.wrapping_sub(len) & 65535]
+                    } else {
+                        0.
+                    };
+                    self.reverb_tone[i] += damping * (delayed - self.reverb_tone[i]);
+                    taps[i] = self.reverb_tone[i];
                 }
+                let sum = taps.iter().sum::<f32>() * 0.25;
+                for i in 0..8 {
+                    let feedback = (-6.9078 * lengths[i] as f32 / sr / decay).exp();
+                    let input = (if i % 2 == 0 { x[0] } else { x[1] }) * 0.5;
+                    self.reverb[i][pos] = (input + (taps[i] - sum) * feedback).clamp(-8., 8.);
+                }
+                wet[0] =
+                    (taps[0] + taps[1] - taps[2] + taps[3] - taps[4] + taps[5] - taps[6] - taps[7])
+                        * 0.3535534;
+                wet[1] =
+                    (taps[0] - taps[1] + taps[2] + taps[3] + taps[4] - taps[5] - taps[6] - taps[7])
+                        * 0.3535534;
+                self.reverb_age = self.reverb_age.saturating_add(1);
             }
             11 => {
                 let hz = if p[119] > 0.5 {
@@ -727,8 +845,11 @@ struct Layer {
 }
 impl Layer {
     fn new() -> Self {
+        Self::with_seed(0)
+    }
+    fn with_seed(seed: usize) -> Self {
         Self {
-            voices: std::array::from_fn(Voice::new),
+            voices: std::array::from_fn(|i| Voice::new(i + seed)),
             prior: [0; 128],
             age: [0; 128],
             serial: 0,
@@ -753,6 +874,13 @@ impl Layer {
         }
     }
     fn keys(&mut self, notes: &[u8; 128], p: &[f32; 256], sr: f32) {
+        let phrase_start = self.prior.iter().all(|&n| n == 0);
+        let shared_phase = self
+            .voices
+            .iter()
+            .find(|v| v.held)
+            .map(|v| v.lfo_phase)
+            .unwrap_or([0.; 4]);
         for n in 0..128 {
             if notes[n] > 0 && self.prior[n] == 0 {
                 self.serial = self.serial.wrapping_add(1);
@@ -783,6 +911,11 @@ impl Layer {
                             0.
                         };
                         v.on(n as u8, notes[n], self.age[n], p, sr, p[122] < 3.);
+                        for l in 0..4 {
+                            if p[73 + l] > 0.5 {
+                                v.lfo_phase[l] = if phrase_start { 0. } else { shared_phase[l] };
+                            }
+                        }
                     }
                 } else if v.held {
                     v.off();
@@ -815,11 +948,16 @@ impl Layer {
                 let v = &mut self.voices[i];
                 v.detune = 0.;
                 v.on(n as u8, notes[n], self.age[n], p, sr, false);
+                for l in 0..4 {
+                    if p[73 + l] > 0.5 {
+                        v.lfo_phase[l] = if phrase_start { 0. } else { shared_phase[l] };
+                    }
+                }
             }
         }
         for (i, v) in self.voices.iter_mut().enumerate() {
             v.pan = if p[209] > 0.5 {
-                (i as f32 / 15. * 2. - 1.) * p[29] / 127.
+                (i as f32 / (self.count - 1).max(1) as f32 * 2. - 1.) * p[29] / 127.
             } else {
                 (if v.age % 2 == 0 { -1. } else { 1. }) * p[29] / 127.
             };
@@ -1086,18 +1224,7 @@ impl Layer {
         let mut active = 0;
         for v in &mut self.voices[..self.count] {
             let u = v.sample(p, state, self.seq, sr, bpm);
-            let pan = (v.pan
-                + v.mod_previous[29] / 127.
-                    * if p[209] < 0.5 {
-                        if v.age % 2 == 0 {
-                            -1.
-                        } else {
-                            1.
-                        }
-                    } else {
-                        1.
-                    })
-            .clamp(-1., 1.);
+            let pan = (v.pan + v.mod_previous[29] / 127.).clamp(-1., 1.);
             out[0] += u * ((1. - pan) * 0.5).sqrt();
             out[1] += u * ((1. + pan) * 0.5).sqrt();
             if v.env[1].stage > 0 {
@@ -1133,7 +1260,7 @@ impl Processor {
         Self {
             shared,
             state: State::default(),
-            layers: [Layer::new(), Layer::new()],
+            layers: [Layer::new(), Layer::with_seed(16)],
             generation: u32::MAX,
             params: [[0.; 256]; 2],
             clock: crate::clock::Clock::shared(),
@@ -1239,7 +1366,7 @@ impl AudioProcessor for Processor {
                     // voice/filter and effect input gains. Keeping makeup here
                     // leaves effect drive and imported patch balances intact;
                     // the soft ceiling handles dense chords and stacked layers.
-                    (v * 4. * self.level).tanh()
+                    soft_ceiling(v * 4. * self.level)
                 } else {
                     0.
                 }
@@ -1271,6 +1398,277 @@ impl AudioProcessor for Processor {
 #[cfg(test)]
 mod behavior {
     use super::*;
+    #[test]
+    fn lfo_polarity_matches_trills_and_centered_vibrato() {
+        for shape in 0..5 {
+            let v: Vec<_> = (0..1000)
+                .map(|i| lfo_wave(i as f32 / 1000., shape, -0.4))
+                .collect();
+            if (1..=3).contains(&shape) {
+                assert!(v.iter().all(|&x| (0. ..=1.).contains(&x)));
+                assert!((v.iter().sum::<f32>() / 1000. - 0.5).abs() < 0.002);
+            } else if shape == 0 {
+                assert!((v.iter().sum::<f32>() / 1000.).abs() < 0.002);
+            } else {
+                assert!(v.iter().all(|&x| x == -0.4));
+            }
+        }
+    }
+    #[test]
+    fn layers_have_independent_oscillator_and_modulation_seeds() {
+        let a = Layer::new();
+        let b = Layer::with_seed(16);
+        for i in 0..16 {
+            assert_ne!(a.voices[i].phase, b.voices[i].phase);
+            assert_ne!(a.voices[i].rng, b.voices[i].rng);
+            assert_ne!(a.voices[i].lfo_phase, b.voices[i].lfo_phase);
+        }
+    }
+    #[test]
+    fn output_ceiling_preserves_quiet_signals_and_bounds_overloads() {
+        for i in -300..=300 {
+            let x = i as f32 / 1000.;
+            assert_eq!(soft_ceiling(x), x);
+        }
+        let mut previous = 0.;
+        for i in 0..10000 {
+            let x = i as f32 / 1000.;
+            let y = soft_ceiling(x);
+            assert!(y >= previous && y <= 1.);
+            assert_eq!(soft_ceiling(-x), -y);
+            previous = y;
+        }
+    }
+    #[test]
+    fn free_lfos_continue_through_silence() {
+        let state = State::default();
+        let p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        let mut v = Voice::new(0);
+        let phase = v.lfo_phase[0];
+        for _ in 0..4800 {
+            assert_eq!(v.sample(&p, &state, [0.; 4], 48000., 120.), 0.);
+        }
+        assert!((v.lfo_phase[0] - phase).abs() > 0.001);
+    }
+    #[test]
+    fn reference_pitch_is_exact_and_slop_is_slow_and_independent() {
+        let state = State::default();
+        let mut p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        let mut v = Voice::new(0);
+        v.on(69, 100, 1, &p, 48000., false);
+        for _ in 0..100 {
+            v.control(&p, &state, [0.; 4], 48000., 120.);
+            assert!((v.freq[0] - 440.).abs() < 0.001);
+        }
+        p[21] = 127.;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        let mut previous = v.freq;
+        let mut largest = 0.0f32;
+        for _ in 0..12000 {
+            v.control(&p, &state, [0.; 4], 48000., 120.);
+            for o in 0..2 {
+                largest = largest.max((1200. * (v.freq[o] / previous[o]).log2()).abs());
+                assert!((1200. * (v.freq[o] / 440.).log2()).abs() <= 12.01);
+            }
+            previous = v.freq;
+        }
+        assert!(largest < 0.02, "control-rate pitch jump: {largest} cents");
+        assert!((v.drift[0] - v.drift[1]).abs() > 0.01);
+    }
+    #[test]
+    fn direct_lfo_and_matrix_pitch_depths_use_different_resolutions() {
+        let state = State::default();
+        let mut p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        let mut v = Voice::new(0);
+        v.on(69, 100, 1, &p, 48000., false);
+        p[61] = 96.;
+        p[65] = 1.;
+        v.lfo[0] = 1.;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        assert!((v.freq[0] - 880.).abs() < 0.01);
+        p[61] = 0.;
+        p[65] = 0.;
+        p[77] = 21.;
+        p[85] = 151.;
+        p[93] = 1.;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        assert!((v.freq[0] - 880.).abs() < 0.01);
+        p[65] = 1.;
+        p[93] = 20.;
+        v.mod_previous = [0.; 256];
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        v.lfo[0] = 1.;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        assert!((v.freq[0] - 880.).abs() < 0.01);
+    }
+    #[test]
+    fn filter_key_tracking_at_64_follows_semitones() {
+        let state = State::default();
+        let mut p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        p[22] = 60.;
+        p[24] = 64.;
+        let mut v = Voice::new(0);
+        v.on(60, 100, 1, &p, 48000., false);
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        let hz = |g: f32| (g / (1. - g)).atan() * 48000. / PI;
+        let low = hz(v.filter.g);
+        v.note = 72;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        assert!((hz(v.filter.g) / low - 2.).abs() < 0.001);
+    }
+    #[test]
+    fn filter_audio_mod_uses_oscillator_one() {
+        let state = State::default();
+        for audible in [false, true] {
+            let mut p = std::array::from_fn(|i| state.patch.data[i] as f32);
+            p[22] = 60.;
+            p[25] = 127.;
+            p[4] = if audible { 1. } else { 0. };
+            p[5] = 1.;
+            let mut v = Voice::new(0);
+            v.on(60, 100, 1, &p, 48000., false);
+            let mut min = 1.0f32;
+            let mut max = 0.0f32;
+            for _ in 0..2000 {
+                v.sample(&p, &state, [0.; 4], 48000., 120.);
+                min = min.min(v.filter.g);
+                max = max.max(v.filter.g);
+            }
+            if audible {
+                assert!(max - min > 0.01);
+            } else {
+                assert!(max - min < 1e-6);
+            }
+        }
+    }
+    #[test]
+    fn auxiliary_repeat_does_not_insert_a_release_segment() {
+        let mut e = [Envelope::default(); 2];
+        let c = EnvCoeffs {
+            delay: 0.,
+            a: 0.2,
+            d: 0.5,
+            s: 0.25,
+            r: 0.999,
+        };
+        for v in &mut e {
+            v.on(c);
+        }
+        for _ in 0..1000 {
+            let a = e[0].tick(c, true);
+            let b = e[1].tick(EnvCoeffs { r: 0.1, ..c }, true);
+            assert!((a - b).abs() < 1e-6);
+        }
+        for v in &mut e {
+            v.off();
+        }
+        assert!(e[0].tick(c, true) > e[1].tick(EnvCoeffs { r: 0.1, ..c }, true));
+    }
+    #[test]
+    fn four_pole_filter_keeps_low_frequency_body() {
+        let mut f = Filter::default();
+        f.tune(200., 48000.);
+        let mut y = 0.;
+        for _ in 0..48000 {
+            y = f.tick(0.25, 0., true);
+        }
+        assert!((y - 0.25).abs() < 0.003, "DC gain: {y}");
+    }
+    #[test]
+    fn fixed_pan_is_balanced_with_eight_voices_and_key_sync_does_not_retrigger_a_chord() {
+        let state = State::default();
+        let mut p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        p[209] = 1.;
+        p[29] = 127.;
+        p[73] = 1.;
+        let mut l = Layer::new();
+        l.count = 8;
+        let mut notes = [0; 128];
+        notes[60] = 100;
+        l.keys(&notes, &p, 48000.);
+        l.voices[0].lfo_phase[0] = 0.37;
+        notes[64] = 100;
+        l.keys(&notes, &p, 48000.);
+        assert!((l.voices[1].lfo_phase[0] - 0.37).abs() < 1e-6);
+        assert!(l.voices[..8].iter().map(|v| v.pan).sum::<f32>().abs() < 1e-6);
+    }
+    #[test]
+    fn shaped_oscillators_remove_dc_and_reduce_triangle_aliases() {
+        for shape in 1..=4 {
+            for width in [10., 50., 90.] {
+                let mean = (0..8192)
+                    .map(|i| wave(i as f32 / 8192., 1. / 128., shape, width))
+                    .sum::<f32>()
+                    / 8192.;
+                assert!(mean.abs() < 0.005, "shape {shape} width {width}: DC {mean}");
+            }
+        }
+        let mut naive = [0.; 2];
+        let mut corrected = [0.; 2];
+        for i in 0..6144 {
+            let t = (i as f32 * 7000. / 48000.).fract();
+            let phase = TAU * i as f32 * 13000. / 48000.;
+            let raw = 1. - 4. * (t - 0.5).abs();
+            let clean = wave(t, 7000. / 48000., 3, 50.);
+            for (c, trig) in [phase.cos(), phase.sin()].into_iter().enumerate() {
+                naive[c] += raw * trig;
+                corrected[c] += clean * trig;
+            }
+        }
+        let power = |v: [f32; 2]| v[0] * v[0] + v[1] * v[1];
+        assert!(power(corrected) < power(naive) * 0.6);
+    }
+    #[test]
+    fn wet_chorus_has_no_undelayed_dry_copy() {
+        let mut fx = Effects::new();
+        let mut p = [0.; 256];
+        p[115] = 4.;
+        p[116] = 1.;
+        p[117] = 127.;
+        p[118] = 80.;
+        p[119] = 90.;
+        assert_eq!(fx.process([1.; 2], &p, 48000., 120., 60, [0.; 3]), [0.; 2]);
+    }
+    #[test]
+    fn reverb_has_a_diffuse_stereo_tail_and_decays() {
+        let mut fx = Effects::new();
+        let mut p = [0.; 256];
+        p[115] = 10.;
+        p[116] = 1.;
+        p[117] = 127.;
+        p[118] = 150.;
+        p[119] = 90.;
+        let mut early = 0.;
+        let mut late = 0.;
+        let mut lr = 0.;
+        let mut ll = 0.;
+        let mut rr = 0.;
+        for i in 0..144000 {
+            let y = fx.process(
+                if i == 0 { [1.; 2] } else { [0.; 2] },
+                &p,
+                48000.,
+                120.,
+                60,
+                [0.; 3],
+            );
+            assert!(y.iter().all(|v| v.is_finite() && v.abs() <= 1.));
+            if (4800..48000).contains(&i) {
+                early += y[0] * y[0] + y[1] * y[1];
+                lr += y[0] * y[1];
+                ll += y[0] * y[0];
+                rr += y[1] * y[1];
+            }
+            if i > 96000 {
+                late += y[0] * y[0] + y[1] * y[1];
+            }
+        }
+        assert!(
+            early > 0.01 && late < early * 0.2,
+            "tail energy {early} -> {late}"
+        );
+        assert!((lr / (ll * rr).sqrt()).abs() < 0.95);
+    }
     fn output(patch: super::super::patch::Patch, notes: &[usize], level: f32) -> Vec<f32> {
         use super::super::AtomicF32;
         use std::sync::{atomic::AtomicBool, Mutex};
