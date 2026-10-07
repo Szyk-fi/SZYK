@@ -6,9 +6,11 @@
 
 pub use crate::apps::hydra::params::{ch, exp, int, lin, tog, Def, Kind, Unit};
 
-pub const GROUPS: [&str; 8] = ["Main", "Charge", "Climb", "Full charge", "Blast", "Size", "Noise", "Crush & Echo"];
+pub const GROUPS: [&str; 9] = ["Main", "Charge", "Climb", "Full charge", "Blast", "Sub", "Size", "Noise", "Crush & Echo"];
 
 pub const WAVES: [&str; 8] = ["Square", "Saw", "Triangle", "Sine", "Pulse", "Noise", "Metal", "Reed"];
+pub const SUB_WAVES: [&str; 3] = ["Sine", "Triangle", "Square"];
+pub const SUB_OCTAVES: [&str; 2] = ["-1 oct", "-2 oct"];
 pub const FULL_MODES: [&str; 3] = ["Keep chirping", "Flutter", "Ripple"];
 
 macro_rules! params {
@@ -64,31 +66,35 @@ params! {
     Width, "Pulse width", 4, lin(0.05, 0.5, Unit::Percent), 0.25;
     Punch, "Punch", 4, lin(0.0, 1.0, Unit::Percent), 0.3;
 
-    PowerCurve, "Power curve", 5, exp(0.3, 3.0, Unit::None), 1.0;
-    PowerPitch, "Size: pitch", 5, lin(-2.0, 3.0, Unit::None), 0.5;
-    PowerLength, "Size: length", 5, lin(0.0, 6.0, Unit::None), 2.0;
-    PowerNoise, "Size: noise", 5, lin(0.0, 1.0, Unit::Percent), 0.5;
-    PowerVolume, "Size: volume", 5, lin(0.0, 1.0, Unit::Percent), 0.5;
+    PowerCurve, "Power curve", 6, exp(0.3, 3.0, Unit::None), 1.0;
+    PowerPitch, "Size: pitch", 6, lin(-2.0, 3.0, Unit::None), 0.5;
+    PowerLength, "Size: length", 6, lin(0.0, 6.0, Unit::None), 2.0;
+    PowerNoise, "Size: noise", 6, lin(0.0, 1.0, Unit::Percent), 0.5;
+    PowerVolume, "Size: volume", 6, lin(0.0, 1.0, Unit::Percent), 0.5;
 
-    Noise, "Noise", 6, lin(0.0, 1.0, Unit::Percent), 0.3;
-    NoiseDecay, "Noise decay", 6, exp(0.01, 3.0, Unit::Seconds), 0.12;
-    NoiseHP, "Noise low cut", 6, exp(20.0, 12000.0, Unit::Hz), 800.0;
-    NoiseLP, "Noise high cut", 6, exp(200.0, 16000.0, Unit::Hz), 9000.0;
-    NoiseSweep, "Noise sweep", 6, lin(-4.0, 4.0, Unit::None), -1.0;
+    Noise, "Noise", 7, lin(0.0, 1.0, Unit::Percent), 0.3;
+    NoiseDecay, "Noise decay", 7, exp(0.01, 3.0, Unit::Seconds), 0.12;
+    NoiseHP, "Noise low cut", 7, exp(20.0, 12000.0, Unit::Hz), 800.0;
+    NoiseLP, "Noise high cut", 7, exp(200.0, 16000.0, Unit::Hz), 9000.0;
+    NoiseSweep, "Noise sweep", 7, lin(-4.0, 4.0, Unit::None), -1.0;
 
-    Bits, "Bits", 7, int(3, 16), 16.0;
-    Rate, "Sample rate", 7, exp(1000.0, 48000.0, Unit::Hz), 48000.0;
-    Drive, "Drive", 7, lin(0.0, 1.0, Unit::Percent), 0.2;
-    EchoMix, "Echo", 7, lin(0.0, 1.0, Unit::Percent), 0.0;
-    EchoTime, "Echo time", 7, exp(40.0, 800.0, Unit::Ms), 220.0;
-    EchoFb, "Echo feedback", 7, lin(0.0, 0.9, Unit::Percent), 0.4;
+    Bits, "Bits", 8, int(3, 16), 16.0;
+    Rate, "Sample rate", 8, exp(1000.0, 48000.0, Unit::Hz), 48000.0;
+    Drive, "Drive", 8, lin(0.0, 1.0, Unit::Percent), 0.2;
+    EchoMix, "Echo", 8, lin(0.0, 1.0, Unit::Percent), 0.0;
+    EchoTime, "Echo time", 8, exp(40.0, 800.0, Unit::Ms), 220.0;
+    EchoFb, "Echo feedback", 8, lin(0.0, 0.9, Unit::Percent), 0.4;
     ChirpCount, "Chirps per charge", 2, int(0, 16), 0.0;
     ChirpGrow, "Chirps deepen", 2, lin(0.0, 1.0, Unit::Percent), 0.0;
     HoldTop, "Hold at top", 3, lin(0.0, 1.0, Unit::Percent), 0.0;
     RippleDepth, "Ripple depth", 3, lin(0.0, 1.0, Unit::Percent), 0.6;
     ChgLevel, "Charge level", 1, lin(0.0, 1.0, Unit::Percent), 1.0;
     ToneLevel, "Tone level", 4, lin(0.0, 1.0, Unit::Percent), 1.0;
-    NoiseSweepTime, "Noise sweep time", 6, lin(0.0, 3.0, Unit::Seconds), 0.0;
-    NoiseEnd, "Noise ends", 6, lin(0.0, 3.0, Unit::Seconds), 0.0;
-    NoiseSweepCurve, "Noise sweep curve", 6, exp(0.3, 4.0, Unit::None), 1.0;
+    NoiseSweepTime, "Noise sweep time", 7, lin(0.0, 3.0, Unit::Seconds), 0.0;
+    NoiseEnd, "Noise ends", 7, lin(0.0, 3.0, Unit::Seconds), 0.0;
+    NoiseSweepCurve, "Noise sweep curve", 7, exp(0.3, 4.0, Unit::None), 1.0;
+    SubCharge, "Sub (charge)", 5, lin(0.0, 1.0, Unit::Percent), 0.0;
+    SubBlast, "Sub (blast)", 5, lin(0.0, 1.0, Unit::Percent), 0.0;
+    SubWave, "Sub wave", 5, ch(&SUB_WAVES), 0.0;
+    SubOctave, "Sub octave", 5, ch(&SUB_OCTAVES), 0.0;
 }
