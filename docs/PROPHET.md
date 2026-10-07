@@ -1,114 +1,122 @@
-# Prophet
+# Portamax Rev2 software instrument
 
-A complete, independent Portamax instrument with a black metal-style panel,
-cream lettering, walnut side cheeks, red program display and live voice LEDs.
-The same 640×360 picture and controls run in the framebuffer and Slint hosts.
-The instrument is original Rust DSP inspired by the Prophet-5 signal path and
-PikoPiko Factory's Profree-4 concept. It is **virtual analogue**, not Profree-4
-firmware, a chip-level emulation, or an analogue circuit running on the MCU.
+This replaces the unmerged Prophet-5-inspired prototype with a native
+Prophet Rev2 patch architecture. Launcher: **Rev2**. App identifier: `prophet`; audio and mixer output: `Rev2`. It is working Rust synthesis, not a panel
+mockup, Sequential firmware, or a validated circuit emulation.
 
-## Signal path
+## Load your patches
 
-Each of up to eight voices has oscillator A (saw/pulse), oscillator B
-(saw/pulse/triangle), independently selectable and combinable waveforms,
-coarse tuning, B fine tuning, variable pulse width, A hard sync to B, noise,
-a resonant four-pole low-pass, filter ADSR and amplifier ADSR. Oscillator B
-can run at low frequency or ignore the keyboard for drones/cross-modulation.
+Place exported Rev2 `.syx` files in `patches/prophet-rev2/`, optionally in
+subdirectories. Open Rev2, choose **Programs → Rescan .syx**, then turn the
+Program row's value encoder. Single program dumps, edit-buffer dumps and
+concatenated banks are supported. The browser keeps every imported program;
+there is no 16-patch truncation. Invalid files are rejected atomically and
+reported on the screen. The included 16 starting points are original sounds;
+Sequential factory programs and paid sound sets are not distributed.
 
-Poly-Mod mixes the filter envelope and oscillator B, with independent routes
-to A frequency, A pulse width and filter cutoff. This is per voice, including
-audio-rate oscillator B modulation. Wheel Mod mixes the global LFO and noise
-and routes to both oscillators' frequency/pulse width and the filter. LFO
-shapes are triangle, saw, square, sine and sample-and-hold random.
+Both layers retain their names, parameters, gated tracks, polyphonic notes,
+velocities, and unused bytes. The codec checks manufacturer `01`, Rev2 model
+`2F`, commands `02`/`03`, 2046 raw bytes and 2339 packed MIDI bytes. NRPN
+numbers are translated separately; they are not raw SysEx offsets.
 
-Select four voices for the Profree-style allocation, five for the classic
-Prophet layout, or eight for extra chords. Mono and unison use last-note
-priority with return to a previously held note; poly mode steals released
-voices first, then the oldest held voice. Unison has adjustable detune.
-Glide, vintage pitch drift, keyboard filter tracking, velocity, stereo spread,
-pitch bend range, drive, stereo chorus and ping-pong delay are included.
+**Programs → Save slot → Write SysEx** writes a hardware-format program dump
+to `saves/prophet-rev2/U1-001.syx` through `U4-128.syx`. Rescan or restart to
+recall saved programs. Native round trips preserve all transmitted bytes.
+The hardware dump omits layer B's last two track-6 velocities; the editor
+marks those unavailable instead of silently discarding an edit.
 
-## Playing and editing
+## Play and edit
 
-- Pads play chromatic notes from C3, bottom-left upward, with an octave control.
-  MIDI keyboards and every sequencer's **Plays → Prophet** route work too.
-- F2 cycles **panel → presets → menu → panel**. Pads remain musical on the
-  panel/menu. On presets, pads 1–8 recall a sound and pads 9–16 select one of
-  the eight factory banks. MIDI remains playable in the browser.
-- The navigation encoder / D-pad up and down selects a control in the current
-  section; the value encoder / D-pad left and right edits it. R1 advances the
-  section; L1 advances the program. Encoder 1 press resets the selected control;
-  encoder 2 press toggles Compare.
-- Touch/click a section, switch or preset. Drag a dial up/down to edit it.
-  The miniature keyboard plays notes while touched; releasing stops the note.
-- Joystick X sweeps cutoff; joystick Y bends pitch. The left hand sensor adds
-  wheel modulation. MIDI CC1 and channel aftertouch affect wheel amount/cutoff.
-- **Compare** toggles between edits and the recalled sound. Editing while
-  comparing first restores your edited sound. **Init** recalls a plain saw patch.
-- Choose U01–U16 beside **Save**, then save an edited patch. Only that user
-  slot is overwritten; factory patches are immutable. Files are versioned JSON
-  in `saves/prophet/user-01.json` through `user-16.json`. Restarting reloads
-  the saved bank. An invalid/version-incompatible file is not applied.
+- Pads and the device note bus play notes with velocity. The screen has a
+  clickable keyboard; click the same key again to release it.
+- L1 changes the edited layer. R1 moves through 16 sections. The first encoder
+  selects a row; the second changes its value. Click a selected row to edit it.
+- F2 opens Programs. F3 starts/stops the polyphonic sequences. Gated sequences
+  run from held notes. Arpeggiation takes precedence over sequencing.
+- Clicking the sequence-page strip advances the 16-step page and velocity
+  track. All 64 steps and six note/velocity tracks are accessible per layer.
+- Programs offers Compare, initialize, copy/swap layers and copy/swap poly
+  sequences. Performance offers hold, transpose, 8/16 voices, mono, device
+  clock following, step recording, master tuning and alternative tunings.
+- To receive directly from a controller/hardware Rev2, use **Performance →
+  Scan MIDI inputs → Direct MIDI input**. The default is Off; ordinary device
+  note routing continues to work without opening a second MIDI port.
+- Direct MIDI receives notes, velocity, bend, wheel, pressure, breath, foot,
+  expression, sustain, program/bank selection, CC parameters, NRPN (including
+  increment/decrement and null selection), clock/start/stop and Rev2 patch
+  dumps. Multi mode routes the base channel to A and the next channel to B.
+  For predictable multi-mode use, select a base MIDI channel rather than All.
+- Saving exports a file. No program is automatically transmitted back to or
+  written into your hardware synthesizer.
 
-## Factory banks (64 original patches)
+## Implemented playback architecture
 
-| Bank | Sounds |
+| Area | Software behavior |
 |---|---|
-| Brass | Walnut Brass, Soft Horns, Fanfare Five, Muted Trumpet, Toto Sunrise, Low Brass, Golden Stabs, Cinema Horns |
-| Strings | Velvet Strings, Slow Orchestra, Silk Ensemble, Solstice Pad, Warm Tape, Night Choir, Fifth Dimension, Frozen Glass |
-| Bass | Roundwood Bass, Rubber Pulse, Octave Bass, Low Voltage, Resonant Thumb, Unison Weight, Dark Triangle, Acid Timber |
-| Leads | Ribbon Lead, Sync Skyline, Pulse Solo, Fifth Avenue, Portamento Gold, Reedy Mono, Wide Unison, Singing Saw |
-| Keys | Wooden Tines, Copper Clav, Analog Harp, Short Circuit, Soft Mallet, Glass Keys, Midnight Piano, Rubber Marimba |
-| Poly-Mod | Poly Bell, Crossmod Chime, Metal Bloom, Formant Wire, B Low Drone, Circuit Gong, Sync Brass, Broken Radio |
-| Motion | PWM Clouds, Lighthouse, Random Tide, Pulsing Amber, Slow Sweep, Square Orbit, Noise Horizon, Afterglow |
-| Essentials | Classic Saw, Twin Squares, Triangle Reed, Seventies Organ, Noise Snare, Analog Kick, Ocean Wind, Init Patch |
+| Voices/layers | 8/16 voice allocation; A, stack and split; independent layer parameters/FX |
+| Oscillators | Two DCO-style oscillators; off/saw/saw+triangle/triangle/pulse; shape modulation; fine/coarse tuning; sync; sub; noise; slop; key/reset switches |
+| Filter | Resonant 2/4-pole low-pass, envelope, keyboard tracking, oscillator-2 audio modulation |
+| Envelopes | Three delayed ADSRs, velocity amounts, bipolar filter/aux amounts, auxiliary looping/destination |
+| LFOs | Four per voice; five waveforms; clock/key sync; independent rate, amount, destination |
+| Modulation | Eight slots; all 23 source IDs and 52 destination IDs; fixed controller routes; amount-to-amount routing |
+| Effects | Separate per-layer mono/stereo/BBD delay, chorus, three phasers, two flangers, reverb, ring mod, distortion, high-pass; mix/parameters/synced delay |
+| Performance | Unison voice counts/detune; low/high/last priority and retrigger modes; glide modes; pan/spread; hold; transpose; master/program volume |
+| Arpeggiator | Five orders, three octave ranges, repeats, relatch, clock divisions and swing |
+| Gated sequencer | Four 16-step tracks, independent reset lengths, rest, five modes, track-2/4 slew |
+| Poly sequencer | Two 64-step sequences; six notes/velocities per step; ties/rests; transposition; step recording/editing |
+| Tuning | Equal temperament plus the guide's 16 alternative pitch tables; master coarse/fine |
+| Buses | Existing notes, mixer, audio and eight modulation inputs per layer |
 
-These are newly designed patches, not copied Sequential factory programs.
-Each patch contains all 55 controls and can be exported by the optional demo
-test below. A factory JSON can be edited, placed into a user-slot filename,
-and loaded at the next startup. Parameter names must match and remain in range.
+## Exactness and remaining gaps
 
-## Integration
+**This is not yet an all-features-to-a-T Rev2 clone.** Native patch import is
+lossless, but lossless import does not prove identical playback. In particular:
 
-Copy `src/apps/prophet/` and `apps/prophet/` into a current Portamax checkout,
-then rebuild. `create()` and the manifest are auto-discovered by `build.rs`;
-no central app list, synthesis engine, dependency or launcher edits are needed.
-The manifest declares its audio output, note input and every modulation input.
-**Prophet** appears in the launcher, mixer, effect Source pickers, modulation
-pickers and sequencer Plays pickers, even before its screen is opened.
+- Chord-memory storage is undocumented in the raw dump mappings consulted.
+  Those bytes survive import/export, but imported chord voicings are not
+  decoded. Chord mode currently uses ordinary unison and displays a warning.
+  A hardware dump before/after storing a known six-note chord is needed to
+  establish the layout rather than guessing reserved offsets.
+- The oscillator shaping, filter, envelope/LFO curves, modulation depths and
+  digital effects are original software models. They have not been calibrated
+  against real Rev2 recordings. Sync/audio-rate modulation can alias.
+- Direct MIDI controllers are shared between layers; independent per-channel
+  controller state in Multi mode is not implemented. NRPN name edits,
+  per-layer sequence start control, MIDI SysEx request/reply/librarian output,
+  Prophet '08 patch conversion and custom MIDI tuning dumps remain unimplemented.
+- Clock following uses the device tempo and transport; exact shared beat-phase
+  alignment and all hardware slave/pedal modes remain to be completed.
+- Step recording works; the hardware's complete real-time recording/overdub
+  workflow, tap tempo, pedal polarity/response curves, local-control modes,
+  calibration and physical USB/DIN/audio/sequence jacks are not emulated.
+- This branch does not migrate the older prototype's JSON presets. That
+  prototype was not merged into main. Its archived code/files remain available.
 
-Audio uses fixed voice/state arrays and preallocated effects buffers. The
-callback reads the keyboard snapshot and publishes audio with `try_lock`;
-it keeps the previous snapshot if the UI is busy. Disk access and JSON parsing
-are on the UI side. No callback allocations, blocking locks or file I/O.
+These gaps are explicit because the requested merge is conditional on finishing
+full feature parity. The working patch player is reviewable, but should not be
+represented as the completed exact clone.
 
-## Validation and limits
+## Validation
 
-`cargo test --bin portamax-sim apps::prophet` exercises sound/release, all
-64 presets at 32/44.1/48/96 kHz, voice stealing, mono priority, sound-changing
-sync/Poly-Mod/PWM/filter controls, patch validation, save/recall, Compare,
-touch/MIDI/pad merging, mod/mixer/audio buses and UI lock contention.
+`cargo test --offline --bin portamax-sim apps::prophet` covers malformed and
+concatenated dumps, realtime interleaving, independent packing vectors,
+byte-for-byte export, save/recall, both-layer playback, pads/MIDI/release,
+all original starting points at 8–192 kHz, oscillator/filter changes, four
+LFOs/eight modulation slots, all effects, auxiliary looping, sequencing,
+ties, gated slew, polyphony/priority, tunings and lock contention.
+
+The optional external-reference test was run against Edisyn's
+`SequentialProphetRev2.init` dump: both names and layers import, the exact
+message exports unchanged, and the patch produces audio. The external file is
+not committed. Run it with:
 
 ```sh
-PORTAMAX_PROPHET_EXPORT=/absolute/output/path cargo test --bin portamax-sim \
-  export_previews_and_demo -- --ignored
+REV2_REFERENCE_SYX=/absolute/path/init.syx cargo test --offline \
+  --bin portamax-sim reference_dump_imports_roundtrips_and_plays -- --ignored
 ```
 
-This writes six real panel PNGs, all factory JSONs and a 32-second WAV demo.
+## References
 
-Oscillators use PolyBLEP for the saw/pulse edges and the synth runs at 2× the
-device sample rate. The filter is a feedback-solved TPT four-stage low-pass;
-resonance is capped below self-oscillation. The triangle, hard-sync edges and
-strong FM may alias at high pitches; the decimator is a two-pole low-pass,
-not a brick-wall resampler. This is not an exact SSM2040/CEM3320 model, and
-chorus/delay are extensions. Desktop validation does not prove an STM32N6 CPU
-budget; profile the voice count and effects on the eventual hardware.
-
-Behaviour references:
-
-- [Sequential Prophet-5 user guide](https://sequential.com/wp-content/uploads/2021/02/Prophet-5-Users-Guide-1.3.pdf)
-- [PikoPiko Factory Profree-4 project](https://www.kickstarter.com/projects/barbaraasuka/technical-release-project-for-profree-4-hardware-synthesizer)
-
-No downloadable, licensed Profree-4 audio engine was found in the checked
-public sources. If one becomes available, it can be assessed separately;
-this app does not claim to contain that source.
+- [Sequential Rev2 guide 1.2.4](https://sequential.com/wp-content/uploads/2021/02/Prophet-Rev2-Users-Guide-1.2.4.pdf), especially Appendices A–E.
+- [Edisyn Rev2 editor and raw format notes](https://github.com/eclab/edisyn/blob/master/edisyn/synth/sequentialprophetrev2/SequentialProphetRev2.java), Wim Verheyen, Apache-2.0. Used to cross-check wire facts, not as the sound engine.
+- [Independent Rev2 parameter map](https://github.com/shimpe/sc-prophet-rev2/blob/master/Classes/ScProphetRev2.sc).

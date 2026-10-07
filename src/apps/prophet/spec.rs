@@ -1,203 +1,1680 @@
-use crate::apps::mi_kit::Spec;
-
-pub const N: usize = 55;
-pub const A_TUNE: usize = 0;
-pub const A_SAW: usize = 1;
-pub const A_PULSE: usize = 2;
-pub const A_PW: usize = 3;
-pub const SYNC: usize = 4;
-pub const B_TUNE: usize = 5;
-pub const B_FINE: usize = 6;
-pub const B_SAW: usize = 7;
-pub const B_PULSE: usize = 8;
-pub const B_TRI: usize = 9;
-pub const B_PW: usize = 10;
-pub const B_LOW: usize = 11;
-pub const B_KEY: usize = 12;
-pub const MIX_A: usize = 13;
-pub const MIX_B: usize = 14;
-pub const NOISE: usize = 15;
-pub const CUTOFF: usize = 16;
-pub const RES: usize = 17;
-pub const ENV_AMT: usize = 18;
-pub const KEYTRACK: usize = 19;
-pub const DRIVE: usize = 20;
-pub const FA: usize = 21;
-pub const FD: usize = 22;
-pub const FS: usize = 23;
-pub const FR: usize = 24;
-pub const AA: usize = 25;
-pub const AD: usize = 26;
-pub const AS: usize = 27;
-pub const AR: usize = 28;
-pub const LFO_RATE: usize = 29;
-pub const LFO_SHAPE: usize = 30;
-pub const WHEEL_NOISE: usize = 31;
-pub const W_FREQ: usize = 32;
-pub const W_PW: usize = 33;
-pub const W_FILTER: usize = 34;
-pub const MOD_AMOUNT: usize = 35;
-pub const POLY_ENV: usize = 36;
-pub const POLY_B: usize = 37;
-pub const P_FREQ: usize = 38;
-pub const P_PW: usize = 39;
-pub const P_FILTER: usize = 40;
-pub const MODE: usize = 41;
-pub const VOICES: usize = 42;
-pub const UNISON_DETUNE: usize = 43;
-pub const GLIDE: usize = 44;
-pub const VINTAGE: usize = 45;
-pub const VELOCITY: usize = 46;
-pub const SPREAD: usize = 47;
-pub const VOLUME: usize = 48;
-pub const CHORUS: usize = 49;
-pub const DELAY_TIME: usize = 50;
-pub const DELAY_FB: usize = 51;
-pub const DELAY_MIX: usize = 52;
-pub const OCTAVE: usize = 53;
-pub const BEND_RANGE: usize = 54;
-
-pub fn seconds(x: f32) -> f32 {
-    0.001 * 8000.0f32.powf(x.clamp(0.0, 1.0))
+//! Wire offsets are raw SysEx offsets, never NRPN numbers. Sources: Sequential
+//! Rev2 guide 1.2.4 and independently documented Edisyn raw-format table.
+#[derive(Clone, Copy)]
+pub struct Param {
+    pub offset: usize,
+    pub name: &'static str,
+    pub max: u8,
+    pub choices: &'static [&'static str],
+    pub nrpn: u16,
 }
-pub fn time_norm(t: f32) -> f32 {
-    (t.max(0.001) / 0.001).ln() / 8000.0f32.ln()
+pub const SHAPES: &[&str] = &["Off", "Saw", "Saw + triangle", "Triangle", "Pulse"];
+pub const GLIDE: &[&str] = &[
+    "Fixed rate",
+    "Fixed rate auto",
+    "Fixed time",
+    "Fixed time auto",
+];
+pub const POLES: &[&str] = &["2 pole", "4 pole"];
+pub const LFO_SHAPES: &[&str] = &["Triangle", "Saw", "Reverse saw", "Square", "Random"];
+pub const FX: &[&str] = &[
+    "Off",
+    "Mono delay",
+    "Stereo delay",
+    "BBD delay",
+    "Chorus",
+    "Phaser high",
+    "Phaser low",
+    "Phaser master",
+    "Flanger 1",
+    "Flanger 2",
+    "Reverb",
+    "Ring mod",
+    "Distortion",
+    "High pass",
+];
+pub const UNISON: &[&str] = &[
+    "1 voice",
+    "2 voices",
+    "3 voices",
+    "4 voices",
+    "5 voices",
+    "6 voices",
+    "7 voices",
+    "8 voices",
+    "9 voices",
+    "10 voices",
+    "11 voices",
+    "12 voices",
+    "13 voices",
+    "14 voices",
+    "15 voices",
+    "16 voices",
+    "Chord memory",
+];
+pub const KEY_MODES: &[&str] = &[
+    "Low",
+    "High",
+    "Last",
+    "Low retrigger",
+    "High retrigger",
+    "Last retrigger",
+];
+pub const DIVIDES: &[&str] = &[
+    "1/2",
+    "1/4",
+    "1/8",
+    "1/8 half swing",
+    "1/8 full swing",
+    "1/8 triplet",
+    "1/16",
+    "1/16 half swing",
+    "1/16 full swing",
+    "1/16 triplet",
+    "1/32",
+    "1/32 triplet",
+    "1/64 triplet",
+];
+pub const ARP_MODES: &[&str] = &["Up", "Down", "Up + down", "Random", "Assign"];
+pub const GATE_MODES: &[&str] = &["Normal", "No reset", "No gate", "No gate/reset", "Key step"];
+pub const SEQ_TYPES: &[&str] = &["Gated", "Poly"];
+pub const PAN_MODES: &[&str] = &["Alternate", "Fixed"];
+pub const LAYER_MODES: &[&str] = &["A", "Split A/B", "Stack A/B"];
+pub const SOURCES: &[&str] = &[
+    "Off",
+    "Seq 1",
+    "Seq 2",
+    "Seq 3",
+    "Seq 4",
+    "LFO 1",
+    "LFO 2",
+    "LFO 3",
+    "LFO 4",
+    "Env LPF",
+    "Env VCA",
+    "Env 3",
+    "Pitch Bend",
+    "Mod Wheel",
+    "Pressure",
+    "Breath",
+    "Foot Pedal",
+    "Expression Pedal",
+    "Velocity",
+    "Note Number",
+    "Noise",
+    "DC",
+    "Audio Out",
+];
+pub const DEST: &[&str] = &[
+    "Off",
+    "Osc 1 Freq",
+    "Osc 2 Freq",
+    "Osc All Freq",
+    "Osc Mix",
+    "Noise Level",
+    "Sub Osc Level",
+    "Osc 1 Shape",
+    "Osc 2 Shape",
+    "Osc All Shape",
+    "Filter Cutoff",
+    "Filter Resonance",
+    "Filter Audio Mod",
+    "VCA Level",
+    "Pan Spread",
+    "LFO 1 Freq",
+    "LFO 2 Freq",
+    "LFO 3 Freq",
+    "LFO 4 Freq",
+    "LFO All Freq",
+    "LFO 1 Amount",
+    "LFO 2 Amount",
+    "LFO 3 Amount",
+    "LFO 4 Amount",
+    "LFO All Amount",
+    "Filter Env Amount",
+    "Amp Env Amount",
+    "Env 3 Amount",
+    "Env All Amount",
+    "LPF Attack",
+    "VCA Attack",
+    "Env 3 Attack",
+    "Env All Attack",
+    "LPF Decay",
+    "VCA Decay",
+    "Env 3 Decay",
+    "Env All Decay",
+    "LPF Release",
+    "VCA Release",
+    "Env 3 Release",
+    "Env All Release",
+    "Mod 1 Amount",
+    "Mod 2 Amount",
+    "Mod 3 Amount",
+    "Mod 4 Amount",
+    "Mod 5 Amount",
+    "Mod 6 Amount",
+    "Mod 7 Amount",
+    "Mod 8 Amount",
+    "Osc Slop",
+    "FX Mix",
+    "FX Param 1",
+    "FX Param 2",
+];
+pub const DEST_SLEW: &[&str] = &[
+    "Off",
+    "Osc 1 Freq",
+    "Osc 2 Freq",
+    "Osc All Freq",
+    "Osc Mix",
+    "Noise Level",
+    "Sub Osc Level",
+    "Osc 1 Shape",
+    "Osc 2 Shape",
+    "Osc All Shape",
+    "Filter Cutoff",
+    "Filter Resonance",
+    "Filter Audio Mod",
+    "VCA Level",
+    "Pan Spread",
+    "LFO 1 Freq",
+    "LFO 2 Freq",
+    "LFO 3 Freq",
+    "LFO 4 Freq",
+    "LFO All Freq",
+    "LFO 1 Amount",
+    "LFO 2 Amount",
+    "LFO 3 Amount",
+    "LFO 4 Amount",
+    "LFO All Amount",
+    "Filter Env Amount",
+    "Amp Env Amount",
+    "Env 3 Amount",
+    "Env All Amount",
+    "LPF Attack",
+    "VCA Attack",
+    "Env 3 Attack",
+    "Env All Attack",
+    "LPF Decay",
+    "VCA Decay",
+    "Env 3 Decay",
+    "Env All Decay",
+    "LPF Release",
+    "VCA Release",
+    "Env 3 Release",
+    "Env All Release",
+    "Mod 1 Amount",
+    "Mod 2 Amount",
+    "Mod 3 Amount",
+    "Mod 4 Amount",
+    "Mod 5 Amount",
+    "Mod 6 Amount",
+    "Mod 7 Amount",
+    "Mod 8 Amount",
+    "Osc Slop",
+    "FX Mix",
+    "FX Param 1",
+    "FX Param 2",
+    "Seq Slew",
+];
+pub const PARAMS: &[Param] = &[
+    Param {
+        offset: 0,
+        name: "Osc 1 Frequency",
+        max: 120,
+        choices: &[],
+        nrpn: 0,
+    },
+    Param {
+        offset: 1,
+        name: "Osc 2 Frequency",
+        max: 120,
+        choices: &[],
+        nrpn: 5,
+    },
+    Param {
+        offset: 2,
+        name: "Osc 1 Fine",
+        max: 100,
+        choices: &[],
+        nrpn: 1,
+    },
+    Param {
+        offset: 3,
+        name: "Osc 2 Fine",
+        max: 100,
+        choices: &[],
+        nrpn: 6,
+    },
+    Param {
+        offset: 4,
+        name: "Osc 1 Shape",
+        max: 4,
+        choices: SHAPES,
+        nrpn: 2,
+    },
+    Param {
+        offset: 5,
+        name: "Osc 2 Shape",
+        max: 4,
+        choices: SHAPES,
+        nrpn: 7,
+    },
+    Param {
+        offset: 6,
+        name: "Osc 1 Shape Mod",
+        max: 99,
+        choices: &[],
+        nrpn: 102,
+    },
+    Param {
+        offset: 7,
+        name: "Osc 2 Shape Mod",
+        max: 99,
+        choices: &[],
+        nrpn: 103,
+    },
+    Param {
+        offset: 8,
+        name: "OSC1 Glide",
+        max: 127,
+        choices: &[],
+        nrpn: 3,
+    },
+    Param {
+        offset: 9,
+        name: "OSC2 Glide",
+        max: 127,
+        choices: &[],
+        nrpn: 8,
+    },
+    Param {
+        offset: 10,
+        name: "OSC1 Key on/off",
+        max: 1,
+        choices: &[],
+        nrpn: 4,
+    },
+    Param {
+        offset: 11,
+        name: "OSC2 Key on/off",
+        max: 1,
+        choices: &[],
+        nrpn: 9,
+    },
+    Param {
+        offset: 12,
+        name: "OSC1 Note Reset",
+        max: 1,
+        choices: &[],
+        nrpn: 99,
+    },
+    Param {
+        offset: 13,
+        name: "OSC2 Note Reset",
+        max: 1,
+        choices: &[],
+        nrpn: 104,
+    },
+    Param {
+        offset: 14,
+        name: "OSC Mix",
+        max: 127,
+        choices: &[],
+        nrpn: 13,
+    },
+    Param {
+        offset: 15,
+        name: "SubOct Level",
+        max: 127,
+        choices: &[],
+        nrpn: 110,
+    },
+    Param {
+        offset: 16,
+        name: "Noise Level",
+        max: 127,
+        choices: &[],
+        nrpn: 14,
+    },
+    Param {
+        offset: 17,
+        name: "Sync",
+        max: 1,
+        choices: &[],
+        nrpn: 10,
+    },
+    Param {
+        offset: 18,
+        name: "Glide Mode",
+        max: 3,
+        choices: GLIDE,
+        nrpn: 11,
+    },
+    Param {
+        offset: 19,
+        name: "Glide on/off",
+        max: 1,
+        choices: &[],
+        nrpn: 111,
+    },
+    Param {
+        offset: 20,
+        name: "Pitch Bend Range",
+        max: 12,
+        choices: &[],
+        nrpn: 113,
+    },
+    Param {
+        offset: 21,
+        name: "OSC Slop",
+        max: 127,
+        choices: &[],
+        nrpn: 12,
+    },
+    Param {
+        offset: 22,
+        name: "Filter Cutoff",
+        max: 164,
+        choices: &[],
+        nrpn: 15,
+    },
+    Param {
+        offset: 23,
+        name: "Filter Resonance",
+        max: 127,
+        choices: &[],
+        nrpn: 16,
+    },
+    Param {
+        offset: 24,
+        name: "Filter Key Amount",
+        max: 127,
+        choices: &[],
+        nrpn: 17,
+    },
+    Param {
+        offset: 25,
+        name: "Filter Audio Mod",
+        max: 127,
+        choices: &[],
+        nrpn: 18,
+    },
+    Param {
+        offset: 26,
+        name: "Filter Poles",
+        max: 1,
+        choices: POLES,
+        nrpn: 19,
+    },
+    Param {
+        offset: 27,
+        name: "VCA Level",
+        max: 127,
+        choices: &[],
+        nrpn: 98,
+    },
+    Param {
+        offset: 28,
+        name: "Program Volume",
+        max: 127,
+        choices: &[],
+        nrpn: 29,
+    },
+    Param {
+        offset: 29,
+        name: "Pan Spread",
+        max: 127,
+        choices: &[],
+        nrpn: 28,
+    },
+    Param {
+        offset: 30,
+        name: "Env3 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 57,
+    },
+    Param {
+        offset: 31,
+        name: "Env3 Repeat",
+        max: 1,
+        choices: &[],
+        nrpn: 97,
+    },
+    Param {
+        offset: 32,
+        name: "EnvF Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 20,
+    },
+    Param {
+        offset: 33,
+        name: "EnvA Amount",
+        max: 127,
+        choices: &[],
+        nrpn: 30,
+    },
+    Param {
+        offset: 34,
+        name: "Env3 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 58,
+    },
+    Param {
+        offset: 35,
+        name: "EnvF Velocity",
+        max: 127,
+        choices: &[],
+        nrpn: 21,
+    },
+    Param {
+        offset: 36,
+        name: "EnvA Velocity",
+        max: 127,
+        choices: &[],
+        nrpn: 31,
+    },
+    Param {
+        offset: 37,
+        name: "Env3 Velocity",
+        max: 127,
+        choices: &[],
+        nrpn: 59,
+    },
+    Param {
+        offset: 38,
+        name: "EnvF Delay",
+        max: 127,
+        choices: &[],
+        nrpn: 22,
+    },
+    Param {
+        offset: 39,
+        name: "EnvA Delay",
+        max: 127,
+        choices: &[],
+        nrpn: 32,
+    },
+    Param {
+        offset: 40,
+        name: "Env3 Delay",
+        max: 127,
+        choices: &[],
+        nrpn: 60,
+    },
+    Param {
+        offset: 41,
+        name: "EnvF Attack",
+        max: 127,
+        choices: &[],
+        nrpn: 23,
+    },
+    Param {
+        offset: 42,
+        name: "EnvA Attack",
+        max: 127,
+        choices: &[],
+        nrpn: 33,
+    },
+    Param {
+        offset: 43,
+        name: "Env3 Attack",
+        max: 127,
+        choices: &[],
+        nrpn: 61,
+    },
+    Param {
+        offset: 44,
+        name: "EnvF Decay",
+        max: 127,
+        choices: &[],
+        nrpn: 24,
+    },
+    Param {
+        offset: 45,
+        name: "EnvA Decay",
+        max: 127,
+        choices: &[],
+        nrpn: 34,
+    },
+    Param {
+        offset: 46,
+        name: "Env3 Decay",
+        max: 127,
+        choices: &[],
+        nrpn: 62,
+    },
+    Param {
+        offset: 47,
+        name: "EnvF Sustain",
+        max: 127,
+        choices: &[],
+        nrpn: 25,
+    },
+    Param {
+        offset: 48,
+        name: "EnvA Sustain",
+        max: 127,
+        choices: &[],
+        nrpn: 35,
+    },
+    Param {
+        offset: 49,
+        name: "Env3 Sustain",
+        max: 127,
+        choices: &[],
+        nrpn: 63,
+    },
+    Param {
+        offset: 50,
+        name: "EnvF Release",
+        max: 127,
+        choices: &[],
+        nrpn: 26,
+    },
+    Param {
+        offset: 51,
+        name: "EnvA Release",
+        max: 127,
+        choices: &[],
+        nrpn: 36,
+    },
+    Param {
+        offset: 52,
+        name: "Env3 Release",
+        max: 127,
+        choices: &[],
+        nrpn: 64,
+    },
+    Param {
+        offset: 53,
+        name: "LFO1 Rate",
+        max: 150,
+        choices: &[],
+        nrpn: 37,
+    },
+    Param {
+        offset: 54,
+        name: "LFO2 Rate",
+        max: 150,
+        choices: &[],
+        nrpn: 42,
+    },
+    Param {
+        offset: 55,
+        name: "LFO3 Rate",
+        max: 150,
+        choices: &[],
+        nrpn: 47,
+    },
+    Param {
+        offset: 56,
+        name: "LFO4 Rate",
+        max: 150,
+        choices: &[],
+        nrpn: 52,
+    },
+    Param {
+        offset: 57,
+        name: "LFO1 Shape",
+        max: 4,
+        choices: LFO_SHAPES,
+        nrpn: 38,
+    },
+    Param {
+        offset: 58,
+        name: "LFO2 Shape",
+        max: 4,
+        choices: LFO_SHAPES,
+        nrpn: 43,
+    },
+    Param {
+        offset: 59,
+        name: "LFO3 Shape",
+        max: 4,
+        choices: LFO_SHAPES,
+        nrpn: 48,
+    },
+    Param {
+        offset: 60,
+        name: "LFO4 Shape",
+        max: 4,
+        choices: LFO_SHAPES,
+        nrpn: 53,
+    },
+    Param {
+        offset: 61,
+        name: "LFO1 Amount",
+        max: 127,
+        choices: &[],
+        nrpn: 39,
+    },
+    Param {
+        offset: 62,
+        name: "LFO2 Amount",
+        max: 127,
+        choices: &[],
+        nrpn: 44,
+    },
+    Param {
+        offset: 63,
+        name: "LFO3 Amount",
+        max: 127,
+        choices: &[],
+        nrpn: 49,
+    },
+    Param {
+        offset: 64,
+        name: "LFO4 Amount",
+        max: 127,
+        choices: &[],
+        nrpn: 54,
+    },
+    Param {
+        offset: 65,
+        name: "LFO1 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 40,
+    },
+    Param {
+        offset: 66,
+        name: "LFO2 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 45,
+    },
+    Param {
+        offset: 67,
+        name: "LFO3 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 50,
+    },
+    Param {
+        offset: 68,
+        name: "LFO4 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 55,
+    },
+    Param {
+        offset: 69,
+        name: "LFO1 ClkSync",
+        max: 1,
+        choices: &[],
+        nrpn: 41,
+    },
+    Param {
+        offset: 70,
+        name: "LFO2 ClkSync",
+        max: 1,
+        choices: &[],
+        nrpn: 46,
+    },
+    Param {
+        offset: 71,
+        name: "LFO3 ClkSync",
+        max: 1,
+        choices: &[],
+        nrpn: 51,
+    },
+    Param {
+        offset: 72,
+        name: "LFO4 ClkSync",
+        max: 1,
+        choices: &[],
+        nrpn: 56,
+    },
+    Param {
+        offset: 73,
+        name: "LFO1 KeySync",
+        max: 1,
+        choices: &[],
+        nrpn: 105,
+    },
+    Param {
+        offset: 74,
+        name: "LFO2 KeySync",
+        max: 1,
+        choices: &[],
+        nrpn: 106,
+    },
+    Param {
+        offset: 75,
+        name: "LFO3 KeySync",
+        max: 1,
+        choices: &[],
+        nrpn: 107,
+    },
+    Param {
+        offset: 76,
+        name: "LFO4 KeySync",
+        max: 1,
+        choices: &[],
+        nrpn: 108,
+    },
+    Param {
+        offset: 77,
+        name: "Mod1 Source",
+        max: 22,
+        choices: SOURCES,
+        nrpn: 65,
+    },
+    Param {
+        offset: 78,
+        name: "Mod2 Source",
+        max: 22,
+        choices: SOURCES,
+        nrpn: 68,
+    },
+    Param {
+        offset: 79,
+        name: "Mod3 Source",
+        max: 22,
+        choices: SOURCES,
+        nrpn: 71,
+    },
+    Param {
+        offset: 80,
+        name: "Mod4 Source",
+        max: 22,
+        choices: SOURCES,
+        nrpn: 74,
+    },
+    Param {
+        offset: 81,
+        name: "Mod5 Source",
+        max: 22,
+        choices: SOURCES,
+        nrpn: 77,
+    },
+    Param {
+        offset: 82,
+        name: "Mod6 Source",
+        max: 22,
+        choices: SOURCES,
+        nrpn: 80,
+    },
+    Param {
+        offset: 83,
+        name: "Mod7 Source",
+        max: 22,
+        choices: SOURCES,
+        nrpn: 83,
+    },
+    Param {
+        offset: 84,
+        name: "Mod8 Source",
+        max: 22,
+        choices: SOURCES,
+        nrpn: 86,
+    },
+    Param {
+        offset: 85,
+        name: "Mod1 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 66,
+    },
+    Param {
+        offset: 86,
+        name: "Mod2 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 69,
+    },
+    Param {
+        offset: 87,
+        name: "Mod3 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 72,
+    },
+    Param {
+        offset: 88,
+        name: "Mod4 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 75,
+    },
+    Param {
+        offset: 89,
+        name: "Mod5 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 78,
+    },
+    Param {
+        offset: 90,
+        name: "Mod6 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 81,
+    },
+    Param {
+        offset: 91,
+        name: "Mod7 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 84,
+    },
+    Param {
+        offset: 92,
+        name: "Mod8 Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 87,
+    },
+    Param {
+        offset: 93,
+        name: "Mod1 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 67,
+    },
+    Param {
+        offset: 94,
+        name: "Mod2 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 70,
+    },
+    Param {
+        offset: 95,
+        name: "Mod3 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 73,
+    },
+    Param {
+        offset: 96,
+        name: "Mod4 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 76,
+    },
+    Param {
+        offset: 97,
+        name: "Mod5 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 79,
+    },
+    Param {
+        offset: 98,
+        name: "Mod6 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 82,
+    },
+    Param {
+        offset: 99,
+        name: "Mod7 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 85,
+    },
+    Param {
+        offset: 100,
+        name: "Mod8 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 88,
+    },
+    Param {
+        offset: 101,
+        name: "Mod Wheel Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 116,
+    },
+    Param {
+        offset: 102,
+        name: "Mod Wheel Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 117,
+    },
+    Param {
+        offset: 103,
+        name: "Pressure Mod Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 118,
+    },
+    Param {
+        offset: 104,
+        name: "Pressure Mod Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 119,
+    },
+    Param {
+        offset: 105,
+        name: "Breath Mod Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 120,
+    },
+    Param {
+        offset: 106,
+        name: "Breath Mod Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 121,
+    },
+    Param {
+        offset: 107,
+        name: "Velocity Mod Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 122,
+    },
+    Param {
+        offset: 108,
+        name: "Velocity Mod Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 123,
+    },
+    Param {
+        offset: 109,
+        name: "MIDI Foot Mod Amount",
+        max: 254,
+        choices: &[],
+        nrpn: 124,
+    },
+    Param {
+        offset: 110,
+        name: "MIDI Foot Mod Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 125,
+    },
+    Param {
+        offset: 111,
+        name: "Gated Seq1 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 184,
+    },
+    Param {
+        offset: 112,
+        name: "Gated Seq2 Destination",
+        max: 53,
+        choices: DEST_SLEW,
+        nrpn: 185,
+    },
+    Param {
+        offset: 113,
+        name: "Gated Seq3 Destination",
+        max: 52,
+        choices: DEST,
+        nrpn: 186,
+    },
+    Param {
+        offset: 114,
+        name: "Gated Seq4 Destination",
+        max: 53,
+        choices: DEST_SLEW,
+        nrpn: 187,
+    },
+    Param {
+        offset: 115,
+        name: "FX Select",
+        max: 13,
+        choices: FX,
+        nrpn: 154,
+    },
+    Param {
+        offset: 116,
+        name: "FX on/off",
+        max: 1,
+        choices: &[],
+        nrpn: 153,
+    },
+    Param {
+        offset: 117,
+        name: "FX mix",
+        max: 255,
+        choices: &[],
+        nrpn: 155,
+    },
+    Param {
+        offset: 118,
+        name: "FX Parameter 1",
+        max: 255,
+        choices: &[],
+        nrpn: 156,
+    },
+    Param {
+        offset: 119,
+        name: "FX Parameter 2",
+        max: 255,
+        choices: &[],
+        nrpn: 157,
+    },
+    Param {
+        offset: 120,
+        name: "FX Clock Sync on/off",
+        max: 1,
+        choices: &[],
+        nrpn: 158,
+    },
+    Param {
+        offset: 122,
+        name: "Key Mode",
+        max: 5,
+        choices: KEY_MODES,
+        nrpn: 170,
+    },
+    Param {
+        offset: 123,
+        name: "Unison on/off",
+        max: 1,
+        choices: &[],
+        nrpn: 168,
+    },
+    Param {
+        offset: 124,
+        name: "Unison Mode",
+        max: 15,
+        choices: UNISON,
+        nrpn: 169,
+    },
+    Param {
+        offset: 130,
+        name: "BPM",
+        max: 250,
+        choices: &[],
+        nrpn: 179,
+    },
+    Param {
+        offset: 131,
+        name: "Divide",
+        max: 12,
+        choices: DIVIDES,
+        nrpn: 175,
+    },
+    Param {
+        offset: 132,
+        name: "Arp Mode",
+        max: 4,
+        choices: ARP_MODES,
+        nrpn: 173,
+    },
+    Param {
+        offset: 133,
+        name: "Arp Range",
+        max: 2,
+        choices: &[],
+        nrpn: 174,
+    },
+    Param {
+        offset: 134,
+        name: "Arp Repeats",
+        max: 3,
+        choices: &[],
+        nrpn: 177,
+    },
+    Param {
+        offset: 135,
+        name: "Arp Relatch on/off",
+        max: 1,
+        choices: &[],
+        nrpn: 178,
+    },
+    Param {
+        offset: 136,
+        name: "Arp on/off",
+        max: 1,
+        choices: &[],
+        nrpn: 172,
+    },
+    Param {
+        offset: 138,
+        name: "Sequencer Mode",
+        max: 4,
+        choices: GATE_MODES,
+        nrpn: 182,
+    },
+    Param {
+        offset: 139,
+        name: "Sequencer Type",
+        max: 1,
+        choices: SEQ_TYPES,
+        nrpn: 183,
+    },
+    Param {
+        offset: 140,
+        name: "Gated Seq1 Step 1-16",
+        max: 125,
+        choices: &[],
+        nrpn: 192,
+    },
+    Param {
+        offset: 141,
+        name: "track1note2",
+        max: 127,
+        choices: &[],
+        nrpn: 193,
+    },
+    Param {
+        offset: 142,
+        name: "track1note3",
+        max: 127,
+        choices: &[],
+        nrpn: 194,
+    },
+    Param {
+        offset: 143,
+        name: "track1note4",
+        max: 127,
+        choices: &[],
+        nrpn: 195,
+    },
+    Param {
+        offset: 144,
+        name: "track1note5",
+        max: 127,
+        choices: &[],
+        nrpn: 196,
+    },
+    Param {
+        offset: 145,
+        name: "track1note6",
+        max: 127,
+        choices: &[],
+        nrpn: 197,
+    },
+    Param {
+        offset: 146,
+        name: "track1note7",
+        max: 127,
+        choices: &[],
+        nrpn: 198,
+    },
+    Param {
+        offset: 147,
+        name: "track1note8",
+        max: 127,
+        choices: &[],
+        nrpn: 199,
+    },
+    Param {
+        offset: 148,
+        name: "track1note9",
+        max: 127,
+        choices: &[],
+        nrpn: 200,
+    },
+    Param {
+        offset: 149,
+        name: "track1note10",
+        max: 127,
+        choices: &[],
+        nrpn: 201,
+    },
+    Param {
+        offset: 150,
+        name: "track1note11",
+        max: 127,
+        choices: &[],
+        nrpn: 202,
+    },
+    Param {
+        offset: 151,
+        name: "track1note12",
+        max: 127,
+        choices: &[],
+        nrpn: 203,
+    },
+    Param {
+        offset: 152,
+        name: "track1note13",
+        max: 127,
+        choices: &[],
+        nrpn: 204,
+    },
+    Param {
+        offset: 153,
+        name: "track1note14",
+        max: 127,
+        choices: &[],
+        nrpn: 205,
+    },
+    Param {
+        offset: 154,
+        name: "track1note15",
+        max: 127,
+        choices: &[],
+        nrpn: 206,
+    },
+    Param {
+        offset: 155,
+        name: "155",
+        max: 127,
+        choices: &[],
+        nrpn: 207,
+    },
+    Param {
+        offset: 156,
+        name: "Gated Seq2 Step 1-16",
+        max: 125,
+        choices: &[],
+        nrpn: 208,
+    },
+    Param {
+        offset: 157,
+        name: "track2note2",
+        max: 127,
+        choices: &[],
+        nrpn: 209,
+    },
+    Param {
+        offset: 158,
+        name: "track2note3",
+        max: 127,
+        choices: &[],
+        nrpn: 210,
+    },
+    Param {
+        offset: 159,
+        name: "track2note4",
+        max: 127,
+        choices: &[],
+        nrpn: 211,
+    },
+    Param {
+        offset: 160,
+        name: "track2note5",
+        max: 127,
+        choices: &[],
+        nrpn: 212,
+    },
+    Param {
+        offset: 161,
+        name: "track2note6",
+        max: 127,
+        choices: &[],
+        nrpn: 213,
+    },
+    Param {
+        offset: 162,
+        name: "track2note7",
+        max: 127,
+        choices: &[],
+        nrpn: 214,
+    },
+    Param {
+        offset: 163,
+        name: "track2note8",
+        max: 127,
+        choices: &[],
+        nrpn: 215,
+    },
+    Param {
+        offset: 164,
+        name: "track2note9",
+        max: 127,
+        choices: &[],
+        nrpn: 216,
+    },
+    Param {
+        offset: 165,
+        name: "track2note10",
+        max: 127,
+        choices: &[],
+        nrpn: 217,
+    },
+    Param {
+        offset: 166,
+        name: "track2note11",
+        max: 127,
+        choices: &[],
+        nrpn: 218,
+    },
+    Param {
+        offset: 167,
+        name: "track2note12",
+        max: 127,
+        choices: &[],
+        nrpn: 219,
+    },
+    Param {
+        offset: 168,
+        name: "track2note13",
+        max: 127,
+        choices: &[],
+        nrpn: 220,
+    },
+    Param {
+        offset: 169,
+        name: "track2note14",
+        max: 127,
+        choices: &[],
+        nrpn: 221,
+    },
+    Param {
+        offset: 170,
+        name: "track2note15",
+        max: 127,
+        choices: &[],
+        nrpn: 222,
+    },
+    Param {
+        offset: 171,
+        name: "171",
+        max: 127,
+        choices: &[],
+        nrpn: 223,
+    },
+    Param {
+        offset: 172,
+        name: "Gated Seq3 Step 1-16",
+        max: 125,
+        choices: &[],
+        nrpn: 224,
+    },
+    Param {
+        offset: 173,
+        name: "track3note2",
+        max: 127,
+        choices: &[],
+        nrpn: 225,
+    },
+    Param {
+        offset: 174,
+        name: "track3note3",
+        max: 127,
+        choices: &[],
+        nrpn: 226,
+    },
+    Param {
+        offset: 175,
+        name: "track3note4",
+        max: 127,
+        choices: &[],
+        nrpn: 227,
+    },
+    Param {
+        offset: 176,
+        name: "track3note5",
+        max: 127,
+        choices: &[],
+        nrpn: 228,
+    },
+    Param {
+        offset: 177,
+        name: "track3note6",
+        max: 127,
+        choices: &[],
+        nrpn: 229,
+    },
+    Param {
+        offset: 178,
+        name: "track3note7",
+        max: 127,
+        choices: &[],
+        nrpn: 230,
+    },
+    Param {
+        offset: 179,
+        name: "track3note8",
+        max: 127,
+        choices: &[],
+        nrpn: 231,
+    },
+    Param {
+        offset: 180,
+        name: "track3note9",
+        max: 127,
+        choices: &[],
+        nrpn: 232,
+    },
+    Param {
+        offset: 181,
+        name: "track3note10",
+        max: 127,
+        choices: &[],
+        nrpn: 233,
+    },
+    Param {
+        offset: 182,
+        name: "track3note11",
+        max: 127,
+        choices: &[],
+        nrpn: 234,
+    },
+    Param {
+        offset: 183,
+        name: "track3note12",
+        max: 127,
+        choices: &[],
+        nrpn: 235,
+    },
+    Param {
+        offset: 184,
+        name: "track3note13",
+        max: 127,
+        choices: &[],
+        nrpn: 236,
+    },
+    Param {
+        offset: 185,
+        name: "track3note14",
+        max: 127,
+        choices: &[],
+        nrpn: 237,
+    },
+    Param {
+        offset: 186,
+        name: "track3note15",
+        max: 127,
+        choices: &[],
+        nrpn: 238,
+    },
+    Param {
+        offset: 187,
+        name: "187",
+        max: 127,
+        choices: &[],
+        nrpn: 239,
+    },
+    Param {
+        offset: 188,
+        name: "Gated Seq4 Step 1-16",
+        max: 125,
+        choices: &[],
+        nrpn: 240,
+    },
+    Param {
+        offset: 189,
+        name: "track4note2",
+        max: 127,
+        choices: &[],
+        nrpn: 241,
+    },
+    Param {
+        offset: 190,
+        name: "track4note3",
+        max: 127,
+        choices: &[],
+        nrpn: 242,
+    },
+    Param {
+        offset: 191,
+        name: "track4note4",
+        max: 127,
+        choices: &[],
+        nrpn: 243,
+    },
+    Param {
+        offset: 192,
+        name: "track4note5",
+        max: 127,
+        choices: &[],
+        nrpn: 244,
+    },
+    Param {
+        offset: 193,
+        name: "track4note6",
+        max: 127,
+        choices: &[],
+        nrpn: 245,
+    },
+    Param {
+        offset: 194,
+        name: "track4note7",
+        max: 127,
+        choices: &[],
+        nrpn: 246,
+    },
+    Param {
+        offset: 195,
+        name: "track4note8",
+        max: 127,
+        choices: &[],
+        nrpn: 247,
+    },
+    Param {
+        offset: 196,
+        name: "track4note9",
+        max: 127,
+        choices: &[],
+        nrpn: 248,
+    },
+    Param {
+        offset: 197,
+        name: "track4note10",
+        max: 127,
+        choices: &[],
+        nrpn: 249,
+    },
+    Param {
+        offset: 198,
+        name: "track4note11",
+        max: 127,
+        choices: &[],
+        nrpn: 250,
+    },
+    Param {
+        offset: 199,
+        name: "track4note12",
+        max: 127,
+        choices: &[],
+        nrpn: 251,
+    },
+    Param {
+        offset: 200,
+        name: "track4note13",
+        max: 127,
+        choices: &[],
+        nrpn: 252,
+    },
+    Param {
+        offset: 201,
+        name: "track4note14",
+        max: 127,
+        choices: &[],
+        nrpn: 253,
+    },
+    Param {
+        offset: 202,
+        name: "track4note15",
+        max: 127,
+        choices: &[],
+        nrpn: 254,
+    },
+    Param {
+        offset: 203,
+        name: "203",
+        max: 127,
+        choices: &[],
+        nrpn: 255,
+    },
+    Param {
+        offset: 208,
+        name: "Unison Detune",
+        max: 16,
+        choices: &[],
+        nrpn: 167,
+    },
+    Param {
+        offset: 209,
+        name: "Pan Mod Mode",
+        max: 1,
+        choices: PAN_MODES,
+        nrpn: 114,
+    },
+    Param {
+        offset: 231,
+        name: "Layer Mode",
+        max: 2,
+        choices: LAYER_MODES,
+        nrpn: 163,
+    },
+    Param {
+        offset: 232,
+        name: "Split Point",
+        max: 120,
+        choices: &[],
+        nrpn: 171,
+    },
+];
+pub fn parameter(offset: usize) -> Option<&'static Param> {
+    PARAMS.iter().find(|p| p.offset == offset)
 }
-pub fn cutoff(x: f32) -> f32 {
-    20.0 * 900.0f32.powf(x.clamp(0.0, 1.0))
+pub fn nrpn_offset(n: u16) -> Option<usize> {
+    let layer = if n >= 2048 { 1024 } else { 0 };
+    parameter_nrpn(n % 2048).map(|i| i + layer)
 }
-pub fn cutoff_norm(hz: f32) -> f32 {
-    (hz / 20.0).ln() / 900.0f32.ln()
+fn parameter_nrpn(n: u16) -> Option<usize> {
+    if (276..1044).contains(&n) {
+        return Some(256 + (n - 276) as usize);
+    }
+    PARAMS.iter().find(|p| p.nrpn == n).map(|p| p.offset)
 }
-pub fn rate(x: f32) -> f32 {
-    0.05 * 400.0f32.powf(x.clamp(0.0, 1.0))
-}
-fn time_text(x: f32) -> String {
-    let s = seconds(x);
-    if s < 1.0 {
-        format!("{:.0} ms", s * 1000.0)
+pub fn text(offset: usize, value: u8) -> String {
+    let i = offset % 1024;
+    if i >= 256 {
+        return if (i - 256) % 128 < 64 {
+            if value == 128 {
+                "Tie".into()
+            } else {
+                format!("Note {value}")
+            }
+        } else if value < 128 {
+            "Rest / end".into()
+        } else {
+            format!("Velocity {}", value - 127)
+        };
+    }
+    if (140..204).contains(&i) {
+        if value == 126 {
+            return "Reset".into();
+        }
+        if value == 127 {
+            return "Rest".into();
+        }
+    }
+    if let Some(p) = parameter(i) {
+        if let Some(s) = p.choices.get(value as usize) {
+            return (*s).into();
+        }
+    }
+    if [2, 3].contains(&i) {
+        format!("{} cents", value as i16 - 50)
+    } else if [
+        32, 34, 85, 86, 87, 88, 89, 90, 91, 92, 101, 103, 105, 107, 109,
+    ]
+    .contains(&i)
+    {
+        format!("{:+}", value as i16 - 127)
     } else {
-        format!("{s:.2} s")
+        value.to_string()
     }
 }
-fn hz_text(x: f32) -> String {
-    format!("{:.0} Hz", cutoff(x))
-}
-fn rate_text(x: f32) -> String {
-    format!("{:.2} Hz", rate(x))
-}
-fn integer(x: f32) -> String {
-    format!("{x:+.0}")
-}
-fn bipolar(x: f32) -> String {
-    format!("{:+.0}%", x * 100.0)
-}
-fn delay_text(x: f32) -> String {
-    format!("{:.0} ms", 30.0 + x * 720.0)
-}
-
-const OFF_ON: &[&str] = &["Off", "On"];
-pub static SPECS: [Spec; N] = [
-    Spec::range("A Tune", -24.0, 24.0, 0.0, integer),
-    Spec::switch("A Saw", OFF_ON, 1),
-    Spec::switch("A Pulse", OFF_ON, 0),
-    Spec::knob("A Pulse Width", 0.5),
-    Spec::switch("A Sync to B", OFF_ON, 0),
-    Spec::range("B Tune", -24.0, 24.0, 0.0, integer),
-    Spec::range("B Fine", -50.0, 50.0, 5.0, integer),
-    Spec::switch("B Saw", OFF_ON, 1),
-    Spec::switch("B Pulse", OFF_ON, 0),
-    Spec::switch("B Triangle", OFF_ON, 0),
-    Spec::knob("B Pulse Width", 0.5),
-    Spec::switch("B Low Frequency", OFF_ON, 0),
-    Spec::switch("B Keyboard", OFF_ON, 1),
-    Spec::knob("Oscillator A", 0.65),
-    Spec::knob("Oscillator B", 0.60),
-    Spec::knob("Noise", 0.0),
-    Spec::range("Cutoff", 0.0, 1.0, 0.72, hz_text),
-    Spec::knob("Resonance", 0.12),
-    Spec::range("Filter Env Amount", -1.0, 1.0, 0.35, bipolar),
-    Spec::knob("Filter Key Track", 0.65),
-    Spec::knob("Drive", 0.10),
-    Spec::range("Filter Attack", 0.0, 1.0, 0.27, time_text),
-    Spec::range("Filter Decay", 0.0, 1.0, 0.64, time_text),
-    Spec::knob("Filter Sustain", 0.4),
-    Spec::range("Filter Release", 0.0, 1.0, 0.59, time_text),
-    Spec::range("Amp Attack", 0.0, 1.0, 0.27, time_text),
-    Spec::range("Amp Decay", 0.0, 1.0, 0.68, time_text),
-    Spec::knob("Amp Sustain", 0.8),
-    Spec::range("Amp Release", 0.0, 1.0, 0.59, time_text),
-    Spec::range("LFO Rate", 0.0, 1.0, 0.67, rate_text),
-    Spec::switch(
-        "LFO Shape",
-        &["Triangle", "Saw", "Square", "Sine", "Random"],
-        0,
-    ),
-    Spec::knob("Wheel Noise Mix", 0.0),
-    Spec::switch("Wheel Frequency", OFF_ON, 1),
-    Spec::switch("Wheel Pulse Width", OFF_ON, 0),
-    Spec::switch("Wheel Filter", OFF_ON, 0),
-    Spec::knob("Mod Amount", 0.0),
-    Spec::range("Poly-Mod Env", -1.0, 1.0, 0.0, bipolar),
-    Spec::knob("Poly-Mod B", 0.0),
-    Spec::switch("Poly-Mod A Freq", OFF_ON, 0),
-    Spec::switch("Poly-Mod A PW", OFF_ON, 0),
-    Spec::switch("Poly-Mod Filter", OFF_ON, 0),
-    Spec::switch("Voice Mode", &["Poly", "Mono", "Unison"], 0),
-    Spec::switch("Voice Count", &["4", "5", "8"], 1),
-    Spec::knob("Unison Detune", 0.18),
-    Spec::knob("Glide", 0.0),
-    Spec::knob("Vintage", 0.18),
-    Spec::knob("Velocity", 0.35),
-    Spec::knob("Stereo Spread", 0.4),
-    Spec::knob("Volume", 0.70),
-    Spec::knob("Chorus", 0.0),
-    Spec::range("Delay Time", 0.0, 1.0, 0.40, delay_text),
-    Spec::knob("Delay Feedback", 0.25),
-    Spec::knob("Delay Mix", 0.0),
-    Spec::range("Pad Octave", -3.0, 3.0, 0.0, integer),
-    Spec::range("Bend Range", 1.0, 12.0, 2.0, integer),
-];
-
-pub const GROUPS: &[(&str, &[usize])] = &[
-    ("OSC A", &[A_TUNE, A_PW, A_SAW, A_PULSE, SYNC]),
-    (
-        "OSC B",
-        &[B_TUNE, B_FINE, B_PW, B_SAW, B_PULSE, B_TRI, B_LOW, B_KEY],
-    ),
-    ("MIXER", &[MIX_A, MIX_B, NOISE, DRIVE]),
-    ("FILTER", &[CUTOFF, RES, ENV_AMT, KEYTRACK]),
-    ("ENVELOPES", &[FA, FD, FS, FR, AA, AD, AS, AR]),
-    ("POLY MOD", &[POLY_ENV, POLY_B, P_FREQ, P_PW, P_FILTER]),
-    (
-        "WHEEL MOD",
-        &[
-            LFO_RATE,
-            LFO_SHAPE,
-            MOD_AMOUNT,
-            WHEEL_NOISE,
-            W_FREQ,
-            W_PW,
-            W_FILTER,
-        ],
-    ),
-    (
-        "PERFORM / FX",
-        &[
-            MODE,
-            VOICES,
-            UNISON_DETUNE,
-            GLIDE,
-            VINTAGE,
-            VELOCITY,
-            SPREAD,
-            VOLUME,
-            CHORUS,
-            DELAY_TIME,
-            DELAY_FB,
-            DELAY_MIX,
-            OCTAVE,
-            BEND_RANGE,
-        ],
-    ),
-];

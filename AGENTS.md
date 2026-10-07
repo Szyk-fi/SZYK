@@ -101,6 +101,26 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: ChatGPT: Rev2-compatible patch player; exact clone still in progress
+- Branch: gpt/rev2-instrument (draft PR; not merged)
+- Changed: src/apps/prophet/, apps/prophet/manifest.toml, docs/PROPHET.md,
+  docs/USER_MANUAL.md. Replaces the previously unmerged Prophet-style prototype.
+- Status: partial. Native Rev2 SysEx import/export and two-layer playback work.
+  All public parameter offsets are retained; chord-memory bytes stay opaque.
+  See docs/PROPHET.md for remaining recording, MIDI, clock and fidelity gaps.
+  Max requested all features exactly and merge only when finished; main is
+  therefore unchanged. Hardware chord before/after dumps and sound references
+  are needed for exact verification. Do not label this completed full parity.
+- Tests: 29 focused passed, 2 optional review/reference tests ignored by default;
+  both optional tests separately passed. Edisyn init dump round-trips byte-for-byte
+  and plays. Manifest contract passes; slint_home_live cargo check passes.
+  Broad suite excluding every_bundled_script_runs_and_plays: 1177 passed,
+  0 failed, 14 ignored. Initial full run was interrupted after that untouched
+  Norns test did not finish; a discovered manifest mismatch was fixed and retested.
+- Notes for the other assistant: standalone app only; no shared engine, buses,
+  dependencies or registry changes. App id prophet; display/audio/mixer Rev2.
+  Current remote-main Blaster sub work is preserved. No hardware presets committed.
+
 ### 2026-10-07: Claude: Blaster: sub oscillator
 - Branch: claude/blaster-sub
 - Changed: src/apps/blaster/ (params: new "Sub" group inserted before Size,
