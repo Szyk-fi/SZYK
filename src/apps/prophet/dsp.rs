@@ -1235,7 +1235,11 @@ impl AudioProcessor for Processor {
             self.level += (target - self.level) * slew;
             sum = sum.map(|v| {
                 if v.is_finite() {
-                    (v * self.level).tanh()
+                    // Restore useful instrument output after the conservative
+                    // voice/filter and effect input gains. Keeping makeup here
+                    // leaves effect drive and imported patch balances intact;
+                    // the soft ceiling handles dense chords and stacked layers.
+                    (v * 4. * self.level).tanh()
                 } else {
                     0.
                 }
@@ -1267,6 +1271,59 @@ impl AudioProcessor for Processor {
 #[cfg(test)]
 mod behavior {
     use super::*;
+    fn output(patch: super::super::patch::Patch, notes: &[usize], level: f32) -> Vec<f32> {
+        use super::super::AtomicF32;
+        use std::sync::{atomic::AtomicBool, Mutex};
+        let mut state = State::default();
+        state.patch = patch;
+        for &note in notes {
+            state.notes[note] = 100;
+        }
+        let shared = Arc::new(Shared {
+            state: Mutex::new(state),
+            mods: (0..16).map(|_| Arc::new(AtomicF32::new(0.))).collect(),
+            output: Arc::new(Mutex::new(Vec::with_capacity(256))),
+            level: Arc::new(AtomicF32::new(level)),
+            external: Arc::new(AtomicF32::new(0.)),
+            peak: AtomicF32::new(0.),
+            tail: AtomicBool::new(false),
+        });
+        let mut processor = Processor::new(shared);
+        let mut audio = vec![0.; 48_000];
+        processor.process(&mut audio, 2, 48_000.);
+        audio[10_000..].to_vec()
+    }
+    fn rms(audio: &[f32]) -> f32 {
+        (audio.iter().map(|v| v * v).sum::<f32>() / audio.len() as f32).sqrt()
+    }
+    #[test]
+    fn init_note_has_useful_output_and_preserves_volume_controls() {
+        use super::super::patch::Patch;
+        let patch = Patch::default();
+        let loud = output(patch, &[60], 1.);
+        assert!(rms(&loud) > 0.10 && rms(&loud) < 0.20);
+        let mut quiet = patch;
+        quiet.data[28] /= 2;
+        let quiet = output(quiet, &[60], 1.);
+        assert!(rms(&quiet) < rms(&loud) * 0.60);
+        assert!(rms(&output(patch, &[60], 0.5)) < rms(&loud) * 0.60);
+        assert_eq!(rms(&output(patch, &[60], 0.)), 0.);
+    }
+    #[test]
+    fn dense_and_stacked_chords_remain_finite_without_hard_clipping() {
+        use super::super::patch::Patch;
+        let notes: Vec<_> = (48..64).collect();
+        for mode in [0, 2] {
+            let mut patch = Patch::default();
+            patch.data[231] = mode;
+            let audio = output(patch, &notes, 1.);
+            assert!(audio.iter().all(|v| v.is_finite() && v.abs() < 1.));
+            assert!(rms(&audio) > 0.25);
+            // Ordinary dense chords should not live on the soft ceiling.
+            let hot = audio.iter().filter(|v| v.abs() > 0.95).count();
+            assert!(hot as f32 / (audio.len() as f32) < 0.02);
+        }
+    }
     #[test]
     fn poly_ties_keep_only_their_track_and_do_not_release_between_steps() {
         let mut state = State::default();

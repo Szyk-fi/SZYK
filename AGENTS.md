@@ -101,6 +101,23 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: ChatGPT: correct low Rev2 output level
+- Branch: gpt/rev2-output-level
+- Changed: src/apps/prophet/dsp.rs, docs/PROPHET.md, AGENTS.md.
+- Status: output fix implemented; publication requires Max's authenticated
+  Terminal because this agent cannot retrieve the GitHub keyring credential.
+  Adds 12 dB of makeup after effects, before the existing mixer/soft ceiling.
+  Internal filter/effect drive and native patch volume bytes stay unchanged.
+- Tests: 31 Rev2 tests passed (2 optional tests ignored). Broad Cargo suite:
+  1179 passed, 0 failed, 14 ignored; previously stalled Norns bundled-script
+  test excluded. Six DSP behavior tests also passed in a lightweight harness
+  using the actual DSP, patch, preset, tuning, atomic and clock modules.
+  Measured all 16 starting points plus 440 imported programs at velocity 100;
+  imported single-note/chord peaks <=0.707, no samples above 0.95. Init single
+  peak increases from 0.0567 to 0.2231; dense/stacked chords remain bounded.
+- Notes for the other assistant: standalone Rev2 change; no shared audio/mixer
+  code or dependencies touched. Full hardware parity remains incomplete.
+
 ### 2026-10-07: ChatGPT: Rev2-compatible patch player; exact clone still in progress
 - Branch: gpt/rev2-instrument
 - Changed: src/apps/prophet/, apps/prophet/manifest.toml, docs/PROPHET.md,
