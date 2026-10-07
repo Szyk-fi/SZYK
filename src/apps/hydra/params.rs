@@ -176,7 +176,7 @@ macro_rules! params {
 }
 
 params! {
-    Level, "Level", 0, lin(0.0, 1.0, Unit::Percent), 0.7;
+    Level, "Level", 0, lin(0.0, 2.0, Unit::Percent), 0.7;
     Voices, "Voices", 0, int(1, 16), 8.0;
     Mode, "Mode", 0, ch(&["Poly", "Mono", "Legato"]), 0.0;
     Glide, "Glide", 0, exp(0.001, 2.0, Unit::Seconds), 0.001;

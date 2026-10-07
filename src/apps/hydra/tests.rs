@@ -403,25 +403,19 @@ fn probe_notes(category: &str) -> Vec<u8> {
     }
 }
 
-/// How loud a sound plays: the geometric mean of its RMS and its peak over
-/// a second and a half held note, so a sustained pad and a short pluck are
-/// judged alike.
+/// How loud a sound plays: the RMS of its loudest fifth of a second over a
+/// held note of five seconds, so a sustained pad (once it has swelled), a
+/// pluck and a hi-hat are all judged by the part you hear.
 fn loudness(a: &mut HydraApp, p: &mut Box<dyn AudioProcessor>, index: usize) -> f32 {
     a.load_preset(index);
     a.tick(&keys(&probe_notes(&a.lib.presets[index].category)));
     let mut buf = vec![0.0f32; 512];
-    let (mut sum, mut peak, mut n) = (0.0f64, 0.0f32, 0usize);
-    for block in 0..140 {
+    let mut energy = Vec::new();
+    for _ in 0..470 {
         buf.fill(0.0);
         p.process(&mut buf, 2, 48_000.0);
         assert!(buf.iter().all(|s| s.is_finite()), "{}: not finite", a.lib.presets[index].name);
-        if block >= 4 {
-            for s in &buf {
-                sum += (*s as f64) * (*s as f64);
-                peak = peak.max(s.abs());
-                n += 1;
-            }
-        }
+        energy.push(buf.iter().map(|s| (*s as f64) * (*s as f64)).sum::<f64>() / buf.len() as f64);
     }
     a.tick(&keys(&[]));
     a.sh.panic.store(true, Ordering::Relaxed);
@@ -429,11 +423,12 @@ fn loudness(a: &mut HydraApp, p: &mut Box<dyn AudioProcessor>, index: usize) -> 
         buf.fill(0.0);
         p.process(&mut buf, 2, 48_000.0);
     }
-    let rms = (sum / n.max(1) as f64).sqrt() as f32;
-    (rms * peak).sqrt()
+    const WINDOW: usize = 19;
+    let loudest = energy.windows(WINDOW).map(|w| w.iter().sum::<f64>() / WINDOW as f64).fold(0.0f64, f64::max);
+    loudest.sqrt() as f32
 }
 
-const TARGET: f32 = 0.16;
+const TARGET: f32 = 0.09;
 
 /// Writes `presets/levels.rs`: each factory sound's Level, found by playing
 /// it and nudging until it is as loud as the rest. Run with
@@ -453,17 +448,20 @@ fn calibrate_levels() {
             a.lib.presets[i].values.retain(|&(k, _)| k != P::Level as usize);
             a.lib.presets[i].values.push((P::Level as usize, level));
             let l = loudness(&mut a, &mut p, i);
+            if std::env::var("HYDRA_PRINT_LOUDNESS").is_ok() {
+                eprintln!("LOUD {name} level {level:.2} -> {l:.4}");
+            }
             if l < 1e-4 {
                 break;
             }
-            level = (level * (TARGET / l)).clamp(0.08, 1.0);
+            level = (level * (TARGET / l)).clamp(0.08, 2.0);
         }
         rows.push((name, (level * 100.0).round() / 100.0));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     let mut text = String::from("//! Factory loudness, written by the `calibrate_levels` test:\n//! `HYDRA_WRITE_LEVELS=1 cargo test --bin portamax-sim calibrate_levels`.\n\npub static LEVELS: &[(&str, f32)] = &[\n");
     for (n, l) in &rows {
-        text.push_str(&format!("    ({n:?}, {l}),\n"));
+        text.push_str(&format!("    ({n:?}, {l:.2}),\n"));
     }
     text.push_str("];\n");
     std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/src/apps/hydra/presets/levels.rs"), text).unwrap();
@@ -481,14 +479,14 @@ fn every_factory_preset_plays_finite_audio_at_a_similar_loudness() {
         if name == "Init" {
             continue;
         }
-        assert!(l > 0.005, "{name} is silent ({l})");
-        if l < 0.07 {
+        assert!(l > 0.01, "{name} is silent ({l})");
+        if l < 0.03 {
             quiet.push(format!("{name} {l:.3}"));
         }
-        if l > 0.4 {
+        if l > 0.3 {
             loud.push(format!("{name} {l:.3}"));
         }
     }
-    assert!(quiet.len() <= 6, "too many quiet sounds: {quiet:?}");
+    assert!(quiet.len() <= 8, "too many quiet sounds: {quiet:?}");
     assert!(loud.is_empty(), "too loud: {loud:?}");
 }

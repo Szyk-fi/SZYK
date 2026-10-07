@@ -555,7 +555,8 @@ impl Voice {
                             // decay time (T60, 0.5..20 s) means a gain that depends on pitch.
                             let t60 = 0.5 * 40.0f32.powf(oc.p3);
                             let decay = 10.0f32.powf(-3.0 / (hz.max(10.0) * t60));
-                            let y = osc.pluck.tick(rate / hz.max(10.0), oc.p1, decay);
+                            // a plucked string keeps little of its burst's energy, so it is made up here
+                            let y = 2.0 * osc.pluck.tick(rate / hz.max(10.0), oc.p1, decay);
                             mono = y;
                             let a = (oc.pan + 1.0) * FRAC_PI_4;
                             l = y * a.cos();
