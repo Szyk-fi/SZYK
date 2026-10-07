@@ -22,7 +22,9 @@ unsafe extern "C" {
 }
 
 const RTLD_NOW: c_int = 2;
-const RTLD_LOCAL: c_int = 4;
+// 4 on macOS, but 0 on Linux, where 4 is RTLD_NOLOAD ("only return a library that is
+// already loaded"): dlopen then fails with no error message at all.
+const RTLD_LOCAL: c_int = if cfg!(target_os = "macos") { 4 } else { 0 };
 
 /// A firmware the build knows how to make.
 pub struct Variant {

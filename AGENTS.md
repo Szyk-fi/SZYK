@@ -101,6 +101,16 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: Claude: Fix: O&C firmware could not load on Linux
+- Branch: claude/bloom-audio-engines
+- Changed: src/apps/oc_firmware.rs. `RTLD_LOCAL` was 4 (the macOS value); on
+  Linux 4 is RTLD_NOLOAD, so `dlopen` returned null with no message and every
+  O&C firmware test failed with "dlopen failed". Now 0 on Linux. macOS is
+  unchanged.
+- Status: done. The 6 apps::oc tests pass on Linux.
+- Tests: apps::oc.
+- Notes for the other assistant: none.
+
 ### 2026-10-07: Claude: Bloom: shapes can gate any audio source
 - Branch: claude/bloom-audio-engines
 - Changed: src/apps/bloom.rs, docs/USER_MANUAL.md. Each shape gets a Gate
