@@ -440,6 +440,14 @@ menu has every setting in groups:
   the start for a rising zap), the sweep time and curve, length, a hold for
   beams, attack, a second oscillator (the body) at an interval, FM, pulse width
   and the click of the shot. **Tone level** at 0 leaves a noise-only blast.
+- **Sub**: a bass oscillator one or two octaves below the tone (**Sub octave**),
+  a sine, triangle or square (**Sub wave**), with its own level during the charge
+  (**Sub (charge)**) and during the blast (**Sub (blast)**). It follows the
+  charge's climb and the blast's sweep, so it rises and then booms down with
+  them; it sounds even when the blast's tone is off or the blast is noise only.
+  The two levels are on the play view (**Sub (charge)** and **Sub (blast)**).
+  It is off by default, and on in the bass-heavy characters (Bomb, Gravity Well,
+  Meteor, Thunder Strike, Dragon Breath, Power Fist).
 - **Size**: how a bigger charge changes the blast: its pitch, length, noise and
   volume, and how quickly size builds (the tap threshold is under Main).
 - **Noise**: the burst's level, decay, filter and how the filter sweeps (its own

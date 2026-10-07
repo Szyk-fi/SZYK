@@ -78,10 +78,10 @@ pub fn factory() -> Vec<Preset> {
             BlastWave => METAL, BlastStart => 3500.0, BlastEnd => 900.0, SweepTime => 0.4, Length => 0.8, Body => 0.2, FmIndex => 0.3, Noise => 0.15, NoiseHP => 4000.0, NoiseDecay => 0.3, EchoMix => 0.3, EchoTime => 310.0, EchoFb => 0.5),
         pr!("Thunder Strike";
             ChargeTime => 1.6, ChgWave => TRI, ChgPitch => 90.0, Climb => 1.5, ChirpDepth => 0.4, ChgNoise => 1.0, FullMode => PULSING, FlutterRate => 20.0,
-            BlastWave => NOISE, BlastStart => 400.0, BlastEnd => 60.0, SweepTime => 0.3, Length => 1.2, Body => 0.0, Noise => 1.0, NoiseDecay => 0.8, NoiseHP => 60.0, NoiseLP => 2500.0, NoiseSweep => -2.0, Punch => 1.0, Drive => 0.5),
+            BlastWave => NOISE, BlastStart => 400.0, BlastEnd => 60.0, SweepTime => 0.3, Length => 1.2, Body => 0.0, Noise => 1.0, NoiseDecay => 0.8, NoiseHP => 60.0, NoiseLP => 2500.0, NoiseSweep => -2.0, Punch => 1.0, Drive => 0.5,SubBlast => 0.5, SubCharge => 0.3, SubOctave => 0),
         pr!("Bomb";
             ChargeTime => 2.0, ChgWave => SQUARE, ChgPitch => 60.0, Climb => 2.0, ChirpRate0 => 2.0, ChirpRate1 => 10.0, ChirpDepth => 0.5, FullMode => PULSING, FlutterRate => 8.0,
-            BlastWave => SINE, BlastStart => 160.0, BlastEnd => 25.0, SweepTime => 0.6, Length => 1.5, Body => 0.4, BodySemis => 12, Noise => 0.9, NoiseDecay => 1.1, NoiseHP => 40.0, NoiseLP => 800.0, Punch => 0.8, Drive => 0.4, PowerLength => 3.0),
+            BlastWave => SINE, BlastStart => 160.0, BlastEnd => 25.0, SweepTime => 0.6, Length => 1.5, Body => 0.4, BodySemis => 12, Noise => 0.9, NoiseDecay => 1.1, NoiseHP => 40.0, NoiseLP => 800.0, Punch => 0.8, Drive => 0.4, PowerLength => 3.0,SubBlast => 0.8, SubCharge => 0.5, SubOctave => 0),
         pr!("Wave Cannon";
             ChargeTime => 3.0, ChgWave => TRI, ChgPitch => 150.0, Climb => 2.5, ChirpDepth => 0.2, ChgWobble => 0.5, FullMode => FLUTTER, FlutterRate => 10.0, FlutterSemis => 12,
             BlastWave => SAW, BlastStart => 1500.0, BlastEnd => 500.0, SweepTime => 0.5, Length => 1.4, Hold => 0.8, Body => 0.7, BodySemis => 7, Noise => 0.3, NoiseLP => 6000.0, EchoMix => 0.25, EchoTime => 280.0),
@@ -108,19 +108,19 @@ pub fn factory() -> Vec<Preset> {
             BlastWave => TRI, BlastStart => 200.0, BlastEnd => 1600.0, SweepTime => 0.8, SweepCurve => 1.0, Length => 1.0, Hold => 0.8, Body => 0.5, BodySemis => 7, Noise => 0.05, PowerPitch => 0.0, EchoMix => 0.2),
         pr!("Meteor";
             ChargeTime => 2.2, ChgWave => TRI, ChgPitch => 55.0, Climb => 2.0, ChirpDepth => 0.3, ChgNoise => 1.0, ChgWobble => 0.4,
-            BlastWave => NOISE, BlastStart => 900.0, BlastEnd => 50.0, SweepTime => 1.5, Length => 2.5, Body => 0.0, Noise => 1.0, NoiseDecay => 1.8, NoiseHP => 80.0, NoiseLP => 4000.0, NoiseSweep => -3.0, Drive => 0.3, PowerLength => 2.0),
+            BlastWave => NOISE, BlastStart => 900.0, BlastEnd => 50.0, SweepTime => 1.5, Length => 2.5, Body => 0.0, Noise => 1.0, NoiseDecay => 1.8, NoiseHP => 80.0, NoiseLP => 4000.0, NoiseSweep => -3.0, Drive => 0.3, PowerLength => 2.0,SubBlast => 0.6, SubCharge => 0.4, SubOctave => 1),
         pr!("Gravity Well";
             ChargeTime => 2.0, ChgWave => SINE, ChgPitch => 55.0, Climb => 3.0, ChirpDepth => 0.0, ChgWobble => 0.2, FullMode => STEADY,
-            BlastWave => SINE, BlastStart => 90.0, BlastEnd => 28.0, SweepTime => 1.0, Length => 2.0, Body => 0.6, BodySemis => 12, Noise => 0.4, NoiseLP => 500.0, NoiseHP => 20.0, NoiseDecay => 1.2, Punch => 0.4, PowerPitch => 0.0, PowerLength => 2.5),
+            BlastWave => SINE, BlastStart => 90.0, BlastEnd => 28.0, SweepTime => 1.0, Length => 2.0, Body => 0.6, BodySemis => 12, Noise => 0.4, NoiseLP => 500.0, NoiseHP => 20.0, NoiseDecay => 1.2, Punch => 0.4, PowerPitch => 0.0, PowerLength => 2.5,SubBlast => 0.7, SubCharge => 0.7, SubOctave => 0),
         pr!("Siren Charge";
             ChargeTime => 1.5, ChgWave => SAW, ChgPitch => 300.0, Climb => 1.5, ChirpRate0 => 3.0, ChirpRate1 => 6.0, ChirpDepth => 1.0, ChirpCurve => 0.6, ChgWobble => 1.0,
             BlastWave => SQUARE, BlastStart => 1200.0, BlastEnd => 1200.0, SweepTime => 0.05, Length => 0.7, Body => 0.3, Noise => 0.1, PowerPitch => 0.0),
         pr!("Dragon Breath";
             ChargeTime => 1.8, ChgWave => SAW, ChgPitch => 80.0, Climb => 1.5, ChirpDepth => 0.2, ChgNoise => 0.9, ChgWobble => 0.4,
-            BlastWave => SAW, BlastStart => 300.0, BlastEnd => 120.0, SweepTime => 1.0, Length => 1.8, Hold => 0.6, Body => 0.5, Noise => 1.0, NoiseDecay => 1.4, NoiseHP => 200.0, NoiseLP => 2500.0, Drive => 0.4, PowerLength => 1.5),
+            BlastWave => SAW, BlastStart => 300.0, BlastEnd => 120.0, SweepTime => 1.0, Length => 1.8, Hold => 0.6, Body => 0.5, Noise => 1.0, NoiseDecay => 1.4, NoiseHP => 200.0, NoiseLP => 2500.0, Drive => 0.4, PowerLength => 1.5,SubBlast => 0.5, SubCharge => 0.4, SubOctave => 0),
         pr!("Power Fist";
             ChargeTime => 0.8, ChgWave => PULSE, ChgPitch => 240.0, Climb => 1.5, ChirpRate1 => 28.0, ChirpDepth => 1.0, FullMode => FLUTTER, FlutterRate => 24.0,
-            BlastWave => SQUARE, BlastStart => 400.0, BlastEnd => 50.0, SweepTime => 0.1, Length => 0.25, Body => 0.5, Noise => 0.5, NoiseDecay => 0.08, Punch => 1.0, Drive => 0.6, Bits => 8, PowerLength => 1.5),
+            BlastWave => SQUARE, BlastStart => 400.0, BlastEnd => 50.0, SweepTime => 0.1, Length => 0.25, Body => 0.5, Noise => 0.5, NoiseDecay => 0.08, Punch => 1.0, Drive => 0.6, Bits => 8, PowerLength => 1.5,SubBlast => 0.6, SubWave => 2.0, SubOctave => 0),
         pr!("Star Shot";
             ChargeTime => 1.0, ChgWave => TRI, ChgPitch => 500.0, Climb => 2.0, ClimbSteps => 5, ChirpDepth => 0.0, FullMode => PULSING, FlutterRate => 16.0,
             BlastWave => SINE, BlastStart => 5000.0, BlastEnd => 2500.0, SweepTime => 0.4, Length => 0.6, Body => 0.4, BodySemis => 12, FmIndex => 0.5, Noise => 0.05, NoiseHP => 6000.0, EchoMix => 0.4, EchoTime => 200.0, EchoFb => 0.55),

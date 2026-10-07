@@ -101,6 +101,21 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-07: Claude: Blaster: sub oscillator
+- Branch: claude/blaster-sub
+- Changed: src/apps/blaster/ (params: new "Sub" group inserted before Size,
+  later groups renumbered; four params appended so existing saved slots keep
+  their indices), voice.rs, presets.rs, mod.rs (the play view's Chirp speed and
+  Crush bits dials became Sub (charge) and Sub (blast)), docs/USER_MANUAL.md
+  (3.10). A sine/triangle/square sub one or two octaves below the tone, separate
+  levels for the charge and the blast; it follows the climb and the sweep and
+  sounds even with Tone level 0. Off by default; on in six bass-heavy characters.
+- Status: done.
+- Tests: 3 new (sub an octave below and -2 oct, wave harmonics, off by default;
+  blast sub follows the sweep with a noise-only blast; sub fattens the charge
+  of the first character without touching its blast).
+- Notes for the other assistant: none.
+
 ### 2026-10-07: Claude: New app: Blaster (hold to charge, release to fire)
 - Branch: claude/blaster
 - Changed: new src/apps/blaster/ (params, store, voice, engine, presets, mod,
