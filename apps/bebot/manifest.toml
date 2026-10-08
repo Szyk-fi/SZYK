@@ -1,0 +1,7 @@
+id = "bebot"
+name = "Bebot"
+category = "instrument"
+description = "An independently implemented Bebot-inspired XY synth. Hold and drag the mouse to sing; scale lock, saw/pulse/sine/PWM and stereo effects."
+notes_in = true
+audio_outputs = ["Bebot"]
+mod_inputs = ["Mixer: Bebot Level"]

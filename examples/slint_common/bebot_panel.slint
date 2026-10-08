@@ -1,0 +1,24 @@
+// Bebot's live performance panel. The app draws one UI for the device and
+// desktop; this component maps captured mouse drags back to picture pixels.
+export component BebotPanel inherits Rectangle {
+    in property <image> frame;
+    callback finger(float, float);
+    background: #081418;
+    Image { source: root.frame; image-fit: contain; width: 100%; height: 100%; }
+    TouchArea {
+        property <bool> finger-held: false;
+        property <float> scale: min(self.width / 640px, self.height / 360px);
+        property <float> finger-x: (self.mouse-x - (self.width - 640px * scale) / 2) / 1px / scale;
+        property <float> finger-y: (self.mouse-y - (self.height - 360px * scale) / 2) / 1px / scale;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                self.finger-held = true;
+                root.finger(finger-x, finger-y);
+            } else if event.kind == PointerEventKind.cancel || (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) {
+                self.finger-held = false;
+                root.finger(-1, -1);
+            }
+        }
+        moved => { if self.pressed && self.finger-held { root.finger(finger-x, finger-y); } }
+    }
+}
