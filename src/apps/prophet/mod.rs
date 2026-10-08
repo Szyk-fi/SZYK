@@ -390,8 +390,22 @@ impl ProphetApp {
                     b + p.offset
                 };
                 rows.push(Row {
-                    name: p.name.into(),
-                    value: spec::text(offset, self.state.patch.data[offset]),
+                    name: if (140..204).contains(&p.offset) {
+                        format!(
+                            "Gate {} step {:02}",
+                            (p.offset - 140) / 16 + 1,
+                            (p.offset - 140) % 16 + 1
+                        )
+                    } else {
+                        p.name.into()
+                    },
+                    value: if (53..57).contains(&p.offset)
+                        && self.state.patch.data[b + 69 + p.offset - 53] != 0
+                    {
+                        spec::LFO_STEPS[(self.state.patch.data[offset] as usize / 9).min(15)].into()
+                    } else {
+                        spec::text(offset, self.state.patch.data[offset])
+                    },
                     offset: Some(offset),
                     action: 0,
                 });
@@ -505,16 +519,8 @@ impl ProphetApp {
                 self.status = "Rev2 SysEx omits these two velocities".into();
                 return;
             }
-            let max = if i % 1024 >= 256 {
-                if (i % 1024 - 256) % 128 < 64 {
-                    128
-                } else {
-                    255
-                }
-            } else {
-                spec::parameter(i % 1024).map_or(255, |p| p.max)
-            };
-            let v = (self.state.patch.data[i] as i32 + d).clamp(0, max as i32) as u8;
+            let v = (self.state.patch.data[i] as i32 + d)
+                .clamp(spec::minimum(i) as i32, spec::maximum(i) as i32) as u8;
             let _ = self.state.patch.set(i, v);
         } else {
             match row.action {
@@ -624,13 +630,13 @@ impl ProphetApp {
                 let mut track = 0;
                 for t in 0..6 {
                     self.state.patch.data[b + 256 + t * 128 + self.record_step] = 0;
-                    self.state.patch.data[b + 320 + t * 128 + self.record_step] = 0;
+                    self.state.patch.data[b + 320 + t * 128 + self.record_step] = 128;
                 }
                 for n in 0..128 {
                     if notes[n] > 0 && track < 6 {
                         self.state.patch.data[b + 256 + track * 128 + self.record_step] = n as u8;
                         self.state.patch.data[b + 320 + track * 128 + self.record_step] =
-                            notes[n].saturating_add(127);
+                            notes[n].min(127).saturating_add(128);
                         track += 1;
                     }
                 }
@@ -847,12 +853,117 @@ impl App for ProphetApp {
         panel::draw(self, fb);
     }
     fn slint_extra(&mut self) -> SlintExtra {
-        let mut fb = FrameBuffer::new();
-        self.draw(&mut fb);
-        crate::apps::kids_kit::screen_extra(&fb)
+        let rows = self.rows();
+        let page = self.selected / 4;
+        let shown: Vec<_> = rows.iter().skip(page * 4).take(4).collect();
+        SlintExtra::Rev2(crate::app::Rev2Extra {
+            name: self.state.patch.name(self.layer),
+            source: self.programs[self.program].source.clone(),
+            status: self.status.clone(),
+            sections: SECTIONS.iter().map(|s| s.to_string()).collect(),
+            section: self.section,
+            layer: self.layer,
+            page,
+            pages: (rows.len() + 3) / 4,
+            sequence_page: self.seq_page,
+            velocity_track: self.track,
+            selected: self.selected % 4,
+            labels: shown.iter().map(|r| r.name.clone()).collect(),
+            values: shown.iter().map(|r| r.value.clone()).collect(),
+            norms: shown
+                .iter()
+                .map(|r| {
+                    r.offset.map_or(-1., |i| {
+                        let min = spec::minimum(i) as f32;
+                        (self.state.patch.data[i] as f32 - min)
+                            / (spec::maximum(i) as f32 - min).max(1.)
+                    })
+                })
+                .collect(),
+            keys: (48..72)
+                .map(|n| {
+                    self.state.notes[(n + self.octave * 12 + self.transpose).clamp(0, 127) as usize]
+                        > 0
+                })
+                .collect(),
+            dirty: self.dirty(),
+            comparing: self.compare.is_some(),
+            peak: self.shared.peak.get(),
+        })
     }
     fn slint_pointer_pick(&mut self, x: f32, y: f32) {
-        panel::pointer(self, x, y);
+        if !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        match x as i32 {
+            1000..=1015 => {
+                self.section = x as usize - 1000;
+                self.selected = 0;
+            }
+            1100..=1103 => {
+                let row = self.selected / 4 * 4 + x as usize - 1100;
+                if row < self.rows().len() {
+                    self.selected = row;
+                    self.edit(y.round() as i32, y == 0.);
+                }
+            }
+            1200 => self.load(
+                (self.program as i32 + y as i32).rem_euclid(self.programs.len() as i32) as usize,
+            ),
+            1201 => {
+                self.section = 14;
+                self.selected = 0;
+            }
+            1202 => self.compare(),
+            1203 => {
+                self.restore_compare();
+                self.state.patch = Patch::default();
+                self.state.generation = self.state.generation.wrapping_add(1);
+                self.publish();
+            }
+            1204 => {
+                if let Err(e) = self.save() {
+                    self.status = format!("Save failed: {e}");
+                }
+            }
+            1205 => {
+                self.layer = 1 - self.layer;
+                self.selected = 0;
+            }
+            1206 => {
+                self.section = 15;
+                self.selected = 0;
+            }
+            1207 => {
+                self.seq_page = (self.seq_page + 1) % 4;
+                self.selected = 0;
+            }
+            1208 => {
+                self.track = (self.track + 1) % 6;
+                self.selected = 0;
+            }
+            1300..=1323 => {
+                self.pointer = if y > 0. {
+                    Some(
+                        (48 + x as i32 - 1300 + self.octave * 12 + self.transpose).clamp(0, 127)
+                            as u8,
+                    )
+                } else {
+                    None
+                };
+                let input = self.input;
+                self.keys(&input);
+            }
+            1400 => {
+                let pages = (self.rows().len() + 3) / 4;
+                if pages > 0 {
+                    self.selected = (((self.selected / 4) as i32 + y as i32)
+                        .rem_euclid(pages as i32) as usize)
+                        * 4;
+                }
+            }
+            _ => panel::pointer(self, x, y),
+        }
     }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.rows()

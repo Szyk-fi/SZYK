@@ -27,7 +27,7 @@ impl Default for Patch {
                 (10, 1),
                 (11, 1),
                 (20, 2),
-                (22, 100),
+                (22, 52),
                 (24, 64),
                 (26, 1),
                 (28, 100),
@@ -89,6 +89,9 @@ impl Patch {
             return Err("Parameter outside patch".into());
         }
         let i = offset % 1024;
+        if offset >= 1024 && [231, 232].contains(&i) {
+            return Err("Global parameter is only in layer A".into());
+        }
         let max = if i >= 256 {
             if (i - 256) % 128 < 64 {
                 128
@@ -98,8 +101,11 @@ impl Patch {
         } else {
             spec::parameter(i).ok_or("Reserved parameter")?.max
         };
-        if value > max {
-            return Err(format!("Parameter {offset} exceeds {max}"));
+        if value < spec::minimum(i) || value > max {
+            return Err(format!(
+                "Parameter {offset} outside {}..{max}",
+                spec::minimum(i)
+            ));
         }
         self.data[offset] = value;
         Ok(())

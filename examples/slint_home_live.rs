@@ -165,6 +165,7 @@ slint::slint! {
 }
 
 slint::slint! {
+    import { Rev2Panel } from "slint_common/rev2_panel.slint";
     import { ForgePanel } from "slint_common/forge_panel.slint";
     import { OraclePanel } from "slint_common/oracle_panel.slint";
     import { PulsarPanel } from "slint_common/pulsar_panel.slint";
@@ -230,7 +231,7 @@ slint::slint! {
         screen-ink: root.live-ink;
         // Retro's full-screen game view -- see `DeviceFrame.hide-chrome`'s
         // own doc comment.
-        hide-chrome: !root.on-home && ((root.active-kind == 30 && !root.retro-menu-visible) || root.active-kind == 43);
+        hide-chrome: !root.on-home && ((root.active-kind == 30 && !root.retro-menu-visible) || (root.active-kind == 43 || root.active-kind == 44));
         in-out property <color> live-accent: #5CF07A;
         in-out property <color> live-bg: #0B100C;
         // The active app's own text-ink color (white by default,
@@ -269,6 +270,24 @@ slint::slint! {
         in-out property <bool> home-more-above: false;
         in-out property <bool> home-more-below: false;
 
+        in-out property <string> r2-program;
+        in-out property <string> r2-source;
+        in-out property <string> r2-status;
+        in-out property <[string]> r2-sections;
+        in-out property <int> r2-section;
+        in-out property <int> r2-layer;
+        in-out property <int> r2-page;
+        in-out property <int> r2-pages;
+        in-out property <int> r2-sequence-page;
+        in-out property <int> r2-velocity-track;
+        in-out property <int> r2-selected;
+        in-out property <[string]> r2-labels;
+        in-out property <[string]> r2-values;
+        in-out property <[float]> r2-norms;
+        in-out property <[bool]> r2-keys;
+        in-out property <bool> r2-dirty;
+        in-out property <bool> r2-comparing;
+        in-out property <float> r2-peak;
         in-out property <[string]> row-names: [];
         in-out property <[string]> row-values: [];
         in-out property <[bool]> row-is-group: [];
@@ -999,7 +1018,7 @@ slint::slint! {
             // Retro's full-screen game view needs the video edge to
             // edge, not just chrome-free -- see `hide-chrome`'s doc
             // comment for the rest of this same fullscreen path.
-            property <bool> retro-fullscreen: !root.on-home && ((root.active-kind == 30 && !root.retro-menu-visible) || root.active-kind == 43);
+            property <bool> retro-fullscreen: !root.on-home && ((root.active-kind == 30 && !root.retro-menu-visible) || (root.active-kind == 43 || root.active-kind == 44));
             padding-left: self.retro-fullscreen ? 0px : 18px;
             padding-right: self.retro-fullscreen ? 0px : 18px;
             padding-top: self.retro-fullscreen ? 0px : 4px;
@@ -1013,7 +1032,7 @@ slint::slint! {
             }
             // Bloom keeps its dedicated orbital layout; all other apps use
             // the shared parameter rail with their own ink, paper, and accent.
-            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 43 && !root.pc-active : ParamListColumn {
+            if !root.on-home && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 43 && root.active-kind != 44 && !root.pc-active : ParamListColumn {
                 width: 278px;
                 row-names: root.row-names;
                 row-values: root.row-values;
@@ -1028,7 +1047,7 @@ slint::slint! {
                 paper: root.live-bg;
             }
 
-            if !root.on-home && root.pc-active && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 43 : PlayColumn {
+            if !root.on-home && root.pc-active && root.active-kind != 29 && root.active-kind != 31 && root.active-kind != 32 && root.active-kind != 30 && root.active-kind != 25 && root.active-kind != 33 && root.active-kind != 34 && root.active-kind != 43 && root.active-kind != 44 : PlayColumn {
                 width: 278px;
                 ink: root.live-ink; accent: root.accent; paper: root.live-bg;
                 layer: root.pc-layer;
@@ -3444,6 +3463,15 @@ slint::slint! {
                 }
             }
 
+            if !root.on-home && root.active-kind == 44 : Rev2Panel {
+                program: root.r2-program; source: root.r2-source; status: root.r2-status;
+                sections: root.r2-sections; section: root.r2-section; layer: root.r2-layer;
+                page: root.r2-page; pages: root.r2-pages; sequence-page: root.r2-sequence-page; velocity-track: root.r2-velocity-track; selected: root.r2-selected;
+                labels: root.r2-labels; values: root.r2-values; norms: root.r2-norms;
+                keys: root.r2-keys; dirty: root.r2-dirty; comparing: root.r2-comparing; peak: root.r2-peak;
+                action(x,y) => { root.screen-touched(x,y); }
+            }
+
             // A Kids app: its own picture, the whole screen.
             if !root.on-home && root.active-kind == 43 : Rectangle {
                 background: black;
@@ -4399,6 +4427,19 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
                     ui.set_tt_volume(t.volume);
                     ui.set_tt_accomp(t.accomp);
                     ui.set_tt_peak(t.peak);
+                }
+                app::SlintExtra::Rev2(r) => {
+                    ui.set_active_kind(44);
+                    ui.set_r2_program(r.name.into()); ui.set_r2_source(r.source.into()); ui.set_r2_status(r.status.into());
+                    ui.set_r2_section(r.section as i32); ui.set_r2_layer(r.layer as i32); ui.set_r2_page(r.page as i32);
+                    ui.set_r2_sequence_page(r.sequence_page as i32); ui.set_r2_velocity_track(r.velocity_track as i32);
+                    ui.set_r2_pages(r.pages as i32); ui.set_r2_selected(r.selected as i32);
+                    ui.set_r2_dirty(r.dirty); ui.set_r2_comparing(r.comparing); ui.set_r2_peak(r.peak);
+                    ui.set_r2_sections(Rc::new(slint::VecModel::from(r.sections.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_r2_labels(Rc::new(slint::VecModel::from(r.labels.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_r2_values(Rc::new(slint::VecModel::from(r.values.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())).into());
+                    ui.set_r2_norms(Rc::new(slint::VecModel::from(r.norms)).into());
+                    ui.set_r2_keys(Rc::new(slint::VecModel::from(r.keys)).into());
                 }
                 app::SlintExtra::None => ui.set_active_kind(0),
                 app::SlintExtra::Screen(sc) => {

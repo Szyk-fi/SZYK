@@ -151,6 +151,7 @@ pub fn render(directory: &str) {
             assert_eq!(app.running(), Some(false));
             app.toggle_running();
         }
+        if name == "Rev2" { app.slint_pointer_pick(1001., 0.); }
         if ["Plaits", "Pam's Workout", "Beads", "Black Hole", "Bloom"].contains(&name) {
         // Exercise actual short pointer taps all the way into the module menu,
         // using the normal three-tick encoder setting that exposed the regression.
@@ -178,7 +179,7 @@ pub fn render(directory: &str) {
         println!("{name}: short D-pad taps move one row; MIDI encoder sensitivity preserved");
         }
         // A full-screen app (the Kids apps) has no menu column to tap.
-        if name != "Synth" && app.slint_rows().len() > 1 && !matches!(app.slint_extra(), app::SlintExtra::Screen(_)) {
+        if name != "Synth" && app.slint_rows().len() > 1 && !matches!(app.slint_extra(), app::SlintExtra::Screen(_) | app::SlintExtra::Rev2(_)) {
             let before = app.slint_selected();
             for (y, delta) in [(249.0, 1), (167.0, -1)] {
                 let position = slint::LogicalPosition::new(113.0, y);
@@ -239,6 +240,59 @@ pub fn render(directory: &str) {
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.write_header().unwrap().write_image_data(pixels.as_bytes()).unwrap();
+        if name == "Rev2" {
+            // Dispatch real Slint pointer events, then pass its commands through
+            // the same App callback used by the live simulator.
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let received = events.clone();
+            ui.on_screen_touched(move |x, y| received.borrow_mut().push((x, y)));
+            let click = |x: f32, y: f32| {
+                let position = slint::LogicalPosition::new(208. + x, 92. + y);
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left });
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left });
+            };
+            click(146., 205.); // First dial +
+            assert_eq!(*events.borrow(), vec![(1100., 1.)]);
+            let before = app.slint_rows()[0].1.clone();
+            for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
+            assert_ne!(app.slint_rows()[0].1, before);
+            let position = slint::LogicalPosition::new(307., 292.);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: slint::LogicalPosition::new(307.,286.) });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: slint::LogicalPosition::new(307.,286.), button: slint::platform::PointerEventButton::Left });
+            assert_eq!(*events.borrow(), vec![(1100.,0.), (1100.,1.)], "vertical knob drag must edit the parameter");
+            for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
+            click(560., 20.); // Layer selector
+            assert_eq!(*events.borrow(), vec![(1205., 0.)]);
+            for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
+            apply_instrument_visual(&ui, app.slint_extra());
+            click(599., 280.); // Next parameter page
+            assert_eq!(*events.borrow(), vec![(1400., 1.)]);
+            for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
+            click(33., 328.); // C: distinct key-down and key-up
+            assert_eq!(*events.borrow(), vec![(1300., 1.), (1300., 0.)]);
+            for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
+            let app::SlintExtra::Rev2(v) = app.slint_extra() else { unreachable!() };
+            assert!(!v.keys[0], "mouse release must stop its note");
+            click(45., 100.); // OSC tab
+            assert_eq!(*events.borrow(), vec![(1000., 0.)]);
+            for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
+            for section in 0..16 {
+                app.slint_pointer_pick(1000. + section as f32, 0.);
+                apply_instrument_visual(&ui, app.slint_extra());
+                save_extra_frame(&window, directory, &format!("rev2-section-{section:02}"));
+                if section == 13 {
+                    click(330.,280.);
+                    click(425.,280.);
+                    assert_eq!(*events.borrow(), vec![(1207.,0.),(1208.,0.)]);
+                    for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
+                    let app::SlintExtra::Rev2(v) = app.slint_extra() else { unreachable!() };
+                    assert_eq!((v.sequence_page,v.velocity_track),(1,1));
+                    assert_eq!(v.labels[0], "Track 2 step 17");
+                }
+            }
+            println!("Rev2: real Slint button/drag editing, layer/page/tab selection and keyboard release passed");
+        }
         // Everything below drives the menu again.
         if has_play_view {
             app.tick(&Input { shoulder_press: [false, true], ..Default::default() });

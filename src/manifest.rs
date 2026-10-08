@@ -104,7 +104,7 @@ pub fn discover(dir: &Path) -> Vec<AppManifest> {
         }
     }
 
-    manifests.sort_by(|a, b| a.id.cmp(&b.id));
+    manifests.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
     manifests
 }
 
@@ -115,8 +115,8 @@ fn load_one(path: &Path) -> Result<AppManifest, Box<dyn std::error::Error>> {
 }
 
 /// Every manifest from several roots -- the built-in `apps/` and the SD
-/// card's `apps/` folder -- in that order. An id found twice keeps the
-/// first; the registry reports the duplicate.
+/// card's `apps/` folder. An id found twice keeps the first root's entry;
+/// the combined catalog is sorted by visible name.
 pub fn discover_all(dirs: &[&Path]) -> Vec<AppManifest> {
     let mut all = Vec::new();
     for d in dirs {
@@ -124,10 +124,26 @@ pub fn discover_all(dirs: &[&Path]) -> Vec<AppManifest> {
             all.extend(discover(d));
         }
     }
+    let mut seen = std::collections::HashSet::new();
+    all.retain(|m| seen.insert(m.id.clone()));
+    all.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
     all
 }
 
 /// Where cartridges dropped on the SD card live (in the sim, `saves/apps`).
 pub fn sd_apps_dir() -> std::path::PathBuf {
     std::env::var_os("PORTAMAX_SD_APPS").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/saves/apps")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rev2_is_sorted_under_its_visible_name() {
+        let apps = discover(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps")));
+        let rev = apps.iter().position(|m| m.id == "prophet").unwrap();
+        assert_eq!(apps[rev].name, "Rev2");
+        assert!(apps[..rev].iter().all(|m| m.name.to_lowercase() <= "rev2".to_string()));
+        assert!(apps[rev+1..].iter().all(|m| m.name.to_lowercase() >= "rev2".to_string()));
+    }
 }

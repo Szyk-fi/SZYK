@@ -17,6 +17,24 @@ pub const GLIDE: &[&str] = &[
 ];
 pub const POLES: &[&str] = &["2 pole", "4 pole"];
 pub const LFO_SHAPES: &[&str] = &["Triangle", "Saw", "Reverse saw", "Square", "Random"];
+pub const LFO_STEPS: &[&str] = &[
+    "32 steps",
+    "16 steps",
+    "8 steps",
+    "6 steps",
+    "4 steps",
+    "3 steps",
+    "2 steps",
+    "1.5 steps",
+    "1 step",
+    "2/3 step",
+    "1/2 step",
+    "1/3 step",
+    "1/4 step",
+    "1/6 step",
+    "1/8 step",
+    "1/16 step",
+];
 pub const FX: &[&str] = &[
     "Off",
     "Mono delay",
@@ -79,7 +97,7 @@ pub const ARP_MODES: &[&str] = &["Up", "Down", "Up + down", "Random", "Assign"];
 pub const GATE_MODES: &[&str] = &["Normal", "No reset", "No gate", "No gate/reset", "Key step"];
 pub const SEQ_TYPES: &[&str] = &["Gated", "Poly"];
 pub const PAN_MODES: &[&str] = &["Alternate", "Fixed"];
-pub const LAYER_MODES: &[&str] = &["A", "Split A/B", "Stack A/B"];
+pub const LAYER_MODES: &[&str] = &["A", "Stack A/B", "Split A/B"];
 pub const SOURCES: &[&str] = &[
     "Off",
     "Seq 1",
@@ -1039,7 +1057,7 @@ pub const PARAMS: &[Param] = &[
     Param {
         offset: 117,
         name: "FX mix",
-        max: 255,
+        max: 127,
         choices: &[],
         nrpn: 155,
     },
@@ -1053,7 +1071,7 @@ pub const PARAMS: &[Param] = &[
     Param {
         offset: 119,
         name: "FX Parameter 2",
-        max: 255,
+        max: 127,
         choices: &[],
         nrpn: 157,
     },
@@ -1081,7 +1099,7 @@ pub const PARAMS: &[Param] = &[
     Param {
         offset: 124,
         name: "Unison Mode",
-        max: 15,
+        max: 16,
         choices: UNISON,
         nrpn: 169,
     },
@@ -1151,7 +1169,7 @@ pub const PARAMS: &[Param] = &[
     Param {
         offset: 140,
         name: "Gated Seq1 Step 1-16",
-        max: 125,
+        max: 127,
         choices: &[],
         nrpn: 192,
     },
@@ -1263,7 +1281,7 @@ pub const PARAMS: &[Param] = &[
     Param {
         offset: 156,
         name: "Gated Seq2 Step 1-16",
-        max: 125,
+        max: 127,
         choices: &[],
         nrpn: 208,
     },
@@ -1375,7 +1393,7 @@ pub const PARAMS: &[Param] = &[
     Param {
         offset: 172,
         name: "Gated Seq3 Step 1-16",
-        max: 125,
+        max: 127,
         choices: &[],
         nrpn: 224,
     },
@@ -1487,7 +1505,7 @@ pub const PARAMS: &[Param] = &[
     Param {
         offset: 188,
         name: "Gated Seq4 Step 1-16",
-        max: 125,
+        max: 127,
         choices: &[],
         nrpn: 240,
     },
@@ -1630,13 +1648,36 @@ pub fn parameter(offset: usize) -> Option<&'static Param> {
 }
 pub fn nrpn_offset(n: u16) -> Option<usize> {
     let layer = if n >= 2048 { 1024 } else { 0 };
-    parameter_nrpn(n % 2048).map(|i| i + layer)
+    let local = n % 2048;
+    if layer != 0 && [163, 171].contains(&local) {
+        return None;
+    }
+    parameter_nrpn(local).map(|i| i + layer)
 }
 fn parameter_nrpn(n: u16) -> Option<usize> {
     if (276..1044).contains(&n) {
         return Some(256 + (n - 276) as usize);
     }
     PARAMS.iter().find(|p| p.nrpn == n).map(|p| p.offset)
+}
+pub fn minimum(offset: usize) -> u8 {
+    if offset % 1024 == 130 {
+        30
+    } else {
+        0
+    }
+}
+pub fn maximum(offset: usize) -> u8 {
+    let i = offset % 1024;
+    if i >= 256 {
+        if (i - 256) % 128 < 64 {
+            128
+        } else {
+            255
+        }
+    } else {
+        parameter(i).map_or(255, |p| p.max)
+    }
 }
 pub fn text(offset: usize, value: u8) -> String {
     let i = offset % 1024;
@@ -1648,9 +1689,11 @@ pub fn text(offset: usize, value: u8) -> String {
                 format!("Note {value}")
             }
         } else if value < 128 {
-            "Rest / end".into()
+            "Reset".into()
+        } else if value == 128 {
+            "Rest".into()
         } else {
-            format!("Velocity {}", value - 127)
+            format!("Velocity {}", value - 128)
         };
     }
     if (140..204).contains(&i) {

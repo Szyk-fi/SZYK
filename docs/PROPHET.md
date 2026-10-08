@@ -28,13 +28,16 @@ marks those unavailable instead of silently discarding an edit.
 ## Play and edit
 
 - Pads and the device note bus play notes with velocity. The screen has a
-  clickable keyboard; click the same key again to release it.
+  clickable keyboard: Slint uses press/release; the framebuffer simulator
+  toggles a note when the same key is clicked again.
 - L1 changes the edited layer. R1 moves through 16 sections. The first encoder
   selects a row; the second changes its value. Click a selected row to edit it.
 - F2 opens Programs. F3 starts/stops the polyphonic sequences. Gated sequences
   run from held notes. Arpeggiation takes precedence over sequencing.
 - Clicking the sequence-page strip advances the 16-step page and velocity
-  track. All 64 steps and six note/velocity tracks are accessible per layer.
+  track in the framebuffer panel. Slint has STEP and VEL TRACK buttons for
+  these selections. All 64 steps and six note/velocity tracks are accessible
+  per layer.
 - Programs offers Compare, initialize, copy/swap layers and copy/swap poly
   sequences. Performance offers hold, transpose, 8/16 voices, mono, device
   clock following, step recording, master tuning and alternative tunings.
@@ -64,8 +67,10 @@ a software calibration, not a hardware match.
 Corrected playback faults affecting imported patches and original sounds:
 
 - Pitch slop now moves slowly and independently per oscillator instead of
-  jumping at control rate. Unmodulated A4 remains 440 Hz. The conservative
-  slop range remains ±12 cents at maximum; hardware slop depth is uncalibrated.
+  jumping at control rate, and continues while voices are silent. Unmodulated
+  A4 remains 440 Hz. Maximum slop now reaches ±4 semitones, with a quadratic
+  amount taper and slow random targets. This approximates firsthand observations;
+  the hardware's exact drift algorithm and amount curve remain uncalibrated.
 - Triangle/random LFOs are bipolar; saw/reverse/square are unipolar. Free LFOs
   continue through silence. Key sync follows phrase starts. Independent layers
   use different oscillator phases and random seeds.
@@ -73,14 +78,18 @@ Corrected playback faults affecting imported patches and original sounds:
   pitch depth is 0.5. Matrix routing to LFO amount uses the measured 4:1 scale.
   These depths follow published firsthand hardware measurements, not a claim
   of firmware equivalence. Gated pitch steps retain their half-semitone scale.
-- Filter keyboard amount 64 tracks one semitone per key; audio modulation uses
+- Filter cutoff follows the measured semitone scale (105 ≈ 440 Hz without
+  tracking); cutoff 24 with keyboard amount 64 follows keyboard pitch. Audio modulation uses
   oscillator 1 and retains envelope velocity response. The filter no longer
   saturates its integrator memory every sample, restoring low-frequency gain.
 - The sub is a square. Shaped ramps/triangles have slope-discontinuity
   corrections; shaped oscillators remove DC offsets. Hard sync and audio-rate
   filter modulation still need oversampling and hardware comparison.
-- Auxiliary repeat cycles without an inserted release. Eight-voice fixed pan
-  is balanced, and pan modulation moves voices consistently.
+- Auxiliary repeat cycles without an inserted release, and matrix modulation
+  reaches its amount. VCA attack interpolates published measured timing anchors;
+  other envelope stages remain generic software curves. Alternate pan modulation
+  changes individual voice spread; Fixed moves the whole program. VCA modulation
+  can open silent voices, and free polyphonic voices rotate by oldest use.
 - Chorus supplies delayed wet taps without duplicating dry signal. Reverb uses
   eight coupled delay lines with separate stereo outputs and damped decay.
   These are original effects, not the Rev2's digital effect algorithms.
@@ -90,6 +99,22 @@ changes how existing patches sound. Before claiming hardware fidelity, compare
 matched recordings for absolute cutoff, resonance/drive, oscillator shaping,
 envelope/rate curves, slop depth and effects. Those are the main remaining sound
 calibration gaps.
+
+## Slint panel and launcher
+
+The launcher sorts by visible name, so `prophet` appears alphabetically as Rev2.
+The live Slint example uses `Rev2Panel`, not a generic parameter list or an image
+of the framebuffer. It follows the earlier panel's wood sides, dark faceplate,
+amber readouts, four knobs, patch toolbar and keyboard. All sixteen sections
+and their parameter pages are connected to the real patch state, including layer
+selection, Compare, Init and Save. Drag a knob vertically or click its +/− buttons;
+pressing and releasing an on-screen piano key starts and stops its note. The
+hardware framebuffer panel remains available in the non-Slint simulator.
+
+Run `PORTAMAX_RENDER_APP=Rev2 cargo run --offline --example slint_home_live --
+--render-instruments /tmp/rev2-ui` to render the actual UI, exercise pointer
+callbacks and capture all sixteen sections. See [the detailed audit](REV2_AUDIT_2026-10-08.md)
+for the parameter map, circuit research and exact remaining limits.
 
 ## Implemented playback architecture
 
@@ -147,7 +172,9 @@ all original starting points at 8–192 kHz, oscillator/filter changes, four
 LFOs/eight modulation slots, pitch/drift/depth/polarity, filter body/tracking,
 DC/triangle alias reduction, stereo reverb decay, chorus wet-only behaviour,
 independent layer seeds, free LFOs during silence, all effects, auxiliary
-looping, sequencing,
+looping and amount modulation, free/synced LFO rate bands, absolute cutoff and
+VCA attack anchors, pan destination modes, Multi channel routing, legal FX/unison/
+gated/BPM limits, Slint paging/layer edits and pointer-note release, sequencing,
 ties, gated slew, polyphony/priority, tunings and lock contention.
 
 The optional external-reference test was run against Edisyn's
@@ -160,9 +187,16 @@ REV2_REFERENCE_SYX=/absolute/path/init.syx cargo test --offline \
   --bin portamax-sim reference_dump_imports_roundtrips_and_plays -- --ignored
 ```
 
+Final 8 October audit: 1,201 broad-suite tests passed, 14 ignored, 3 excluded
+(two sandbox-blocked UDP integration tests and the known stalled Norns bundled
+script test). All 54 focused Rev2 regressions are included. The external init
+test also passed separately; 440 imported user patches and all 16 original starts
+render finite bounded audio. The Slint renderer verifies actual button/drag edits,
+layer/page/tab controls, sequence step/velocity-track selection and key release.
+
 ## References
 
 - [Sequential Rev2 guide 1.2.4](https://sequential.com/wp-content/uploads/2021/02/Prophet-Rev2-Users-Guide-1.2.4.pdf), especially Appendices A–E.
 - [Edisyn Rev2 editor and raw format notes](https://github.com/eclab/edisyn/blob/master/edisyn/synth/sequentialprophetrev2/SequentialProphetRev2.java), Wim Verheyen, Apache-2.0. Used to cross-check wire facts, not as the sound engine.
 - [Independent Rev2 parameter map](https://github.com/shimpe/sc-prophet-rev2/blob/master/Classes/ScProphetRev2.sc).
-- [Firsthand Rev2 modulation-depth measurements](https://forum.sequential.com/index.php?topic=3203.0), CreativeSpiral. Used for pitch-route resolution; other measured curves are not yet fitted.
+- [Firsthand Rev2 modulation-depth measurements](https://forum.sequential.com/index.php?topic=3203.0), CreativeSpiral. Used for pitch-route resolution, cutoff anchors, slop behavior and approximate VCA attack timing.

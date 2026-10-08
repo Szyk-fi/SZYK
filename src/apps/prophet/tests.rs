@@ -116,6 +116,8 @@ fn nrpn_uses_a_different_layout_to_sysex() {
     assert_eq!(spec::nrpn_offset(276), Some(256));
     assert_eq!(spec::nrpn_offset(3091), Some(2047));
     assert_eq!(spec::nrpn_offset(27), None);
+    assert_eq!(spec::nrpn_offset(2211), None);
+    assert_eq!(spec::nrpn_offset(2219), None);
 }
 #[test]
 fn pads_and_midi_play_and_release() {
@@ -159,11 +161,11 @@ fn split_and_stack_route_b_instead_of_discarding_it() {
     let mut p = Patch::default();
     p.data[4] = 0;
     p.data[5] = 0;
-    p.data[231] = 1;
+    p.data[231] = 2;
     p.data[232] = 60;
     assert!(energy(&play(p, &[(48, 100)], 0.2)) < 1e-10);
     assert!(energy(&play(p, &[(72, 100)], 0.2)) > 1e-5);
-    p.data[231] = 2;
+    p.data[231] = 1;
     assert!(energy(&play(p, &[(48, 100)], 0.2)) > 1e-5);
     p.data[231] = 0;
     assert!(energy(&play(p, &[(72, 100)], 0.2)) < 1e-10);
@@ -308,7 +310,7 @@ fn step_recording_writes_six_note_velocities() {
         );
         assert_eq!(
             a.state.patch.data[320 + t * 128],
-            [227, 217, 207, 197, 187, 177][t]
+            [228, 218, 208, 198, 188, 178][t]
         );
     }
     assert_eq!(a.record_step, 1);
@@ -401,6 +403,133 @@ fn panel_controls_have_usable_labels_and_layer_specific_offsets() {
             let mut f = FrameBuffer::new();
             a.draw(&mut f);
             assert!(f.buffer().iter().any(|v| *v != 0));
+        }
+    }
+}
+#[test]
+fn parameter_limits_cover_hardware_endpoints_and_sequence_sentinels() {
+    let mut p = Patch::default();
+    for layer in [0, 1024] {
+        for (offset, max) in [
+            (117, 127),
+            (118, 255),
+            (119, 127),
+            (124, 16),
+            (140, 127),
+            (156, 127),
+            (172, 127),
+            (188, 127),
+            (53, 150),
+        ] {
+            assert!(p.set(layer + offset, max).is_ok());
+            if max < 255 {
+                assert!(p.set(layer + offset, max + 1).is_err());
+            }
+        }
+        assert!(p.set(layer + 130, 30).is_ok());
+        assert!(p.set(layer + 130, 29).is_err());
+    }
+    assert_eq!(spec::LAYER_MODES, &["A", "Stack A/B", "Split A/B"]);
+    assert_eq!(spec::text(140, 126), "Reset");
+    assert_eq!(spec::text(140, 127), "Rest");
+    assert_eq!(spec::text(320, 127), "Reset");
+    assert_eq!(spec::text(320, 128), "Rest");
+    assert_eq!(spec::text(320, 255), "Velocity 127");
+}
+#[test]
+fn slint_controls_edit_real_parameters_page_layers_and_release_keys() {
+    let mut a = app();
+    for section in 0..16 {
+        a.slint_pointer_pick(1000. + section as f32, 0.);
+        let SlintExtra::Rev2(view) = a.slint_extra() else {
+            panic!("dedicated panel missing")
+        };
+        assert_eq!(view.section, section);
+        assert!(!view.labels.is_empty());
+        assert_eq!(view.labels.len(), view.values.len());
+        assert_eq!(view.labels.len(), view.norms.len());
+        assert!(view.labels.len() <= 4);
+        for page in 0..view.pages {
+            let SlintExtra::Rev2(v) = a.slint_extra() else {
+                unreachable!()
+            };
+            assert_eq!(v.page, page);
+            assert!(v.selected < v.labels.len());
+            a.slint_pointer_pick(1400., 1.);
+        }
+    }
+    a.slint_pointer_pick(1001., 0.);
+    let before = a.state.patch.data[22];
+    a.slint_pointer_pick(1100., 1.);
+    assert_eq!(a.state.patch.data[22], before + 1);
+    a.slint_pointer_pick(1205., 0.);
+    let before_b = a.state.patch.data[1046];
+    a.slint_pointer_pick(1100., -1.);
+    assert_eq!(a.state.patch.data[1046], before_b - 1);
+    a.slint_pointer_pick(1300., 1.);
+    assert!(a.state.notes[48] > 0);
+    a.slint_pointer_pick(1300., 0.);
+    assert_eq!(a.state.notes[48], 0);
+    for section in 10..=13 {
+        a.slint_pointer_pick(1000. + section as f32, 0.);
+        for page in 0..4 {
+            assert_eq!(a.seq_page, page);
+            assert!(a
+                .rows()
+                .last()
+                .unwrap()
+                .name
+                .ends_with(&format!("{:02}", page * 16 + 16)));
+            a.slint_pointer_pick(1207., 0.);
+        }
+    }
+    for track in 0..6 {
+        assert_eq!(a.track, track);
+        assert!(a.rows()[0]
+            .name
+            .starts_with(&format!("Track {}", track + 1)));
+        a.slint_pointer_pick(1208., 0.);
+    }
+}
+#[test]
+fn sequence_nrpn_uses_the_same_velocity_encoding_as_sysex() {
+    let mut a = app();
+    for message in [[0xb0, 99, 2], [0xb0, 98, 84], [0xb0, 6, 1], [0xb0, 38, 127]] {
+        a.receive(&message);
+    }
+    assert_eq!(a.state.patch.data[320], 255);
+    assert_eq!(spec::text(320, a.state.patch.data[320]), "Velocity 127");
+    a.receive(&[0xb0, 38, 0]);
+    assert_eq!(a.state.patch.data[320], 128);
+    assert_eq!(spec::text(320, a.state.patch.data[320]), "Rest");
+}
+#[test]
+fn multi_mode_routes_channels_without_applying_the_split_point() {
+    let mut a = app();
+    a.state.multi = true;
+    a.state.patch.data[231] = 2; // Split must not override Multi's channel routing.
+    a.state.patch.data[28] = 0;
+    a.state.midi_notes[1][48] = 100; // Below split, on layer B's MIDI channel.
+    a.publish();
+    let mut p = a.audio_processor().unwrap();
+    assert!(energy(&render(p.as_mut(), 0.2, 48000.)) > 1e-5);
+}
+#[test]
+fn alternate_pan_modulates_width_and_fixed_pan_moves_the_program() {
+    let mut p = Patch::default();
+    p.data[77] = 21;
+    p.data[85] = 254;
+    p.data[93] = 14;
+    for mode in [0, 1] {
+        p.data[209] = mode;
+        let audio = play(p, &[(60, 100), (64, 100)], 0.2);
+        let left = energy(&audio.iter().step_by(2).copied().collect::<Vec<_>>());
+        let right = energy(&audio.iter().skip(1).step_by(2).copied().collect::<Vec<_>>());
+        assert!(right > 1e-5);
+        if mode == 0 {
+            assert!(left > 1e-5);
+        } else {
+            assert!(left < 1e-10);
         }
     }
 }

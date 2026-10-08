@@ -85,9 +85,34 @@ Remove your line when you're done.
 
 | Who | What | Files | Since |
 |---|---|---|---|
-| | | | |
+| — | none | — | — |
 
 ## 5. Work log
+
+### 2026-10-08: ChatGPT: Rev2 wire/DSP audit and real Slint panel
+- Branch: gpt/rev2-parameter-ui-audit   Commits: this changeset
+- Changed: src/apps/prophet/, src/manifest.rs, src/app.rs, live Slint example,
+  instrument preview, docs/PROPHET.md, detailed audit/parameter CSV/screenshots,
+  tools/apply-rev2-audit.command.
+- Status: audit fixes and Slint panel done on the isolated branch; installation
+  and publishing blocked by checkout write restrictions and GitHub HTTP 403.
+  Hardware fidelity remains partial; see docs/REV2_AUDIT_2026-10-08.md.
+- Tests: final broad suite 1201 passed, 0 failed, 14 ignored, 3 excluded (two UDP
+  binds forbidden by sandbox; previously documented stalled Norns bundled-script
+  test). All 54 focused Rev2 tests pass in that run; optional external Edisyn
+  init import/export/audio test separately passes. Atlas factory compile/play/
+  morph test included. Live Slint renders all 16 sections, verifies mouse button/
+  drag edits, layer/page/tab controls, all sequence ranges/tracks and key release.
+  440 imported patches plus all 16 original starts render finite bounded audio.
+  Apply script passes bash -n; git diff --check clean.
+- Notes for the other assistant: latest main 977d8c3 verified before edits and
+  again at completion. Stack=1/Split=2; poly velocity <=127 Reset,128 Rest,
+ 129..255 velocity1..127; native bytes never rewritten on import. Cutoff and VCA
+  attack use published measured anchors; slop depth/taper remain approximate.
+  No shared synthesis engine, dependency or registry edits. Main's dirty
+  Eurorack submodule and imported patches preserved. Use apply script with --run
+  to fast-forward the unchanged base and launch the actual Slint UI.
+
 
 Newest at the top. Keep each entry short. Use this format:
 

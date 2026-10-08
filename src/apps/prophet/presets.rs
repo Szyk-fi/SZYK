@@ -28,7 +28,9 @@ pub(super) fn factory() -> Vec<Program> {
             p.set_name(1, name);
             match i {
                 1 => {
-                    p.data[231] = 2;
+                    p.data[231] = 1;
+                    p.data[21] = 12;
+                    p.data[1045] = 16;
                     p.data[1027] = 57;
                     p.data[1066] = 65;
                     p.data[1075] = 75;
@@ -37,10 +39,10 @@ pub(super) fn factory() -> Vec<Program> {
                     p.data[117] = 30;
                 }
                 2 => {
-                    p.data[231] = 1;
+                    p.data[231] = 2;
                     p.data[232] = 60;
                     p.data[15] = 70;
-                    p.data[22] = 70;
+                    p.data[22] = 22;
                     p.data[48] = 80;
                     p.data[1066] = 80;
                     p.data[1075] = 70;
@@ -54,7 +56,7 @@ pub(super) fn factory() -> Vec<Program> {
                 }
                 4 => {
                     p.data[23] = 105;
-                    p.data[22] = 65;
+                    p.data[22] = 17;
                     p.data[32] = 170;
                     p.data[44] = 65;
                 }
@@ -84,7 +86,7 @@ pub(super) fn factory() -> Vec<Program> {
                     p.data[0] = 12;
                     p.data[1] = 12;
                     p.data[15] = 100;
-                    p.data[22] = 75;
+                    p.data[22] = 27;
                 }
                 9 => {
                     p.data[101] = 185;
@@ -121,7 +123,7 @@ pub(super) fn factory() -> Vec<Program> {
                 13 => {
                     for s in 0..8 {
                         p.data[256 + s] = [60, 64, 67, 72][s % 4];
-                        p.data[320 + s] = 227;
+                        p.data[320 + s] = 228;
                     }
                 }
                 14 => {

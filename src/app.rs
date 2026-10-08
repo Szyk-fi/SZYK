@@ -529,6 +529,30 @@ pub enum SlintExtra {
     Grid(GridExtra),
     Atlas(AtlasExtra),
     Screen(ScreenExtra),
+    Rev2(Rev2Extra),
+}
+
+/// Native Slint Rev2 panel: every control comes from the app's parameter rows.
+#[allow(dead_code)]
+pub struct Rev2Extra {
+    pub name: String,
+    pub source: String,
+    pub status: String,
+    pub sections: Vec<String>,
+    pub section: usize,
+    pub layer: usize,
+    pub page: usize,
+    pub pages: usize,
+    pub sequence_page: usize,
+    pub velocity_track: usize,
+    pub selected: usize,
+    pub labels: Vec<String>,
+    pub values: Vec<String>,
+    pub norms: Vec<f32>,
+    pub keys: Vec<bool>,
+    pub dirty: bool,
+    pub comparing: bool,
+    pub peak: f32,
 }
 
 /// An app that draws its whole screen itself (the Kids apps): the GUI

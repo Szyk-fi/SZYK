@@ -11,6 +11,37 @@ const CONTROL_FRAMES: u32 = 8;
 fn seconds(x: f32) -> f32 {
     0.001 * 20000.0f32.powf((x / 127.).clamp(0., 1.))
 }
+// Interpolate CreativeSpiral's measured VCA attack anchors (seconds).
+// This fits one observed hardware response, not the firmware lookup table.
+fn amp_attack(x: f32) -> f32 {
+    const POINTS: [(f32, f32); 17] = [
+        (0., 0.003),
+        (7., 0.010),
+        (15., 0.031),
+        (23., 0.075),
+        (31., 0.135),
+        (39., 0.195),
+        (47., 0.260),
+        (55., 0.390),
+        (63., 0.605),
+        (71., 0.735),
+        (79., 0.950),
+        (87., 1.260),
+        (95., 1.830),
+        (103., 3.060),
+        (111., 6.080),
+        (119., 14.220),
+        (127., 24.660),
+    ];
+    let x = x.clamp(0., 127.);
+    for pair in POINTS.windows(2) {
+        if x <= pair[1].0 {
+            let t = (x - pair[0].0) / (pair[1].0 - pair[0].0);
+            return pair[0].1 * (pair[1].1 / pair[0].1).powf(t);
+        }
+    }
+    POINTS[16].1
+}
 fn random(r: &mut u32) -> f32 {
     *r ^= *r << 13;
     *r ^= *r >> 17;
@@ -118,7 +149,12 @@ impl EnvCoeffs {
             } else {
                 0.
             },
-            a: 1. / (seconds(p[41 + e]) * sr),
+            a: 1.
+                / (if e == 1 {
+                    amp_attack(p[42])
+                } else {
+                    seconds(p[41 + e])
+                } * sr),
             d: (-6.9078 / (seconds(p[44 + e]) * sr)).exp(),
             s: p[47 + e] / 127.,
             r: (-6.9078 / (seconds(p[50 + e]) * sr)).exp(),
@@ -183,7 +219,7 @@ struct Filter {
 }
 impl Filter {
     fn tune(&mut self, hz: f32, sr: f32) {
-        let t = (PI * hz.clamp(5., sr * 0.38) / sr).tan();
+        let t = (PI * hz.clamp(0.5, sr * 0.38) / sr).tan();
         self.g = t / (1. + t);
     }
     fn tick(&mut self, x: f32, res: f32, four: bool) -> f32 {
@@ -421,7 +457,8 @@ impl Voice {
         route(
             &mut m,
             p[30] as usize,
-            self.env[2].v * (p[34] - 127.) / 127. * (1. - p[37] / 127. * (1. - self.vel)),
+            self.env[2].v * (p[34] + self.mod_previous[34] - 127.) / 127.
+                * (1. - p[37] / 127. * (1. - self.vel)),
         );
         for t in 0..4 {
             let dest = p[111 + t] as usize;
@@ -439,10 +476,10 @@ impl Voice {
         }
         if self.drift_remaining == 0 {
             self.drift_target = std::array::from_fn(|_| random(&mut self.rng));
-            self.drift_remaining = (sr * (0.5 + 1.5 * random(&mut self.rng).abs())) as u32;
+            self.drift_remaining = (sr * (4. + 16. * random(&mut self.rng).abs())) as u32;
         }
         self.drift_remaining = self.drift_remaining.saturating_sub(CONTROL_FRAMES);
-        let drift_slew = 1. - (-(CONTROL_FRAMES as f32) / (sr * 0.35)).exp();
+        let drift_slew = 1. - (-(CONTROL_FRAMES as f32) / (sr * 3.)).exp();
         for o in 0..2 {
             self.drift[o] += (self.drift_target[o] - self.drift[o]) * drift_slew;
         }
@@ -469,7 +506,7 @@ impl Voice {
                     + (p[2 + o] - 50.) / 100.
                     + state.bend * p[20]
                     + self.detune
-                    + self.drift[o] * self.params[21].clamp(0., 127.) / 127. * 0.12
+                    + self.drift[o] * (self.params[21].clamp(0., 127.) / 127.).powi(2) * 4.
                     + state.master_coarse
                     + state.master_fine / 100.,
             )
@@ -477,13 +514,13 @@ impl Voice {
             self.shape_mod[o] = self.params[6 + o].clamp(0., 99.);
         }
         let env = self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel));
-        let cut = self.params[22] + env + p[24] / 64. * (self.note as f32 - 60.);
-        self.filter.tune(frequency(cut) * 0.5, sr);
+        let cut = self.params[22] + env + p[24] / 64. * (self.note as f32 + 12.);
+        self.filter.tune(frequency(cut - 36.), sr);
     }
     fn advance_lfos(&mut self, p: &[f32; 256], m: &[f32; 256], sr: f32, bpm: f32) {
         for l in 0..4 {
             let rate = (p[53 + l] + m[53 + l]).clamp(0., 150.);
-            let hz = if p[69 + l] > 0.5 || rate > 127. {
+            let hz = if p[69 + l] > 0.5 {
                 let periods = [
                     32.,
                     16.,
@@ -502,14 +539,12 @@ impl Voice {
                     0.125,
                     0.0625,
                 ];
-                let idx = if rate > 127. {
-                    (rate - 128.) as usize
-                } else {
-                    (rate / 8.) as usize
-                };
+                // Edisyn's hardware editor groups the 0..150 dial into
+                // nine-value clock-division bands, not a separate >127 mode.
+                let idx = (rate / 9.) as usize;
                 bpm / 60. / (periods[idx.min(15)] * step_beats(p[131] as usize, 0))
             } else {
-                0.022 * (500.0f32 / 0.022).powf(rate / 127.)
+                0.022 * (500.0f32 / 0.022).powf(rate / 150.)
             };
             let next = self.lfo_phase[l] + CONTROL_FRAMES as f32 * hz / sr;
             if next >= 1. {
@@ -521,16 +556,6 @@ impl Voice {
         }
     }
     fn sample(&mut self, p: &[f32; 256], state: &State, seq: [f32; 4], sr: f32, bpm: f32) -> f32 {
-        if self.env[1].stage == 0 && p[27] <= 0. && !self.held {
-            // Free-running LFOs continue through silence. Key sync is handled
-            // when the next phrase begins, not by freezing unused voices.
-            if self.tick % CONTROL_FRAMES == 0 {
-                let m = self.mod_previous;
-                self.advance_lfos(p, &m, sr, bpm);
-            }
-            self.tick = self.tick.wrapping_add(1);
-            return 0.;
-        }
         if self.tick % CONTROL_FRAMES == 0 {
             self.control(p, state, seq, sr, bpm);
         }
@@ -549,18 +574,22 @@ impl Voice {
         }
         self.sub = (self.sub + d[0] * 0.5).fract();
         let sub = wave(self.sub, d[0] * 0.5, 4, 50.);
+        if self.env[1].stage == 0 && self.params[27] <= 0. && !self.held {
+            self.last = 0.;
+            return 0.;
+        }
         let mix = (self.params[14] / 127.).clamp(0., 1.);
         let noise = random(&mut self.rng);
         let signal = a * (1. - mix)
             + b * mix
-            + sub * self.params[15] / 127.
-            + noise * self.params[16] / 127.;
+            + sub * self.params[15].clamp(0., 127.) / 127.
+            + noise * self.params[16].clamp(0., 127.) / 127.;
         if self.params[25] > 0. {
             let cut = self.params[22]
                 + self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel))
-                + p[24] / 64. * (self.note as f32 - 60.)
+                + p[24] / 64. * (self.note as f32 + 12.)
                 + a * self.params[25] * 0.5;
-            self.filter.tune(frequency(cut) * 0.5, sr);
+            self.filter.tune(frequency(cut - 36.), sr);
         }
         let filtered = self
             .filter
@@ -932,7 +961,8 @@ impl Layer {
                     continue;
                 }
                 let i = (0..self.count)
-                    .find(|&i| self.voices[i].env[1].stage == 0)
+                    .filter(|&i| self.voices[i].env[1].stage == 0 && !self.voices[i].held)
+                    .min_by_key(|&i| self.voices[i].age)
                     .or_else(|| {
                         (0..self.count)
                             .filter(|&i| !self.voices[i].held)
@@ -956,11 +986,7 @@ impl Layer {
             }
         }
         for (i, v) in self.voices.iter_mut().enumerate() {
-            v.pan = if p[209] > 0.5 {
-                (i as f32 / (self.count - 1).max(1) as f32 * 2. - 1.) * p[29] / 127.
-            } else {
-                (if v.age % 2 == 0 { -1. } else { 1. }) * p[29] / 127.
-            };
+            v.pan = (if i % 2 == 0 { -1. } else { 1. }) * p[29] / 127.;
         }
         self.prior = *notes;
     }
@@ -1092,7 +1118,7 @@ impl Layer {
                 let b = state.layer * 1024;
                 let mut length = 64;
                 for s in 0..64 {
-                    if state.patch.data[b + 256 + s] == 0 && state.patch.data[b + 320 + s] == 0 {
+                    if state.patch.data[b + 320 + s] < 128 {
                         length = s.max(1);
                         break;
                     }
@@ -1102,27 +1128,27 @@ impl Layer {
                 for track in 0..6 {
                     let n = state.patch.data[b + 256 + track * 128 + self.step];
                     let vel = state.patch.data[b + 320 + track * 128 + self.step];
-                    if n == 128 && vel >= 128 {
+                    if n == 128 && vel >= 129 {
                         if let Some(note) = self.poly_notes[track] {
                             self.generated[note as usize] = self.poly_vel[track];
                             continuing[note as usize] = true;
                         }
-                    } else if n < 128 && vel >= 128 {
+                    } else if n < 128 && vel >= 129 {
                         let transpose = held
                             .iter()
                             .position(|v| *v > 0)
                             .map_or(0, |n| n as i32 - 60);
                         let note = (n as i32 + transpose).clamp(0, 127) as u8;
                         self.poly_notes[track] = Some(note);
-                        self.poly_vel[track] = vel - 127;
-                        self.generated[note as usize] = vel - 127;
+                        self.poly_vel[track] = vel - 128;
+                        self.generated[note as usize] = vel - 128;
                     } else {
                         self.poly_notes[track] = None;
                         self.poly_vel[track] = 0;
                     }
                     let next = (self.step + 1) % length;
                     if state.patch.data[b + 256 + track * 128 + next] == 128
-                        && state.patch.data[b + 320 + track * 128 + next] >= 128
+                        && state.patch.data[b + 320 + track * 128 + next] >= 129
                     {
                         if let Some(note) = self.poly_notes[track] {
                             self.ties[note as usize] = true;
@@ -1222,9 +1248,13 @@ impl Layer {
         let mut out = [0.; 2];
         let mut fxmod = [0.; 3];
         let mut active = 0;
-        for v in &mut self.voices[..self.count] {
+        for (i, v) in self.voices[..self.count].iter_mut().enumerate() {
             let u = v.sample(p, state, self.seq, sr, bpm);
-            let pan = (v.pan + v.mod_previous[29] / 127.).clamp(-1., 1.);
+            let pan = if p[209] > 0.5 {
+                (v.pan + v.mod_previous[29] / 127.).clamp(-1., 1.)
+            } else {
+                (if i % 2 == 0 { -1. } else { 1. }) * (v.params[29] / 127.).clamp(0., 1.)
+            };
             out[0] += u * ((1. - pan) * 0.5).sqrt();
             out[1] += u * ((1. + pan) * 0.5).sqrt();
             if v.env[1].stage > 0 {
@@ -1308,7 +1338,7 @@ impl AudioProcessor for Processor {
             }
         }
         let mode = if self.state.multi {
-            2
+            1
         } else {
             self.state.patch.data[231].min(2)
         };
@@ -1334,7 +1364,7 @@ impl AudioProcessor for Processor {
                     held[n] = held[n]
                         .max(self.state.midi_notes[if self.state.multi { layer } else { 0 }][n]);
                 }
-                if mode == 1 {
+                if mode == 2 {
                     let split = self.state.patch.data[232];
                     for n in 0..128 {
                         if (layer == 0 && n >= split as usize) || (layer == 1 && n < split as usize)
@@ -1449,6 +1479,82 @@ mod behavior {
             assert_eq!(v.sample(&p, &state, [0.; 4], 48000., 120.), 0.);
         }
         assert!((v.lfo_phase[0] - phase).abs() > 0.001);
+        assert!(v.drift.iter().any(|d| d.abs() > 0.001));
+        assert!(v.phase.iter().any(|d| d.abs() > 0.001));
+    }
+    #[test]
+    fn high_free_lfo_rates_and_clock_division_bands_are_independent() {
+        let state = State::default();
+        let mut p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        let mut v = Voice::new(0);
+        let m = [0.; 256];
+        let advance = |v: &mut Voice, p: &[f32; 256], bpm| {
+            v.lfo_phase = [0.; 4];
+            v.advance_lfos(p, &m, 48000., bpm);
+            v.lfo_phase[0]
+        };
+        p[53] = 150.;
+        let fast = advance(&mut v, &p, 120.);
+        assert!((fast - 500. * 8. / 48000.).abs() < 1e-5);
+        assert_eq!(fast, advance(&mut v, &p, 60.));
+        p[69] = 1.;
+        p[53] = 72.; // 1 sequencer step (not 72/127 free rate).
+        p[131] = 1.; // quarter note
+        let synced = advance(&mut v, &p, 120.);
+        assert!((synced - 2. * 8. / 48000.).abs() < 1e-6);
+        p[53] = 80.;
+        assert_eq!(synced, advance(&mut v, &p, 120.));
+        p[53] = 81.;
+        assert!((advance(&mut v, &p, 120.) / synced - 1.5).abs() < 1e-5);
+        assert!((step_beats(12, 0) - 1. / 16.).abs() < 1e-6);
+    }
+    #[test]
+    fn matrix_can_modulate_auxiliary_amount_and_open_an_idle_vca() {
+        let state = State::default();
+        let mut p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        let mut v = Voice::new(0);
+        v.on(69, 100, 1, &p, 48000., false);
+        v.env[2].v = 1.;
+        p[30] = 1.;
+        p[77] = 21.;
+        p[85] = 151.; // DC +24 to Env3 Amount
+        p[93] = 27.;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        assert!((v.freq[0] - 880.).abs() < 0.01);
+        p[30] = 0.;
+        p[85] = 254.;
+        p[93] = 13.; // DC opens VCA without a gate.
+        let mut idle = Voice::new(1);
+        let audio: Vec<_> = (0..4096)
+            .map(|_| idle.sample(&p, &state, [0.; 4], 48000., 120.))
+            .collect();
+        assert!(audio.iter().any(|s| s.abs() > 0.001));
+        assert!(audio.iter().all(|s| s.is_finite()));
+    }
+    #[test]
+    fn filter_absolute_cutoff_and_attack_follow_measured_anchors() {
+        let state = State::default();
+        let mut p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        let mut v = Voice::new(0);
+        let hz = |g: f32| (g / (1. - g)).atan() * 48000. / PI;
+        p[22] = 105.;
+        p[24] = 0.;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        assert!((hz(v.filter.g) - 440.).abs() < 0.01);
+        p[22] = 0.;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        assert!((hz(v.filter.g) - frequency(-36.)).abs() < 1e-5);
+        p[22] = 24.;
+        p[24] = 64.;
+        v.note = 69;
+        v.control(&p, &state, [0.; 4], 48000., 120.);
+        assert!((hz(v.filter.g) - 440.).abs() < 0.01);
+        assert!((amp_attack(63.) - 0.605).abs() < 1e-6);
+        assert!((amp_attack(127.) - 24.660).abs() < 1e-5);
+        for i in 1..128 {
+            assert!(amp_attack(i as f32) > amp_attack((i - 1) as f32));
+        }
     }
     #[test]
     fn reference_pitch_is_exact_and_slop_is_slow_and_independent() {
@@ -1468,11 +1574,11 @@ mod behavior {
             v.control(&p, &state, [0.; 4], 48000., 120.);
             for o in 0..2 {
                 largest = largest.max((1200. * (v.freq[o] / previous[o]).log2()).abs());
-                assert!((1200. * (v.freq[o] / 440.).log2()).abs() <= 12.01);
+                assert!((1200. * (v.freq[o] / 440.).log2()).abs() <= 400.01);
             }
             previous = v.freq;
         }
-        assert!(largest < 0.02, "control-rate pitch jump: {largest} cents");
+        assert!(largest < 0.03, "control-rate pitch jump: {largest} cents");
         assert!((v.drift[0] - v.drift[1]).abs() > 0.01);
     }
     #[test]
@@ -1711,7 +1817,7 @@ mod behavior {
     fn dense_and_stacked_chords_remain_finite_without_hard_clipping() {
         use super::super::patch::Patch;
         let notes: Vec<_> = (48..64).collect();
-        for mode in [0, 2] {
+        for mode in [0, 1] {
             let mut patch = Patch::default();
             patch.data[231] = mode;
             let audio = output(patch, &notes, 1.);
@@ -1768,6 +1874,40 @@ mod behavior {
         );
         assert!(l.prior[67] > 0);
         assert_eq!(l.prior[64], 0);
+    }
+    #[test]
+    fn native_poly_velocity_rest_and_reset_have_the_hardware_encoding() {
+        let mut state = State::default();
+        state.playing = true;
+        // Independent editor wire encoding: 127 reset, 128 rest, 129 velocity 1,
+        // 255 velocity 127. Reset terminates the sequence regardless of its note.
+        for (offset, value) in [
+            (256, 60),
+            (257, 62),
+            (258, 64),
+            (259, 67),
+            (320, 129),
+            (321, 128),
+            (322, 255),
+            (323, 127),
+        ] {
+            state.patch.data[offset] = value;
+        }
+        let p = std::array::from_fn(|i| state.patch.data[i] as f32);
+        let mut l = Layer::new();
+        let held = [0; 128];
+        assert_eq!(l.schedule(&held, &p, &state, 48000., 120.)[60], 1);
+        l.elapsed = 1.;
+        assert!(l
+            .schedule(&held, &p, &state, 48000., 120.)
+            .iter()
+            .all(|v| *v == 0));
+        l.elapsed = 1.;
+        assert_eq!(l.schedule(&held, &p, &state, 48000., 120.)[64], 127);
+        l.elapsed = 1.;
+        let notes = l.schedule(&held, &p, &state, 48000., 120.);
+        assert_eq!(notes[60], 1);
+        assert_eq!(notes[67], 0);
     }
     #[test]
     fn all_numeric_mod_destinations_reach_a_real_parameter() {

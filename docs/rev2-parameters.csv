@@ -1,0 +1,970 @@
+scope,raw_offset_A,NRPN_A,raw_offset_B,NRPN_B,parameter,minimum,maximum,encoding
+Layer,0,0,1024,2048,Osc 1 Frequency,0,120,Unsigned / enum
+Layer,1,5,1025,2053,Osc 2 Frequency,0,120,Unsigned / enum
+Layer,2,1,1026,2049,Osc 1 Fine,0,100,Cents: stored value - 50
+Layer,3,6,1027,2054,Osc 2 Fine,0,100,Cents: stored value - 50
+Layer,4,2,1028,2050,Osc 1 Shape,0,4,Unsigned / enum
+Layer,5,7,1029,2055,Osc 2 Shape,0,4,Unsigned / enum
+Layer,6,102,1030,2150,Osc 1 Shape Mod,0,99,Unsigned / enum
+Layer,7,103,1031,2151,Osc 2 Shape Mod,0,99,Unsigned / enum
+Layer,8,3,1032,2051,OSC1 Glide,0,127,Unsigned / enum
+Layer,9,8,1033,2056,OSC2 Glide,0,127,Unsigned / enum
+Layer,10,4,1034,2052,OSC1 Key on/off,0,1,Unsigned / enum
+Layer,11,9,1035,2057,OSC2 Key on/off,0,1,Unsigned / enum
+Layer,12,99,1036,2147,OSC1 Note Reset,0,1,Unsigned / enum
+Layer,13,104,1037,2152,OSC2 Note Reset,0,1,Unsigned / enum
+Layer,14,13,1038,2061,OSC Mix,0,127,Unsigned / enum
+Layer,15,110,1039,2158,SubOct Level,0,127,Unsigned / enum
+Layer,16,14,1040,2062,Noise Level,0,127,Unsigned / enum
+Layer,17,10,1041,2058,Sync,0,1,Unsigned / enum
+Layer,18,11,1042,2059,Glide Mode,0,3,Unsigned / enum
+Layer,19,111,1043,2159,Glide on/off,0,1,Unsigned / enum
+Layer,20,113,1044,2161,Pitch Bend Range,0,12,Unsigned / enum
+Layer,21,12,1045,2060,OSC Slop,0,127,Unsigned / enum
+Layer,22,15,1046,2063,Filter Cutoff,0,164,Unsigned / enum
+Layer,23,16,1047,2064,Filter Resonance,0,127,Unsigned / enum
+Layer,24,17,1048,2065,Filter Key Amount,0,127,Unsigned / enum
+Layer,25,18,1049,2066,Filter Audio Mod,0,127,Unsigned / enum
+Layer,26,19,1050,2067,Filter Poles,0,1,Unsigned / enum
+Layer,27,98,1051,2146,VCA Level,0,127,Unsigned / enum
+Layer,28,29,1052,2077,Program Volume,0,127,Unsigned / enum
+Layer,29,28,1053,2076,Pan Spread,0,127,Unsigned / enum
+Layer,30,57,1054,2105,Env3 Destination,0,52,Unsigned / enum
+Layer,31,97,1055,2145,Env3 Repeat,0,1,Unsigned / enum
+Layer,32,20,1056,2068,EnvF Amount,0,254,Bipolar: stored value - 127
+Layer,33,30,1057,2078,EnvA Amount,0,127,Unsigned / enum
+Layer,34,58,1058,2106,Env3 Amount,0,254,Bipolar: stored value - 127
+Layer,35,21,1059,2069,EnvF Velocity,0,127,Unsigned / enum
+Layer,36,31,1060,2079,EnvA Velocity,0,127,Unsigned / enum
+Layer,37,59,1061,2107,Env3 Velocity,0,127,Unsigned / enum
+Layer,38,22,1062,2070,EnvF Delay,0,127,Unsigned / enum
+Layer,39,32,1063,2080,EnvA Delay,0,127,Unsigned / enum
+Layer,40,60,1064,2108,Env3 Delay,0,127,Unsigned / enum
+Layer,41,23,1065,2071,EnvF Attack,0,127,Unsigned / enum
+Layer,42,33,1066,2081,EnvA Attack,0,127,Unsigned / enum
+Layer,43,61,1067,2109,Env3 Attack,0,127,Unsigned / enum
+Layer,44,24,1068,2072,EnvF Decay,0,127,Unsigned / enum
+Layer,45,34,1069,2082,EnvA Decay,0,127,Unsigned / enum
+Layer,46,62,1070,2110,Env3 Decay,0,127,Unsigned / enum
+Layer,47,25,1071,2073,EnvF Sustain,0,127,Unsigned / enum
+Layer,48,35,1072,2083,EnvA Sustain,0,127,Unsigned / enum
+Layer,49,63,1073,2111,Env3 Sustain,0,127,Unsigned / enum
+Layer,50,26,1074,2074,EnvF Release,0,127,Unsigned / enum
+Layer,51,36,1075,2084,EnvA Release,0,127,Unsigned / enum
+Layer,52,64,1076,2112,Env3 Release,0,127,Unsigned / enum
+Layer,53,37,1077,2085,LFO1 Rate,0,150,Unsigned / enum
+Layer,54,42,1078,2090,LFO2 Rate,0,150,Unsigned / enum
+Layer,55,47,1079,2095,LFO3 Rate,0,150,Unsigned / enum
+Layer,56,52,1080,2100,LFO4 Rate,0,150,Unsigned / enum
+Layer,57,38,1081,2086,LFO1 Shape,0,4,Unsigned / enum
+Layer,58,43,1082,2091,LFO2 Shape,0,4,Unsigned / enum
+Layer,59,48,1083,2096,LFO3 Shape,0,4,Unsigned / enum
+Layer,60,53,1084,2101,LFO4 Shape,0,4,Unsigned / enum
+Layer,61,39,1085,2087,LFO1 Amount,0,127,Unsigned / enum
+Layer,62,44,1086,2092,LFO2 Amount,0,127,Unsigned / enum
+Layer,63,49,1087,2097,LFO3 Amount,0,127,Unsigned / enum
+Layer,64,54,1088,2102,LFO4 Amount,0,127,Unsigned / enum
+Layer,65,40,1089,2088,LFO1 Destination,0,52,Unsigned / enum
+Layer,66,45,1090,2093,LFO2 Destination,0,52,Unsigned / enum
+Layer,67,50,1091,2098,LFO3 Destination,0,52,Unsigned / enum
+Layer,68,55,1092,2103,LFO4 Destination,0,52,Unsigned / enum
+Layer,69,41,1093,2089,LFO1 ClkSync,0,1,Unsigned / enum
+Layer,70,46,1094,2094,LFO2 ClkSync,0,1,Unsigned / enum
+Layer,71,51,1095,2099,LFO3 ClkSync,0,1,Unsigned / enum
+Layer,72,56,1096,2104,LFO4 ClkSync,0,1,Unsigned / enum
+Layer,73,105,1097,2153,LFO1 KeySync,0,1,Unsigned / enum
+Layer,74,106,1098,2154,LFO2 KeySync,0,1,Unsigned / enum
+Layer,75,107,1099,2155,LFO3 KeySync,0,1,Unsigned / enum
+Layer,76,108,1100,2156,LFO4 KeySync,0,1,Unsigned / enum
+Layer,77,65,1101,2113,Mod1 Source,0,22,Unsigned / enum
+Layer,78,68,1102,2116,Mod2 Source,0,22,Unsigned / enum
+Layer,79,71,1103,2119,Mod3 Source,0,22,Unsigned / enum
+Layer,80,74,1104,2122,Mod4 Source,0,22,Unsigned / enum
+Layer,81,77,1105,2125,Mod5 Source,0,22,Unsigned / enum
+Layer,82,80,1106,2128,Mod6 Source,0,22,Unsigned / enum
+Layer,83,83,1107,2131,Mod7 Source,0,22,Unsigned / enum
+Layer,84,86,1108,2134,Mod8 Source,0,22,Unsigned / enum
+Layer,85,66,1109,2114,Mod1 Amount,0,254,Bipolar: stored value - 127
+Layer,86,69,1110,2117,Mod2 Amount,0,254,Bipolar: stored value - 127
+Layer,87,72,1111,2120,Mod3 Amount,0,254,Bipolar: stored value - 127
+Layer,88,75,1112,2123,Mod4 Amount,0,254,Bipolar: stored value - 127
+Layer,89,78,1113,2126,Mod5 Amount,0,254,Bipolar: stored value - 127
+Layer,90,81,1114,2129,Mod6 Amount,0,254,Bipolar: stored value - 127
+Layer,91,84,1115,2132,Mod7 Amount,0,254,Bipolar: stored value - 127
+Layer,92,87,1116,2135,Mod8 Amount,0,254,Bipolar: stored value - 127
+Layer,93,67,1117,2115,Mod1 Destination,0,52,Unsigned / enum
+Layer,94,70,1118,2118,Mod2 Destination,0,52,Unsigned / enum
+Layer,95,73,1119,2121,Mod3 Destination,0,52,Unsigned / enum
+Layer,96,76,1120,2124,Mod4 Destination,0,52,Unsigned / enum
+Layer,97,79,1121,2127,Mod5 Destination,0,52,Unsigned / enum
+Layer,98,82,1122,2130,Mod6 Destination,0,52,Unsigned / enum
+Layer,99,85,1123,2133,Mod7 Destination,0,52,Unsigned / enum
+Layer,100,88,1124,2136,Mod8 Destination,0,52,Unsigned / enum
+Layer,101,116,1125,2164,Mod Wheel Amount,0,254,Bipolar: stored value - 127
+Layer,102,117,1126,2165,Mod Wheel Destination,0,52,Unsigned / enum
+Layer,103,118,1127,2166,Pressure Mod Amount,0,254,Bipolar: stored value - 127
+Layer,104,119,1128,2167,Pressure Mod Destination,0,52,Unsigned / enum
+Layer,105,120,1129,2168,Breath Mod Amount,0,254,Bipolar: stored value - 127
+Layer,106,121,1130,2169,Breath Mod Destination,0,52,Unsigned / enum
+Layer,107,122,1131,2170,Velocity Mod Amount,0,254,Bipolar: stored value - 127
+Layer,108,123,1132,2171,Velocity Mod Destination,0,52,Unsigned / enum
+Layer,109,124,1133,2172,MIDI Foot Mod Amount,0,254,Bipolar: stored value - 127
+Layer,110,125,1134,2173,MIDI Foot Mod Destination,0,52,Unsigned / enum
+Layer,111,184,1135,2232,Gated Seq1 Destination,0,52,Unsigned / enum
+Layer,112,185,1136,2233,Gated Seq2 Destination,0,53,Unsigned / enum
+Layer,113,186,1137,2234,Gated Seq3 Destination,0,52,Unsigned / enum
+Layer,114,187,1138,2235,Gated Seq4 Destination,0,53,Unsigned / enum
+Layer,115,154,1139,2202,FX Select,0,13,Unsigned / enum
+Layer,116,153,1140,2201,FX on/off,0,1,Unsigned / enum
+Layer,117,155,1141,2203,FX mix,0,127,Unsigned / enum
+Layer,118,156,1142,2204,FX Parameter 1,0,255,Unsigned / enum
+Layer,119,157,1143,2205,FX Parameter 2,0,127,Unsigned / enum
+Layer,120,158,1144,2206,FX Clock Sync on/off,0,1,Unsigned / enum
+Layer,122,170,1146,2218,Key Mode,0,5,Unsigned / enum
+Layer,123,168,1147,2216,Unison on/off,0,1,Unsigned / enum
+Layer,124,169,1148,2217,Unison Mode,0,16,Unsigned / enum
+Layer,130,179,1154,2227,BPM,30,250,Unsigned / enum
+Layer,131,175,1155,2223,Divide,0,12,Unsigned / enum
+Layer,132,173,1156,2221,Arp Mode,0,4,Unsigned / enum
+Layer,133,174,1157,2222,Arp Range,0,2,Unsigned / enum
+Layer,134,177,1158,2225,Arp Repeats,0,3,Unsigned / enum
+Layer,135,178,1159,2226,Arp Relatch on/off,0,1,Unsigned / enum
+Layer,136,172,1160,2220,Arp on/off,0,1,Unsigned / enum
+Layer,138,182,1162,2230,Sequencer Mode,0,4,Unsigned / enum
+Layer,139,183,1163,2231,Sequencer Type,0,1,Unsigned / enum
+Layer,140,192,1164,2240,Gated Seq1 Step 1-16,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,141,193,1165,2241,track1note2,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,142,194,1166,2242,track1note3,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,143,195,1167,2243,track1note4,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,144,196,1168,2244,track1note5,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,145,197,1169,2245,track1note6,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,146,198,1170,2246,track1note7,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,147,199,1171,2247,track1note8,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,148,200,1172,2248,track1note9,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,149,201,1173,2249,track1note10,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,150,202,1174,2250,track1note11,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,151,203,1175,2251,track1note12,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,152,204,1176,2252,track1note13,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,153,205,1177,2253,track1note14,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,154,206,1178,2254,track1note15,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,155,207,1179,2255,155,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,156,208,1180,2256,Gated Seq2 Step 1-16,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,157,209,1181,2257,track2note2,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,158,210,1182,2258,track2note3,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,159,211,1183,2259,track2note4,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,160,212,1184,2260,track2note5,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,161,213,1185,2261,track2note6,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,162,214,1186,2262,track2note7,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,163,215,1187,2263,track2note8,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,164,216,1188,2264,track2note9,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,165,217,1189,2265,track2note10,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,166,218,1190,2266,track2note11,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,167,219,1191,2267,track2note12,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,168,220,1192,2268,track2note13,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,169,221,1193,2269,track2note14,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,170,222,1194,2270,track2note15,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,171,223,1195,2271,171,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,172,224,1196,2272,Gated Seq3 Step 1-16,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,173,225,1197,2273,track3note2,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,174,226,1198,2274,track3note3,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,175,227,1199,2275,track3note4,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,176,228,1200,2276,track3note5,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,177,229,1201,2277,track3note6,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,178,230,1202,2278,track3note7,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,179,231,1203,2279,track3note8,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,180,232,1204,2280,track3note9,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,181,233,1205,2281,track3note10,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,182,234,1206,2282,track3note11,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,183,235,1207,2283,track3note12,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,184,236,1208,2284,track3note13,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,185,237,1209,2285,track3note14,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,186,238,1210,2286,track3note15,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,187,239,1211,2287,187,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,188,240,1212,2288,Gated Seq4 Step 1-16,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,189,241,1213,2289,track4note2,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,190,242,1214,2290,track4note3,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,191,243,1215,2291,track4note4,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,192,244,1216,2292,track4note5,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,193,245,1217,2293,track4note6,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,194,246,1218,2294,track4note7,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,195,247,1219,2295,track4note8,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,196,248,1220,2296,track4note9,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,197,249,1221,2297,track4note10,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,198,250,1222,2298,track4note11,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,199,251,1223,2299,track4note12,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,200,252,1224,2300,track4note13,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,201,253,1225,2301,track4note14,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,202,254,1226,2302,track4note15,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,203,255,1227,2303,203,0,127,0..125 step; 126 reset; 127 rest (reset/rest semantics depend on track)
+Layer,208,167,1232,2215,Unison Detune,0,16,Unsigned / enum
+Layer,209,114,1233,2162,Pan Mod Mode,0,1,Unsigned / enum
+Global,231,163,,,Layer Mode,0,2,Unsigned / enum
+Global,232,171,,,Split Point,0,120,Unsigned / enum
+Layer,256,276,1280,2324,Poly track 1 step 1 note,0,128,0..127 MIDI note; 128 tie
+Layer,320,340,1344,2388,Poly track 1 step 1 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,257,277,1281,2325,Poly track 1 step 2 note,0,128,0..127 MIDI note; 128 tie
+Layer,321,341,1345,2389,Poly track 1 step 2 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,258,278,1282,2326,Poly track 1 step 3 note,0,128,0..127 MIDI note; 128 tie
+Layer,322,342,1346,2390,Poly track 1 step 3 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,259,279,1283,2327,Poly track 1 step 4 note,0,128,0..127 MIDI note; 128 tie
+Layer,323,343,1347,2391,Poly track 1 step 4 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,260,280,1284,2328,Poly track 1 step 5 note,0,128,0..127 MIDI note; 128 tie
+Layer,324,344,1348,2392,Poly track 1 step 5 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,261,281,1285,2329,Poly track 1 step 6 note,0,128,0..127 MIDI note; 128 tie
+Layer,325,345,1349,2393,Poly track 1 step 6 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,262,282,1286,2330,Poly track 1 step 7 note,0,128,0..127 MIDI note; 128 tie
+Layer,326,346,1350,2394,Poly track 1 step 7 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,263,283,1287,2331,Poly track 1 step 8 note,0,128,0..127 MIDI note; 128 tie
+Layer,327,347,1351,2395,Poly track 1 step 8 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,264,284,1288,2332,Poly track 1 step 9 note,0,128,0..127 MIDI note; 128 tie
+Layer,328,348,1352,2396,Poly track 1 step 9 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,265,285,1289,2333,Poly track 1 step 10 note,0,128,0..127 MIDI note; 128 tie
+Layer,329,349,1353,2397,Poly track 1 step 10 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,266,286,1290,2334,Poly track 1 step 11 note,0,128,0..127 MIDI note; 128 tie
+Layer,330,350,1354,2398,Poly track 1 step 11 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,267,287,1291,2335,Poly track 1 step 12 note,0,128,0..127 MIDI note; 128 tie
+Layer,331,351,1355,2399,Poly track 1 step 12 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,268,288,1292,2336,Poly track 1 step 13 note,0,128,0..127 MIDI note; 128 tie
+Layer,332,352,1356,2400,Poly track 1 step 13 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,269,289,1293,2337,Poly track 1 step 14 note,0,128,0..127 MIDI note; 128 tie
+Layer,333,353,1357,2401,Poly track 1 step 14 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,270,290,1294,2338,Poly track 1 step 15 note,0,128,0..127 MIDI note; 128 tie
+Layer,334,354,1358,2402,Poly track 1 step 15 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,271,291,1295,2339,Poly track 1 step 16 note,0,128,0..127 MIDI note; 128 tie
+Layer,335,355,1359,2403,Poly track 1 step 16 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,272,292,1296,2340,Poly track 1 step 17 note,0,128,0..127 MIDI note; 128 tie
+Layer,336,356,1360,2404,Poly track 1 step 17 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,273,293,1297,2341,Poly track 1 step 18 note,0,128,0..127 MIDI note; 128 tie
+Layer,337,357,1361,2405,Poly track 1 step 18 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,274,294,1298,2342,Poly track 1 step 19 note,0,128,0..127 MIDI note; 128 tie
+Layer,338,358,1362,2406,Poly track 1 step 19 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,275,295,1299,2343,Poly track 1 step 20 note,0,128,0..127 MIDI note; 128 tie
+Layer,339,359,1363,2407,Poly track 1 step 20 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,276,296,1300,2344,Poly track 1 step 21 note,0,128,0..127 MIDI note; 128 tie
+Layer,340,360,1364,2408,Poly track 1 step 21 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,277,297,1301,2345,Poly track 1 step 22 note,0,128,0..127 MIDI note; 128 tie
+Layer,341,361,1365,2409,Poly track 1 step 22 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,278,298,1302,2346,Poly track 1 step 23 note,0,128,0..127 MIDI note; 128 tie
+Layer,342,362,1366,2410,Poly track 1 step 23 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,279,299,1303,2347,Poly track 1 step 24 note,0,128,0..127 MIDI note; 128 tie
+Layer,343,363,1367,2411,Poly track 1 step 24 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,280,300,1304,2348,Poly track 1 step 25 note,0,128,0..127 MIDI note; 128 tie
+Layer,344,364,1368,2412,Poly track 1 step 25 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,281,301,1305,2349,Poly track 1 step 26 note,0,128,0..127 MIDI note; 128 tie
+Layer,345,365,1369,2413,Poly track 1 step 26 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,282,302,1306,2350,Poly track 1 step 27 note,0,128,0..127 MIDI note; 128 tie
+Layer,346,366,1370,2414,Poly track 1 step 27 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,283,303,1307,2351,Poly track 1 step 28 note,0,128,0..127 MIDI note; 128 tie
+Layer,347,367,1371,2415,Poly track 1 step 28 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,284,304,1308,2352,Poly track 1 step 29 note,0,128,0..127 MIDI note; 128 tie
+Layer,348,368,1372,2416,Poly track 1 step 29 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,285,305,1309,2353,Poly track 1 step 30 note,0,128,0..127 MIDI note; 128 tie
+Layer,349,369,1373,2417,Poly track 1 step 30 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,286,306,1310,2354,Poly track 1 step 31 note,0,128,0..127 MIDI note; 128 tie
+Layer,350,370,1374,2418,Poly track 1 step 31 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,287,307,1311,2355,Poly track 1 step 32 note,0,128,0..127 MIDI note; 128 tie
+Layer,351,371,1375,2419,Poly track 1 step 32 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,288,308,1312,2356,Poly track 1 step 33 note,0,128,0..127 MIDI note; 128 tie
+Layer,352,372,1376,2420,Poly track 1 step 33 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,289,309,1313,2357,Poly track 1 step 34 note,0,128,0..127 MIDI note; 128 tie
+Layer,353,373,1377,2421,Poly track 1 step 34 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,290,310,1314,2358,Poly track 1 step 35 note,0,128,0..127 MIDI note; 128 tie
+Layer,354,374,1378,2422,Poly track 1 step 35 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,291,311,1315,2359,Poly track 1 step 36 note,0,128,0..127 MIDI note; 128 tie
+Layer,355,375,1379,2423,Poly track 1 step 36 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,292,312,1316,2360,Poly track 1 step 37 note,0,128,0..127 MIDI note; 128 tie
+Layer,356,376,1380,2424,Poly track 1 step 37 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,293,313,1317,2361,Poly track 1 step 38 note,0,128,0..127 MIDI note; 128 tie
+Layer,357,377,1381,2425,Poly track 1 step 38 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,294,314,1318,2362,Poly track 1 step 39 note,0,128,0..127 MIDI note; 128 tie
+Layer,358,378,1382,2426,Poly track 1 step 39 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,295,315,1319,2363,Poly track 1 step 40 note,0,128,0..127 MIDI note; 128 tie
+Layer,359,379,1383,2427,Poly track 1 step 40 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,296,316,1320,2364,Poly track 1 step 41 note,0,128,0..127 MIDI note; 128 tie
+Layer,360,380,1384,2428,Poly track 1 step 41 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,297,317,1321,2365,Poly track 1 step 42 note,0,128,0..127 MIDI note; 128 tie
+Layer,361,381,1385,2429,Poly track 1 step 42 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,298,318,1322,2366,Poly track 1 step 43 note,0,128,0..127 MIDI note; 128 tie
+Layer,362,382,1386,2430,Poly track 1 step 43 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,299,319,1323,2367,Poly track 1 step 44 note,0,128,0..127 MIDI note; 128 tie
+Layer,363,383,1387,2431,Poly track 1 step 44 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,300,320,1324,2368,Poly track 1 step 45 note,0,128,0..127 MIDI note; 128 tie
+Layer,364,384,1388,2432,Poly track 1 step 45 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,301,321,1325,2369,Poly track 1 step 46 note,0,128,0..127 MIDI note; 128 tie
+Layer,365,385,1389,2433,Poly track 1 step 46 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,302,322,1326,2370,Poly track 1 step 47 note,0,128,0..127 MIDI note; 128 tie
+Layer,366,386,1390,2434,Poly track 1 step 47 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,303,323,1327,2371,Poly track 1 step 48 note,0,128,0..127 MIDI note; 128 tie
+Layer,367,387,1391,2435,Poly track 1 step 48 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,304,324,1328,2372,Poly track 1 step 49 note,0,128,0..127 MIDI note; 128 tie
+Layer,368,388,1392,2436,Poly track 1 step 49 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,305,325,1329,2373,Poly track 1 step 50 note,0,128,0..127 MIDI note; 128 tie
+Layer,369,389,1393,2437,Poly track 1 step 50 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,306,326,1330,2374,Poly track 1 step 51 note,0,128,0..127 MIDI note; 128 tie
+Layer,370,390,1394,2438,Poly track 1 step 51 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,307,327,1331,2375,Poly track 1 step 52 note,0,128,0..127 MIDI note; 128 tie
+Layer,371,391,1395,2439,Poly track 1 step 52 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,308,328,1332,2376,Poly track 1 step 53 note,0,128,0..127 MIDI note; 128 tie
+Layer,372,392,1396,2440,Poly track 1 step 53 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,309,329,1333,2377,Poly track 1 step 54 note,0,128,0..127 MIDI note; 128 tie
+Layer,373,393,1397,2441,Poly track 1 step 54 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,310,330,1334,2378,Poly track 1 step 55 note,0,128,0..127 MIDI note; 128 tie
+Layer,374,394,1398,2442,Poly track 1 step 55 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,311,331,1335,2379,Poly track 1 step 56 note,0,128,0..127 MIDI note; 128 tie
+Layer,375,395,1399,2443,Poly track 1 step 56 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,312,332,1336,2380,Poly track 1 step 57 note,0,128,0..127 MIDI note; 128 tie
+Layer,376,396,1400,2444,Poly track 1 step 57 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,313,333,1337,2381,Poly track 1 step 58 note,0,128,0..127 MIDI note; 128 tie
+Layer,377,397,1401,2445,Poly track 1 step 58 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,314,334,1338,2382,Poly track 1 step 59 note,0,128,0..127 MIDI note; 128 tie
+Layer,378,398,1402,2446,Poly track 1 step 59 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,315,335,1339,2383,Poly track 1 step 60 note,0,128,0..127 MIDI note; 128 tie
+Layer,379,399,1403,2447,Poly track 1 step 60 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,316,336,1340,2384,Poly track 1 step 61 note,0,128,0..127 MIDI note; 128 tie
+Layer,380,400,1404,2448,Poly track 1 step 61 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,317,337,1341,2385,Poly track 1 step 62 note,0,128,0..127 MIDI note; 128 tie
+Layer,381,401,1405,2449,Poly track 1 step 62 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,318,338,1342,2386,Poly track 1 step 63 note,0,128,0..127 MIDI note; 128 tie
+Layer,382,402,1406,2450,Poly track 1 step 63 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,319,339,1343,2387,Poly track 1 step 64 note,0,128,0..127 MIDI note; 128 tie
+Layer,383,403,1407,2451,Poly track 1 step 64 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,384,404,1408,2452,Poly track 2 step 1 note,0,128,0..127 MIDI note; 128 tie
+Layer,448,468,1472,2516,Poly track 2 step 1 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,385,405,1409,2453,Poly track 2 step 2 note,0,128,0..127 MIDI note; 128 tie
+Layer,449,469,1473,2517,Poly track 2 step 2 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,386,406,1410,2454,Poly track 2 step 3 note,0,128,0..127 MIDI note; 128 tie
+Layer,450,470,1474,2518,Poly track 2 step 3 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,387,407,1411,2455,Poly track 2 step 4 note,0,128,0..127 MIDI note; 128 tie
+Layer,451,471,1475,2519,Poly track 2 step 4 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,388,408,1412,2456,Poly track 2 step 5 note,0,128,0..127 MIDI note; 128 tie
+Layer,452,472,1476,2520,Poly track 2 step 5 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,389,409,1413,2457,Poly track 2 step 6 note,0,128,0..127 MIDI note; 128 tie
+Layer,453,473,1477,2521,Poly track 2 step 6 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,390,410,1414,2458,Poly track 2 step 7 note,0,128,0..127 MIDI note; 128 tie
+Layer,454,474,1478,2522,Poly track 2 step 7 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,391,411,1415,2459,Poly track 2 step 8 note,0,128,0..127 MIDI note; 128 tie
+Layer,455,475,1479,2523,Poly track 2 step 8 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,392,412,1416,2460,Poly track 2 step 9 note,0,128,0..127 MIDI note; 128 tie
+Layer,456,476,1480,2524,Poly track 2 step 9 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,393,413,1417,2461,Poly track 2 step 10 note,0,128,0..127 MIDI note; 128 tie
+Layer,457,477,1481,2525,Poly track 2 step 10 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,394,414,1418,2462,Poly track 2 step 11 note,0,128,0..127 MIDI note; 128 tie
+Layer,458,478,1482,2526,Poly track 2 step 11 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,395,415,1419,2463,Poly track 2 step 12 note,0,128,0..127 MIDI note; 128 tie
+Layer,459,479,1483,2527,Poly track 2 step 12 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,396,416,1420,2464,Poly track 2 step 13 note,0,128,0..127 MIDI note; 128 tie
+Layer,460,480,1484,2528,Poly track 2 step 13 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,397,417,1421,2465,Poly track 2 step 14 note,0,128,0..127 MIDI note; 128 tie
+Layer,461,481,1485,2529,Poly track 2 step 14 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,398,418,1422,2466,Poly track 2 step 15 note,0,128,0..127 MIDI note; 128 tie
+Layer,462,482,1486,2530,Poly track 2 step 15 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,399,419,1423,2467,Poly track 2 step 16 note,0,128,0..127 MIDI note; 128 tie
+Layer,463,483,1487,2531,Poly track 2 step 16 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,400,420,1424,2468,Poly track 2 step 17 note,0,128,0..127 MIDI note; 128 tie
+Layer,464,484,1488,2532,Poly track 2 step 17 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,401,421,1425,2469,Poly track 2 step 18 note,0,128,0..127 MIDI note; 128 tie
+Layer,465,485,1489,2533,Poly track 2 step 18 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,402,422,1426,2470,Poly track 2 step 19 note,0,128,0..127 MIDI note; 128 tie
+Layer,466,486,1490,2534,Poly track 2 step 19 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,403,423,1427,2471,Poly track 2 step 20 note,0,128,0..127 MIDI note; 128 tie
+Layer,467,487,1491,2535,Poly track 2 step 20 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,404,424,1428,2472,Poly track 2 step 21 note,0,128,0..127 MIDI note; 128 tie
+Layer,468,488,1492,2536,Poly track 2 step 21 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,405,425,1429,2473,Poly track 2 step 22 note,0,128,0..127 MIDI note; 128 tie
+Layer,469,489,1493,2537,Poly track 2 step 22 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,406,426,1430,2474,Poly track 2 step 23 note,0,128,0..127 MIDI note; 128 tie
+Layer,470,490,1494,2538,Poly track 2 step 23 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,407,427,1431,2475,Poly track 2 step 24 note,0,128,0..127 MIDI note; 128 tie
+Layer,471,491,1495,2539,Poly track 2 step 24 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,408,428,1432,2476,Poly track 2 step 25 note,0,128,0..127 MIDI note; 128 tie
+Layer,472,492,1496,2540,Poly track 2 step 25 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,409,429,1433,2477,Poly track 2 step 26 note,0,128,0..127 MIDI note; 128 tie
+Layer,473,493,1497,2541,Poly track 2 step 26 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,410,430,1434,2478,Poly track 2 step 27 note,0,128,0..127 MIDI note; 128 tie
+Layer,474,494,1498,2542,Poly track 2 step 27 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,411,431,1435,2479,Poly track 2 step 28 note,0,128,0..127 MIDI note; 128 tie
+Layer,475,495,1499,2543,Poly track 2 step 28 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,412,432,1436,2480,Poly track 2 step 29 note,0,128,0..127 MIDI note; 128 tie
+Layer,476,496,1500,2544,Poly track 2 step 29 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,413,433,1437,2481,Poly track 2 step 30 note,0,128,0..127 MIDI note; 128 tie
+Layer,477,497,1501,2545,Poly track 2 step 30 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,414,434,1438,2482,Poly track 2 step 31 note,0,128,0..127 MIDI note; 128 tie
+Layer,478,498,1502,2546,Poly track 2 step 31 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,415,435,1439,2483,Poly track 2 step 32 note,0,128,0..127 MIDI note; 128 tie
+Layer,479,499,1503,2547,Poly track 2 step 32 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,416,436,1440,2484,Poly track 2 step 33 note,0,128,0..127 MIDI note; 128 tie
+Layer,480,500,1504,2548,Poly track 2 step 33 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,417,437,1441,2485,Poly track 2 step 34 note,0,128,0..127 MIDI note; 128 tie
+Layer,481,501,1505,2549,Poly track 2 step 34 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,418,438,1442,2486,Poly track 2 step 35 note,0,128,0..127 MIDI note; 128 tie
+Layer,482,502,1506,2550,Poly track 2 step 35 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,419,439,1443,2487,Poly track 2 step 36 note,0,128,0..127 MIDI note; 128 tie
+Layer,483,503,1507,2551,Poly track 2 step 36 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,420,440,1444,2488,Poly track 2 step 37 note,0,128,0..127 MIDI note; 128 tie
+Layer,484,504,1508,2552,Poly track 2 step 37 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,421,441,1445,2489,Poly track 2 step 38 note,0,128,0..127 MIDI note; 128 tie
+Layer,485,505,1509,2553,Poly track 2 step 38 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,422,442,1446,2490,Poly track 2 step 39 note,0,128,0..127 MIDI note; 128 tie
+Layer,486,506,1510,2554,Poly track 2 step 39 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,423,443,1447,2491,Poly track 2 step 40 note,0,128,0..127 MIDI note; 128 tie
+Layer,487,507,1511,2555,Poly track 2 step 40 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,424,444,1448,2492,Poly track 2 step 41 note,0,128,0..127 MIDI note; 128 tie
+Layer,488,508,1512,2556,Poly track 2 step 41 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,425,445,1449,2493,Poly track 2 step 42 note,0,128,0..127 MIDI note; 128 tie
+Layer,489,509,1513,2557,Poly track 2 step 42 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,426,446,1450,2494,Poly track 2 step 43 note,0,128,0..127 MIDI note; 128 tie
+Layer,490,510,1514,2558,Poly track 2 step 43 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,427,447,1451,2495,Poly track 2 step 44 note,0,128,0..127 MIDI note; 128 tie
+Layer,491,511,1515,2559,Poly track 2 step 44 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,428,448,1452,2496,Poly track 2 step 45 note,0,128,0..127 MIDI note; 128 tie
+Layer,492,512,1516,2560,Poly track 2 step 45 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,429,449,1453,2497,Poly track 2 step 46 note,0,128,0..127 MIDI note; 128 tie
+Layer,493,513,1517,2561,Poly track 2 step 46 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,430,450,1454,2498,Poly track 2 step 47 note,0,128,0..127 MIDI note; 128 tie
+Layer,494,514,1518,2562,Poly track 2 step 47 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,431,451,1455,2499,Poly track 2 step 48 note,0,128,0..127 MIDI note; 128 tie
+Layer,495,515,1519,2563,Poly track 2 step 48 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,432,452,1456,2500,Poly track 2 step 49 note,0,128,0..127 MIDI note; 128 tie
+Layer,496,516,1520,2564,Poly track 2 step 49 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,433,453,1457,2501,Poly track 2 step 50 note,0,128,0..127 MIDI note; 128 tie
+Layer,497,517,1521,2565,Poly track 2 step 50 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,434,454,1458,2502,Poly track 2 step 51 note,0,128,0..127 MIDI note; 128 tie
+Layer,498,518,1522,2566,Poly track 2 step 51 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,435,455,1459,2503,Poly track 2 step 52 note,0,128,0..127 MIDI note; 128 tie
+Layer,499,519,1523,2567,Poly track 2 step 52 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,436,456,1460,2504,Poly track 2 step 53 note,0,128,0..127 MIDI note; 128 tie
+Layer,500,520,1524,2568,Poly track 2 step 53 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,437,457,1461,2505,Poly track 2 step 54 note,0,128,0..127 MIDI note; 128 tie
+Layer,501,521,1525,2569,Poly track 2 step 54 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,438,458,1462,2506,Poly track 2 step 55 note,0,128,0..127 MIDI note; 128 tie
+Layer,502,522,1526,2570,Poly track 2 step 55 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,439,459,1463,2507,Poly track 2 step 56 note,0,128,0..127 MIDI note; 128 tie
+Layer,503,523,1527,2571,Poly track 2 step 56 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,440,460,1464,2508,Poly track 2 step 57 note,0,128,0..127 MIDI note; 128 tie
+Layer,504,524,1528,2572,Poly track 2 step 57 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,441,461,1465,2509,Poly track 2 step 58 note,0,128,0..127 MIDI note; 128 tie
+Layer,505,525,1529,2573,Poly track 2 step 58 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,442,462,1466,2510,Poly track 2 step 59 note,0,128,0..127 MIDI note; 128 tie
+Layer,506,526,1530,2574,Poly track 2 step 59 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,443,463,1467,2511,Poly track 2 step 60 note,0,128,0..127 MIDI note; 128 tie
+Layer,507,527,1531,2575,Poly track 2 step 60 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,444,464,1468,2512,Poly track 2 step 61 note,0,128,0..127 MIDI note; 128 tie
+Layer,508,528,1532,2576,Poly track 2 step 61 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,445,465,1469,2513,Poly track 2 step 62 note,0,128,0..127 MIDI note; 128 tie
+Layer,509,529,1533,2577,Poly track 2 step 62 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,446,466,1470,2514,Poly track 2 step 63 note,0,128,0..127 MIDI note; 128 tie
+Layer,510,530,1534,2578,Poly track 2 step 63 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,447,467,1471,2515,Poly track 2 step 64 note,0,128,0..127 MIDI note; 128 tie
+Layer,511,531,1535,2579,Poly track 2 step 64 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,512,532,1536,2580,Poly track 3 step 1 note,0,128,0..127 MIDI note; 128 tie
+Layer,576,596,1600,2644,Poly track 3 step 1 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,513,533,1537,2581,Poly track 3 step 2 note,0,128,0..127 MIDI note; 128 tie
+Layer,577,597,1601,2645,Poly track 3 step 2 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,514,534,1538,2582,Poly track 3 step 3 note,0,128,0..127 MIDI note; 128 tie
+Layer,578,598,1602,2646,Poly track 3 step 3 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,515,535,1539,2583,Poly track 3 step 4 note,0,128,0..127 MIDI note; 128 tie
+Layer,579,599,1603,2647,Poly track 3 step 4 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,516,536,1540,2584,Poly track 3 step 5 note,0,128,0..127 MIDI note; 128 tie
+Layer,580,600,1604,2648,Poly track 3 step 5 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,517,537,1541,2585,Poly track 3 step 6 note,0,128,0..127 MIDI note; 128 tie
+Layer,581,601,1605,2649,Poly track 3 step 6 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,518,538,1542,2586,Poly track 3 step 7 note,0,128,0..127 MIDI note; 128 tie
+Layer,582,602,1606,2650,Poly track 3 step 7 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,519,539,1543,2587,Poly track 3 step 8 note,0,128,0..127 MIDI note; 128 tie
+Layer,583,603,1607,2651,Poly track 3 step 8 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,520,540,1544,2588,Poly track 3 step 9 note,0,128,0..127 MIDI note; 128 tie
+Layer,584,604,1608,2652,Poly track 3 step 9 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,521,541,1545,2589,Poly track 3 step 10 note,0,128,0..127 MIDI note; 128 tie
+Layer,585,605,1609,2653,Poly track 3 step 10 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,522,542,1546,2590,Poly track 3 step 11 note,0,128,0..127 MIDI note; 128 tie
+Layer,586,606,1610,2654,Poly track 3 step 11 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,523,543,1547,2591,Poly track 3 step 12 note,0,128,0..127 MIDI note; 128 tie
+Layer,587,607,1611,2655,Poly track 3 step 12 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,524,544,1548,2592,Poly track 3 step 13 note,0,128,0..127 MIDI note; 128 tie
+Layer,588,608,1612,2656,Poly track 3 step 13 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,525,545,1549,2593,Poly track 3 step 14 note,0,128,0..127 MIDI note; 128 tie
+Layer,589,609,1613,2657,Poly track 3 step 14 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,526,546,1550,2594,Poly track 3 step 15 note,0,128,0..127 MIDI note; 128 tie
+Layer,590,610,1614,2658,Poly track 3 step 15 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,527,547,1551,2595,Poly track 3 step 16 note,0,128,0..127 MIDI note; 128 tie
+Layer,591,611,1615,2659,Poly track 3 step 16 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,528,548,1552,2596,Poly track 3 step 17 note,0,128,0..127 MIDI note; 128 tie
+Layer,592,612,1616,2660,Poly track 3 step 17 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,529,549,1553,2597,Poly track 3 step 18 note,0,128,0..127 MIDI note; 128 tie
+Layer,593,613,1617,2661,Poly track 3 step 18 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,530,550,1554,2598,Poly track 3 step 19 note,0,128,0..127 MIDI note; 128 tie
+Layer,594,614,1618,2662,Poly track 3 step 19 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,531,551,1555,2599,Poly track 3 step 20 note,0,128,0..127 MIDI note; 128 tie
+Layer,595,615,1619,2663,Poly track 3 step 20 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,532,552,1556,2600,Poly track 3 step 21 note,0,128,0..127 MIDI note; 128 tie
+Layer,596,616,1620,2664,Poly track 3 step 21 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,533,553,1557,2601,Poly track 3 step 22 note,0,128,0..127 MIDI note; 128 tie
+Layer,597,617,1621,2665,Poly track 3 step 22 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,534,554,1558,2602,Poly track 3 step 23 note,0,128,0..127 MIDI note; 128 tie
+Layer,598,618,1622,2666,Poly track 3 step 23 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,535,555,1559,2603,Poly track 3 step 24 note,0,128,0..127 MIDI note; 128 tie
+Layer,599,619,1623,2667,Poly track 3 step 24 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,536,556,1560,2604,Poly track 3 step 25 note,0,128,0..127 MIDI note; 128 tie
+Layer,600,620,1624,2668,Poly track 3 step 25 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,537,557,1561,2605,Poly track 3 step 26 note,0,128,0..127 MIDI note; 128 tie
+Layer,601,621,1625,2669,Poly track 3 step 26 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,538,558,1562,2606,Poly track 3 step 27 note,0,128,0..127 MIDI note; 128 tie
+Layer,602,622,1626,2670,Poly track 3 step 27 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,539,559,1563,2607,Poly track 3 step 28 note,0,128,0..127 MIDI note; 128 tie
+Layer,603,623,1627,2671,Poly track 3 step 28 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,540,560,1564,2608,Poly track 3 step 29 note,0,128,0..127 MIDI note; 128 tie
+Layer,604,624,1628,2672,Poly track 3 step 29 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,541,561,1565,2609,Poly track 3 step 30 note,0,128,0..127 MIDI note; 128 tie
+Layer,605,625,1629,2673,Poly track 3 step 30 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,542,562,1566,2610,Poly track 3 step 31 note,0,128,0..127 MIDI note; 128 tie
+Layer,606,626,1630,2674,Poly track 3 step 31 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,543,563,1567,2611,Poly track 3 step 32 note,0,128,0..127 MIDI note; 128 tie
+Layer,607,627,1631,2675,Poly track 3 step 32 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,544,564,1568,2612,Poly track 3 step 33 note,0,128,0..127 MIDI note; 128 tie
+Layer,608,628,1632,2676,Poly track 3 step 33 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,545,565,1569,2613,Poly track 3 step 34 note,0,128,0..127 MIDI note; 128 tie
+Layer,609,629,1633,2677,Poly track 3 step 34 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,546,566,1570,2614,Poly track 3 step 35 note,0,128,0..127 MIDI note; 128 tie
+Layer,610,630,1634,2678,Poly track 3 step 35 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,547,567,1571,2615,Poly track 3 step 36 note,0,128,0..127 MIDI note; 128 tie
+Layer,611,631,1635,2679,Poly track 3 step 36 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,548,568,1572,2616,Poly track 3 step 37 note,0,128,0..127 MIDI note; 128 tie
+Layer,612,632,1636,2680,Poly track 3 step 37 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,549,569,1573,2617,Poly track 3 step 38 note,0,128,0..127 MIDI note; 128 tie
+Layer,613,633,1637,2681,Poly track 3 step 38 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,550,570,1574,2618,Poly track 3 step 39 note,0,128,0..127 MIDI note; 128 tie
+Layer,614,634,1638,2682,Poly track 3 step 39 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,551,571,1575,2619,Poly track 3 step 40 note,0,128,0..127 MIDI note; 128 tie
+Layer,615,635,1639,2683,Poly track 3 step 40 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,552,572,1576,2620,Poly track 3 step 41 note,0,128,0..127 MIDI note; 128 tie
+Layer,616,636,1640,2684,Poly track 3 step 41 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,553,573,1577,2621,Poly track 3 step 42 note,0,128,0..127 MIDI note; 128 tie
+Layer,617,637,1641,2685,Poly track 3 step 42 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,554,574,1578,2622,Poly track 3 step 43 note,0,128,0..127 MIDI note; 128 tie
+Layer,618,638,1642,2686,Poly track 3 step 43 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,555,575,1579,2623,Poly track 3 step 44 note,0,128,0..127 MIDI note; 128 tie
+Layer,619,639,1643,2687,Poly track 3 step 44 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,556,576,1580,2624,Poly track 3 step 45 note,0,128,0..127 MIDI note; 128 tie
+Layer,620,640,1644,2688,Poly track 3 step 45 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,557,577,1581,2625,Poly track 3 step 46 note,0,128,0..127 MIDI note; 128 tie
+Layer,621,641,1645,2689,Poly track 3 step 46 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,558,578,1582,2626,Poly track 3 step 47 note,0,128,0..127 MIDI note; 128 tie
+Layer,622,642,1646,2690,Poly track 3 step 47 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,559,579,1583,2627,Poly track 3 step 48 note,0,128,0..127 MIDI note; 128 tie
+Layer,623,643,1647,2691,Poly track 3 step 48 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,560,580,1584,2628,Poly track 3 step 49 note,0,128,0..127 MIDI note; 128 tie
+Layer,624,644,1648,2692,Poly track 3 step 49 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,561,581,1585,2629,Poly track 3 step 50 note,0,128,0..127 MIDI note; 128 tie
+Layer,625,645,1649,2693,Poly track 3 step 50 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,562,582,1586,2630,Poly track 3 step 51 note,0,128,0..127 MIDI note; 128 tie
+Layer,626,646,1650,2694,Poly track 3 step 51 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,563,583,1587,2631,Poly track 3 step 52 note,0,128,0..127 MIDI note; 128 tie
+Layer,627,647,1651,2695,Poly track 3 step 52 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,564,584,1588,2632,Poly track 3 step 53 note,0,128,0..127 MIDI note; 128 tie
+Layer,628,648,1652,2696,Poly track 3 step 53 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,565,585,1589,2633,Poly track 3 step 54 note,0,128,0..127 MIDI note; 128 tie
+Layer,629,649,1653,2697,Poly track 3 step 54 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,566,586,1590,2634,Poly track 3 step 55 note,0,128,0..127 MIDI note; 128 tie
+Layer,630,650,1654,2698,Poly track 3 step 55 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,567,587,1591,2635,Poly track 3 step 56 note,0,128,0..127 MIDI note; 128 tie
+Layer,631,651,1655,2699,Poly track 3 step 56 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,568,588,1592,2636,Poly track 3 step 57 note,0,128,0..127 MIDI note; 128 tie
+Layer,632,652,1656,2700,Poly track 3 step 57 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,569,589,1593,2637,Poly track 3 step 58 note,0,128,0..127 MIDI note; 128 tie
+Layer,633,653,1657,2701,Poly track 3 step 58 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,570,590,1594,2638,Poly track 3 step 59 note,0,128,0..127 MIDI note; 128 tie
+Layer,634,654,1658,2702,Poly track 3 step 59 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,571,591,1595,2639,Poly track 3 step 60 note,0,128,0..127 MIDI note; 128 tie
+Layer,635,655,1659,2703,Poly track 3 step 60 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,572,592,1596,2640,Poly track 3 step 61 note,0,128,0..127 MIDI note; 128 tie
+Layer,636,656,1660,2704,Poly track 3 step 61 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,573,593,1597,2641,Poly track 3 step 62 note,0,128,0..127 MIDI note; 128 tie
+Layer,637,657,1661,2705,Poly track 3 step 62 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,574,594,1598,2642,Poly track 3 step 63 note,0,128,0..127 MIDI note; 128 tie
+Layer,638,658,1662,2706,Poly track 3 step 63 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,575,595,1599,2643,Poly track 3 step 64 note,0,128,0..127 MIDI note; 128 tie
+Layer,639,659,1663,2707,Poly track 3 step 64 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,640,660,1664,2708,Poly track 4 step 1 note,0,128,0..127 MIDI note; 128 tie
+Layer,704,724,1728,2772,Poly track 4 step 1 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,641,661,1665,2709,Poly track 4 step 2 note,0,128,0..127 MIDI note; 128 tie
+Layer,705,725,1729,2773,Poly track 4 step 2 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,642,662,1666,2710,Poly track 4 step 3 note,0,128,0..127 MIDI note; 128 tie
+Layer,706,726,1730,2774,Poly track 4 step 3 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,643,663,1667,2711,Poly track 4 step 4 note,0,128,0..127 MIDI note; 128 tie
+Layer,707,727,1731,2775,Poly track 4 step 4 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,644,664,1668,2712,Poly track 4 step 5 note,0,128,0..127 MIDI note; 128 tie
+Layer,708,728,1732,2776,Poly track 4 step 5 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,645,665,1669,2713,Poly track 4 step 6 note,0,128,0..127 MIDI note; 128 tie
+Layer,709,729,1733,2777,Poly track 4 step 6 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,646,666,1670,2714,Poly track 4 step 7 note,0,128,0..127 MIDI note; 128 tie
+Layer,710,730,1734,2778,Poly track 4 step 7 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,647,667,1671,2715,Poly track 4 step 8 note,0,128,0..127 MIDI note; 128 tie
+Layer,711,731,1735,2779,Poly track 4 step 8 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,648,668,1672,2716,Poly track 4 step 9 note,0,128,0..127 MIDI note; 128 tie
+Layer,712,732,1736,2780,Poly track 4 step 9 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,649,669,1673,2717,Poly track 4 step 10 note,0,128,0..127 MIDI note; 128 tie
+Layer,713,733,1737,2781,Poly track 4 step 10 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,650,670,1674,2718,Poly track 4 step 11 note,0,128,0..127 MIDI note; 128 tie
+Layer,714,734,1738,2782,Poly track 4 step 11 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,651,671,1675,2719,Poly track 4 step 12 note,0,128,0..127 MIDI note; 128 tie
+Layer,715,735,1739,2783,Poly track 4 step 12 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,652,672,1676,2720,Poly track 4 step 13 note,0,128,0..127 MIDI note; 128 tie
+Layer,716,736,1740,2784,Poly track 4 step 13 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,653,673,1677,2721,Poly track 4 step 14 note,0,128,0..127 MIDI note; 128 tie
+Layer,717,737,1741,2785,Poly track 4 step 14 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,654,674,1678,2722,Poly track 4 step 15 note,0,128,0..127 MIDI note; 128 tie
+Layer,718,738,1742,2786,Poly track 4 step 15 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,655,675,1679,2723,Poly track 4 step 16 note,0,128,0..127 MIDI note; 128 tie
+Layer,719,739,1743,2787,Poly track 4 step 16 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,656,676,1680,2724,Poly track 4 step 17 note,0,128,0..127 MIDI note; 128 tie
+Layer,720,740,1744,2788,Poly track 4 step 17 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,657,677,1681,2725,Poly track 4 step 18 note,0,128,0..127 MIDI note; 128 tie
+Layer,721,741,1745,2789,Poly track 4 step 18 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,658,678,1682,2726,Poly track 4 step 19 note,0,128,0..127 MIDI note; 128 tie
+Layer,722,742,1746,2790,Poly track 4 step 19 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,659,679,1683,2727,Poly track 4 step 20 note,0,128,0..127 MIDI note; 128 tie
+Layer,723,743,1747,2791,Poly track 4 step 20 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,660,680,1684,2728,Poly track 4 step 21 note,0,128,0..127 MIDI note; 128 tie
+Layer,724,744,1748,2792,Poly track 4 step 21 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,661,681,1685,2729,Poly track 4 step 22 note,0,128,0..127 MIDI note; 128 tie
+Layer,725,745,1749,2793,Poly track 4 step 22 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,662,682,1686,2730,Poly track 4 step 23 note,0,128,0..127 MIDI note; 128 tie
+Layer,726,746,1750,2794,Poly track 4 step 23 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,663,683,1687,2731,Poly track 4 step 24 note,0,128,0..127 MIDI note; 128 tie
+Layer,727,747,1751,2795,Poly track 4 step 24 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,664,684,1688,2732,Poly track 4 step 25 note,0,128,0..127 MIDI note; 128 tie
+Layer,728,748,1752,2796,Poly track 4 step 25 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,665,685,1689,2733,Poly track 4 step 26 note,0,128,0..127 MIDI note; 128 tie
+Layer,729,749,1753,2797,Poly track 4 step 26 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,666,686,1690,2734,Poly track 4 step 27 note,0,128,0..127 MIDI note; 128 tie
+Layer,730,750,1754,2798,Poly track 4 step 27 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,667,687,1691,2735,Poly track 4 step 28 note,0,128,0..127 MIDI note; 128 tie
+Layer,731,751,1755,2799,Poly track 4 step 28 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,668,688,1692,2736,Poly track 4 step 29 note,0,128,0..127 MIDI note; 128 tie
+Layer,732,752,1756,2800,Poly track 4 step 29 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,669,689,1693,2737,Poly track 4 step 30 note,0,128,0..127 MIDI note; 128 tie
+Layer,733,753,1757,2801,Poly track 4 step 30 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,670,690,1694,2738,Poly track 4 step 31 note,0,128,0..127 MIDI note; 128 tie
+Layer,734,754,1758,2802,Poly track 4 step 31 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,671,691,1695,2739,Poly track 4 step 32 note,0,128,0..127 MIDI note; 128 tie
+Layer,735,755,1759,2803,Poly track 4 step 32 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,672,692,1696,2740,Poly track 4 step 33 note,0,128,0..127 MIDI note; 128 tie
+Layer,736,756,1760,2804,Poly track 4 step 33 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,673,693,1697,2741,Poly track 4 step 34 note,0,128,0..127 MIDI note; 128 tie
+Layer,737,757,1761,2805,Poly track 4 step 34 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,674,694,1698,2742,Poly track 4 step 35 note,0,128,0..127 MIDI note; 128 tie
+Layer,738,758,1762,2806,Poly track 4 step 35 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,675,695,1699,2743,Poly track 4 step 36 note,0,128,0..127 MIDI note; 128 tie
+Layer,739,759,1763,2807,Poly track 4 step 36 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,676,696,1700,2744,Poly track 4 step 37 note,0,128,0..127 MIDI note; 128 tie
+Layer,740,760,1764,2808,Poly track 4 step 37 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,677,697,1701,2745,Poly track 4 step 38 note,0,128,0..127 MIDI note; 128 tie
+Layer,741,761,1765,2809,Poly track 4 step 38 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,678,698,1702,2746,Poly track 4 step 39 note,0,128,0..127 MIDI note; 128 tie
+Layer,742,762,1766,2810,Poly track 4 step 39 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,679,699,1703,2747,Poly track 4 step 40 note,0,128,0..127 MIDI note; 128 tie
+Layer,743,763,1767,2811,Poly track 4 step 40 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,680,700,1704,2748,Poly track 4 step 41 note,0,128,0..127 MIDI note; 128 tie
+Layer,744,764,1768,2812,Poly track 4 step 41 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,681,701,1705,2749,Poly track 4 step 42 note,0,128,0..127 MIDI note; 128 tie
+Layer,745,765,1769,2813,Poly track 4 step 42 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,682,702,1706,2750,Poly track 4 step 43 note,0,128,0..127 MIDI note; 128 tie
+Layer,746,766,1770,2814,Poly track 4 step 43 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,683,703,1707,2751,Poly track 4 step 44 note,0,128,0..127 MIDI note; 128 tie
+Layer,747,767,1771,2815,Poly track 4 step 44 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,684,704,1708,2752,Poly track 4 step 45 note,0,128,0..127 MIDI note; 128 tie
+Layer,748,768,1772,2816,Poly track 4 step 45 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,685,705,1709,2753,Poly track 4 step 46 note,0,128,0..127 MIDI note; 128 tie
+Layer,749,769,1773,2817,Poly track 4 step 46 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,686,706,1710,2754,Poly track 4 step 47 note,0,128,0..127 MIDI note; 128 tie
+Layer,750,770,1774,2818,Poly track 4 step 47 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,687,707,1711,2755,Poly track 4 step 48 note,0,128,0..127 MIDI note; 128 tie
+Layer,751,771,1775,2819,Poly track 4 step 48 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,688,708,1712,2756,Poly track 4 step 49 note,0,128,0..127 MIDI note; 128 tie
+Layer,752,772,1776,2820,Poly track 4 step 49 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,689,709,1713,2757,Poly track 4 step 50 note,0,128,0..127 MIDI note; 128 tie
+Layer,753,773,1777,2821,Poly track 4 step 50 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,690,710,1714,2758,Poly track 4 step 51 note,0,128,0..127 MIDI note; 128 tie
+Layer,754,774,1778,2822,Poly track 4 step 51 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,691,711,1715,2759,Poly track 4 step 52 note,0,128,0..127 MIDI note; 128 tie
+Layer,755,775,1779,2823,Poly track 4 step 52 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,692,712,1716,2760,Poly track 4 step 53 note,0,128,0..127 MIDI note; 128 tie
+Layer,756,776,1780,2824,Poly track 4 step 53 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,693,713,1717,2761,Poly track 4 step 54 note,0,128,0..127 MIDI note; 128 tie
+Layer,757,777,1781,2825,Poly track 4 step 54 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,694,714,1718,2762,Poly track 4 step 55 note,0,128,0..127 MIDI note; 128 tie
+Layer,758,778,1782,2826,Poly track 4 step 55 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,695,715,1719,2763,Poly track 4 step 56 note,0,128,0..127 MIDI note; 128 tie
+Layer,759,779,1783,2827,Poly track 4 step 56 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,696,716,1720,2764,Poly track 4 step 57 note,0,128,0..127 MIDI note; 128 tie
+Layer,760,780,1784,2828,Poly track 4 step 57 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,697,717,1721,2765,Poly track 4 step 58 note,0,128,0..127 MIDI note; 128 tie
+Layer,761,781,1785,2829,Poly track 4 step 58 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,698,718,1722,2766,Poly track 4 step 59 note,0,128,0..127 MIDI note; 128 tie
+Layer,762,782,1786,2830,Poly track 4 step 59 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,699,719,1723,2767,Poly track 4 step 60 note,0,128,0..127 MIDI note; 128 tie
+Layer,763,783,1787,2831,Poly track 4 step 60 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,700,720,1724,2768,Poly track 4 step 61 note,0,128,0..127 MIDI note; 128 tie
+Layer,764,784,1788,2832,Poly track 4 step 61 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,701,721,1725,2769,Poly track 4 step 62 note,0,128,0..127 MIDI note; 128 tie
+Layer,765,785,1789,2833,Poly track 4 step 62 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,702,722,1726,2770,Poly track 4 step 63 note,0,128,0..127 MIDI note; 128 tie
+Layer,766,786,1790,2834,Poly track 4 step 63 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,703,723,1727,2771,Poly track 4 step 64 note,0,128,0..127 MIDI note; 128 tie
+Layer,767,787,1791,2835,Poly track 4 step 64 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,768,788,1792,2836,Poly track 5 step 1 note,0,128,0..127 MIDI note; 128 tie
+Layer,832,852,1856,2900,Poly track 5 step 1 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,769,789,1793,2837,Poly track 5 step 2 note,0,128,0..127 MIDI note; 128 tie
+Layer,833,853,1857,2901,Poly track 5 step 2 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,770,790,1794,2838,Poly track 5 step 3 note,0,128,0..127 MIDI note; 128 tie
+Layer,834,854,1858,2902,Poly track 5 step 3 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,771,791,1795,2839,Poly track 5 step 4 note,0,128,0..127 MIDI note; 128 tie
+Layer,835,855,1859,2903,Poly track 5 step 4 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,772,792,1796,2840,Poly track 5 step 5 note,0,128,0..127 MIDI note; 128 tie
+Layer,836,856,1860,2904,Poly track 5 step 5 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,773,793,1797,2841,Poly track 5 step 6 note,0,128,0..127 MIDI note; 128 tie
+Layer,837,857,1861,2905,Poly track 5 step 6 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,774,794,1798,2842,Poly track 5 step 7 note,0,128,0..127 MIDI note; 128 tie
+Layer,838,858,1862,2906,Poly track 5 step 7 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,775,795,1799,2843,Poly track 5 step 8 note,0,128,0..127 MIDI note; 128 tie
+Layer,839,859,1863,2907,Poly track 5 step 8 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,776,796,1800,2844,Poly track 5 step 9 note,0,128,0..127 MIDI note; 128 tie
+Layer,840,860,1864,2908,Poly track 5 step 9 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,777,797,1801,2845,Poly track 5 step 10 note,0,128,0..127 MIDI note; 128 tie
+Layer,841,861,1865,2909,Poly track 5 step 10 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,778,798,1802,2846,Poly track 5 step 11 note,0,128,0..127 MIDI note; 128 tie
+Layer,842,862,1866,2910,Poly track 5 step 11 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,779,799,1803,2847,Poly track 5 step 12 note,0,128,0..127 MIDI note; 128 tie
+Layer,843,863,1867,2911,Poly track 5 step 12 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,780,800,1804,2848,Poly track 5 step 13 note,0,128,0..127 MIDI note; 128 tie
+Layer,844,864,1868,2912,Poly track 5 step 13 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,781,801,1805,2849,Poly track 5 step 14 note,0,128,0..127 MIDI note; 128 tie
+Layer,845,865,1869,2913,Poly track 5 step 14 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,782,802,1806,2850,Poly track 5 step 15 note,0,128,0..127 MIDI note; 128 tie
+Layer,846,866,1870,2914,Poly track 5 step 15 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,783,803,1807,2851,Poly track 5 step 16 note,0,128,0..127 MIDI note; 128 tie
+Layer,847,867,1871,2915,Poly track 5 step 16 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,784,804,1808,2852,Poly track 5 step 17 note,0,128,0..127 MIDI note; 128 tie
+Layer,848,868,1872,2916,Poly track 5 step 17 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,785,805,1809,2853,Poly track 5 step 18 note,0,128,0..127 MIDI note; 128 tie
+Layer,849,869,1873,2917,Poly track 5 step 18 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,786,806,1810,2854,Poly track 5 step 19 note,0,128,0..127 MIDI note; 128 tie
+Layer,850,870,1874,2918,Poly track 5 step 19 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,787,807,1811,2855,Poly track 5 step 20 note,0,128,0..127 MIDI note; 128 tie
+Layer,851,871,1875,2919,Poly track 5 step 20 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,788,808,1812,2856,Poly track 5 step 21 note,0,128,0..127 MIDI note; 128 tie
+Layer,852,872,1876,2920,Poly track 5 step 21 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,789,809,1813,2857,Poly track 5 step 22 note,0,128,0..127 MIDI note; 128 tie
+Layer,853,873,1877,2921,Poly track 5 step 22 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,790,810,1814,2858,Poly track 5 step 23 note,0,128,0..127 MIDI note; 128 tie
+Layer,854,874,1878,2922,Poly track 5 step 23 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,791,811,1815,2859,Poly track 5 step 24 note,0,128,0..127 MIDI note; 128 tie
+Layer,855,875,1879,2923,Poly track 5 step 24 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,792,812,1816,2860,Poly track 5 step 25 note,0,128,0..127 MIDI note; 128 tie
+Layer,856,876,1880,2924,Poly track 5 step 25 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,793,813,1817,2861,Poly track 5 step 26 note,0,128,0..127 MIDI note; 128 tie
+Layer,857,877,1881,2925,Poly track 5 step 26 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,794,814,1818,2862,Poly track 5 step 27 note,0,128,0..127 MIDI note; 128 tie
+Layer,858,878,1882,2926,Poly track 5 step 27 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,795,815,1819,2863,Poly track 5 step 28 note,0,128,0..127 MIDI note; 128 tie
+Layer,859,879,1883,2927,Poly track 5 step 28 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,796,816,1820,2864,Poly track 5 step 29 note,0,128,0..127 MIDI note; 128 tie
+Layer,860,880,1884,2928,Poly track 5 step 29 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,797,817,1821,2865,Poly track 5 step 30 note,0,128,0..127 MIDI note; 128 tie
+Layer,861,881,1885,2929,Poly track 5 step 30 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,798,818,1822,2866,Poly track 5 step 31 note,0,128,0..127 MIDI note; 128 tie
+Layer,862,882,1886,2930,Poly track 5 step 31 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,799,819,1823,2867,Poly track 5 step 32 note,0,128,0..127 MIDI note; 128 tie
+Layer,863,883,1887,2931,Poly track 5 step 32 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,800,820,1824,2868,Poly track 5 step 33 note,0,128,0..127 MIDI note; 128 tie
+Layer,864,884,1888,2932,Poly track 5 step 33 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,801,821,1825,2869,Poly track 5 step 34 note,0,128,0..127 MIDI note; 128 tie
+Layer,865,885,1889,2933,Poly track 5 step 34 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,802,822,1826,2870,Poly track 5 step 35 note,0,128,0..127 MIDI note; 128 tie
+Layer,866,886,1890,2934,Poly track 5 step 35 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,803,823,1827,2871,Poly track 5 step 36 note,0,128,0..127 MIDI note; 128 tie
+Layer,867,887,1891,2935,Poly track 5 step 36 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,804,824,1828,2872,Poly track 5 step 37 note,0,128,0..127 MIDI note; 128 tie
+Layer,868,888,1892,2936,Poly track 5 step 37 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,805,825,1829,2873,Poly track 5 step 38 note,0,128,0..127 MIDI note; 128 tie
+Layer,869,889,1893,2937,Poly track 5 step 38 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,806,826,1830,2874,Poly track 5 step 39 note,0,128,0..127 MIDI note; 128 tie
+Layer,870,890,1894,2938,Poly track 5 step 39 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,807,827,1831,2875,Poly track 5 step 40 note,0,128,0..127 MIDI note; 128 tie
+Layer,871,891,1895,2939,Poly track 5 step 40 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,808,828,1832,2876,Poly track 5 step 41 note,0,128,0..127 MIDI note; 128 tie
+Layer,872,892,1896,2940,Poly track 5 step 41 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,809,829,1833,2877,Poly track 5 step 42 note,0,128,0..127 MIDI note; 128 tie
+Layer,873,893,1897,2941,Poly track 5 step 42 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,810,830,1834,2878,Poly track 5 step 43 note,0,128,0..127 MIDI note; 128 tie
+Layer,874,894,1898,2942,Poly track 5 step 43 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,811,831,1835,2879,Poly track 5 step 44 note,0,128,0..127 MIDI note; 128 tie
+Layer,875,895,1899,2943,Poly track 5 step 44 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,812,832,1836,2880,Poly track 5 step 45 note,0,128,0..127 MIDI note; 128 tie
+Layer,876,896,1900,2944,Poly track 5 step 45 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,813,833,1837,2881,Poly track 5 step 46 note,0,128,0..127 MIDI note; 128 tie
+Layer,877,897,1901,2945,Poly track 5 step 46 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,814,834,1838,2882,Poly track 5 step 47 note,0,128,0..127 MIDI note; 128 tie
+Layer,878,898,1902,2946,Poly track 5 step 47 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,815,835,1839,2883,Poly track 5 step 48 note,0,128,0..127 MIDI note; 128 tie
+Layer,879,899,1903,2947,Poly track 5 step 48 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,816,836,1840,2884,Poly track 5 step 49 note,0,128,0..127 MIDI note; 128 tie
+Layer,880,900,1904,2948,Poly track 5 step 49 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,817,837,1841,2885,Poly track 5 step 50 note,0,128,0..127 MIDI note; 128 tie
+Layer,881,901,1905,2949,Poly track 5 step 50 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,818,838,1842,2886,Poly track 5 step 51 note,0,128,0..127 MIDI note; 128 tie
+Layer,882,902,1906,2950,Poly track 5 step 51 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,819,839,1843,2887,Poly track 5 step 52 note,0,128,0..127 MIDI note; 128 tie
+Layer,883,903,1907,2951,Poly track 5 step 52 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,820,840,1844,2888,Poly track 5 step 53 note,0,128,0..127 MIDI note; 128 tie
+Layer,884,904,1908,2952,Poly track 5 step 53 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,821,841,1845,2889,Poly track 5 step 54 note,0,128,0..127 MIDI note; 128 tie
+Layer,885,905,1909,2953,Poly track 5 step 54 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,822,842,1846,2890,Poly track 5 step 55 note,0,128,0..127 MIDI note; 128 tie
+Layer,886,906,1910,2954,Poly track 5 step 55 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,823,843,1847,2891,Poly track 5 step 56 note,0,128,0..127 MIDI note; 128 tie
+Layer,887,907,1911,2955,Poly track 5 step 56 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,824,844,1848,2892,Poly track 5 step 57 note,0,128,0..127 MIDI note; 128 tie
+Layer,888,908,1912,2956,Poly track 5 step 57 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,825,845,1849,2893,Poly track 5 step 58 note,0,128,0..127 MIDI note; 128 tie
+Layer,889,909,1913,2957,Poly track 5 step 58 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,826,846,1850,2894,Poly track 5 step 59 note,0,128,0..127 MIDI note; 128 tie
+Layer,890,910,1914,2958,Poly track 5 step 59 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,827,847,1851,2895,Poly track 5 step 60 note,0,128,0..127 MIDI note; 128 tie
+Layer,891,911,1915,2959,Poly track 5 step 60 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,828,848,1852,2896,Poly track 5 step 61 note,0,128,0..127 MIDI note; 128 tie
+Layer,892,912,1916,2960,Poly track 5 step 61 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,829,849,1853,2897,Poly track 5 step 62 note,0,128,0..127 MIDI note; 128 tie
+Layer,893,913,1917,2961,Poly track 5 step 62 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,830,850,1854,2898,Poly track 5 step 63 note,0,128,0..127 MIDI note; 128 tie
+Layer,894,914,1918,2962,Poly track 5 step 63 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,831,851,1855,2899,Poly track 5 step 64 note,0,128,0..127 MIDI note; 128 tie
+Layer,895,915,1919,2963,Poly track 5 step 64 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,896,916,1920,2964,Poly track 6 step 1 note,0,128,0..127 MIDI note; 128 tie
+Layer,960,980,1984,3028,Poly track 6 step 1 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,897,917,1921,2965,Poly track 6 step 2 note,0,128,0..127 MIDI note; 128 tie
+Layer,961,981,1985,3029,Poly track 6 step 2 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,898,918,1922,2966,Poly track 6 step 3 note,0,128,0..127 MIDI note; 128 tie
+Layer,962,982,1986,3030,Poly track 6 step 3 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,899,919,1923,2967,Poly track 6 step 4 note,0,128,0..127 MIDI note; 128 tie
+Layer,963,983,1987,3031,Poly track 6 step 4 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,900,920,1924,2968,Poly track 6 step 5 note,0,128,0..127 MIDI note; 128 tie
+Layer,964,984,1988,3032,Poly track 6 step 5 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,901,921,1925,2969,Poly track 6 step 6 note,0,128,0..127 MIDI note; 128 tie
+Layer,965,985,1989,3033,Poly track 6 step 6 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,902,922,1926,2970,Poly track 6 step 7 note,0,128,0..127 MIDI note; 128 tie
+Layer,966,986,1990,3034,Poly track 6 step 7 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,903,923,1927,2971,Poly track 6 step 8 note,0,128,0..127 MIDI note; 128 tie
+Layer,967,987,1991,3035,Poly track 6 step 8 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,904,924,1928,2972,Poly track 6 step 9 note,0,128,0..127 MIDI note; 128 tie
+Layer,968,988,1992,3036,Poly track 6 step 9 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,905,925,1929,2973,Poly track 6 step 10 note,0,128,0..127 MIDI note; 128 tie
+Layer,969,989,1993,3037,Poly track 6 step 10 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,906,926,1930,2974,Poly track 6 step 11 note,0,128,0..127 MIDI note; 128 tie
+Layer,970,990,1994,3038,Poly track 6 step 11 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,907,927,1931,2975,Poly track 6 step 12 note,0,128,0..127 MIDI note; 128 tie
+Layer,971,991,1995,3039,Poly track 6 step 12 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,908,928,1932,2976,Poly track 6 step 13 note,0,128,0..127 MIDI note; 128 tie
+Layer,972,992,1996,3040,Poly track 6 step 13 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,909,929,1933,2977,Poly track 6 step 14 note,0,128,0..127 MIDI note; 128 tie
+Layer,973,993,1997,3041,Poly track 6 step 14 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,910,930,1934,2978,Poly track 6 step 15 note,0,128,0..127 MIDI note; 128 tie
+Layer,974,994,1998,3042,Poly track 6 step 15 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,911,931,1935,2979,Poly track 6 step 16 note,0,128,0..127 MIDI note; 128 tie
+Layer,975,995,1999,3043,Poly track 6 step 16 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,912,932,1936,2980,Poly track 6 step 17 note,0,128,0..127 MIDI note; 128 tie
+Layer,976,996,2000,3044,Poly track 6 step 17 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,913,933,1937,2981,Poly track 6 step 18 note,0,128,0..127 MIDI note; 128 tie
+Layer,977,997,2001,3045,Poly track 6 step 18 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,914,934,1938,2982,Poly track 6 step 19 note,0,128,0..127 MIDI note; 128 tie
+Layer,978,998,2002,3046,Poly track 6 step 19 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,915,935,1939,2983,Poly track 6 step 20 note,0,128,0..127 MIDI note; 128 tie
+Layer,979,999,2003,3047,Poly track 6 step 20 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,916,936,1940,2984,Poly track 6 step 21 note,0,128,0..127 MIDI note; 128 tie
+Layer,980,1000,2004,3048,Poly track 6 step 21 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,917,937,1941,2985,Poly track 6 step 22 note,0,128,0..127 MIDI note; 128 tie
+Layer,981,1001,2005,3049,Poly track 6 step 22 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,918,938,1942,2986,Poly track 6 step 23 note,0,128,0..127 MIDI note; 128 tie
+Layer,982,1002,2006,3050,Poly track 6 step 23 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,919,939,1943,2987,Poly track 6 step 24 note,0,128,0..127 MIDI note; 128 tie
+Layer,983,1003,2007,3051,Poly track 6 step 24 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,920,940,1944,2988,Poly track 6 step 25 note,0,128,0..127 MIDI note; 128 tie
+Layer,984,1004,2008,3052,Poly track 6 step 25 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,921,941,1945,2989,Poly track 6 step 26 note,0,128,0..127 MIDI note; 128 tie
+Layer,985,1005,2009,3053,Poly track 6 step 26 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,922,942,1946,2990,Poly track 6 step 27 note,0,128,0..127 MIDI note; 128 tie
+Layer,986,1006,2010,3054,Poly track 6 step 27 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,923,943,1947,2991,Poly track 6 step 28 note,0,128,0..127 MIDI note; 128 tie
+Layer,987,1007,2011,3055,Poly track 6 step 28 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,924,944,1948,2992,Poly track 6 step 29 note,0,128,0..127 MIDI note; 128 tie
+Layer,988,1008,2012,3056,Poly track 6 step 29 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,925,945,1949,2993,Poly track 6 step 30 note,0,128,0..127 MIDI note; 128 tie
+Layer,989,1009,2013,3057,Poly track 6 step 30 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,926,946,1950,2994,Poly track 6 step 31 note,0,128,0..127 MIDI note; 128 tie
+Layer,990,1010,2014,3058,Poly track 6 step 31 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,927,947,1951,2995,Poly track 6 step 32 note,0,128,0..127 MIDI note; 128 tie
+Layer,991,1011,2015,3059,Poly track 6 step 32 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,928,948,1952,2996,Poly track 6 step 33 note,0,128,0..127 MIDI note; 128 tie
+Layer,992,1012,2016,3060,Poly track 6 step 33 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,929,949,1953,2997,Poly track 6 step 34 note,0,128,0..127 MIDI note; 128 tie
+Layer,993,1013,2017,3061,Poly track 6 step 34 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,930,950,1954,2998,Poly track 6 step 35 note,0,128,0..127 MIDI note; 128 tie
+Layer,994,1014,2018,3062,Poly track 6 step 35 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,931,951,1955,2999,Poly track 6 step 36 note,0,128,0..127 MIDI note; 128 tie
+Layer,995,1015,2019,3063,Poly track 6 step 36 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,932,952,1956,3000,Poly track 6 step 37 note,0,128,0..127 MIDI note; 128 tie
+Layer,996,1016,2020,3064,Poly track 6 step 37 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,933,953,1957,3001,Poly track 6 step 38 note,0,128,0..127 MIDI note; 128 tie
+Layer,997,1017,2021,3065,Poly track 6 step 38 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,934,954,1958,3002,Poly track 6 step 39 note,0,128,0..127 MIDI note; 128 tie
+Layer,998,1018,2022,3066,Poly track 6 step 39 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,935,955,1959,3003,Poly track 6 step 40 note,0,128,0..127 MIDI note; 128 tie
+Layer,999,1019,2023,3067,Poly track 6 step 40 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,936,956,1960,3004,Poly track 6 step 41 note,0,128,0..127 MIDI note; 128 tie
+Layer,1000,1020,2024,3068,Poly track 6 step 41 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,937,957,1961,3005,Poly track 6 step 42 note,0,128,0..127 MIDI note; 128 tie
+Layer,1001,1021,2025,3069,Poly track 6 step 42 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,938,958,1962,3006,Poly track 6 step 43 note,0,128,0..127 MIDI note; 128 tie
+Layer,1002,1022,2026,3070,Poly track 6 step 43 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,939,959,1963,3007,Poly track 6 step 44 note,0,128,0..127 MIDI note; 128 tie
+Layer,1003,1023,2027,3071,Poly track 6 step 44 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,940,960,1964,3008,Poly track 6 step 45 note,0,128,0..127 MIDI note; 128 tie
+Layer,1004,1024,2028,3072,Poly track 6 step 45 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,941,961,1965,3009,Poly track 6 step 46 note,0,128,0..127 MIDI note; 128 tie
+Layer,1005,1025,2029,3073,Poly track 6 step 46 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,942,962,1966,3010,Poly track 6 step 47 note,0,128,0..127 MIDI note; 128 tie
+Layer,1006,1026,2030,3074,Poly track 6 step 47 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,943,963,1967,3011,Poly track 6 step 48 note,0,128,0..127 MIDI note; 128 tie
+Layer,1007,1027,2031,3075,Poly track 6 step 48 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,944,964,1968,3012,Poly track 6 step 49 note,0,128,0..127 MIDI note; 128 tie
+Layer,1008,1028,2032,3076,Poly track 6 step 49 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,945,965,1969,3013,Poly track 6 step 50 note,0,128,0..127 MIDI note; 128 tie
+Layer,1009,1029,2033,3077,Poly track 6 step 50 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,946,966,1970,3014,Poly track 6 step 51 note,0,128,0..127 MIDI note; 128 tie
+Layer,1010,1030,2034,3078,Poly track 6 step 51 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,947,967,1971,3015,Poly track 6 step 52 note,0,128,0..127 MIDI note; 128 tie
+Layer,1011,1031,2035,3079,Poly track 6 step 52 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,948,968,1972,3016,Poly track 6 step 53 note,0,128,0..127 MIDI note; 128 tie
+Layer,1012,1032,2036,3080,Poly track 6 step 53 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,949,969,1973,3017,Poly track 6 step 54 note,0,128,0..127 MIDI note; 128 tie
+Layer,1013,1033,2037,3081,Poly track 6 step 54 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,950,970,1974,3018,Poly track 6 step 55 note,0,128,0..127 MIDI note; 128 tie
+Layer,1014,1034,2038,3082,Poly track 6 step 55 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,951,971,1975,3019,Poly track 6 step 56 note,0,128,0..127 MIDI note; 128 tie
+Layer,1015,1035,2039,3083,Poly track 6 step 56 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,952,972,1976,3020,Poly track 6 step 57 note,0,128,0..127 MIDI note; 128 tie
+Layer,1016,1036,2040,3084,Poly track 6 step 57 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,953,973,1977,3021,Poly track 6 step 58 note,0,128,0..127 MIDI note; 128 tie
+Layer,1017,1037,2041,3085,Poly track 6 step 58 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,954,974,1978,3022,Poly track 6 step 59 note,0,128,0..127 MIDI note; 128 tie
+Layer,1018,1038,2042,3086,Poly track 6 step 59 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,955,975,1979,3023,Poly track 6 step 60 note,0,128,0..127 MIDI note; 128 tie
+Layer,1019,1039,2043,3087,Poly track 6 step 60 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,956,976,1980,3024,Poly track 6 step 61 note,0,128,0..127 MIDI note; 128 tie
+Layer,1020,1040,2044,3088,Poly track 6 step 61 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,957,977,1981,3025,Poly track 6 step 62 note,0,128,0..127 MIDI note; 128 tie
+Layer,1021,1041,2045,3089,Poly track 6 step 62 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,958,978,1982,3026,Poly track 6 step 63 note,0,128,0..127 MIDI note; 128 tie
+Layer,1022,1042,2046,3090,Poly track 6 step 63 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
+Layer,959,979,1983,3027,Poly track 6 step 64 note,0,128,0..127 MIDI note; 128 tie
+Layer,1023,1043,2047,3091,Poly track 6 step 64 velocity,0,255,129..255 encode velocity 1..127; 128 rest; <=127 reset
