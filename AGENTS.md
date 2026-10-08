@@ -89,6 +89,17 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-08: ChatGPT: prepare authorized Rev2 merge and publish
+- Branch: gpt/rev2-parameter-ui-audit
+- Changed: tools/apply-rev2-audit.command adds --publish; --run remains optional.
+- Status: blocked executing merge. Max explicitly requested merging. GitHub main
+  still 977d8c3; integration branch creation returns HTTP 403. Local git fetch
+  cannot write .git/FETCH_HEAD (Operation not permitted). No main files changed.
+- Tests: bash -n and git diff --check pass. DSP/UI source unchanged from the
+  verified Rev2 audit. One Terminal command now applies and publishes main.
+- Notes for the other assistant: Max's imported patches and modified Eurorack
+  worktree remain untouched. No approval was withheld; execution access is blocked.
+
 ### 2026-10-08: ChatGPT: Rev2 wire/DSP audit and real Slint panel
 - Branch: gpt/rev2-parameter-ui-audit   Commits: this changeset
 - Changed: src/apps/prophet/, src/manifest.rs, src/app.rs, live Slint example,

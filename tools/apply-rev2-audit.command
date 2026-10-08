@@ -1,6 +1,15 @@
 #!/bin/bash
-# Apply this reviewed branch to Max's normal checkout, then optionally run Slint.
+# Apply this reviewed branch, optionally publish main and run Slint.
 set -euo pipefail
+publish=false
+run=false
+for option in "$@"; do
+    case "$option" in
+        --publish) publish=true ;;
+        --run) run=true ;;
+        *) echo "Usage: bash $0 [--publish] [--run]" >&2; exit 2 ;;
+    esac
+done
 audit_dir="$(cd "$(dirname "$0")/.." && pwd)"
 checkout="/Users/max/Developer/Modulade/portamax-sim"
 branch="gpt/rev2-parameter-ui-audit"
@@ -23,7 +32,11 @@ fi
 git -C "$checkout" fetch "$audit_dir" "$branch"
 git -C "$checkout" merge --ff-only FETCH_HEAD
 echo "Rev2 audit applied. Imported patches and local submodule source were preserved."
-if [ "${1:-}" = --run ]; then
+if [ "$publish" = true ]; then
+    git -C "$checkout" push origin main
+    echo "Rev2 audit published to GitHub main."
+fi
+if [ "$run" = true ]; then
     cd "$checkout"
     exec cargo run --offline --example slint_home_live
 fi
