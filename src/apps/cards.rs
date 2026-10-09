@@ -160,7 +160,7 @@ impl App for CardsApp {
             cells.push(match self.cards.states.get(s) {
                 Some(SlotState::Card(d)) => format!("{ports} ports · {} mA", d.current_ma),
                 Some(SlotState::Fault(_)) => "off".into(),
-                _ => format!("{} tier", tier(s)),
+                _ => "empty".into(),
             });
         }
         let pending = (0..SLOTS.len()).any(|s| self.changed(s));
@@ -247,12 +247,17 @@ mod tests {
 
     #[test]
     fn it_lists_every_slot_and_shows_a_patched_cv_out_moving() {
-        let (mut app, mods) = booted();
+        let (app, _) = booted();
         let rows = app.display();
-        assert_eq!(rows[0], ("Slot A (upper)".to_string(), "Audio 2x2".to_string()));
-        assert!(rows.iter().any(|r| r.0 == "Slot B (upper)" && r.1 == "CV 4x4"));
-        assert!(rows.iter().any(|r| r.0 == "Slot C (upper)" && r.1 == "MIDI DIN"));
-        assert!(rows.iter().any(|r| r.0 == "Slot F (lower)" && r.1 == "empty"));
+        assert_eq!(rows[0], ("Slot A (rear)".to_string(), "Audio 2x2".to_string()));
+        assert!(rows.iter().any(|r| r.0 == "Slot B (rear)" && r.1 == "MIDI DIN"));
+        assert_eq!(rows.iter().filter(|r| r.0.starts_with("Slot ")).count(), 2);
+        let audio = AudioBus::new();
+        let mods = Arc::new(ModBus::new());
+        let config = SlotConfig { slots: vec!["audio_2x2".into(), "cv_4x4".into()] };
+        let cards = Arc::new(IoCards::install(IoCards::detect(IoCards::sim_reader(&config, &catalog())), &audio, &mods, None));
+        let mut app = CardsApp::new(cards, Arc::new(AtomicF32::new(1.0)), None);
+        assert!(app.display().iter().any(|r| r.0 == "Slot B (rear)" && r.1 == "CV 4x4"));
         mods.get(mods.index_of("Slot B: CV Out 2").unwrap()).unwrap().set(0.25);
         let rows = app.display();
         assert!(rows.iter().any(|r| r.0 == "  CV Out 2" && r.1 == "+2.50 V"), "{rows:?}");
