@@ -2241,6 +2241,77 @@ mod tests {
         eprintln!("wrote a real running Metal Slug 3 frame to {}", out_path.display());
     }
 
+    /// Diagnoses the real, live finding from
+    /// `dump_a_real_neogeo_frame_to_disk_if_a_cartridge_is_present`'s own
+    /// output (an all-black frame; VRAM gets one batch of nonzero writes
+    /// then goes static; the CPU's PC sits at the exact same BIOS address
+    /// for hundreds of real frames in a row): drives the same real
+    /// cartridge to that same stuck point, then dumps the raw opcode
+    /// words around PC plus every register, and single-steps the CPU a
+    /// short run printing PC before/after each step, so the actual spin
+    /// loop (and what condition it's testing) can be read off directly
+    /// instead of guessed at. `#[ignore]`d for the same reason as its
+    /// sibling above -- run explicitly with
+    /// `cargo test --bin portamax-sim diagnose_neogeo_stuck_pc -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn diagnose_neogeo_stuck_pc_if_a_cartridge_is_present() {
+        use m68k::AddressBus;
+
+        let mut app = new_app();
+        app.console = Console::NeoGeo;
+        app.rescan_roms();
+        if app.roms.is_empty() {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        }
+        app.load_selected_rom();
+        assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+        // 150 real frames (with periodic Start presses) is well past the
+        // point the earlier run showed PC had already frozen (by frame 100).
+        for frame in 0..150 {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            let press_start = frame % 60 == 0;
+            app.tick(&Input { grid: std::array::from_fn(|pad| pad == 7 && press_start), ..Default::default() });
+            if app.deck.is_none() {
+                eprintln!("deck stopped early at frame {frame}: {}", app.status);
+                return;
+            }
+        }
+
+        let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+            panic!("deck must still be Neo Geo after 150 frames: {}", app.status);
+        };
+        let sr = machine.cpu.get_sr();
+        eprintln!("stuck at pc=0x{:06X}, sr=0x{sr:04X} (interrupt mask={})", machine.cpu.pc, (sr >> 8) & 7);
+        for r in 0..8 {
+            eprintln!("  d{r}=0x{:08X}  a{r}=0x{:08X}", machine.cpu.d(r), machine.cpu.a(r));
+        }
+        let pc = machine.cpu.pc;
+        eprintln!("opcode words around pc:");
+        for off in [-8i32, -6, -4, -2, 0, 2, 4, 6, 8] {
+            let addr = (pc as i64 + off as i64) as u32;
+            eprintln!("  [{off:+}] 0x{addr:06X}: {:04X}", machine.bus.read_word(addr));
+        }
+
+        eprintln!("single-stepping 30 instructions from the stuck pc:");
+        for i in 0..30 {
+            let before = machine.cpu.pc;
+            let ok = machine.step();
+            eprintln!(
+                "  step {i}: pc 0x{before:06X} -> 0x{:06X}  d0=0x{:08X} d1=0x{:08X} (ok={ok})",
+                machine.cpu.pc,
+                machine.cpu.d(0),
+                machine.cpu.d(1)
+            );
+            if !ok {
+                eprintln!("  CPU halted/faulted -- stopping early");
+                break;
+            }
+        }
+    }
+
     /// No real arcade ROM sets ship with this repo (same legal reasons
     /// as NES/SNES), but `phosphor_machines`' own `MachineEntry::
     /// create_bare` builds a real, fully wired machine with zero-filled
