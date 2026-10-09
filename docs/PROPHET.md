@@ -78,8 +78,10 @@ Corrected playback faults affecting imported patches and original sounds:
   pitch depth is 0.5. Matrix routing to LFO amount uses the measured 4:1 scale.
   These depths follow published firsthand hardware measurements, not a claim
   of firmware equivalence. Gated pitch steps retain their half-semitone scale.
-- Filter cutoff follows the measured semitone scale (105 ≈ 440 Hz without
-  tracking); cutoff 24 with keyboard amount 64 follows keyboard pitch. Audio modulation uses
+- Filter cutoff uses a semitone scale, calibrated against recordings of the
+  REVField bank: 105 ≈ 880 Hz without tracking (the CreativeSpiral anchor of
+  440 Hz left every program 5–16 dB too dark above 600 Hz, so `CUTOFF_SHIFT`
+  adds an octave); cutoff 24 with keyboard amount 64 follows keyboard pitch. Audio modulation uses
   oscillator 1 and retains envelope velocity response. The filter no longer
   saturates its integrator memory every sample, restoring low-frequency gain.
 - The sub is a square. Shaped ramps/triangles have slope-discontinuity
@@ -200,3 +202,18 @@ layer/page/tab controls, sequence step/velocity-track selection and key release.
 - [Edisyn Rev2 editor and raw format notes](https://github.com/eclab/edisyn/blob/master/edisyn/synth/sequentialprophetrev2/SequentialProphetRev2.java), Wim Verheyen, Apache-2.0. Used to cross-check wire facts, not as the sound engine.
 - [Independent Rev2 parameter map](https://github.com/shimpe/sc-prophet-rev2/blob/master/Classes/ScProphetRev2.sc).
 - [Firsthand Rev2 modulation-depth measurements](https://forum.sequential.com/index.php?topic=3203.0), CreativeSpiral. Used for pitch-route resolution, cutoff anchors, slop behavior and approximate VCA attack timing.
+
+## Comparison with recordings (October 2026)
+
+`reference_spectral_match` (ignored; `REV2_DIR=<folder> cargo test --release
+--bin portamax-sim reference_spectral -- --ignored --nocapture`) reads
+`REVfield1.wav`... (one clip per REVField program), estimates the notes in each
+2 s window, plays them through the same program and compares third-octave
+spectra after scaling both to equal total power, so loudness is ignored.
+First ten programs: raising the cutoff scale by 12–15 semitones cut the mean
+band error from 14.0 to 10.3 dB and removed the dark bias in eight of nine
+usable clips. Remaining differences: programs 1, 5 and 10 stay dark at high
+frequencies, program 9 (filter audio mod 30) is too bright, and programs 6 and
+8 are plucks the held-note test cannot judge. Audio-rate filter modulation
+depth (0.5 per unit) and the hard-sync direction are not settled; one clean
+monophonic clip (program 10) preferred a depth of about 1.0.
