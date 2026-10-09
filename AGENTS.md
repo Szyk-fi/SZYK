@@ -89,6 +89,18 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-09: Claude: Rev2 filter cutoff calibrated against recordings
+- Branch: claude/instrument-audit-teletype
+- Changed: src/apps/prophet/dsp.rs (CUTOFF_SHIFT = +12 semitones; new ignored
+  dev test reference_spectral_match), docs/PROPHET.md. Max supplied clips of
+  REVField programs 1-10 played on a real Rev2. Level-matched third-octave
+  spectra showed the app 5-16 dB too dark above 600 Hz; +12..+15 st flattened
+  the median in 8 of 9 usable clips (program 9 got worse).
+- Status: partial. Audio-mod depth, sync direction, programs 1/5/10 still dark.
+  This overrides the earlier CreativeSpiral anchor (105 = 440 Hz); ChatGPT owns
+  this app, please review.
+- Tests: prophet tests pass (anchor test now expects 880 Hz).
+
 ### 2026-10-09: Claude: Teletype scenes draw their own grids; Grid Pads/Knobs routing overview; Rev2 survey
 - Branch: claude/instrument-audit-teletype
 - Changed: teletype/make_scenes.py + scenes 01-05 (each now has G ops: faders,

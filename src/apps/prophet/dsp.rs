@@ -48,6 +48,14 @@ fn random(r: &mut u32) -> f32 {
     *r ^= *r << 5;
     *r as f32 / u32::MAX as f32 * 2. - 1.
 }
+/// Semitones added to the cutoff scale. The CreativeSpiral anchor (105 = 440 Hz)
+/// leaves every program darker than recordings of the REVField bank: matching
+/// third-octave spectra of eight sustained programs, the bias falls from
+/// -5..-16 dB to about 0 dB at +12..+15 semitones (run the ignored
+/// `reference_spectral_match` test with REV2_DIR to repeat it). An octave is
+/// the conservative end of that range; it is a calibration against recordings,
+/// not a measured circuit value.
+const CUTOFF_SHIFT: f32 = 12.;
 fn frequency(n: f32) -> f32 {
     440. * ((n - 69.) / 12.).exp2()
 }
@@ -515,7 +523,7 @@ impl Voice {
         }
         let env = self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel));
         let cut = self.params[22] + env + p[24] / 64. * (self.note as f32 + 12.);
-        self.filter.tune(frequency(cut - 36.), sr);
+        self.filter.tune(frequency(cut - 36. + CUTOFF_SHIFT), sr);
     }
     fn advance_lfos(&mut self, p: &[f32; 256], m: &[f32; 256], sr: f32, bpm: f32) {
         for l in 0..4 {
@@ -589,7 +597,7 @@ impl Voice {
                 + self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel))
                 + p[24] / 64. * (self.note as f32 + 12.)
                 + a * self.params[25] * 0.5;
-            self.filter.tune(frequency(cut - 36.), sr);
+            self.filter.tune(frequency(cut - 36. + CUTOFF_SHIFT), sr);
         }
         let filtered = self
             .filter
@@ -1541,15 +1549,15 @@ mod behavior {
         p[22] = 105.;
         p[24] = 0.;
         v.control(&p, &state, [0.; 4], 48000., 120.);
-        assert!((hz(v.filter.g) - 440.).abs() < 0.01);
+        assert!((hz(v.filter.g) - 880.).abs() < 0.02, "105 is an octave above the old anchor");
         p[22] = 0.;
         v.control(&p, &state, [0.; 4], 48000., 120.);
-        assert!((hz(v.filter.g) - frequency(-36.)).abs() < 1e-5);
+        assert!((hz(v.filter.g) - frequency(-36. + CUTOFF_SHIFT)).abs() < 1e-5);
         p[22] = 24.;
         p[24] = 64.;
         v.note = 69;
         v.control(&p, &state, [0.; 4], 48000., 120.);
-        assert!((hz(v.filter.g) - 440.).abs() < 0.01);
+        assert!((hz(v.filter.g) - 880.).abs() < 0.02, "105 is an octave above the old anchor");
         assert!((amp_attack(63.) - 0.605).abs() < 1e-6);
         assert!((amp_attack(127.) - 24.660).abs() < 1e-5);
         for i in 1..128 {
@@ -1776,6 +1784,9 @@ mod behavior {
         assert!((lr / (ll * rr).sqrt()).abs() < 0.95);
     }
     fn output(patch: super::super::patch::Patch, notes: &[usize], level: f32) -> Vec<f32> {
+        output_secs(patch, notes, level, 1)
+    }
+    fn output_secs(patch: super::super::patch::Patch, notes: &[usize], level: f32, secs: usize) -> Vec<f32> {
         use super::super::AtomicF32;
         use std::sync::{atomic::AtomicBool, Mutex};
         let mut state = State::default();
@@ -1793,12 +1804,129 @@ mod behavior {
             tail: AtomicBool::new(false),
         });
         let mut processor = Processor::new(shared);
-        let mut audio = vec![0.; 48_000];
+        let mut audio = vec![0.; 48_000 * secs];
         processor.process(&mut audio, 2, 48_000.);
         audio[10_000..].to_vec()
     }
     fn rms(audio: &[f32]) -> f32 {
         (audio.iter().map(|v| v * v).sum::<f32>() / audio.len() as f32).sqrt()
+    }
+    // ---- Spectral comparison with recordings (ignored dev tool).
+    // REV2_DIR holds REVfield1.wav, REVfield2.wav ... one 16-bit clip per
+    // REVfield program in bank order. For every 2 s window the notes played
+    // are estimated, replayed through the same program here, and the two
+    // spectra compared in third-octave bands after each is scaled to unit
+    // total power, so loudness is ignored and only spectral shape counts.
+    const THIRDS: usize = 24;
+    fn third_centers() -> [f32; THIRDS] {
+        std::array::from_fn(|i| 63. * 2f32.powf(i as f32 / 3.))
+    }
+    fn mags(x: &[f32], at: usize, n: usize) -> Vec<f32> {
+        use rustfft::{num_complex::Complex, FftPlanner};
+        let fft = FftPlanner::<f32>::new().plan_fft_forward(n);
+        let mut b: Vec<Complex<f32>> = (0..n)
+            .map(|k| Complex::new(x.get(at + k).copied().unwrap_or(0.) * (0.5 - 0.5 * (2. * PI * k as f32 / n as f32).cos()), 0.))
+            .collect();
+        fft.process(&mut b);
+        b[..n / 2].iter().map(|c| c.norm()).collect()
+    }
+    fn estimate_notes(x: &[f32], at: usize, sr: f32) -> Vec<usize> {
+        let n = 16_384;
+        let mut m = mags(x, at, n);
+        let bin = |hz: f32| (hz * n as f32 / sr).round() as usize;
+        let strength = |m: &[f32], note: usize| {
+            let f = 440. * ((note as f32 - 69.) / 12.).exp2();
+            (bin(f * 0.971)..=bin(f * 1.03)).map(|i| m[i.min(m.len() - 1)]).fold(0f32, f32::max)
+        };
+        let mut notes: Vec<usize> = Vec::new();
+        let mut first = 0f32;
+        for _ in 0..4 {
+            let (best, v) = (33..84).map(|nt| (nt, strength(&m, nt))).fold((0, 0f32), |a, b| if b.1 > a.1 { b } else { a });
+            if first == 0. { first = v; }
+            if v < first * 0.35 || v <= 0. { break; }
+            if !notes.contains(&best) { notes.push(best); }
+            let f = 440. * ((best as f32 - 69.) / 12.).exp2();
+            for h in 1..=12 {
+                let c = bin(f * h as f32);
+                for i in c.saturating_sub(3)..=(c + 3).min(m.len() - 1) { m[i] *= 0.05; }
+            }
+        }
+        notes
+    }
+    /// Third-octave band powers (dB re total) averaged over the frames of `x`.
+    fn thirds_db(x: &[f32], sr: f32) -> [f32; THIRDS] {
+        let n = 16_384;
+        let c = third_centers();
+        let mut acc = [0f64; THIRDS];
+        let mut total = 0f64;
+        let mut at = 0;
+        while at + n <= x.len() {
+            let m = mags(x, at, n);
+            for (i, v) in m.iter().enumerate().skip(1) {
+                let hz = i as f32 * sr / n as f32;
+                let p = (*v as f64) * (*v as f64);
+                total += p;
+                for (b, cb) in c.iter().enumerate() {
+                    if hz >= cb / 1.122 && hz < cb * 1.122 { acc[b] += p; }
+                }
+            }
+            at += n / 2;
+        }
+        std::array::from_fn(|b| (10. * ((acc[b] / total.max(1e-30)).max(1e-12)).log10()) as f32)
+    }
+    fn median(mut v: Vec<f32>) -> f32 {
+        v.sort_by(|a, b| a.total_cmp(b));
+        v.get(v.len() / 2).copied().unwrap_or(0.)
+    }
+    #[test]
+    #[ignore]
+    fn reference_spectral_match() {
+        let Ok(dir) = std::env::var("REV2_DIR") else { return };
+        let b = std::fs::read("patches/prophet-rev2/REVField-User-Bank-1.syx").unwrap();
+        let progs = super::super::patch::import(&b).unwrap();
+        let centers = third_centers();
+        eprintln!("SPEC bands (Hz): {}", centers.iter().map(|c| format!("{c:.0}")).collect::<Vec<_>>().join(" "));
+        let mut all: Vec<[f32; THIRDS]> = Vec::new();
+        for k in 1..=20usize {
+            let Ok(mut r) = hound::WavReader::open(format!("{dir}/REVfield{k}.wav")) else { continue };
+            let sr = r.spec().sample_rate as f32;
+            let ch = r.spec().channels as usize;
+            let raw: Vec<f32> = r.samples::<i16>().map(|v| v.unwrap() as f32 / 32768.).collect();
+            let x: Vec<f32> = raw.chunks(ch).map(|c| c.iter().sum::<f32>() / ch as f32).collect();
+            let win = (sr * 2.) as usize;
+            let mut deltas: Vec<[f32; THIRDS]> = Vec::new();
+            let mut cen = (Vec::new(), Vec::new());
+            for w in 0..x.len() / win {
+                let seg = &x[w * win..(w + 1) * win];
+                if (seg.iter().map(|v| v * v).sum::<f32>() / win as f32).sqrt() < 0.005 { continue; }
+                let notes = estimate_notes(&x, w * win + win / 4, sr);
+                if notes.is_empty() { continue; }
+                let out = output_secs(progs[k - 1], &notes, 1., 6);
+                let mono: Vec<f32> = out.chunks(2).map(|c| (c[0] + c[1]) * 0.5).collect();
+                let tail = &mono[mono.len().saturating_sub(48_000 * 2)..];
+                if (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt() < 0.002 { continue; }
+                let (a, bnd) = (thirds_db(seg, sr), thirds_db(tail, 48_000.));
+                deltas.push(std::array::from_fn(|i| bnd[i] - a[i]));
+                let cen_of = |t: &[f32]| -> f32 {
+                    let p = |v: &[f32; THIRDS]| { let w: Vec<f32> = v.iter().map(|d| 10f32.powf(d / 10.)).collect(); w.iter().zip(&centers).map(|(a, c)| a * c).sum::<f32>() / w.iter().sum::<f32>() };
+                    p(&thirds_db(t, if std::ptr::eq(t, tail) { 48_000. } else { sr }))
+                };
+                cen.0.push(cen_of(seg));
+                cen.1.push(cen_of(tail));
+            }
+            if deltas.is_empty() { eprintln!("SPEC {k:2} {:<14} no usable windows", progs[k - 1].name(0)); continue; }
+            let med: [f32; THIRDS] = std::array::from_fn(|i| median(deltas.iter().map(|d| d[i]).collect()));
+            eprintln!(
+                "SPEC {k:2} {:<14} windows {:2} centroid ref {:5.0} synth {:5.0} Hz | synth-ref dB per band: {}",
+                progs[k - 1].name(0), deltas.len(), median(cen.0), median(cen.1),
+                med.iter().map(|d| format!("{d:+.0}")).collect::<Vec<_>>().join(" ")
+            );
+            all.push(med);
+        }
+        let overall: Vec<String> = (0..THIRDS).map(|i| format!("{:+.0}", median(all.iter().map(|d| d[i]).collect()))).collect();
+        eprintln!("SPEC median over clips: {}", overall.join(" "));
+        let err = (all.iter().map(|d| d.iter().map(|v| v * v).sum::<f32>() / THIRDS as f32).sum::<f32>() / all.len().max(1) as f32).sqrt();
+        eprintln!("SPEC rms band error over clips: {err:.2} dB");
     }
     #[test]
     fn init_note_has_useful_output_and_preserves_volume_controls() {
