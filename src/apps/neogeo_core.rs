@@ -2153,12 +2153,22 @@ mod tests {
     /// as unverified can be checked visually: real game sprite tiles
     /// should show recognizable silhouettes/shading, not visual noise,
     /// if the decode is broadly right, even before palette or exact
-    /// left/right mirroring is confirmed. Runs the real CMC42 decrypt
-    /// pipeline first (Metal Slug 3 needs it -- undecrypted C-ROM data
-    /// would never resemble real sprites no matter how correct the
-    /// tile-format decode itself is). `#[ignore]`d since it's a human-
-    /// inspection tool, not an assertion -- run explicitly with
-    /// `cargo test --bin portamax-sim real_c_roms_visual_dump -- --ignored --nocapture`.
+    /// left/right mirroring is confirmed.
+    ///
+    /// Whether the real CMC42 decrypt pipeline runs first depends on the
+    /// dump, exactly the way `NeoGeoBus::new` itself decides (by P2's real
+    /// size): MAME's own raw, encrypted romset needs it, but this repo's
+    /// own real cartridge folder is a pre-decrypted dump (see
+    /// `detect_neogeo_protection`'s own doc comment in retro.rs for the
+    /// evidence) whose C-ROMs are *already plain* -- decrypting them again
+    /// would turn real graphics data into noise. **Confirmed by running
+    /// this test against a real user-supplied dump**: with CMC42 applied
+    /// (wrong, for this dump) the output was uniform per-pixel noise; with
+    /// it skipped (matching what `NeoGeoBus::new` actually does for a <8MB
+    /// P2) the same C-ROMs show real large-scale structure -- flat fields,
+    /// distinct blocks -- consistent with genuine tile data. `#[ignore]`d
+    /// since it's a human-inspection tool, not an assertion -- run
+    /// explicitly with `cargo test --bin portamax-sim real_c_roms_visual_dump -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn real_c_roms_visual_dump_if_present() {
@@ -2170,15 +2180,25 @@ mod tests {
             };
             c_roms.push(rom);
         }
-        let mut combined = interleave_c_rom_pairs(&c_roms);
-        cmc42::gfx_decrypt(&mut combined, cmc42::MSLUG3_GFX_KEY);
-        let (odd_rom, even_rom) = deinterleave_c_rom_pairs(&combined, c_roms.len().div_ceil(2));
+        let p2_len = load_real_rom("256-p2.rom").map_or(0, |p2| p2.len());
+        let (odd_rom, even_rom) = if p2_len >= 0x800000 {
+            eprintln!("P2 is {p2_len:#x} bytes (>= 8MB): treating C-ROMs as the raw, CMC42-encrypted layout");
+            let mut combined = interleave_c_rom_pairs(&c_roms);
+            cmc42::gfx_decrypt(&mut combined, cmc42::MSLUG3_GFX_KEY);
+            deinterleave_c_rom_pairs(&combined, c_roms.len().div_ceil(2))
+        } else {
+            eprintln!("P2 is {p2_len:#x} bytes (< 8MB): treating C-ROMs as an already-decrypted dump, same as NeoGeoBus::new does");
+            (concat_c_roms(&c_roms, true), concat_c_roms(&c_roms, false))
+        };
+        dump_sprite_tile_grid(&odd_rom, &even_rom, "neogeo_sprite_tiles_grayscale.png");
+    }
 
+    fn dump_sprite_tile_grid(odd_rom: &[u8], even_rom: &[u8], filename: &str) {
         const GRID: usize = 16; // 16x16 tiles = 256 tiles total
         const SIZE: usize = GRID * 16;
         let mut gray = vec![0u8; SIZE * SIZE];
         for tile in 0..(GRID * GRID) as u32 {
-            let pixels = decode_sprite_tile(&odd_rom, &even_rom, tile);
+            let pixels = decode_sprite_tile(odd_rom, even_rom, tile);
             let tile_x = (tile as usize % GRID) * 16;
             let tile_y = (tile as usize / GRID) * 16;
             for (y, row) in pixels.iter().enumerate() {
@@ -2187,7 +2207,7 @@ mod tests {
                 }
             }
         }
-        let out_path = std::env::temp_dir().join("neogeo_sprite_tiles_grayscale.png");
+        let out_path = std::env::temp_dir().join(filename);
         let file = std::fs::File::create(&out_path).expect("create output file");
         let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), SIZE as u32, SIZE as u32);
         encoder.set_color(png::ColorType::Grayscale);
