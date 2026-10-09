@@ -42,7 +42,7 @@ const BAR: Rgb565 = Rgb565::new(8, 40, 26);
 
 const C_BANK: usize = 0;
 const C_ROUTES: usize = 1;
-const N_CONTROLS: usize = C_ROUTES + 2 * KNOBS;
+const N_CONTROLS: usize = C_ROUTES + KNOBS;
 
 fn knob_name(k: usize) -> String {
     format!("Knob {}{}", k % MAX_ENCODERS + 1, (b'A' + (k / MAX_ENCODERS) as u8) as char)
@@ -128,16 +128,18 @@ impl ArcKnobsApp {
     fn text(&self, i: usize) -> (String, String) {
         match i {
             C_BANK => ("Bank".into(), ((b'A' + self.bank as u8) as char).to_string()),
-            _ => {
-                let k = (i - C_ROUTES) / 2;
-                let r = self.routes[k];
-                if (i - C_ROUTES) % 2 == 0 {
-                    (format!("{} to", knob_name(k)), Patch::app_label(&self.mods, r))
-                } else {
-                    (format!("{} input", knob_name(k)), Patch::input_label(&self.mods, r))
-                }
-            }
+            // One row per knob so every routing reads at a glance.
+            _ => (knob_name(i - C_ROUTES), Patch::label(&self.mods, self.routes[i - C_ROUTES])),
         }
+    }
+
+    /// Steps a knob's route through None and then every mod input, app by app.
+    fn step_route(&self, route: usize, d: i32) -> usize {
+        let apps = self.mods.apps();
+        let all: Vec<usize> = apps.iter().flat_map(|(_, v)| v.iter().map(|i| i + 1)).collect();
+        let at = if route == 0 { 0 } else { all.iter().position(|r| *r == route).map_or(0, |p| p + 1) };
+        let next = (at as i32 + d.signum()).rem_euclid(all.len() as i32 + 1) as usize;
+        if next == 0 { 0 } else { all[next - 1] }
     }
 
     fn rows(&self) -> Vec<(String, String, bool)> {
@@ -154,9 +156,8 @@ impl ArcKnobsApp {
         match i {
             C_BANK => self.bank = (self.bank as i32 + d).rem_euclid(BANKS as i32) as usize,
             _ => {
-                let k = (i - C_ROUTES) / 2;
-                let r = self.routes[k];
-                self.routes[k] = if (i - C_ROUTES) % 2 == 0 { Patch::step_app(&self.mods, r, d) } else { Patch::step_input(&self.mods, r, d) };
+                let k = i - C_ROUTES;
+                self.routes[k] = self.step_route(self.routes[k], d);
             }
         }
     }
@@ -187,14 +188,7 @@ impl PlayHost for ArcKnobsApp {
     fn kit_reset(&mut self, i: usize) {
         match i {
             C_BANK => self.bank = 0,
-            _ => {
-                let k = (i - C_ROUTES) / 2;
-                if (i - C_ROUTES) % 2 == 0 {
-                    self.routes[k] = 0;
-                } else {
-                    self.routes[k] = Patch::first_input(&self.mods, self.routes[k]);
-                }
-            }
+            _ => self.routes[i - C_ROUTES] = 0,
         }
     }
     fn kit_set_norm(&mut self, _i: usize, _v: f32) {}
@@ -323,9 +317,9 @@ mod tests {
         let mut app = ArcKnobsApp::new(Arc::clone(&a), Arc::clone(&mods), Arc::new(AtomicF32::new(3.0)));
         // Knob 1A to the cutoff, knob 2B to the resonance.
         app.control(C_ROUTES, 1);
-        app.control(C_ROUTES + 2 * 5, 1);
-        app.control(C_ROUTES + 2 * 5 + 1, 1);
-        assert_eq!(app.text(C_ROUTES + 2 * 5 + 1).1, "Res");
+        app.control(C_ROUTES + 5, 1);
+        app.control(C_ROUTES + 5, 1);
+        assert_eq!(app.text(C_ROUTES + 5).1, "Synth > Res");
         a.turn(0, -256);
         app.frame();
         assert!((cutoff.get() - 0.25).abs() < 1e-3, "{}", cutoff.get());

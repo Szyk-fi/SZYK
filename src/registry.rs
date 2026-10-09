@@ -581,12 +581,9 @@ mod manifest_contract_tests {
         }
         let s = grid.snapshot();
         assert!(s.hint.is_some(), "Teletype was built and says how it uses the grid");
-        assert_eq!(s.leds[0], 5, "the first script key is lit dimly");
-        grid.press(0, 0, true);
-        for (_, app) in apps.iter_mut() {
-            app.background_tick();
-        }
-        assert_eq!(grid.snapshot().leds[0], 15, "pressing it lights it as the script runs");
+        // The first scene draws its own grid once the audio side has run its
+        // init script (not in this test), and says so either way.
+        assert!(s.hint.as_deref().is_some_and(|h| h.contains("draws this grid")), "{:?}", s.hint);
     }
 
     /// Drag and drop: a folder holding a manifest and a patch is a new

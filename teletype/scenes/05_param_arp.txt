@@ -1,9 +1,13 @@
 PARAM ARP
 The Param knob (or the right hand) sets the speed,
 IN (or the left hand) transposes. Pad 1 picks a new chord.
+On the grid: six wide faders paint the chord's notes (drag to change),
+the dots under them follow the arpeggio, and the bottom row picks a
+new chord.
 
 #1
 L 0 5: P I ADD PN 1 I MUL 3 RAND 1
+L 0 5: G.FDR.V I P I
 
 #2
 
@@ -18,16 +22,21 @@ L 0 5: P I ADD PN 1 I MUL 3 RAND 1
 #7
 
 #8
+L 0 5: P I G.FDR.V I
 
 #M
+G.CLR; G.LED MUL 2 P.I 6 15
 M SCALE 0 16383 400 60 PARAM
 J SCALE 0 16383 0 24 IN
 CV 1 N ADD 48 ADD J P.NEXT
 TR.P 1
 
 #I
-M 200
-TR.TIME 1 80
+M 200; TR.TIME 1 80
+G.GFDR.RN 0 0 24
+L 0 5: G.FDR I MUL 2 I 0 2 6 1 24 8
+L 0 5: G.FDR.V I P I
+G.BTN 0 0 7 16 1 0 3 1
 
 #P
 6	6	0	0
