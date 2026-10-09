@@ -48,14 +48,12 @@ fn random(r: &mut u32) -> f32 {
     *r ^= *r << 5;
     *r as f32 / u32::MAX as f32 * 2. - 1.
 }
-/// Semitones added to the cutoff scale. The CreativeSpiral anchor (105 = 440 Hz)
-/// leaves every program darker than recordings of the REVField bank: matching
-/// third-octave spectra of eight sustained programs, the bias falls from
-/// -5..-16 dB to about 0 dB at +12..+15 semitones (run the ignored
-/// `reference_spectral_match` test with REV2_DIR to repeat it). An octave is
-/// the conservative end of that range; it is a calibration against recordings,
-/// not a measured circuit value.
-const CUTOFF_SHIFT: f32 = 12.;
+/// Cutoff offset in semitones. Zero is the measured scale (forum measurements of
+/// the hardware: one semitone per unit, 105 = 440 Hz). An octave shift briefly
+/// looked better against recordings only because the filter lacked the feed-through
+/// below; with `FILTER_LEAK` in place the shift gained under 1.5 dB mean error and
+/// made cutoffs above 120 6 dB too bright, so it was removed.
+const CUTOFF_SHIFT: f32 = 0.;
 /// Feed-through around the filter: 2% of the unfiltered oscillator mix,
 /// low-passed by a one-pole at 1 kHz, is added to the output. The ideal
 /// 24 dB/octave cascade attenuates a sawtooth, pulse or saw+triangle far more
@@ -1567,7 +1565,7 @@ mod behavior {
         p[22] = 105.;
         p[24] = 0.;
         v.control(&p, &state, [0.; 4], 48000., 120.);
-        assert!((hz(v.filter.g) - 880.).abs() < 0.02, "105 is an octave above the old anchor");
+        assert!((hz(v.filter.g) - 440.).abs() < 0.01);
         p[22] = 0.;
         v.control(&p, &state, [0.; 4], 48000., 120.);
         assert!((hz(v.filter.g) - frequency(-36. + CUTOFF_SHIFT)).abs() < 1e-5);
@@ -1575,7 +1573,7 @@ mod behavior {
         p[24] = 64.;
         v.note = 69;
         v.control(&p, &state, [0.; 4], 48000., 120.);
-        assert!((hz(v.filter.g) - 880.).abs() < 0.02, "105 is an octave above the old anchor");
+        assert!((hz(v.filter.g) - 440.).abs() < 0.01);
         assert!((amp_attack(63.) - 0.605).abs() < 1e-6);
         assert!((amp_attack(127.) - 24.660).abs() < 1e-5);
         for i in 1..128 {

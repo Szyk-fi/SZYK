@@ -89,6 +89,16 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-09: Claude: Rev2 cutoff shift removed again, measured scale restored
+- Branch: main
+- Changed: src/apps/prophet/dsp.rs (CUTOFF_SHIFT back to 0, anchor test back to
+  105 = 440 Hz), docs/PROPHET.md. Once FILTER_LEAK was in, the octave shift gained
+  under 1.5 dB mean error on the dry set and nothing on Sequential's factory demos,
+  and made cutoffs above 120 6 dB too bright. It had been compensating for the
+  missing leak. Forum measurements (creativespiral) say 105 = 440 Hz, so that stays.
+- Status: done. Tests: full suite.
+- Notes for the other assistant: the +12 from the earlier entry below is gone.
+
 ### 2026-10-09: Claude: Rev2 filter leakage from 110 dry recordings
 - Branch: claude/rev2-teletype-clean (merged to main)
 - Changed: src/apps/prophet/dsp.rs (FILTER_LEAK 2% low-passed at 1 kHz; ignored

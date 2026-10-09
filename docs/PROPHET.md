@@ -78,10 +78,8 @@ Corrected playback faults affecting imported patches and original sounds:
   pitch depth is 0.5. Matrix routing to LFO amount uses the measured 4:1 scale.
   These depths follow published firsthand hardware measurements, not a claim
   of firmware equivalence. Gated pitch steps retain their half-semitone scale.
-- Filter cutoff uses a semitone scale, calibrated against recordings of the
-  REVField bank: 105 ≈ 880 Hz without tracking (the CreativeSpiral anchor of
-  440 Hz left every program 5–16 dB too dark above 600 Hz, so `CUTOFF_SHIFT`
-  adds an octave); cutoff 24 with keyboard amount 64 follows keyboard pitch. Audio modulation uses
+- Filter cutoff follows the measured semitone scale (105 ≈ 440 Hz without
+  tracking, forum measurements by CreativeSpiral); cutoff 24 with keyboard amount 64 follows keyboard pitch. Audio modulation uses
   oscillator 1 and retains envelope velocity response. The filter no longer
   saturates its integrator memory every sample, restoring low-frequency gain.
 - The sub is a square. Shaped ramps/triangles have slope-discontinuity
@@ -233,8 +231,9 @@ estimates the notes in each 2 s window, replays them through the same program,
 scales both spectra to equal power and compares third-octave bands, so loudness
 is ignored.
 
-With only the octave cutoff shift, sawtooth, pulse and saw+triangle programs
-were 10-25 dB too dark above 1 kHz and cutoffs under 60 were 30+ dB dark;
+With the measured cutoff scale (and, in an earlier attempt, an extra octave of
+cutoff), sawtooth, pulse and saw+triangle programs were 10-25 dB too dark above
+1 kHz and cutoffs under 60 were 30+ dB dark;
 triangle programs fit. An ideal 24 dB/octave filter attenuates harmonically rich
 waves far more than the hardware, so `FILTER_LEAK` adds 2% of the unfiltered mix,
 low-passed at 1 kHz. A flat 0.4% leak fixed the dark bands but overshot above
@@ -242,10 +241,14 @@ low-passed at 1 kHz. A flat 0.4% leak fixed the dark bands but overshot above
 
 | Dry REVField set (103 clips) | mean band error | mean bias above 1 kHz | clips within 6 dB |
 |---|---|---|---|
-| octave shift only | 18.0 dB | -11.5 dB | 33 |
+| octave shift only (earlier attempt) | 18.0 dB | -11.5 dB | 33 |
 | flat 0.4% leak | 13.5 dB | -1.3 dB | 41 |
 | 2% leak, 1 kHz low-pass | 13.1 dB | -1.9 dB | 43 |
 
+With the leak in place a cutoff shift of 0 / +4 / +8 / +12 / +16 semitones gives
+mean errors of 13.5 / 13.0 / 12.7 / 12.1 / 11.8 dB on the dry set and 12.6 / 12.3 /
+12.4 / 12.4 / 12.6 dB on the factory demos, while cutoffs above 120 go from -2 dB
+to +6 dB at +12; the shift was therefore removed and the measured scale kept.
 On the ten factory demos the median band bias is within about 3 dB from 250 Hz
 to 8 kHz and the mean error fell from 20.0 to 17.6 dB. Bias by oscillator 1
 shape (dry set): saw -5.7, saw+triangle -4.5, triangle +0.7, pulse -2.3.
