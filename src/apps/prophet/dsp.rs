@@ -56,6 +56,17 @@ fn random(r: &mut u32) -> f32 {
 /// the conservative end of that range; it is a calibration against recordings,
 /// not a measured circuit value.
 const CUTOFF_SHIFT: f32 = 12.;
+/// Feed-through around the filter: 2% of the unfiltered oscillator mix,
+/// low-passed by a one-pole at 1 kHz, is added to the output. The ideal
+/// 24 dB/octave cascade attenuates a sawtooth, pulse or saw+triangle far more
+/// than the recorded Rev2 does: against 103 dry REVField recordings the app was
+/// 10-25 dB too dark above 1 kHz for those waves and 30+ dB for cutoffs below 60.
+/// The leak lowers the mean third-octave band error from 18 to 12 dB and levels
+/// the bias across waves and cutoffs; a flat (unfiltered) leak overshot above
+/// 4 kHz against Sequential's factory demos, hence the low-pass. Both numbers
+/// are fits to recordings, not measured circuit values.
+const FILTER_LEAK: f32 = 0.02;
+const FILTER_LEAK_HZ: f32 = 1000.;
 fn frequency(n: f32) -> f32 {
     440. * ((n - 69.) / 12.).exp2()
 }
@@ -346,6 +357,7 @@ struct Voice {
     lfo: [f32; 4],
     lfo_hold: [f32; 4],
     mod_previous: [f32; 256],
+    leak_lp: f32,
     freq: [f32; 2],
     shape_mod: [f32; 2],
     params: [f32; 256],
@@ -375,6 +387,7 @@ impl Voice {
             lfo: [0.; 4],
             lfo_hold: [0.; 4],
             mod_previous: [0.; 256],
+            leak_lp: 0.,
             freq: [0.; 2],
             shape_mod: [50.; 2],
             params: [0.; 256],
@@ -601,7 +614,12 @@ impl Voice {
         }
         let filtered = self
             .filter
-            .tick(signal * 0.45 + 1e-6, self.params[23], p[26] > 0.5);
+            .tick(signal * 0.45 + 1e-6, self.params[23], p[26] > 0.5)
+            + {
+                let a = 1. - (-TAU * FILTER_LEAK_HZ / sr).exp();
+                self.leak_lp += (signal * 0.45 - self.leak_lp) * a;
+                self.leak_lp * FILTER_LEAK
+            };
         let amp = (self.env[1].v * self.params[33] / 127. * (1. - p[36] / 127. * (1. - self.vel))
             + self.params[27] / 127.)
             .clamp(0., 2.);
@@ -1882,12 +1900,27 @@ mod behavior {
     #[ignore]
     fn reference_spectral_match() {
         let Ok(dir) = std::env::var("REV2_DIR") else { return };
-        let b = std::fs::read("patches/prophet-rev2/REVField-User-Bank-1.syx").unwrap();
+        let syx = std::env::var("REV2_SYX").unwrap_or_else(|_| "patches/prophet-rev2/REVField-User-Bank-1.syx".into());
+        let b = std::fs::read(syx).unwrap();
         let progs = super::super::patch::import(&b).unwrap();
+        let step: usize = std::env::var("REV2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        // REV2_MAP: lines of "<clip number> <program index in the .syx>"; the
+        // default pairs clip k with program k-1.
+        let pairs: Vec<(usize, usize)> = match std::env::var("REV2_MAP") {
+            Ok(f) => std::fs::read_to_string(f)
+                .unwrap()
+                .lines()
+                .filter_map(|l| {
+                    let mut it = l.split_whitespace().map(|v| v.parse::<usize>());
+                    Some((it.next()?.ok()?, it.next()?.ok()?))
+                })
+                .collect(),
+            Err(_) => (1..=progs.len()).step_by(step).map(|k| (k, k - 1)).collect(),
+        };
         let centers = third_centers();
         eprintln!("SPEC bands (Hz): {}", centers.iter().map(|c| format!("{c:.0}")).collect::<Vec<_>>().join(" "));
         let mut all: Vec<[f32; THIRDS]> = Vec::new();
-        for k in 1..=20usize {
+        for (k, pi) in pairs {
             let Ok(mut r) = hound::WavReader::open(format!("{dir}/REVfield{k}.wav")) else { continue };
             let sr = r.spec().sample_rate as f32;
             let ch = r.spec().channels as usize;
@@ -1901,7 +1934,13 @@ mod behavior {
                 if (seg.iter().map(|v| v * v).sum::<f32>() / win as f32).sqrt() < 0.005 { continue; }
                 let notes = estimate_notes(&x, w * win + win / 4, sr);
                 if notes.is_empty() { continue; }
-                let out = output_secs(progs[k - 1], &notes, 1., 6);
+                let mut patch = progs[pi];
+                if std::env::var("REV2_DRY").is_ok() {
+                    // The recording has no effects: switch the layer FX off.
+                    patch.data[116] = 0;
+                    patch.data[1024 + 116] = 0;
+                }
+                let out = output_secs(patch, &notes, 1., 6);
                 let mono: Vec<f32> = out.chunks(2).map(|c| (c[0] + c[1]) * 0.5).collect();
                 let tail = &mono[mono.len().saturating_sub(48_000 * 2)..];
                 if (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt() < 0.002 { continue; }
@@ -1914,11 +1953,11 @@ mod behavior {
                 cen.0.push(cen_of(seg));
                 cen.1.push(cen_of(tail));
             }
-            if deltas.is_empty() { eprintln!("SPEC {k:2} {:<14} no usable windows", progs[k - 1].name(0)); continue; }
+            if deltas.is_empty() { eprintln!("SPEC {k:2} {:<14} no usable windows", progs[pi].name(0)); continue; }
             let med: [f32; THIRDS] = std::array::from_fn(|i| median(deltas.iter().map(|d| d[i]).collect()));
             eprintln!(
                 "SPEC {k:2} {:<14} windows {:2} centroid ref {:5.0} synth {:5.0} Hz | synth-ref dB per band: {}",
-                progs[k - 1].name(0), deltas.len(), median(cen.0), median(cen.1),
+                progs[pi].name(0), deltas.len(), median(cen.0), median(cen.1),
                 med.iter().map(|d| format!("{d:+.0}")).collect::<Vec<_>>().join(" ")
             );
             all.push(med);

@@ -89,6 +89,20 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-09: Claude: Rev2 filter leakage from 110 dry recordings
+- Branch: claude/rev2-teletype-clean (merged to main)
+- Changed: src/apps/prophet/dsp.rs (FILTER_LEAK 2% low-passed at 1 kHz; ignored
+  dev test takes REV2_DRY, REV2_STEP, REV2_SYX, REV2_MAP), docs/PROPHET.md,
+  tools/soundcloud_playlist.sh. Also checked against ten of Sequential's
+  official factory demos (factory .syx fetched from sequential.com, not in repo).
+  Max's SoundCloud REVField dry set (110 tracks) vs the app: sawtooth/pulse
+  patches were 10-25 dB too dark above 1 kHz. The ideal filter's stopband is
+  too deep; a leak around it cut mean band error 18.0 -> 13.1 dB.
+- Status: partial. Cutoff >120 too bright (+9 dB); filter-envelope sweep of
+  low-cutoff patches may be under-scaled; 8 worst clips listed in PROPHET.md.
+- Tests: prophet tests pass; full suite run before commit.
+- Notes for the other assistant: Rev2 is yours; please review.
+
 ### 2026-10-09: Claude: Rev2 filter cutoff calibrated against recordings
 - Branch: claude/instrument-audit-teletype
 - Changed: src/apps/prophet/dsp.rs (CUTOFF_SHIFT = +12 semitones; new ignored

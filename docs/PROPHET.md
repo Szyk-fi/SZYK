@@ -217,3 +217,42 @@ frequencies, program 9 (filter audio mod 30) is too bright, and programs 6 and
 8 are plucks the held-note test cannot judge. Audio-rate filter modulation
 depth (0.5 per unit) and the hard-sync direction are not settled; one clean
 monophonic clip (program 10) preferred a depth of about 1.0.
+
+### Filter leakage (October 2026)
+
+Two sets of recordings were compared with the app: 110 dry REVField programs
+(103 usable) and ten of Sequential's own factory demos matched to their programs
+(Livid Saws, Knock Knock, Plush Pluck, Can't Kill Me, Blomp In the Night, Fast
+Times At DSI, Marshmallow Pie, Repulsor Lift, Thx4TheMemory, Pizzicato; the
+factory file is Sequential's `Rev2_Programs_v1.0.syx`, not distributed here).
+The tool is the ignored `reference_spectral_match` test (`REV2_DIR=<folder of
+REVfield<n>.wav> REV2_DRY=1 cargo test --release --bin portamax-sim
+reference_spectral -- --ignored --nocapture`; `REV2_SYX` and `REV2_MAP` pair
+clips with programs in any .syx, `REV2_STEP=n` takes every nth clip). It
+estimates the notes in each 2 s window, replays them through the same program,
+scales both spectra to equal power and compares third-octave bands, so loudness
+is ignored.
+
+With only the octave cutoff shift, sawtooth, pulse and saw+triangle programs
+were 10-25 dB too dark above 1 kHz and cutoffs under 60 were 30+ dB dark;
+triangle programs fit. An ideal 24 dB/octave filter attenuates harmonically rich
+waves far more than the hardware, so `FILTER_LEAK` adds 2% of the unfiltered mix,
+low-passed at 1 kHz. A flat 0.4% leak fixed the dark bands but overshot above
+4 kHz on the factory demos (+3 to +7 dB), hence the low-pass.
+
+| Dry REVField set (103 clips) | mean band error | mean bias above 1 kHz | clips within 6 dB |
+|---|---|---|---|
+| octave shift only | 18.0 dB | -11.5 dB | 33 |
+| flat 0.4% leak | 13.5 dB | -1.3 dB | 41 |
+| 2% leak, 1 kHz low-pass | 13.1 dB | -1.9 dB | 43 |
+
+On the ten factory demos the median band bias is within about 3 dB from 250 Hz
+to 8 kHz and the mean error fell from 20.0 to 17.6 dB. Bias by oscillator 1
+shape (dry set): saw -5.7, saw+triangle -4.5, triangle +0.7, pulse -2.3.
+
+Remaining differences: cutoffs above 120 are about 8 dB too bright and cutoffs
+under 60 about 5 dB dark; the 1-4 kHz bands stay 4-7 dB dark whatever the leak;
+the filter-envelope sweep of low-cutoff programs may be under-scaled (positive
+sweeps x1.5-2 with a larger cutoff shift improved that group but over-brightened
+others); 0.4% flat versus 2% low-passed are fits, not the real circuit. Programs
+with plucked or sequenced material cannot be judged by held-note replays.
