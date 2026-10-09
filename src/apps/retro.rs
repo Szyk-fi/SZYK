@@ -2365,6 +2365,13 @@ mod tests {
                     break;
                 }
             }
+            // Matches `tick`'s own per-frame budget exactly -- omitting
+            // this starves the Z80 the real app always gives it, which
+            // would make any Z80/REG_SOUND reading from this point on
+            // meaningless (a test artifact, not a real finding).
+            for _ in 0..10_000u32 {
+                machine.step_sound();
+            }
         }
         let (vram_after, pal_after) = machine.bus.debug_nonzero_counts();
         eprintln!("across 5 more real frames:");
@@ -2376,7 +2383,7 @@ mod tests {
             let line: Vec<String> = chunk.iter().map(|a| format!("0x{a:06X}")).collect();
             eprintln!("    {}", line.join(" "));
         }
-        eprintln!("REG_SOUND reply byte (0x320000) = 0x{:02X}", machine.bus.read_byte(0x320000));
+        eprintln!("REG_SOUND reply byte (0x320000) = 0x{:02X}, z80 pc = 0x{:04X}", machine.bus.read_byte(0x320000), machine.sound_cpu.pc);
 
         // Keep going much further (60 more real frames, 3,600,000
         // instructions) to see whether palette RAM is genuinely never
@@ -2400,6 +2407,9 @@ mod tests {
                     if !machine.step() {
                         break;
                     }
+                }
+                for _ in 0..10_000u32 {
+                    machine.step_sound();
                 }
             }
             let (vram, pal) = machine.bus.debug_nonzero_counts();
