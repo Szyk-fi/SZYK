@@ -2383,18 +2383,37 @@ mod tests {
         // written at all (a real hang/stuck-retry condition) or just
         // extremely slow to get there. Checks every 10 frames and bails
         // out immediately with a saved screenshot the first time
-        // palette RAM gets any nonzero entry.
+        // palette RAM gets any nonzero entry. Also tracks whether each
+        // frame replays the exact same address set (a true stuck retry
+        // loop) or keeps covering new ground (just slow), the Z80's own
+        // PC (is the sound CPU alive at all), and the REG_SOUND reply
+        // byte (did the Z80's sound driver ever actually reply to
+        // anything, or is it still `SoundLatch::new`'s untouched
+        // default of zero).
+        let mut prev_frame_set: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
         for outer in 0..6 {
+            let mut this_round_set = std::collections::BTreeSet::new();
             for _ in 0..10 {
                 machine.vblank();
                 for _ in 0..50_000u32 {
+                    this_round_set.insert(machine.cpu.pc);
                     if !machine.step() {
                         break;
                     }
                 }
             }
             let (vram, pal) = machine.bus.debug_nonzero_counts();
-            eprintln!("after {} more frames: pc=0x{:06X} vram={vram} palette={pal}", (outer + 1) * 10, machine.cpu.pc);
+            let new_vs_prev = this_round_set.difference(&prev_frame_set).count();
+            eprintln!(
+                "after {} more frames: pc=0x{:06X} vram={vram} palette={pal}  distinct_pcs_this_round={} new_vs_prev_round={}  z80_pc=0x{:04X}  reg_sound_reply=0x{:02X}",
+                (outer + 1) * 10,
+                machine.cpu.pc,
+                this_round_set.len(),
+                new_vs_prev,
+                machine.sound_cpu.pc,
+                machine.bus.read_byte(0x320000)
+            );
+            prev_frame_set = this_round_set;
             if pal > 0 {
                 eprintln!("palette RAM finally has real data -- saving a frame");
                 let (w, h, rgba) = machine.bus.render_frame();
