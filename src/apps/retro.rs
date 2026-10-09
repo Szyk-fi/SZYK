@@ -2342,6 +2342,41 @@ mod tests {
         eprintln!("  pc ended at 0x{:06X}", machine.cpu.pc);
         eprintln!("  left the 0xC18714/0xC1871A loop? {:?}", left_loop_at);
         eprintln!("  $10FE8C changed? {:?} (started at 0x{initial_value:04X})", value_changed_at);
+
+        // Now trace exactly what the main loop actually does once that
+        // wait clears: every distinct PC visited across several more
+        // real frames' worth of budget, in order of first visit, plus
+        // palette/VRAM counts before and after -- this tells us whether
+        // real per-frame game logic is running (a wide footprint of
+        // addresses, eventually touching palette RAM) or whether the
+        // CPU is confined to a tiny loop doing nothing of substance.
+        let (vram_before, pal_before) = machine.bus.debug_nonzero_counts();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut first_visits: Vec<u32> = Vec::new();
+        for frame in 0..5 {
+            machine.vblank();
+            for _ in 0..50_000u32 {
+                let pc = machine.cpu.pc;
+                if seen.insert(pc) && first_visits.len() < 200 {
+                    first_visits.push(pc);
+                }
+                if !machine.step() {
+                    eprintln!("  CPU halted/faulted during trace frame {frame}");
+                    break;
+                }
+            }
+        }
+        let (vram_after, pal_after) = machine.bus.debug_nonzero_counts();
+        eprintln!("across 5 more real frames:");
+        eprintln!("  distinct pc addresses visited: {}", seen.len());
+        eprintln!("  pc range: 0x{:06X} .. 0x{:06X}", seen.iter().next().copied().unwrap_or(0), seen.iter().next_back().copied().unwrap_or(0));
+        eprintln!("  vram nonzero: {vram_before} -> {vram_after}, palette nonzero: {pal_before} -> {pal_after}");
+        eprintln!("  first {} distinct pcs visited, in order:", first_visits.len());
+        for chunk in first_visits.chunks(8) {
+            let line: Vec<String> = chunk.iter().map(|a| format!("0x{a:06X}")).collect();
+            eprintln!("    {}", line.join(" "));
+        }
+        eprintln!("REG_SOUND reply byte (0x320000) = 0x{:02X}", machine.bus.read_byte(0x320000));
     }
 
     /// No real arcade ROM sets ship with this repo (same legal reasons
