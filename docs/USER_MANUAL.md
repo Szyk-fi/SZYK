@@ -579,11 +579,20 @@ how the app uses it.
 
 **Teletype on the grid.** There are two cases:
 
-- A scene with **no `G.` ops** (the default scenes): the top row is the
+- Every **bundled scene now draws its own grid**: `01 pattern melody` has eight
+  faders (one per step, press a key to set the note) with a playhead and three
+  pad buttons; `02 euclid drums` has fill and speed faders, four mute buttons
+  and a step counter; `03 drunk walk` draws the walk as it goes with a range
+  fader; `04 pad scripts` has big pads and a note-length fader; `05 param arp`
+  has six faders that paint the chord; `06 grid steps` is a four-track step
+  sequencer. Loading a scene takes the grid, so switching scenes changes what
+  the grid shows. The grid is 16 keys wide by 8 high; a scene sees the top-left
+  of Teletype's 16 × 16 space.
+- A scene with **no `G.` ops** (the empty scene, or one you write): the top row is the
   module's script buttons. Keys 1-8 run scripts 1-8, key 10 runs M and key 11
   runs I; each lights while it runs. You can play a scene's triggers and CV
   from the grid without opening Teletype.
-- A scene that **uses `G.` ops** (for example scene `06 grid steps`): the
+- A scene that **uses `G.` ops** (every bundled scene; see above): the
   scene draws and reads the grid itself (`G.LED`, `G.BTN`, `G.FDR`, ...), in a
   16 × 16 space at the grid's top-left, and takes the grid when it loads. Grid
   presses run scripts whether or not the metro (F3) is running.

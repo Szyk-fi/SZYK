@@ -2902,7 +2902,8 @@ impl TeletypeApp {
             self.default_grid_frame();
             return;
         }
-        self.grid.set_hint(APP_NAME, "");
+        let scene = self.scenes.get(self.scene).map_or("", |s| s.0.as_str());
+        self.grid.set_hint(APP_NAME, &format!("Scene {scene} draws this grid itself (G ops): its faders and buttons are the controls."));
         for k in self.grid.keys(APP_NAME) {
             if k.x < tg::DIM && k.y < tg::DIM {
                 self.send(Edit::GridKey(k.x, k.y, k.down));
@@ -3743,6 +3744,63 @@ mod tests {
         a.toggle_running();
         let out = run(&mut p, 300);
         assert!(rms(&out) > 0.005, "{} makes sound on its own ({})", a.scenes[1].0, rms(&out));
+    }
+
+    /// Every bundled scene has a grid of its own: it takes the grid on load,
+    /// draws something, and two scenes never draw the same picture.
+    #[test]
+    fn every_bundled_scene_draws_its_own_grid() {
+        let (mut a, _) = app(Path::new(TT_DIR));
+        let g = grid_kit::grid();
+        g.register("Other");
+        let mut pictures: Vec<(String, Vec<i32>)> = Vec::new();
+        for i in 1..a.scenes.len() {
+            g.set_focus("Other");
+            a.load_scene(i);
+            assert!(a.status.is_empty(), "{}: {}", a.scenes[i].0, a.status);
+            assert_eq!(g.focus().as_deref(), Some(APP_NAME), "{} takes the grid", a.scenes[i].0);
+            let mut p = a.audio_processor().unwrap();
+            for _ in 0..3 {
+                a.background_tick();
+                run(&mut p, 2);
+            }
+            a.background_tick();
+            let s = g.snapshot();
+            let lit = s.leds.iter().filter(|v| **v > 0).count();
+            assert!(lit >= 8, "{} lights the grid ({lit})", a.scenes[i].0);
+            let pic: Vec<i32> = s.leds.iter().map(|v| *v as i32).collect();
+            if let Some((other, _)) = pictures.iter().find(|(_, q)| *q == pic) {
+                panic!("{} and {other} draw the same grid", a.scenes[i].0);
+            }
+            pictures.push((a.scenes[i].0.clone(), pic));
+            a.taken = false;
+        }
+    }
+
+    #[test]
+    fn the_pattern_melody_scene_edits_its_pattern_from_the_grid() {
+        let (mut a, _) = app(Path::new(TT_DIR));
+        let g = grid_kit::grid();
+        g.register("Other");
+        g.set_focus("Other");
+        let i = a.scenes.iter().position(|(n, _)| n.contains("pattern_melody")).unwrap();
+        a.load_scene(i);
+        let mut p = a.audio_processor().unwrap();
+        let frame = |a: &mut TeletypeApp, p: &mut Box<dyn AudioProcessor>| {
+            a.background_tick();
+            run(p, 2);
+            a.background_tick();
+        };
+        frame(&mut a, &mut p);
+        assert_eq!(a.view().pats[0].v[2], 7);
+        g.press(2, 0, true);
+        frame(&mut a, &mut p);
+        g.press(2, 0, false);
+        frame(&mut a, &mut p);
+        for _ in 0..5 {
+            frame(&mut a, &mut p);
+        }
+        assert_eq!(a.view().pats[0].v[2], 12, "the top key of step 3's fader is its highest note");
     }
 
     #[test]

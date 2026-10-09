@@ -2,6 +2,9 @@ PAD SCRIPTS
 Nothing runs on its own: play scripts 1-8 from the SCRIPTS pads.
 1-3 and 5 are notes, 4 is an arpeggio, 6 a random bass,
 7 changes the note length and 8 starts and stops the metro.
+On the grid: the top row of big pads plays scripts 1-4, the row under it
+plays the random bass (script 6), and the fader on the bottom row sets the
+note length.
 
 #1
 CV 1 N 48; TR.P 1
@@ -26,7 +29,7 @@ CV 2 N RRAND 36 48
 TR.P 2
 
 #7
-TR.TIME 1 RRAND 40 400
+TR.TIME 1 ADD 40 MUL 25 G.FDR.N 0
 
 #8
 M.ACT EZ M.ACT
@@ -35,10 +38,10 @@ M.ACT EZ M.ACT
 PROB 40: $ 6
 
 #I
-M 250
-TR.TIME 1 150
-TR.TIME 2 400
-M.ACT 0
+M 250; TR.TIME 1 150; TR.TIME 2 400; M.ACT 0
+L 1 4: G.BTN I MUL 3 I 0 3 3 0 3 I
+G.BTX 8 3 3 3 3 0 3 6 4 1
+G.FDR 0 0 7 16 1 0 15 7; G.FDR.N 0 4
 
 #P
 0	0	0	0

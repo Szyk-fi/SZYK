@@ -37,7 +37,7 @@ const POINT: Rgb565 = Rgb565::new(8, 50, 31);
 
 const C_GLIDE: usize = 0;
 const C_ROUTES: usize = 1;
-const N_CONTROLS: usize = C_ROUTES + 2 * OUTS;
+const N_CONTROLS: usize = C_ROUTES + OUTS;
 
 fn out_name(o: usize) -> String {
     format!("Pad {} {}", o / 2 + 1, if o % 2 == 0 { "X" } else { "Y" })
@@ -165,16 +165,18 @@ impl GridPadsApp {
     fn text(&self, i: usize) -> (String, String) {
         match i {
             C_GLIDE => ("Glide".into(), if self.glide <= 0.0 { "off".into() } else { format!("{:.0} ms", self.glide * 1000.0) }),
-            _ => {
-                let o = (i - C_ROUTES) / 2;
-                let r = self.routes[o];
-                if (i - C_ROUTES) % 2 == 0 {
-                    (format!("{} to", out_name(o)), Patch::app_label(&self.mods, r))
-                } else {
-                    (format!("{} input", out_name(o)), Patch::input_label(&self.mods, r))
-                }
-            }
+            // One row per output so every pad's routing reads at a glance.
+            _ => (out_name(i - C_ROUTES), Patch::label(&self.mods, self.routes[i - C_ROUTES])),
         }
+    }
+
+    /// Steps an output through None and then every mod input, app by app.
+    fn step_route(&self, route: usize, d: i32) -> usize {
+        let apps = self.mods.apps();
+        let all: Vec<usize> = apps.iter().flat_map(|(_, v)| v.iter().map(|i| i + 1)).collect();
+        let at = if route == 0 { 0 } else { all.iter().position(|r| *r == route).map_or(0, |p| p + 1) };
+        let next = (at as i32 + d.signum()).rem_euclid(all.len() as i32 + 1) as usize;
+        if next == 0 { 0 } else { all[next - 1] }
     }
 
     fn rows(&self) -> Vec<(String, String, bool)> {
@@ -191,9 +193,8 @@ impl GridPadsApp {
         match i {
             C_GLIDE => self.glide = (self.glide + d as f32 * 0.05).clamp(0.0, 4.0),
             _ => {
-                let o = (i - C_ROUTES) / 2;
-                let r = self.routes[o];
-                self.routes[o] = if (i - C_ROUTES) % 2 == 0 { Patch::step_app(&self.mods, r, d) } else { Patch::step_input(&self.mods, r, d) };
+                let o = i - C_ROUTES;
+                self.routes[o] = self.step_route(self.routes[o], d);
             }
         }
     }
@@ -224,14 +225,7 @@ impl PlayHost for GridPadsApp {
     fn kit_reset(&mut self, i: usize) {
         match i {
             C_GLIDE => self.glide = 0.0,
-            _ => {
-                let o = (i - C_ROUTES) / 2;
-                if (i - C_ROUTES) % 2 == 0 {
-                    self.routes[o] = 0;
-                } else {
-                    self.routes[o] = Patch::first_input(&self.mods, self.routes[o]);
-                }
-            }
+            _ => self.routes[i - C_ROUTES] = 0,
         }
     }
     fn kit_set_norm(&mut self, _i: usize, _v: f32) {}
@@ -346,9 +340,9 @@ mod tests {
         let mut app = GridPadsApp::new(Arc::clone(&g), Arc::clone(&mods), Arc::new(AtomicF32::new(3.0)));
         // Pad 6 (second row, second pad) X to pan, Y to tone.
         let o = 2 * 5;
-        app.control(C_ROUTES + 2 * o, 1);
-        app.control(C_ROUTES + 2 * (o + 1), 1);
-        app.control(C_ROUTES + 2 * (o + 1) + 1, 1);
+        app.control(C_ROUTES + o, 1);
+        app.control(C_ROUTES + o + 1, 1);
+        app.control(C_ROUTES + o + 1, 1);
         // Its bottom-right key: X 1, Y 0.
         g.press(7, 7, true);
         g.press(7, 7, false);

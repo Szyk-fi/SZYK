@@ -89,6 +89,25 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-09: Claude: Teletype scenes draw their own grids; Grid Pads/Knobs routing overview; Rev2 survey
+- Branch: claude/instrument-audit-teletype
+- Changed: teletype/make_scenes.py + scenes 01-05 (each now has G ops: faders,
+  buttons, playheads; the grid is 16 x 8 so everything sits in rows 0-7),
+  src/apps/teletype.rs (hint for G scenes), src/apps/grid_pads.rs and
+  arc_knobs.rs (one routing row per pad/knob, "App > Input", knob 2 steps
+  through every input; was two rows per output), src/registry.rs test,
+  docs/USER_MANUAL.md 5.3.
+- Rev2: no code change. Survey of the 440 supplied programs: the four
+  REVField bank files are identical copies of 110 programs; every parameter is
+  in range; offset 20 (Pitch Bend Range) is 7 in 436 of 440 (hardware default is
+  2, so check this offset); with C4 held for 6 s the median program renders
+  0.022 RMS against 0.15 for Init, and 22% under 0.005 (sustain 0 plucks, closed
+  cutoff with Key Amount 0). Needs a named patch to compare against hardware.
+- Status: done except the Rev2 question.
+- Tests: full suite.
+- Notes for the other assistant: Rev2 is yours; please look at the pitch bend
+  offset and the quiet-patch loudness.
+
 ### 2026-10-09: Claude: instrument/Plays audit, read-only instruments editable, Teletype links on screen
 - Branch: gpt/bebot-1791467933 (as found)   Commits: none yet
 - Audit (new test registry::audit_every_source_and_instrument): all 33 instruments

@@ -1,6 +1,8 @@
 DRUNK WALK
 A melody that wanders a step at a time, and a bass note
 every eighth tick. Pad 1 sends the walk back to the middle.
+On the grid: the walk is drawn as it goes, one column per tick. The top
+fader sets how far it may wander, the button under it is pad 1.
 
 #1
 DRUNK 12
@@ -18,19 +20,21 @@ DRUNK 12
 #7
 
 #8
+DRUNK.MAX ADD 2 MUL 2 G.FDR.N 0
 
 #M
-CV 1 N ADD 48 QT DRUNK 2
-TR.P 1
+X WRAP ADD X 1 0 15; A QT DRUNK 2
+CV 1 N ADD 48 A; TR.P 1
+L 2 7: G.LED X I 0
+G.LED X SUB 7 DIV A 4 15
 EVERY 8: CV 2 N ADD 36 RAND 12
 EVERY 8: TR.P 2
 
 #I
-M 150
-DRUNK.MAX 24
-DRUNK 12
-TR.TIME 2 900
-CV.SLEW 1 20
+M 150; DRUNK.MAX 24; DRUNK 12
+TR.TIME 2 900; CV.SLEW 1 20
+G.FDR 0 0 0 16 1 0 11 8; G.FDR.N 0 11
+G.BTN 0 0 1 4 1 0 3 1
 
 #P
 0	0	0	0
