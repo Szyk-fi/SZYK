@@ -654,10 +654,14 @@ impl Chop {
     }
 
     fn rows(&self) -> Vec<(&'static str, String)> {
+        self.rows_for(VIEWS[self.view])
+    }
+
+    fn rows_for(&self, view: View) -> Vec<(&'static str, String)> {
         let pads = self.s.pads.lock().unwrap();
         let p = &pads[self.pad];
         let fx = *self.s.fx.lock().unwrap();
-        match VIEWS[self.view] {
+        match view {
             View::Play => vec![],
             View::Edit => vec![
                 ("Start", format!("{:.1}%", p.set.start * 100.0)),
@@ -783,6 +787,17 @@ fn trim(data: &[f32]) -> Vec<f32> {
 }
 
 impl App for Chop {
+    // A source lists the pad's Edit rows whatever view Chop is showing.
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        self.rows_for(View::Edit).into_iter().map(|(label, value)| crate::app::Setting { label: label.into(), value }).collect()
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        let Some(edit) = VIEWS.iter().position(|v| *v == View::Edit) else { return };
+        let (view, row) = (std::mem::replace(&mut self.view, edit), std::mem::replace(&mut self.row, index));
+        self.edit(delta);
+        self.view = view;
+        self.row = row;
+    }
     fn wants_fullscreen(&self) -> bool {
         true
     }

@@ -668,6 +668,16 @@ impl Skins {
 }
 
 impl App for Skins {
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        (0..self.sound_rows()).map(|i| self.sound_row(i)).map(|(label, value)| crate::app::Setting { label, value }).collect()
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        if index < self.sound_rows() {
+            let keep = std::mem::replace(&mut self.row, index);
+            self.sound_edit(delta);
+            self.row = keep;
+        }
+    }
     fn wants_fullscreen(&self) -> bool {
         true
     }

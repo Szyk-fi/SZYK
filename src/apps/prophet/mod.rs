@@ -773,6 +773,13 @@ impl ProphetApp {
     }
 }
 impl App for ProphetApp {
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        if index < self.rows().len() {
+            let keep = std::mem::replace(&mut self.selected, index);
+            self.edit(delta, false);
+            self.selected = keep;
+        }
+    }
     fn play_surface(&self) -> bool {
         true
     }

@@ -416,6 +416,11 @@ pub trait Module: 'static {
     }
     fn edit_extra(&mut self, _i: usize, _delta: i32) {}
     fn reset_extra(&mut self, _i: usize) {}
+    /// Whether the extra rows lead the menu (a note source's Plays row and
+    /// the instrument's settings under it belong at the top).
+    fn extras_first(&self) -> bool {
+        false
+    }
     /// Once per frame, after the keys have been read.
     fn update(&mut self, _keys: &Keys) {}
     fn processor(&mut self, notes: Arc<NoteQueue>) -> Box<dyn AudioProcessor>;
@@ -462,24 +467,39 @@ impl<M: Module> MiApp<M> {
 
     fn rows(&self) -> Vec<(String, String)> {
         let c = self.m.controls();
-        (0..c.len()).map(|i| (c.specs[i].name.to_string(), c.text(i))).chain(self.m.extra_rows()).collect()
+        let controls = (0..c.len()).map(|i| (c.specs[i].name.to_string(), c.text(i)));
+        let extra = self.m.extra_rows();
+        if self.m.extras_first() {
+            extra.into_iter().chain(controls).collect()
+        } else {
+            controls.chain(extra).collect()
+        }
+    }
+
+    /// Menu row `i` as `Ok(control)` or `Err(extra row)`.
+    fn locate(&self, i: usize) -> Result<usize, usize> {
+        let n = self.m.controls().len();
+        if self.m.extras_first() {
+            let k = self.m.extra_rows().len();
+            if i < k { Err(i) } else { Ok(i - k) }
+        } else if i < n {
+            Ok(i)
+        } else {
+            Err(i - n)
+        }
     }
 
     fn edit_row(&mut self, i: usize, delta: i32) {
-        let n = self.m.controls().len();
-        if i < n {
-            self.m.controls().edit(i, delta, self.sensitivity.get());
-        } else {
-            self.m.edit_extra(i - n, delta);
+        match self.locate(i) {
+            Ok(c) => self.m.controls().edit(c, delta, self.sensitivity.get()),
+            Err(e) => self.m.edit_extra(e, delta),
         }
     }
 
     fn reset_row(&mut self, i: usize) {
-        let n = self.m.controls().len();
-        if i < n {
-            self.m.controls().reset(i);
-        } else {
-            self.m.reset_extra(i - n);
+        match self.locate(i) {
+            Ok(c) => self.m.controls().reset(c),
+            Err(e) => self.m.reset_extra(e),
         }
     }
 }
