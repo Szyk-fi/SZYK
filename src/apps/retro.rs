@@ -2310,6 +2310,38 @@ mod tests {
                 break;
             }
         }
+
+        // The spin is `TST.W $10FE8C; BNE` (decoded from the opcode
+        // dump above): the loop exits only when that work-RAM word
+        // reads zero. Firing a fresh VBlank (the same call `tick`
+        // makes once per real frame) and then single-stepping a full
+        // real frame's worth of instructions (50,000, matching the
+        // per-frame budget in this file's own `tick`) tells us whether
+        // the level-1 interrupt is actually ever taken from inside this
+        // tight loop, and whether that word ever changes at all.
+        let watched = 0x0010FE8Cu32;
+        eprintln!("$10FE8C = 0x{:04X} before a fresh vblank", machine.bus.read_word(watched));
+        machine.vblank();
+        let mut left_loop_at = None;
+        let mut value_changed_at = None;
+        let initial_value = machine.bus.read_word(watched);
+        for i in 0..50_000u32 {
+            let pc_before = machine.cpu.pc;
+            if !machine.step() {
+                eprintln!("  CPU halted/faulted at step {i}");
+                break;
+            }
+            if left_loop_at.is_none() && pc_before != 0xC18714 && pc_before != 0xC1871A {
+                left_loop_at = Some((i, pc_before));
+            }
+            if value_changed_at.is_none() && machine.bus.read_word(watched) != initial_value {
+                value_changed_at = Some((i, machine.bus.read_word(watched)));
+            }
+        }
+        eprintln!("after one fresh vblank + 50,000 steps:");
+        eprintln!("  pc ended at 0x{:06X}", machine.cpu.pc);
+        eprintln!("  left the 0xC18714/0xC1871A loop? {:?}", left_loop_at);
+        eprintln!("  $10FE8C changed? {:?} (started at 0x{initial_value:04X})", value_changed_at);
     }
 
     /// No real arcade ROM sets ship with this repo (same legal reasons
