@@ -2377,6 +2377,38 @@ mod tests {
             eprintln!("    {}", line.join(" "));
         }
         eprintln!("REG_SOUND reply byte (0x320000) = 0x{:02X}", machine.bus.read_byte(0x320000));
+
+        // Keep going much further (60 more real frames, 3,600,000
+        // instructions) to see whether palette RAM is genuinely never
+        // written at all (a real hang/stuck-retry condition) or just
+        // extremely slow to get there. Checks every 10 frames and bails
+        // out immediately with a saved screenshot the first time
+        // palette RAM gets any nonzero entry.
+        for outer in 0..6 {
+            for _ in 0..10 {
+                machine.vblank();
+                for _ in 0..50_000u32 {
+                    if !machine.step() {
+                        break;
+                    }
+                }
+            }
+            let (vram, pal) = machine.bus.debug_nonzero_counts();
+            eprintln!("after {} more frames: pc=0x{:06X} vram={vram} palette={pal}", (outer + 1) * 10, machine.cpu.pc);
+            if pal > 0 {
+                eprintln!("palette RAM finally has real data -- saving a frame");
+                let (w, h, rgba) = machine.bus.render_frame();
+                let out_path = std::env::temp_dir().join("neogeo_long_run_frame.png");
+                let file = std::fs::File::create(&out_path).expect("create output file");
+                let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+                encoder.set_color(png::ColorType::Rgba);
+                encoder.set_depth(png::BitDepth::Eight);
+                let mut writer = encoder.write_header().expect("write PNG header");
+                writer.write_image_data(&rgba).expect("write PNG data");
+                eprintln!("wrote {}", out_path.display());
+                break;
+            }
+        }
     }
 
     /// No real arcade ROM sets ship with this repo (same legal reasons
