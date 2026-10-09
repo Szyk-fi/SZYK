@@ -540,6 +540,13 @@ impl Choir {
 }
 
 impl App for Choir {
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        if index < ROWS.len() {
+            let keep = std::mem::replace(&mut self.row, index);
+            self.edit(delta);
+            self.row = keep;
+        }
+    }
     fn wants_fullscreen(&self) -> bool {
         true
     }

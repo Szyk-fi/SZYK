@@ -2823,6 +2823,9 @@ impl App for TeletypeApp {
             if !self.status.is_empty() {
                 Text::new(&self.status, Point::new(16, 330), MonoTextStyle::new(&SPLEEN_6X12, ACCENT)).draw(f).ok();
             }
+            let dim = MonoTextStyle::new(&SPLEEN_6X12, DIM);
+            Text::new(&format!("Notes: TR 1-4 play {}", self.route.label()), Point::new(16, 300), dim).draw(f).ok();
+            Text::new(&self.grid_status(), Point::new(16, 314), dim).draw(f).ok();
             return;
         }
         let view = self.view();
@@ -2872,6 +2875,18 @@ impl App for TeletypeApp {
 }
 
 impl TeletypeApp {
+    /// One line saying what the grid is doing for Teletype right now, shown
+    /// on its screens so nobody has to guess.
+    fn grid_status(&self) -> String {
+        if self.grid.focus().as_deref() != Some(APP_NAME) {
+            "Grid: not on it. Grid app > SELECT".into()
+        } else if self.text.scripts.iter().flatten().any(|l| uses_grid(l)) {
+            "Grid: the scene draws it (G ops)".into()
+        } else {
+            "Grid: keys 1-8 = S1-S8, 10 M, 11 I".into()
+        }
+    }
+
     /// Passes the grid's presses to the interpreter and shows its picture.
     /// Runs every frame, on screen or not, so a scene plays from the Grid
     /// app's screen or a real grid while anything else is showing.
@@ -3052,11 +3067,12 @@ impl TeletypeApp {
         let metro = if !self.p.running.load(Ordering::Relaxed) { "stopped (F3)" } else if view.m_act { "running" } else { "M.ACT 0" };
         Text::new(&format!("M {}ms {metro}  P.N {}", view.m, view.p_n), Point::new(x, 154), dim).draw(f).ok();
         Text::new(&format!("TR plays: {}", self.route.label().chars().take(20).collect::<String>()), Point::new(x, 168), dim).draw(f).ok();
+        Text::new(&self.grid_status(), Point::new(x, 182), if self.grid.focus().as_deref() == Some(APP_NAME) { acc } else { dim }).draw(f).ok();
         let Some(page) = page else { return };
         let (title, pads) = PAGES[page.min(PAGES.len() - 1)];
-        Text::new(&format!("pads: {title}"), Point::new(x, 188), MonoTextStyle::new(&SPLEEN_6X12, BRIGHT)).draw(f).ok();
+        Text::new(&format!("pads: {title}"), Point::new(x, 200), MonoTextStyle::new(&SPLEEN_6X12, BRIGHT)).draw(f).ok();
         for (i, p) in pads.iter().enumerate() {
-            let (cx, cy) = (x + (i as i32 % 4) * 50, 196 + (i as i32 / 4) * 34);
+            let (cx, cy) = (x + (i as i32 % 4) * 50, 206 + (i as i32 / 4) * 34);
             Rectangle::new(Point::new(cx, cy), Size::new(46, 30)).into_styled(PrimitiveStyle::with_stroke(DIM, 1)).draw(f).ok();
             let label = pad_label(*p);
             let style = if matches!(p, Pad::Word(_)) { ink } else { acc };
@@ -3632,6 +3648,47 @@ mod tests {
         assert!((hz(&out[960..3840]) - 440.0).abs() < 15.0, "A4, got {}", hz(&out[960..3840]));
         let after = run(&mut p, 60);
         assert!(rms(&after[after.len() - 4800..]) < 0.001, "the gate closed after TR.TIME");
+    }
+
+    #[test]
+    fn tr_notes_reach_the_instrument_the_plays_row_names_through_the_note_bus() {
+        let dir = empty_dir();
+        std::fs::write(dir.join("scenes/t.txt"), "#1\nCV 1 N 69\nTR.P 1\n\n#I\nM.ACT 0\n").unwrap();
+        let bus = Arc::new(NoteBus::new());
+        let inst = bus.register_instrument("synth", "Synth").unwrap();
+        let (a, _) = app(&dir);
+        let mut a = a.with_notes(Some(Arc::clone(&bus)));
+        a.load_scene(1);
+        assert_eq!(a.route.label(), "Own sound", "it starts on its built-in voice");
+        a.route.step(1); // none
+        a.route.step(1); // Synth
+        assert_eq!(a.route.label(), "Synth");
+        let mut p = a.audio_processor().unwrap();
+        a.send(Edit::Fire(0));
+        let mut view = crate::note_bus::NoteView::default();
+        let mut struck = false;
+        for _ in 0..8 {
+            run(&mut p, 1);
+            inst.poll(&mut view);
+            struck |= view.keys[69] > 0;
+        }
+        assert!(struck, "TR 1 at CV 1 = N 69 played note 69 on the instrument");
+        let own = run(&mut p, 4);
+        assert!(rms(&own) < 1e-4, "and its own voice stays quiet while it plays another app");
+    }
+
+    #[test]
+    fn the_screen_says_what_the_grid_is_doing() {
+        let dir = empty_dir();
+        let (mut a, _) = app(&dir);
+        let g = grid_kit::grid();
+        g.register("Other");
+        g.set_focus("Other");
+        assert!(a.grid_status().contains("not on it"), "{}", a.grid_status());
+        g.set_focus(APP_NAME);
+        assert!(a.grid_status().contains("keys 1-8"), "{}", a.grid_status());
+        a.text.scripts[0][0] = parse_line("G.LED 0 0 15").unwrap();
+        assert!(a.grid_status().contains("scene draws"), "{}", a.grid_status());
     }
 
     #[test]

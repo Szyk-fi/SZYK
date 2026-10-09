@@ -139,6 +139,10 @@ impl Module for Marbles {
         false
     }
 
+    fn extras_first(&self) -> bool {
+        true
+    }
+
     fn extra_rows(&self) -> Vec<(String, String)> {
         let mut rows = vec![("Plays".into(), self.route.label())];
         // The instrument it plays, dialled in right under Plays.

@@ -89,6 +89,29 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-09: Claude: instrument/Plays audit, read-only instruments editable, Teletype links on screen
+- Branch: gpt/bebot-1791467933 (as found)   Commits: none yet
+- Audit (new test registry::audit_every_source_and_instrument): all 33 instruments
+  publish settings through the note bus; every flat-menu source (Chordsmith,
+  Constellation, Dream, Hum, Kria, Marbles, Mutant, Nebula, O&C 1-4, Orbit, Orca,
+  Swarm, Teletype, Turing Machine) leads with Plays and lists them under it.
+  Gaps found: Choir, Chop, Skins, Timbre Map and Rev2 listed settings read-only
+  (fixed: each now answers adjust_setting); Marbles had Plays at row 17 (fixed:
+  new Module::extras_first in mi_kit). Not fixed: Ledger lists no settings under
+  Plays (its menu is the kit control list plus the tracker, no place to insert
+  rows). Plays sits inside a group by design in Bloom, Madness, Norns, Sequencer,
+  Session. No notes_in: rainbow_bells, critter_choir, chip_player (candidates);
+  queen_of_pentacles and pams are CV/gate sources with no note output.
+- Teletype: it already routed TR to instruments (Plays row) and had grid support;
+  the gap was visibility. Menu and side panel now show `TR plays: ...` and a
+  `Grid: ...` status line; USER_MANUAL 5.3 explains the links. New tests: notes
+  reach the instrument over the bus; grid status text.
+- Changed: src/apps/{choir,chop,skins,timbre_map,prophet/mod,marbles,mi_kit,teletype}.rs,
+  src/registry.rs, docs/USER_MANUAL.md, AGENTS.md.
+- Status: done except Ledger.
+- Notes for the other assistant: prophet/mod.rs and bebot area touched only to add
+  adjust_setting to Rev2 (ChatGPT's app); please review.
+
 ### 2026-10-08: ChatGPT: prepare authorized Rev2 merge and publish
 - Branch: gpt/rev2-parameter-ui-audit
 - Changed: tools/apply-rev2-audit.command adds --publish; --run remains optional.

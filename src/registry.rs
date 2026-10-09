@@ -474,6 +474,91 @@ mod manifest_contract_tests {
         assert_ne!(before, after, "editing the listed row changed the instrument");
     }
 
+    /// Audit: every instrument publishes settings through the note bus and
+    /// they edit; every note source leads with Plays and lists them under it.
+    /// Prints a table (--nocapture); the gaps fail the test.
+    #[test]
+    fn audit_every_source_and_instrument() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/apps"));
+        let manifests = crate::manifest::discover(dir);
+        let ctx = test_context(Arc::new(ModBus::new()));
+        let notes = ctx.get::<NoteBus>();
+        let registry = Registry::new(ctx);
+        let mut apps = registry.build(&manifests);
+        let mut gaps: Vec<String> = Vec::new();
+        let frames = |apps: &mut Vec<(String, Box<dyn App>)>| {
+            for _ in 0..4 {
+                for (_, app) in apps.iter_mut() {
+                    app.background_tick();
+                }
+            }
+        };
+        let instruments = notes.instruments();
+        for (slot, iname, _) in &instruments {
+            let _ = notes.instrument_settings(*slot);
+            frames(&mut apps);
+            let rows = notes.instrument_settings(*slot);
+            let mut changed = false;
+            for i in 0..rows.len().min(60) {
+                let before: Vec<String> = rows.iter().map(|r| r.value.clone()).collect();
+                notes.adjust_instrument_setting(*slot, i, 3);
+                frames(&mut apps);
+                let _ = notes.instrument_settings(*slot);
+                frames(&mut apps);
+                let after: Vec<String> = notes.instrument_settings(*slot).iter().map(|r| r.value.clone()).collect();
+                if after != before {
+                    changed = true;
+                    break;
+                }
+            }
+            println!("AUDIT instrument {iname:<14} settings={:<3} editable={changed}", rows.len());
+            if rows.is_empty() {
+                gaps.push(format!("instrument {iname}: lists no settings"));
+            } else if !changed {
+                gaps.push(format!("instrument {iname}: settings read-only ({} rows)", rows.len()));
+            }
+        }
+        let want = ["Synth", "Plaits", "Sample Drum"];
+        // These keep Plays inside a group or a view of their own (a track, a
+        // shape, the SETUP page, the PARAMS list) rather than at the top of a
+        // flat menu, and Ledger's menu is the kit's control list, which has
+        // nowhere to insert rows. Their own tests cover them.
+        let nested = |n: &str| ["Bloom Shape", "Madness", "Norns", "Sequencer T", "Session ", "Ledger T"].iter().any(|p| n.starts_with(p));
+        for (src, owner, route) in notes.sources() {
+            if nested(&src) {
+                continue;
+            }
+            let Some(ai) = manifests.iter().find(|m| m.id == owner).and_then(|m| apps.iter().position(|(n, _)| *n == m.name)) else {
+                gaps.push(format!("source {src}: owner {owner} not built"));
+                continue;
+            };
+            for iname in want {
+                let Some(slot) = notes.instrument_index(iname) else { continue };
+                apps[ai].1.on_enter();
+                route.store(slot, std::sync::atomic::Ordering::Relaxed);
+                for _ in 0..6 {
+                    let _ = apps[ai].1.slint_rows();
+                    frames(&mut apps);
+                }
+                let rows = apps[ai].1.slint_rows();
+                let plays = rows.iter().position(|r| r.0.contains("Plays") || r.0 == "Engine");
+                let under = plays.map(|p| rows.iter().skip(p + 1).take_while(|r| r.0.starts_with("  ")).count()).unwrap_or(0);
+                let first = rows.iter().position(|r| !r.2).unwrap_or(0);
+                println!("AUDIT source {src:<16} {iname:<12} plays={plays:?} first={first} under={under}  [{}]", rows.iter().take(3).map(|r| r.0.as_str()).collect::<Vec<_>>().join(" | "));
+                match plays {
+                    None => gaps.push(format!("source {src}: no Plays row")),
+                    Some(p) if p > first + 1 => gaps.push(format!("source {src}: Plays at row {p}, menu starts at {first}")),
+                    _ if under == 0 => gaps.push(format!("source {src}: nothing listed under Plays for {iname}")),
+                    _ => {}
+                }
+            }
+        }
+        gaps.sort();
+        gaps.dedup();
+        println!("AUDIT GAPS:\n{}", gaps.join("\n"));
+        assert!(gaps.is_empty(), "gaps:\n{}", gaps.join("\n"));
+    }
+
     /// The grid is playable from the first frame: Teletype is chosen in the
     /// Grid app without ever having been opened, handing it the grid builds
     /// it, and with a scene that has no G ops it still shows (and runs)

@@ -588,6 +588,22 @@ how the app uses it.
   16 × 16 space at the grid's top-left, and takes the grid when it loads. Grid
   presses run scripts whether or not the metro (F3) is running.
 
+**Teletype's links, at a glance.** Teletype is not wired to anything until you
+choose it, and its screen says where it stands:
+
+- **Notes.** Teletype's four TR outputs play notes at the pitch of the matching
+  CV (`N 60` = middle C). The **Plays** row (first in its menu) picks the
+  instrument they go to over the note bus; the instrument's own settings are
+  listed right below it. On *Own sound* (the start) the built-in voice plays;
+  set Plays to an instrument and only that instrument sounds. The menu and the
+  side panel both show `TR plays: ...`.
+- **CV and TR as modulation.** Each output can also drive any app's mod input
+  (the `CV 1 App` / `CV 1 Input` rows).
+- **Grid.** The line `Grid: ...` on Teletype's screens says whether it holds
+  the grid (`not on it. Grid app > SELECT` means open Grid and press SELECT
+  until the title says `plays: Teletype`), whether the keys are the script
+  buttons (`keys 1-8 = S1-S8, 10 M, 11 I`) or the scene draws it (`G ops`).
+
 If the grid stays dark: check the title says `plays: Teletype`, and read the
 line under the grid. Press F3 in Teletype if the scene needs the metro.
 

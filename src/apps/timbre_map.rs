@@ -257,6 +257,22 @@ fn pad_note(p: usize) -> f32 {
 }
 
 impl App for TimbreMap {
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> {
+        vec![
+            crate::app::Setting { label: "Nearest".into(), value: self.nearest().into() },
+            crate::app::Setting { label: "Map X".into(), value: format!("{:.2}", self.x.get()) },
+            crate::app::Setting { label: "Map Y".into(), value: format!("{:.2}", self.y.get()) },
+        ]
+    }
+    fn adjust_setting(&mut self, index: usize, delta: i32) {
+        let span = [self.info.hi[0] - self.info.lo[0], self.info.hi[1] - self.info.lo[1]];
+        let (x, y) = (self.x.get(), self.y.get());
+        match index {
+            1 => self.set(x + delta as f32 * span[0] * 0.03, y),
+            2 => self.set(x, y + delta as f32 * span[1] * 0.03),
+            _ => {}
+        }
+    }
     fn wants_fullscreen(&self) -> bool {
         true
     }
