@@ -89,6 +89,17 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-10: Claude: Rev2 Livid Saws silent; amp velocity now adds; positive filter sweeps x1.5
+- Branch: main (local)
+- Changed: src/apps/prophet/dsp.rs (amp amount = amount + velocity sensitivity x
+  velocity, capped; FILTER_ENV_POSITIVE = 1.5; new test), docs/PROPHET.md.
+  Max reported Livid Saws silent and some programs very quiet. Cause of the
+  silence: amp env amount 0 with velocity 127 (65 factory programs) was scaled to
+  nothing. Quiet programs: closed filters and under-scaled positive sweeps.
+- Status: partial; closed-filter programs are still quiet.
+- Tests: full suite.
+- Notes for the other assistant: filter and Env3 velocity are unchanged.
+
 ### 2026-10-09: Claude: Rev2 cutoff shift removed again, measured scale restored
 - Branch: main
 - Changed: src/apps/prophet/dsp.rs (CUTOFF_SHIFT back to 0, anchor test back to

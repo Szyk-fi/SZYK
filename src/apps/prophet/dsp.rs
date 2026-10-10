@@ -54,6 +54,20 @@ fn random(r: &mut u32) -> f32 {
 /// below; with `FILTER_LEAK` in place the shift gained under 1.5 dB mean error and
 /// made cutoffs above 120 6 dB too bright, so it was removed.
 const CUTOFF_SHIFT: f32 = 0.;
+/// Positive filter-envelope sweeps are scaled up by 1.5. Against 99 dry REVField
+/// recordings the programs that open their filter with an envelope (and low-cutoff
+/// programs in particular) rendered 7-17 dB quieter and darker than the recordings;
+/// 1.5 lowers the mean band error from 13.6 to 12.9 dB and the quietest group's
+/// level gap from 13 to 10 dB, while 2-3 over-brighten open-filter programs.
+/// A fit to recordings, not a measured value.
+const FILTER_ENV_POSITIVE: f32 = 1.5;
+fn envp(amount: f32) -> f32 {
+    if amount > 127. {
+        127. + (amount - 127.) * FILTER_ENV_POSITIVE
+    } else {
+        amount
+    }
+}
 /// Feed-through around the filter: 2% of the unfiltered oscillator mix,
 /// low-passed by a one-pole at 1 kHz, is added to the output. The ideal
 /// 24 dB/octave cascade attenuates a sawtooth, pulse or saw+triangle far more
@@ -532,7 +546,7 @@ impl Voice {
             .clamp(0.01, sr * 0.35);
             self.shape_mod[o] = self.params[6 + o].clamp(0., 99.);
         }
-        let env = self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel));
+        let env = self.env[0].v * (envp(self.params[32]) - 127.) * (1. - p[35] / 127. * (1. - self.vel));
         let cut = self.params[22] + env + p[24] / 64. * (self.note as f32 + 12.);
         self.filter.tune(frequency(cut - 36. + CUTOFF_SHIFT), sr);
     }
@@ -605,7 +619,7 @@ impl Voice {
             + noise * self.params[16].clamp(0., 127.) / 127.;
         if self.params[25] > 0. {
             let cut = self.params[22]
-                + self.env[0].v * (self.params[32] - 127.) * (1. - p[35] / 127. * (1. - self.vel))
+                + self.env[0].v * (envp(self.params[32]) - 127.) * (1. - p[35] / 127. * (1. - self.vel))
                 + p[24] / 64. * (self.note as f32 + 12.)
                 + a * self.params[25] * 0.5;
             self.filter.tune(frequency(cut - 36. + CUTOFF_SHIFT), sr);
@@ -618,9 +632,12 @@ impl Voice {
                 self.leak_lp += (signal * 0.45 - self.leak_lp) * a;
                 self.leak_lp * FILTER_LEAK
             };
-        let amp = (self.env[1].v * self.params[33] / 127. * (1. - p[36] / 127. * (1. - self.vel))
-            + self.params[27] / 127.)
-            .clamp(0., 2.);
+        // Velocity adds to the envelope amount rather than scaling it down: 65 of
+        // Sequential's 512 factory programs (Livid Saws among them) set the amp
+        // envelope amount near 0 with velocity at 127 and depend on velocity to
+        // open the VCA; scaling would leave them silent.
+        let amount = (self.params[33] + p[36] * self.vel).clamp(0., 127.);
+        let amp = (self.env[1].v * amount / 127. + self.params[27] / 127.).clamp(0., 2.);
         self.last = (filtered * amp).clamp(-4., 4.);
         self.last
     }
@@ -1926,6 +1943,7 @@ mod behavior {
             let x: Vec<f32> = raw.chunks(ch).map(|c| c.iter().sum::<f32>() / ch as f32).collect();
             let win = (sr * 2.) as usize;
             let mut deltas: Vec<[f32; THIRDS]> = Vec::new();
+            let mut levels: Vec<f32> = Vec::new();
             let mut cen = (Vec::new(), Vec::new());
             for w in 0..x.len() / win {
                 let seg = &x[w * win..(w + 1) * win];
@@ -1944,6 +1962,9 @@ mod behavior {
                 if (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt() < 0.002 { continue; }
                 let (a, bnd) = (thirds_db(seg, sr), thirds_db(tail, 48_000.));
                 deltas.push(std::array::from_fn(|i| bnd[i] - a[i]));
+                let r_ref = (seg.iter().map(|v| v * v).sum::<f32>() / seg.len() as f32).sqrt();
+                let r_syn = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
+                levels.push(20. * (r_syn / r_ref.max(1e-9)).max(1e-6).log10());
                 let cen_of = |t: &[f32]| -> f32 {
                     let p = |v: &[f32; THIRDS]| { let w: Vec<f32> = v.iter().map(|d| 10f32.powf(d / 10.)).collect(); w.iter().zip(&centers).map(|(a, c)| a * c).sum::<f32>() / w.iter().sum::<f32>() };
                     p(&thirds_db(t, if std::ptr::eq(t, tail) { 48_000. } else { sr }))
@@ -1954,8 +1975,8 @@ mod behavior {
             if deltas.is_empty() { eprintln!("SPEC {k:2} {:<14} no usable windows", progs[pi].name(0)); continue; }
             let med: [f32; THIRDS] = std::array::from_fn(|i| median(deltas.iter().map(|d| d[i]).collect()));
             eprintln!(
-                "SPEC {k:2} {:<14} windows {:2} centroid ref {:5.0} synth {:5.0} Hz | synth-ref dB per band: {}",
-                progs[pi].name(0), deltas.len(), median(cen.0), median(cen.1),
+                "SPEC {k:2} {:<14} windows {:2} level synth-ref {:+.1} dB centroid ref {:5.0} synth {:5.0} Hz | synth-ref dB per band: {}",
+                progs[pi].name(0), deltas.len(), median(levels.clone()), median(cen.0), median(cen.1),
                 med.iter().map(|d| format!("{d:+.0}")).collect::<Vec<_>>().join(" ")
             );
             all.push(med);
@@ -1964,6 +1985,18 @@ mod behavior {
         eprintln!("SPEC median over clips: {}", overall.join(" "));
         let err = (all.iter().map(|d| d.iter().map(|v| v * v).sum::<f32>() / THIRDS as f32).sum::<f32>() / all.len().max(1) as f32).sqrt();
         eprintln!("SPEC rms band error over clips: {err:.2} dB");
+    }
+    #[test]
+    fn velocity_adds_to_the_amp_envelope_amount_so_amount_zero_programs_sound() {
+        use super::super::patch::Patch;
+        // Sequential's factory "Livid Saws" and 64 other programs set the amp
+        // envelope amount near 0 and velocity sensitivity to 127.
+        let mut patch = Patch::default();
+        patch.data[33] = 0;
+        patch.data[36] = 127;
+        assert!(rms(&output(patch, &[60], 1.)) > 0.02, "velocity opens the VCA");
+        patch.data[36] = 0;
+        assert!(rms(&output(patch, &[60], 1.)) < 1e-5, "with no velocity sensitivity amount 0 is silent");
     }
     #[test]
     fn init_note_has_useful_output_and_preserves_volume_controls() {

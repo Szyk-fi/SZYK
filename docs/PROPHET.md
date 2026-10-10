@@ -259,3 +259,25 @@ the filter-envelope sweep of low-cutoff programs may be under-scaled (positive
 sweeps x1.5-2 with a larger cutoff shift improved that group but over-brightened
 others); 0.4% flat versus 2% low-passed are fits, not the real circuit. Programs
 with plucked or sequenced material cannot be judged by held-note replays.
+
+### Velocity and the amp envelope; quiet programs (October 2026)
+
+`Livid Saws` (bank 1 #59) made no sound. Its amp envelope amount is 0 and its
+amp velocity is 127, and so are 64 other factory programs' (65 of 512 have an
+amount at or under 40, and 74% of those have velocity 100 or more, against 23% of
+the rest). The app scaled the amount *down* with velocity, so an amount of 0
+stayed silent whatever the velocity. Velocity now *adds* to the amount
+(amount + velocity sensitivity x velocity, capped at 127). Filter and Env3
+velocity still scale down; the factory data does not show the same pattern for
+them (53% of filter-envelope programs use velocity whether or not they sweep).
+
+Loudness across the 512 factory programs at C3, velocity 100, loudest half
+second of six: median 0.073 RMS, 10th percentile 0.006, 72 programs below 0.01
+(33 below 0.003). Compared with the 99 usable dry REVField recordings, the app
+was 9 dB quieter on average (sd 10 dB), and the gap grows as the cutoff falls
+(-17 dB under cutoff 40, -7 dB above 80) and with filter-envelope sweep
+(-10 dB for positive sweeps, -18 dB for the strongest). Positive filter-envelope
+sweeps are therefore scaled by 1.5 (`FILTER_ENV_POSITIVE`): mean band error 13.6 ->
+12.9 dB, level gap of cutoffs under 60 from -13 to -10 dB; 2-3x over-brightens
+open-filter programs. Programs with closed filters and little sweep stay quiet; the
+recordings may have been loudness-matched, so absolute level is only a hint.
