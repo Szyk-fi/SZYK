@@ -186,6 +186,7 @@ slint::slint! {
 
     import { InstrumentLabel, InstrumentHeading, ScopeSurface, SignalTrace, ValueTrack, InstrumentPanel, VectorSegment } from "slint_common/instrument_widgets.slint";
 
+    import { BebotPanel } from "slint_common/bebot_panel.slint";
     import { BloomPanel } from "slint_common/bloom_panel.slint";
 
     export component LiveHomeScreen inherits DeviceFrame {
@@ -3473,7 +3474,12 @@ slint::slint! {
             }
 
             // A Kids app: its own picture, the whole screen.
-            if !root.on-home && root.active-kind == 43 : Rectangle {
+            if !root.on-home && root.active-kind == 43 && root.active-app-name == "Bebot" : BebotPanel {
+                frame: root.screen-frame;
+                finger(x, y) => { root.screen-touched(x, y); }
+            }
+
+            if !root.on-home && root.active-kind == 43 && root.active-app-name != "Bebot" : Rectangle {
                 background: black;
                 Image {
                     source: root.screen-frame;
@@ -4453,9 +4459,15 @@ fn apply_instrument_visual(ui: &LiveHomeScreen, extra: app::SlintExtra) {
 
 #[path = "slint_common/instrument_preview.rs"]
 mod instrument_preview;
+#[path = "slint_common/bebot_preview.rs"]
+mod bebot_preview;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--render-bebot") {
+        bebot_preview::render(args.get(2).expect("usage: --render-bebot OUTPUT_DIRECTORY"));
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--render-atlas-howto") {
         instrument_preview::atlas_howto::render(args.get(2).expect("usage: --render-atlas-howto OUTPUT_DIRECTORY"));
         return;

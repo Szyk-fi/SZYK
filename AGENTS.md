@@ -215,6 +215,27 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-08: ChatGPT: Bebot-inspired mouse-drag instrument
+- Branch: gpt/bebot
+- Changed: new src/apps/bebot/, apps/bebot/manifest.toml, docs/BEBOT.md;
+  examples/slint_common/bebot_panel.slint + bebot_preview.rs;
+  examples/slint_home_live.rs imports/selects the dedicated panel and exposes
+  --render-bebot. No existing DSP, buses, dependencies or registry edited.
+- Status: implementation done; remote publication blocked. Max requested merging
+  to main, but GitHub writes return 403 and automatic approval review requires
+  explicit confirmation of the destination Szyk-fi/SZYK before a push.
+- Tests: 13 Bebot behavior tests pass in the actual Portamax binary. Four extra
+  tests importing the actual DSP passed (pitch/release/rates, slow tune, extreme
+  effects across 8-192 kHz, invalid rate). Live Slint shell builds; actual mouse
+  press/drag/release/right-click and settings interaction verified by
+  --render-bebot; both screenshots visually reviewed. Broad suite: 1187 passed,
+  19 failed because this checkout has no samples/, 14 ignored, one previously
+  stalled Norns bundled-script test excluded. Launcher/manifest contracts pass.
+- Notes for the other assistant: independent implementation and original robot;
+  not Normalware's engine/artwork and not exact sonic parity. One mouse contact
+  plus seven stable pad/MIDI voices; eight new presets, one saved user preset.
+  No four-contact touchscreen driver, custom note masks or preset folders yet.
+
 ### 2026-10-07: ChatGPT: Rev2 sound and modulation audit
 - Branch: gpt/rev2-sound-audit
 - Changed: src/apps/prophet/dsp.rs, docs/PROPHET.md, AGENTS.md.
