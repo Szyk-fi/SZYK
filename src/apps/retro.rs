@@ -2600,6 +2600,31 @@ mod tests {
                     let ea = resolve_ea(bus, &mut cursor, mode, reg, 2);
                     return (format!("LEA {ea},A{areg}"), cursor - pc);
                 }
+                // MOVEM -- register list comes as its own extension
+                // word right after the opcode, before any ea extension
+                // words; predecrement mode reverses the bit->register
+                // mapping (bit0=A7..bit15=D0) versus every other mode
+                // (bit0=D0..bit15=A7).
+                if (opcode & 0xFB80) == 0x4880 {
+                    let dir = (opcode >> 10) & 1;
+                    let sz: u16 = if (opcode >> 6) & 1 == 0 { 1 } else { 2 };
+                    let mask = bus.read_word(cursor);
+                    cursor += 2;
+                    let mode = (opcode >> 3) & 7;
+                    let reg = opcode & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, sz as u8);
+                    let order: [&str; 16] = if mode == 4 {
+                        ["A7", "A6", "A5", "A4", "A3", "A2", "A1", "A0", "D7", "D6", "D5", "D4", "D3", "D2", "D1", "D0"]
+                    } else {
+                        ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
+                    };
+                    let regs: Vec<&str> = (0..16).filter(|i| mask & (1 << i) != 0).map(|i| order[i]).collect();
+                    let regs = regs.join("/");
+                    return (
+                        if dir == 0 { format!("MOVEM{} {regs},{ea}", size_name(sz)) } else { format!("MOVEM{} {ea},{regs}", size_name(sz)) },
+                        cursor - pc,
+                    );
+                }
                 // CLR/NEG/NOT/TST -- single <ea>, no register operand.
                 let size = (opcode >> 6) & 3;
                 if size != 3 {
@@ -2672,16 +2697,23 @@ mod tests {
                     let ea = resolve_ea(bus, &mut cursor, mode, reg, size as u8);
                     return (format!("{mnemonic}{} #${imm:X},{ea}", size_name(size)), cursor - pc);
                 }
-                if (opcode >> 8) & 1 == 1 || matches!((opcode >> 6) & 3, 0..=3) {
-                    let bit_op = (opcode >> 6) & 3;
-                    let op_name = ["BTST", "BCHG", "BCLR", "BSET"][bit_op as usize];
-                    let mode = (opcode >> 3) & 7;
-                    let reg = opcode & 7;
-                    if (opcode >> 8) & 1 == 1 {
-                        let dreg = (opcode >> 9) & 7;
-                        let ea = resolve_ea(bus, &mut cursor, mode, reg, 0);
-                        return (format!("{op_name} D{dreg},{ea}"), cursor - pc);
-                    }
+                // BTST/BCHG/BCLR/BSET -- register form (bit8=1, bit
+                // number in a Dn) or immediate form (bits8-15 fixed at
+                // 0000_1000, bit number in an extension word).
+                let bit_op = (opcode >> 6) & 3;
+                let op_name = ["BTST", "BCHG", "BCLR", "BSET"][bit_op as usize];
+                let mode = (opcode >> 3) & 7;
+                let reg = opcode & 7;
+                if opcode & 0x0100 != 0 {
+                    let dreg = (opcode >> 9) & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, 0);
+                    return (format!("{op_name} D{dreg},{ea}"), cursor - pc);
+                }
+                if opcode & 0x0F00 == 0x0800 {
+                    let imm = bus.read_word(cursor);
+                    cursor += 2;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, 0);
+                    return (format!("{op_name} #{imm},{ea}"), cursor - pc);
                 }
                 (format!("DC.W ${opcode:04X}"), 2)
             }
@@ -2806,24 +2838,32 @@ mod tests {
                 machine.bus.read_byte(watched)
             );
         }
+        let (_, pal_before_frame) = machine.bus.debug_nonzero_counts();
         machine.vblank();
         let mut last_pc = u32::MAX;
         let mut printed = 0usize;
         let mut left_trivial_loop = false;
+        let mut palette_changed_at = None;
         for i in 0..50_000u32 {
             let pc = machine.cpu.pc;
             if pc != last_pc {
                 if pc != 0xC18714 && pc != 0xC1871A {
                     left_trivial_loop = true;
                 }
-                if printed < 60 {
+                if palette_changed_at.is_none() {
+                    let (_, pal) = machine.bus.debug_nonzero_counts();
+                    if pal != pal_before_frame {
+                        palette_changed_at = Some((i, pal));
+                    }
+                }
+                if printed < 700 {
                     use m68k::AddressBus;
                     let raw = machine.bus.read_word(pc);
                     let (text, _len) = decode_one(&mut machine.bus, pc);
                     eprintln!("  step {i} 0x{pc:06X} [{raw:04X}]: {text}");
                     printed += 1;
-                } else if printed == 60 {
-                    eprintln!("  ... (truncated after 60 transitions; still watching silently)");
+                } else if printed == 700 {
+                    eprintln!("  ... (truncated after 700 transitions; still watching silently)");
                     printed += 1;
                 }
                 last_pc = pc;
@@ -2835,7 +2875,7 @@ mod tests {
         }
         use m68k::AddressBus;
         eprintln!(
-            "after the full recorded frame: pc=0x{:06X} sr=0x{:04X} (interrupt mask={}) $10FE8C=0x{:02X} ever_left_trivial_loop={left_trivial_loop}",
+            "after the full recorded frame: pc=0x{:06X} sr=0x{:04X} (interrupt mask={}) $10FE8C=0x{:02X} ever_left_trivial_loop={left_trivial_loop} palette_changed_at={palette_changed_at:?}",
             machine.cpu.pc,
             machine.cpu.get_sr(),
             (machine.cpu.get_sr() >> 8) & 7,
