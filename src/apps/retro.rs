@@ -2883,6 +2883,252 @@ mod tests {
         );
     }
 
+    /// Real palette RAM's actual range: $400000-$401FFF backing 256
+    /// palettes x 16 colors, mirrored through $7FFFFF (see
+    /// `neogeo_core`'s own memory-map doc comment) -- any 68k access
+    /// anywhere in $400000-$7FFFFF really does land in it, not just
+    /// the backing 8KB.
+    fn in_palette_range(addr: u32) -> bool {
+        (0x400000..=0x7FFFFF).contains(&addr)
+    }
+
+    /// Best-effort flag (not a real operand-address resolver like
+    /// `resolve_ea` -- just a diagnostic heuristic on top of its
+    /// *text* output) for whether one `decode_one`-decoded instruction
+    /// touches palette RAM. Two cases: a literal absolute address
+    /// printed by `resolve_ea` (`"$4xxxxx.L"`/`.W`), found by scanning
+    /// for `$` followed by 5+ hex digits that aren't an immediate
+    /// (immediates are always printed `"#$..."`, which would otherwise
+    /// false-positive on a coincidentally palette-range-shaped
+    /// constant like a 32-bit mask); and register-indirect/indexed
+    /// forms (`"(A3)"`, `"4(A6)"`, ...), which `resolve_ea`'s text
+    /// never carries a resolved numeric address for at all -- checked
+    /// instead against that address register's real, live value right
+    /// before this instruction executes (passed in as `cpu`).
+    fn palette_touch_flag(cpu: &m68k::CpuCore, text: &str) -> String {
+        let mut hits: Vec<String> = Vec::new();
+        let bytes = text.as_bytes();
+        let mut idx = 0usize;
+        while let Some(rel) = text[idx..].find('$') {
+            let pos = idx + rel;
+            let is_immediate = pos > 0 && bytes[pos - 1] == b'#';
+            let after = &text[pos + 1..];
+            let hexlen = after.chars().take_while(|c| c.is_ascii_hexdigit()).count();
+            if !is_immediate && hexlen >= 5 {
+                if let Ok(addr) = u32::from_str_radix(&after[..hexlen], 16) {
+                    if in_palette_range(addr) {
+                        hits.push(format!("${addr:06X}"));
+                    }
+                }
+            }
+            idx = pos + 1 + hexlen.max(1);
+        }
+        for n in 0..8usize {
+            if text.contains(&format!("A{n})")) {
+                let addr = cpu.a(n);
+                if in_palette_range(addr) {
+                    hits.push(format!("A{n}=${addr:06X}"));
+                }
+            }
+        }
+        if hits.is_empty() {
+            String::new()
+        } else {
+            format!("   <<< PALETTE RANGE: {} >>>", hits.join(", "))
+        }
+    }
+
+    /// Catches the real, one-time VRAM-init batch write
+    /// (`debug_nonzero_counts()`'s `vram_nonzero` going from 0 to
+    /// ~2336 words, confirmed happening somewhere in frames 0-100 by
+    /// `dump_a_real_neogeo_frame_to_disk_if_a_cartridge_is_present`'s
+    /// own output) in the act, during the real cold boot -- as opposed
+    /// to `diagnose_neogeo_stuck_pc_if_a_cartridge_is_present` and
+    /// `disassemble_neogeo_stuck_loop_if_a_cartridge_is_present`, which
+    /// both deliberately warm up *past* this window to study the
+    /// already-confirmed-stuck steady state at frame 150+. The open
+    /// question here is specifically what runs during this early
+    /// window, and whether anything in it is -- or was ever meant to be
+    /// -- a palette-RAM write, given that palette RAM is confirmed
+    /// (same two tests above) to never get a single nonzero word at
+    /// any point afterward.
+    ///
+    /// Two passes, both from a true cold boot:
+    ///
+    /// Pass 1 ticks the real app exactly like every sibling diagnostic
+    /// here (`sleep(17ms)` + `app.tick()` + a Start press every 60
+    /// frames), but checks `debug_nonzero_counts()` after *every* real
+    /// frame (not every 100) to find the exact frame where
+    /// `vram_nonzero` first leaves zero.
+    ///
+    /// Pass 2 repeats the same boot on a fresh app/machine, ticks the
+    /// real app the same way for only `transition_frame - 2` frames
+    /// (`NEOGEO_FRAME_SECONDS` is ~16.9ms, just under the test's own
+    /// 17ms sleep, so `frame_accum`'s catch-up loop runs exactly one
+    /// internal machine frame per real tick for many calls in a row --
+    /// see `tick`'s own `frame_accum` logic -- meaning the external
+    /// tick count and the internal machine-frame count track 1:1 this
+    /// early; the 2-frame margin is just slack against that not
+    /// holding exactly), then switches to driving the machine directly
+    /// -- `vblank()` plus the exact same 50,000-instruction budget
+    /// `tick()`'s own `Deck::NeoGeo` arm uses, just with no real-time
+    /// sleep and no `app.tick()` call wrapping it -- one deterministic
+    /// machine frame at a time, decoding every instruction with
+    /// `decode_one` (run-length collapsed by PC, same convention
+    /// `disassemble_neogeo_stuck_loop_if_a_cartridge_is_present`
+    /// already uses) until `debug_nonzero_counts()` itself confirms the
+    /// transition. This manual step is not just a determinism
+    /// safeguard: `app.tick()` only ever exposes machine state *between*
+    /// whole frames, never mid-frame, so it is the only way to see
+    /// which instructions actually ran during the frame that did it.
+    /// `#[ignore]`d for the same reason as its siblings -- run
+    /// explicitly with `cargo test --bin portamax-sim
+    /// trace_neogeo_cold_boot_vram_init -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn trace_neogeo_cold_boot_vram_init_if_a_cartridge_is_present() {
+        let mut app = new_app();
+        app.console = Console::NeoGeo;
+        app.rescan_roms();
+        if app.roms.is_empty() {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        }
+        app.load_selected_rom();
+        assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+        eprintln!("=== pass 1: ticking the real app frame-by-frame from cold boot, every frame logged ===");
+        let mut transition_frame = None;
+        for frame in 0..120u32 {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            let press_start = frame % 60 == 0;
+            app.tick(&Input { grid: std::array::from_fn(|pad| pad == 7 && press_start), ..Default::default() });
+            let Some(Deck::NeoGeo(machine)) = app.deck.as_ref() else {
+                eprintln!("deck stopped early at frame {frame}: {}", app.status);
+                return;
+            };
+            let (vram, pal) = machine.bus.debug_nonzero_counts();
+            eprintln!("frame {frame:3}: vram_nonzero={vram:6} palette_nonzero={pal:4} pc=0x{:06X}", machine.cpu.pc);
+            if transition_frame.is_none() && vram > 0 {
+                transition_frame = Some(frame);
+                eprintln!(">>> VRAM first went nonzero at frame {frame} (vram_nonzero={vram}) <<<");
+            }
+        }
+        let Some(transition_frame) = transition_frame else {
+            eprintln!("VRAM never left zero across the first 120 real frames -- nothing to single-step");
+            return;
+        };
+
+        eprintln!("=== pass 2: fresh boot, single-stepping the real transition frame ===");
+        let mut app2 = new_app();
+        app2.console = Console::NeoGeo;
+        app2.rescan_roms();
+        app2.load_selected_rom();
+        assert!(app2.deck.is_some(), "cartridge must load on the second run: {}", app2.status);
+
+        let warmup_ticks = transition_frame.saturating_sub(2);
+        for frame in 0..warmup_ticks {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            let press_start = frame % 60 == 0;
+            app2.tick(&Input { grid: std::array::from_fn(|pad| pad == 7 && press_start), ..Default::default() });
+            if app2.deck.is_none() {
+                eprintln!("deck stopped early at frame {frame} on the second run: {}", app2.status);
+                return;
+            }
+        }
+
+        let Some(Deck::NeoGeo(machine)) = app2.deck.as_mut() else {
+            panic!("deck must still be Neo Geo at frame {warmup_ticks} on the second run: {}", app2.status);
+        };
+        let (vram_check, pal_check) = machine.bus.debug_nonzero_counts();
+        eprintln!(
+            "switching to manual, deterministic per-instruction stepping after {warmup_ticks} real ticks (vram_nonzero={vram_check}, palette_nonzero={pal_check}, pc=0x{:06X})",
+            machine.cpu.pc
+        );
+
+        let mut manual_frame = warmup_ticks;
+        let mut found_transition = false;
+        while manual_frame < warmup_ticks + 6 && !found_transition {
+            let press_start = manual_frame % 60 == 0;
+            machine.bus.set_p1_input([false; 8], press_start, false);
+            let (vram_before, pal_before) = machine.bus.debug_nonzero_counts();
+            eprintln!("--- manual frame {manual_frame}: vram={vram_before} palette={pal_before} before this frame's vblank ---");
+            machine.vblank();
+            let mut last_pc = u32::MAX;
+            // Capped *per distinct address* (first 5 visits), not by a
+            // flat total -- a flat cap (tried first) got entirely used
+            // up by one single tight address-alternating loop (a real
+            // VRAM-fill loop this cartridge runs, 1280 iterations of 3
+            // alternating addresses -- never collapsed by the plain
+            // "differs from the previous PC" rule below, since A/B/C/A/
+            // B/C/... always differs from its immediate predecessor)
+            // before any later code in the same frame ever got a
+            // chance to print at all. This still shows every loop's
+            // real shape (its body, clearly) while leaving the rest of
+            // the frame's budget free to reach whatever runs *after*
+            // it -- the actual goal here, not just the loop itself.
+            let mut seen_count: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+            let mut printed_total = 0usize;
+            for i in 0..50_000u32 {
+                let pc = machine.cpu.pc;
+                if pc != last_pc {
+                    let count = seen_count.entry(pc).or_insert(0);
+                    *count += 1;
+                    if *count <= 5 && printed_total < 20_000 {
+                        use m68k::AddressBus;
+                        let raw = machine.bus.read_word(pc);
+                        let (text, _len) = decode_one(&mut machine.bus, pc);
+                        let flag = palette_touch_flag(&machine.cpu, &text);
+                        eprintln!("  frame {manual_frame} step {i:5} 0x{pc:06X} [{raw:04X}]: {text}{flag}");
+                        printed_total += 1;
+                        // Flagged instructions are the whole point of
+                        // this trace -- also dump every register's
+                        // *live* value right now (before this
+                        // instruction executes), since that's the real
+                        // data about to land in palette RAM. Without
+                        // this, confirming "it writes black" instead of
+                        // "it writes a real color" would mean manually
+                        // walking back through earlier `MOVEQ`/`MOVE`
+                        // instructions by hand to reconstruct D0-D7 --
+                        // exactly the kind of guess this whole test
+                        // exists to replace with a direct read.
+                        if !flag.is_empty() {
+                            let d: Vec<String> = (0..8).map(|n| format!("D{n}=${:08X}", machine.cpu.d(n))).collect();
+                            let a: Vec<String> = (0..8).map(|n| format!("A{n}=${:08X}", machine.cpu.a(n))).collect();
+                            eprintln!("    registers at that moment: {}  {}", d.join(" "), a.join(" "));
+                            printed_total += 1;
+                        }
+                        if *count == 5 {
+                            eprintln!("  (further visits to 0x{pc:06X} this frame suppressed after 5)");
+                            printed_total += 1;
+                        }
+                    } else if printed_total == 20_000 {
+                        eprintln!("  ... (truncated after 20000 printed lines this frame; still watching silently)");
+                        printed_total += 1;
+                    }
+                    last_pc = pc;
+                }
+                if !machine.step() {
+                    eprintln!("  CPU halted/faulted at manual frame {manual_frame} step {i}");
+                    break;
+                }
+            }
+            for _ in 0..10_000u32 {
+                machine.step_sound();
+            }
+            let (vram_after, pal_after) = machine.bus.debug_nonzero_counts();
+            eprintln!("--- manual frame {manual_frame}: vram {vram_before}->{vram_after}  palette {pal_before}->{pal_after} ---");
+            if vram_before == 0 && vram_after > 0 {
+                found_transition = true;
+                eprintln!(">>> manual frame {manual_frame} is the real VRAM-init frame (vram {vram_before}->{vram_after}) <<<");
+            }
+            manual_frame += 1;
+        }
+        if !found_transition {
+            eprintln!("did not catch the vram_nonzero 0->nonzero transition within the manual window ({}..{}) -- widen it", warmup_ticks, warmup_ticks + 6);
+        }
+    }
+
     /// No real arcade ROM sets ship with this repo (same legal reasons
     /// as NES/SNES), but `phosphor_machines`' own `MachineEntry::
     /// create_bare` builds a real, fully wired machine with zero-filled
