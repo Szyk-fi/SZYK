@@ -3600,6 +3600,247 @@ mod tests {
         eprintln!("genuinely new PCs vs the unpoked control -- scenario B: {} addresses {:X?}", new_in_b.len(), new_in_b.iter().map(|pc| pc).collect::<Vec<_>>());
     }
 
+    /// Direct causal test of the real, concrete hardware-state gap
+    /// `find_what_the_neogeo_bios_post_boot_loop_is_stuck_on_if_a_
+    /// cartridge_is_present` identified: real BIOS POST spins forever
+    /// at $C0996E-$C09980 waiting for a live `REG_LSPCMODE` ($3C0006)
+    /// readback whose top 9 bits (bits 7-15), after `LSR.W #7,D1`,
+    /// equal 0xF8 -- i.e. the real 16-bit value must be 0x7C00-0x7C7F
+    /// (the low 7 bits get shifted out by the `LSR` before `SUBI.W
+    /// #$F8,D1`/`BNE` ever look at what's left, so only bits 7-15
+    /// matter, not the full word -- this is checked analytically
+    /// below, not assumed). This core's own `read_word` for that
+    /// address only ever returns `Lspc::anim_counter` (a real, but
+    /// much narrower, 3-bit field -- observed value 2 the whole time,
+    /// never touching bits 7-15), which is why the loop never exits.
+    ///
+    /// Diagnostic only, per this session's own instructions -- does
+    /// NOT change `neogeo_core.rs`'s `read_word`. Rather than touch
+    /// production code, this steps the real CPU one instruction at a
+    /// time (same `machine.step()` every other diagnostic in this file
+    /// uses) and, every time PC is about to execute the loop's own
+    /// `MOVE.W $3C0006.L,D1` at $C09974, lets that instruction execute
+    /// for real against the real bus (the real watchdog kick, and the
+    /// real `step_sound`/Z80 side of every *other* instruction in the
+    /// loop, stay exactly as real as any other test here) and then
+    /// overwrites D1's low word immediately afterward. That is bit-
+    /// for-bit what `read_word(0x3C0006)` returning the poked value
+    /// instead of `anim_counter` would have left in D1: `MOVE.W
+    /// <ea>,D1` does nothing to D1 beyond loading it from memory and
+    /// setting flags off the loaded value, and nothing later in the
+    /// loop reads $3C0006 again before `LSR`/`SUBI`/`BNE` consume D1.
+    ///
+    /// Four scenarios, each a fresh boot so none can contaminate
+    /// another's result:
+    /// - 0x7C00 -- the loop's own arithmetic demand, low bits zero.
+    /// - 0x7C00 | the real live `anim_counter` -- what a real combined
+    ///   status/counter register would plausibly look like (the task
+    ///   explicitly asked for this variant).
+    /// - 0x7C7F -- the top edge of the *actual* 0x7C00-0x7C7F range
+    ///   that satisfies `(value>>7)==0xF8` (the wider 0x7C00-0x7DFF
+    ///   sweep this test was asked to consider is checked here
+    ///   analytically instead of brute-forced: `0x7DFF>>7 == 0xFB`,
+    ///   not `0xF8`, so only the low 128 of those 512 values can
+    ///   possibly satisfy the branch -- this picks the extreme end of
+    ///   that real working sub-range rather than running all 128).
+    /// - 0x7D00 -- a deliberately-failing control (top 9 bits = 0xFA,
+    ///   not 0xF8) to make sure a poke that *shouldn't* unblock the
+    ///   loop doesn't appear to by some unrelated accident.
+    ///
+    /// `#[ignore]`d for the same reason as its siblings -- run
+    /// explicitly with `cargo test --release --bin portamax-sim
+    /// poke_lspcmode_readback -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn poke_lspcmode_readback_and_check_for_real_bios_post_progress_if_a_cartridge_is_present() {
+        use m68k::AddressBus;
+
+        const MOVE_LSPCMODE_PC: u32 = 0xC09974;
+        const STUCK_LOOP: std::ops::RangeInclusive<u32> = 0xC0996E..=0xC09980;
+        const BIOS_WINDOW: std::ops::RangeInclusive<u32> = 0xC00000..=0xC1FFFF;
+
+        fn boot_to_steady_state() -> Option<RetroApp> {
+            let mut app = new_app();
+            app.console = Console::NeoGeo;
+            app.rescan_roms();
+            if app.roms.is_empty() {
+                return None;
+            }
+            app.load_selected_rom();
+            assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+            if let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() {
+                for _ in 0..10 {
+                    machine.vblank();
+                    for _ in 0..50_000u32 {
+                        if !machine.step() {
+                            break;
+                        }
+                    }
+                    for _ in 0..10_000u32 {
+                        machine.step_sound();
+                    }
+                }
+            }
+            Some(app)
+        }
+
+        /// Runs `frames` more real machine frames with `poke` applied
+        /// on *every* pass through the loop's own `MOVE.W
+        /// $3C0006.L,D1` -- not just once -- so the loop keeps seeing
+        /// the poked value for as long as real BIOS POST keeps
+        /// re-checking it, same as real hardware supplying a steady
+        /// status readback would. Prints a short `decode_one` trace of
+        /// the first `trace_cap` distinct addresses visited once the
+        /// CPU is first seen outside `STUCK_LOOP` with at least one
+        /// poke already applied, so a genuine escape shows real code
+        /// running, not just a changed PC number.
+        fn run_with_poke(machine: &mut crate::apps::neogeo_core::NeoGeoMachine, poke: u16, frames: u32, trace_cap: usize) -> (std::collections::BTreeSet<u32>, (usize, usize), usize, bool) {
+            let mut visited = std::collections::BTreeSet::new();
+            let mut pokes_applied = 0usize;
+            let mut escaped = false;
+            let mut traced = 0usize;
+            let mut last_traced_pc = u32::MAX;
+            for _ in 0..frames {
+                machine.vblank();
+                let mut i = 0u32;
+                while i < 50_000u32 {
+                    let pc = machine.cpu.pc;
+                    visited.insert(pc);
+                    if !escaped && pokes_applied > 0 && !STUCK_LOOP.contains(&pc) {
+                        escaped = true;
+                        eprintln!("  escaped the known stuck loop after {pokes_applied} poke(s) applied -- pc=0x{pc:06X}");
+                    }
+                    if escaped && traced < trace_cap && pc != last_traced_pc {
+                        let (text, _len) = decode_one(&mut machine.bus, pc);
+                        eprintln!("    post-escape step: 0x{pc:06X}: {text}");
+                        traced += 1;
+                        last_traced_pc = pc;
+                    }
+                    let is_poke_site = pc == MOVE_LSPCMODE_PC;
+                    if !machine.step() {
+                        break;
+                    }
+                    if is_poke_site {
+                        // Bit-for-bit what `read_word(0x3C0006)`
+                        // returning `poke` instead of `anim_counter`
+                        // would have left in D1 -- see this test's own
+                        // doc comment.
+                        machine.cpu.dar[1] = (machine.cpu.dar[1] & 0xFFFF_0000) | poke as u32;
+                        pokes_applied += 1;
+                    }
+                    i += 1;
+                }
+                for _ in 0..10_000u32 {
+                    machine.step_sound();
+                }
+            }
+            (visited, machine.bus.debug_nonzero_counts(), pokes_applied, escaped)
+        }
+
+        // Saves unconditionally once invoked -- the task's own
+        // instruction is an *or*: "if palette RAM ever becomes
+        // nonzero OR a rendered frame is no longer all-black". The
+        // caller only invokes this once it has already confirmed one
+        // of those, so this always writes the file even if the
+        // render itself still comes out all-black (a palette entry
+        // existing is not the same as anything on screen actually
+        // using it yet) -- that is itself real, worth-recording
+        // evidence of how far POST got, not a reason to skip saving.
+        fn save_frame(machine: &crate::apps::neogeo_core::NeoGeoMachine, label: &str) {
+            let (w, h, rgba) = machine.bus.render_frame();
+            let non_black = rgba.chunks_exact(4).filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count();
+            eprintln!("{label}: rendering a frame -- {non_black} non-black pixels of {}", w * h);
+            let out_path = std::path::Path::new("/home/user/szyk-scratch-neogeo-lspc-poke.png");
+            let file = std::fs::File::create(out_path).expect("create output file");
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().expect("write PNG header");
+            writer.write_image_data(&rgba).expect("write PNG data");
+            eprintln!("{label}: wrote a frame ({non_black} non-black pixels) to {}", out_path.display());
+        }
+
+        fn run_scenario(label: &str, poke: u16, frames: u32) {
+            eprintln!("=== scenario: {label} (poke=0x{poke:04X}) ===");
+            let Some(mut app) = boot_to_steady_state() else {
+                eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+                return;
+            };
+            let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+                eprintln!("deck stopped before this scenario could run: {}", app.status);
+                return;
+            };
+            let pc_before = machine.cpu.pc;
+            let (_, pal_before) = machine.bus.debug_nonzero_counts();
+            assert!(
+                STUCK_LOOP.contains(&pc_before),
+                "the steady-state warmup must land in the known stuck loop before any poke -- got pc=0x{pc_before:06X}"
+            );
+            eprintln!("before poke: pc=0x{pc_before:06X} palette_nonzero={pal_before} live $3C0006 readback=0x{:04X}", machine.bus.read_word(0x3C0006));
+
+            let (visited, (vram, pal), pokes_applied, escaped) = run_with_poke(machine, poke, frames, 40);
+            let outside_bios: Vec<u32> = visited.iter().copied().filter(|pc| !BIOS_WINDOW.contains(pc)).collect();
+            eprintln!(
+                "after {frames} more frames: pokes_applied={pokes_applied} escaped_stuck_loop={escaped} distinct_pcs={} outside_bios_window={outside_bios:X?} vram_nonzero={vram} palette_nonzero={pal} (was {pal_before}) final_pc=0x{:06X}",
+                visited.len(),
+                machine.cpu.pc
+            );
+            if pal != pal_before || !outside_bios.is_empty() {
+                save_frame(machine, label);
+            }
+        }
+
+        // Cheap sanity control, no poke at all: confirms the closed
+        // 5-address loop this test's own doc comment claims
+        // (0xC0996E, 0xC09974, 0xC0997A, 0xC0997C, 0xC09980) really is
+        // all that gets visited with nothing forced -- so any address
+        // outside that set in the scenarios below is real evidence of
+        // the poke doing something, not an artifact of some unrelated
+        // confound (e.g. a periodic interrupt handler) also running.
+        {
+            let Some(mut app) = boot_to_steady_state() else {
+                eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+                return;
+            };
+            let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+                eprintln!("deck stopped before the no-poke control could run: {}", app.status);
+                return;
+            };
+            let mut visited = std::collections::BTreeSet::new();
+            for _ in 0..3 {
+                machine.vblank();
+                for _ in 0..50_000u32 {
+                    visited.insert(machine.cpu.pc);
+                    if !machine.step() {
+                        break;
+                    }
+                }
+                for _ in 0..10_000u32 {
+                    machine.step_sound();
+                }
+            }
+            eprintln!("no-poke control over 3 frames: distinct_pcs_visited={:X?}", visited.iter().collect::<Vec<_>>());
+        }
+
+        run_scenario("0x7C00 (loop's own arithmetic demand)", 0x7C00, 40);
+
+        {
+            // Read before this scenario's own fresh boot so the
+            // combined-register variant below uses the real live
+            // `anim_counter`, not a guess at its value.
+            let Some(mut probe) = boot_to_steady_state() else {
+                eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+                return;
+            };
+            let anim_counter_live = if let Some(Deck::NeoGeo(m)) = probe.deck.as_mut() { m.bus.read_word(0x3C0006) & 0x7 } else { 0 };
+            eprintln!("live anim_counter sampled from a fresh steady-state boot: {anim_counter_live}");
+            run_scenario("0x7C00 | live anim_counter", 0x7C00 | anim_counter_live, 40);
+        }
+
+        run_scenario("0x7C7F (top edge of the real 0x7C00-0x7C7F working range)", 0x7C7F, 20);
+        run_scenario("0x7D00 (control: top 9 bits=0xFA, must NOT unblock the loop)", 0x7D00, 10);
+    }
+
     /// Real palette RAM's actual range: $400000-$401FFF backing 256
     /// palettes x 16 colors, mirrored through $7FFFFF (see
     /// `neogeo_core`'s own memory-map doc comment) -- any 68k access
