@@ -1639,6 +1639,7 @@ impl AudioProcessor for RetroAudioProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::apps::neogeo_core::NeoGeoBus;
 
     fn new_app() -> RetroApp {
         let sensitivity = Arc::new(AtomicF32::new(0.1));
@@ -2435,6 +2436,365 @@ mod tests {
                 let mut writer = encoder.write_header().expect("write PNG header");
                 writer.write_image_data(&rgba).expect("write PNG data");
                 eprintln!("wrote {}", out_path.display());
+                break;
+            }
+        }
+    }
+
+    /// Resolves one instruction's effective address into a real,
+    /// human-readable operand (an actual address/displacement/register,
+    /// not `m68k::dasm::disassemble`'s own unresolved `<ea>`
+    /// placeholder), advancing `pc` past whatever extension word(s)
+    /// that addressing mode consumes. Per
+    /// <https://wiki.neogeodev.org/index.php?title=68000_addressing_modes>
+    /// (standard, publicly documented 68000 encoding, the same bit
+    /// layout `m68k`'s own disassembler decodes from, just taken one
+    /// step further here).
+    fn resolve_ea(bus: &mut NeoGeoBus, pc: &mut u32, mode: u16, reg: u16, size: u8) -> String {
+        use m68k::AddressBus;
+        match mode {
+            0 => format!("D{reg}"),
+            1 => format!("A{reg}"),
+            2 => format!("(A{reg})"),
+            3 => format!("(A{reg})+"),
+            4 => format!("-(A{reg})"),
+            5 => {
+                let disp = bus.read_word(*pc) as i16;
+                *pc += 2;
+                format!("{disp}(A{reg})")
+            }
+            6 => {
+                let ext = bus.read_word(*pc);
+                *pc += 2;
+                format!("{}(A{reg},{}{}.{})", (ext & 0xFF) as i8, if ext & 0x8000 != 0 { "A" } else { "D" }, (ext >> 12) & 7, if ext & 0x0800 != 0 { "L" } else { "W" })
+            }
+            7 => match reg {
+                0 => {
+                    let addr = bus.read_word(*pc);
+                    *pc += 2;
+                    format!("${addr:04X}.W")
+                }
+                1 => {
+                    let hi = bus.read_word(*pc) as u32;
+                    let lo = bus.read_word(*pc + 2) as u32;
+                    *pc += 4;
+                    format!("${:06X}.L", (hi << 16) | lo)
+                }
+                2 => {
+                    let base = *pc;
+                    let disp = bus.read_word(*pc) as i16;
+                    *pc += 2;
+                    format!("${:06X}(PC)", (base as i64 + disp as i64) as u32)
+                }
+                3 => {
+                    let ext = bus.read_word(*pc);
+                    *pc += 2;
+                    format!("{}(PC,Xn) ext=${ext:04X}", (ext & 0xFF) as i8)
+                }
+                4 => {
+                    if size == 2 {
+                        let hi = bus.read_word(*pc) as u32;
+                        let lo = bus.read_word(*pc + 2) as u32;
+                        *pc += 4;
+                        format!("#${:08X}", (hi << 16) | lo)
+                    } else {
+                        let v = bus.read_word(*pc);
+                        *pc += 2;
+                        format!("#${v:04X}")
+                    }
+                }
+                _ => "???".to_string(),
+            },
+            _ => "???".to_string(),
+        }
+    }
+
+    /// Full, operand-resolved disassembly of one instruction at `pc`,
+    /// covering the instruction classes that actually show up in the
+    /// stuck boot loop this file's other diagnostics found (data moves,
+    /// compares/tests, branches, and BIOS calls) -- not a complete
+    /// 68000 disassembler. Returns the real BIOS/cart ROM is read-only
+    /// here (no side effects from reading code as data), and the
+    /// decoded instruction's real length in bytes so a caller can
+    /// advance a cursor without executing anything.
+    fn decode_one(bus: &mut NeoGeoBus, pc: u32) -> (String, u32) {
+        use m68k::AddressBus;
+        let opcode = bus.read_word(pc);
+        let mut cursor = pc + 2;
+        let op_hi = (opcode >> 12) & 0xF;
+        let size_name = |s: u16| match s {
+            0 => ".B",
+            1 => ".W",
+            2 => ".L",
+            _ => "",
+        };
+        let branch_target = |pc: u32, opcode: u16, bus: &mut NeoGeoBus, cursor: &mut u32| -> (i64, u32) {
+            let disp8 = (opcode & 0xFF) as i8;
+            if disp8 == 0 {
+                let disp16 = bus.read_word(*cursor) as i16;
+                *cursor += 2;
+                (pc as i64 + 2 + disp16 as i64, 4)
+            } else {
+                (pc as i64 + 2 + disp8 as i64, 2)
+            }
+        };
+        match op_hi {
+            0x1 | 0x2 | 0x3 => {
+                // MOVE.B/.L/.W -- source extension words are encoded
+                // (and must be read) before the destination's.
+                let size: u16 = match op_hi {
+                    1 => 0,
+                    2 => 2,
+                    _ => 1,
+                };
+                let src_mode = (opcode >> 3) & 7;
+                let src_reg = opcode & 7;
+                let dst_mode = (opcode >> 6) & 7;
+                let dst_reg = (opcode >> 9) & 7;
+                let src = resolve_ea(bus, &mut cursor, src_mode, src_reg, size as u8);
+                let dst = resolve_ea(bus, &mut cursor, dst_mode, dst_reg, size as u8);
+                let mnemonic = if dst_mode == 1 { "MOVEA" } else { "MOVE" };
+                (format!("{mnemonic}{} {src},{dst}", size_name(size)), cursor - pc)
+            }
+            0x7 => {
+                let reg = (opcode >> 9) & 7;
+                let data = (opcode & 0xFF) as i8;
+                (format!("MOVEQ #{data},D{reg}"), 2)
+            }
+            0x6 => {
+                let cond = (opcode >> 8) & 0xF;
+                let (target, len) = branch_target(pc, opcode, bus, &mut cursor);
+                let mnemonic = match cond {
+                    0 => "BRA".to_string(),
+                    1 => "BSR".to_string(),
+                    c => format!("B{}", ["T", "F", "HI", "LS", "CC", "CS", "NE", "EQ", "VC", "VS", "PL", "MI", "GE", "LT", "GT", "LE"][c as usize]),
+                };
+                (format!("{mnemonic} ${target:06X}"), len)
+            }
+            0x4 => {
+                if opcode == 0x4E75 {
+                    return ("RTS".to_string(), 2);
+                }
+                if opcode == 0x4E73 {
+                    return ("RTE".to_string(), 2);
+                }
+                if opcode == 0x4E71 {
+                    return ("NOP".to_string(), 2);
+                }
+                if (opcode & 0xFFC0) == 0x4EC0 {
+                    let mode = (opcode >> 3) & 7;
+                    let reg = opcode & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, 2);
+                    return (format!("JMP {ea}"), cursor - pc);
+                }
+                if (opcode & 0xFFC0) == 0x4E80 {
+                    let mode = (opcode >> 3) & 7;
+                    let reg = opcode & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, 2);
+                    return (format!("JSR {ea}"), cursor - pc);
+                }
+                if (opcode & 0xF1C0) == 0x41C0 {
+                    let areg = (opcode >> 9) & 7;
+                    let mode = (opcode >> 3) & 7;
+                    let reg = opcode & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, 2);
+                    return (format!("LEA {ea},A{areg}"), cursor - pc);
+                }
+                // CLR/NEG/NOT/TST -- single <ea>, no register operand.
+                let size = (opcode >> 6) & 3;
+                if size != 3 {
+                    let sub = (opcode >> 8) & 0xF;
+                    let mnemonic = match sub {
+                        0x2 => Some("CLR"),
+                        0x4 => Some("NEG"),
+                        0x6 => Some("NOT"),
+                        0xA => Some("TST"),
+                        _ => None,
+                    };
+                    if let Some(mnemonic) = mnemonic {
+                        let mode = (opcode >> 3) & 7;
+                        let reg = opcode & 7;
+                        let ea = resolve_ea(bus, &mut cursor, mode, reg, size as u8);
+                        return (format!("{mnemonic}{} {ea}", size_name(size)), cursor - pc);
+                    }
+                }
+                (format!("DC.W ${opcode:04X}"), 2)
+            }
+            0x5 => {
+                let size = (opcode >> 6) & 3;
+                if size == 3 {
+                    let mode = (opcode >> 3) & 7;
+                    let cond = (opcode >> 8) & 0xF;
+                    if mode == 1 {
+                        let reg = opcode & 7;
+                        let disp = bus.read_word(cursor) as i16;
+                        cursor += 2;
+                        let target = (pc as i64 + 2 + disp as i64) as u32;
+                        return (format!("DB{} D{reg},${target:06X}", ["T", "F", "HI", "LS", "CC", "CS", "NE", "EQ", "VC", "VS", "PL", "MI", "GE", "LT", "GT", "LE"][cond as usize]), cursor - pc);
+                    }
+                    let reg = opcode & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, 1);
+                    return (format!("S{} {ea}", ["T", "F", "HI", "LS", "CC", "CS", "NE", "EQ", "VC", "VS", "PL", "MI", "GE", "LT", "GT", "LE"][cond as usize]), cursor - pc);
+                }
+                let data = (opcode >> 9) & 7;
+                let data = if data == 0 { 8 } else { data };
+                let op = if (opcode >> 8) & 1 == 0 { "ADDQ" } else { "SUBQ" };
+                let mode = (opcode >> 3) & 7;
+                let reg = opcode & 7;
+                let ea = resolve_ea(bus, &mut cursor, mode, reg, size as u8);
+                (format!("{op}{} #{data},{ea}", size_name(size)), cursor - pc)
+            }
+            0x0 => {
+                let size = (opcode >> 6) & 3;
+                let hi_nibble = (opcode >> 8) & 0xF;
+                let imm_op = match hi_nibble {
+                    0x0 => Some("ORI"),
+                    0x2 => Some("ANDI"),
+                    0x4 => Some("SUBI"),
+                    0x6 => Some("ADDI"),
+                    0xA => Some("EORI"),
+                    0xC => Some("CMPI"),
+                    _ => None,
+                };
+                if let Some(mnemonic) = imm_op {
+                    let imm = if size == 2 {
+                        let hi = bus.read_word(cursor) as u32;
+                        let lo = bus.read_word(cursor + 2) as u32;
+                        cursor += 4;
+                        hi << 16 | lo
+                    } else {
+                        let v = bus.read_word(cursor) as u32;
+                        cursor += 2;
+                        v
+                    };
+                    let mode = (opcode >> 3) & 7;
+                    let reg = opcode & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, size as u8);
+                    return (format!("{mnemonic}{} #${imm:X},{ea}", size_name(size)), cursor - pc);
+                }
+                if (opcode >> 8) & 1 == 1 || matches!((opcode >> 6) & 3, 0..=3) {
+                    let bit_op = (opcode >> 6) & 3;
+                    let op_name = ["BTST", "BCHG", "BCLR", "BSET"][bit_op as usize];
+                    let mode = (opcode >> 3) & 7;
+                    let reg = opcode & 7;
+                    if (opcode >> 8) & 1 == 1 {
+                        let dreg = (opcode >> 9) & 7;
+                        let ea = resolve_ea(bus, &mut cursor, mode, reg, 0);
+                        return (format!("{op_name} D{dreg},{ea}"), cursor - pc);
+                    }
+                }
+                (format!("DC.W ${opcode:04X}"), 2)
+            }
+            0x8 | 0x9 | 0xB | 0xC | 0xD => {
+                let reg = (opcode >> 9) & 7;
+                let size = (opcode >> 6) & 3;
+                let opmode = (opcode >> 6) & 7;
+                let (base_name, direction_bit) = match op_hi {
+                    0x8 => ("OR", (opcode >> 8) & 1),
+                    0x9 => ("SUB", (opcode >> 8) & 1),
+                    0xB => {
+                        if (opcode >> 8) & 1 == 1 {
+                            ("EOR", 1)
+                        } else {
+                            ("CMP", 0)
+                        }
+                    }
+                    0xC => ("AND", (opcode >> 8) & 1),
+                    0xD => ("ADD", (opcode >> 8) & 1),
+                    _ => unreachable!(),
+                };
+                // ...A (address-register) forms, opmode 3/7 -- only for
+                // SUB/CMP/ADD; for OR/AND those same opmode bits mean
+                // DIVU/DIVS/MULU/MULS instead, handled by the fallback
+                // below (left as a raw DC.W rather than misdecoded).
+                if matches!(op_hi, 0x9 | 0xB | 0xD) && (opmode == 3 || opmode == 7) {
+                    let sz: u16 = if opmode == 3 { 1 } else { 2 };
+                    let mode = (opcode >> 3) & 7;
+                    let eareg = opcode & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, eareg, sz as u8);
+                    let mnemonic = match op_hi {
+                        0x9 => "SUBA",
+                        0xB => "CMPA",
+                        _ => "ADDA",
+                    };
+                    return (format!("{mnemonic}{} {ea},A{reg}", size_name(sz)), cursor - pc);
+                }
+                let mode = (opcode >> 3) & 7;
+                let eareg = opcode & 7;
+                let ea = resolve_ea(bus, &mut cursor, mode, eareg, size as u8);
+                if direction_bit == 0 {
+                    (format!("{base_name}{} {ea},D{reg}", size_name(size)), cursor - pc)
+                } else {
+                    (format!("{base_name}{} D{reg},{ea}", size_name(size)), cursor - pc)
+                }
+            }
+            _ => (format!("DC.W ${opcode:04X}"), 2),
+        }
+    }
+
+    /// Does a true, consecutive-instruction (not deduplicated-by-first-
+    /// visit) walk of one real frame from the already-confirmed stuck
+    /// point, with every instruction decoded by `decode_one` above
+    /// (real resolved operands, not placeholders) -- run-length
+    /// collapsed (consecutive repeats of the same address printed once)
+    /// so the real control-flow shape fits in a readable amount of
+    /// output. This is the actual follow-up to
+    /// `diagnose_neogeo_stuck_pc_if_a_cartridge_is_present`'s finding
+    /// that the exact same 637 addresses repeat forever every frame --
+    /// the goal here is reading off the real comparison that decides to
+    /// retry instead of proceeding, not just knowing that it happens.
+    /// `#[ignore]`d for the same reason as its siblings -- run
+    /// explicitly with
+    /// `cargo test --bin portamax-sim disassemble_neogeo_stuck_loop -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn disassemble_neogeo_stuck_loop_if_a_cartridge_is_present() {
+        let mut app = new_app();
+        app.console = Console::NeoGeo;
+        app.rescan_roms();
+        if app.roms.is_empty() {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        }
+        app.load_selected_rom();
+        assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+        // Reach the same confirmed-stuck steady state as the other
+        // diagnostics (150 real frames is well past where it settles).
+        for frame in 0..150 {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            let press_start = frame % 60 == 0;
+            app.tick(&Input { grid: std::array::from_fn(|pad| pad == 7 && press_start), ..Default::default() });
+            if app.deck.is_none() {
+                eprintln!("deck stopped early at frame {frame}: {}", app.status);
+                return;
+            }
+        }
+
+        let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+            panic!("deck must still be Neo Geo after 150 frames: {}", app.status);
+        };
+
+        machine.vblank();
+        let mut last_pc = u32::MAX;
+        let mut printed = 0usize;
+        for _ in 0..50_000u32 {
+            let pc = machine.cpu.pc;
+            if pc != last_pc {
+                if printed < 1500 {
+                    use m68k::AddressBus;
+                    let raw = machine.bus.read_word(pc);
+                    let (text, _len) = decode_one(&mut machine.bus, pc);
+                    eprintln!("  0x{pc:06X} [{raw:04X}]: {text}");
+                    printed += 1;
+                } else if printed == 1500 {
+                    eprintln!("  ... (truncated after 1500 distinct transitions)");
+                    printed += 1;
+                }
+                last_pc = pc;
+            }
+            if !machine.step() {
+                eprintln!("  CPU halted/faulted");
                 break;
             }
         }
