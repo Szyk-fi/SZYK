@@ -2883,6 +2883,230 @@ mod tests {
         );
     }
 
+    /// Direct causal test of the leading hypothesis coming out of
+    /// `disassemble_neogeo_stuck_loop_if_a_cartridge_is_present`'s own
+    /// trace: the main loop's every-frame idle wait (`CMPI.W
+    /// #$7070,$10FE82.L` / `BNE`) never passes because $10FE82 is a
+    /// real BIOS-POST-owned "controller/cabinet auto-probe resolved"
+    /// work-RAM cell -- on real hardware, only SNK BIOS POST's
+    /// one-time auto-probe ever writes it, and this emulator's boot
+    /// path jumps straight into the cartridge's own entry-point
+    /// trampoline, explicitly skipping that POST (see `neogeo_core`'s
+    /// own module doc comment and `HEADER_ENTRY_TRAMPOLINE`), so the
+    /// cell should sit at its cold-reset default forever. This test
+    /// does not fix anything in `neogeo_core` -- it forces the
+    /// suspected sentinel directly into live work RAM at the
+    /// already-confirmed stuck steady state and checks whether *that
+    /// alone* unblocks real forward progress: new PC territory outside
+    /// the BIOS/known-cart-service range the other diagnostics mapped,
+    /// and/or palette RAM finally getting real nonzero data.
+    ///
+    /// Two independent fresh boots, so the two configurations can't
+    /// contaminate each other's result:
+    ///
+    /// - scenario A pokes only $10FE82 (the loop's own `CMPI.W`
+    ///   operand) to 0x7070.
+    /// - scenario B also pokes $10FE2E (seen compared against the
+    ///   literal word 4 earlier in the same per-frame service lap) to
+    ///   4, and $10FDBE -- a third cell the trace touched around the
+    ///   same controller-check region -- to 4 as well, in case the
+    ///   real gate is a compound check across more than one cell and
+    ///   $10FE82 alone isn't sufficient. $10FDBE's own "resolved"
+    ///   value has no direct trace evidence behind it the way
+    ///   $10FE82/$10FE2E's literal comparands do -- this is a guess,
+    ///   flagged as such in the output, not a confirmed comparand.
+    ///
+    /// `#[ignore]`d for the same reason as its siblings -- run
+    /// explicitly with `cargo test --release --bin portamax-sim
+    /// poke_suspected_bios_sentinel_and_check_for_real_boot_progress --
+    /// --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn poke_suspected_bios_sentinel_and_check_for_real_boot_progress_if_a_cartridge_is_present() {
+        use m68k::AddressBus;
+
+        // Real BIOS/known-cart-service address range the other
+        // diagnostics mapped the stuck loop's entire ~637-address
+        // footprint into (see `disassemble_neogeo_stuck_loop_if_a_
+        // cartridge_is_present`'s own trace, which never once printed
+        // a PC outside $C00000-$C1FFFF). A PC landing outside this
+        // range after the poke would be real, previously-unseen
+        // territory -- not just a differently-shaped replay of the
+        // same idle wait.
+        const BIOS_RANGE: std::ops::RangeInclusive<u32> = 0xC00000..=0xC20000;
+
+        /// Boots a fresh Metal Slug 3 session and runs it up to the
+        /// same confirmed-stuck steady state
+        /// `disassemble_neogeo_stuck_loop_if_a_cartridge_is_present`
+        /// reaches, via the identical warmup: 150 real-time-paced
+        /// frames with a Start press every 60, then 3 more
+        /// deterministic frames (vblank + step budget + step_sound) to
+        /// clear sleep-jitter phase in the inner vblank-wait counter.
+        /// Returns `None` only if no cartridge is installed, so the
+        /// caller can skip cleanly.
+        fn boot_to_steady_state() -> Option<RetroApp> {
+            let mut app = new_app();
+            app.console = Console::NeoGeo;
+            app.rescan_roms();
+            if app.roms.is_empty() {
+                return None;
+            }
+            app.load_selected_rom();
+            assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+            for frame in 0..150 {
+                std::thread::sleep(std::time::Duration::from_millis(17));
+                let press_start = frame % 60 == 0;
+                app.tick(&Input { grid: std::array::from_fn(|pad| pad == 7 && press_start), ..Default::default() });
+                if app.deck.is_none() {
+                    return Some(app); // caller reports the early stop
+                }
+            }
+            if let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() {
+                for _ in 0..3 {
+                    machine.vblank();
+                    for _ in 0..50_000u32 {
+                        if !machine.step() {
+                            break;
+                        }
+                    }
+                    for _ in 0..10_000u32 {
+                        machine.step_sound();
+                    }
+                }
+            }
+            Some(app)
+        }
+
+        /// Runs `extra_frames` more real machine frames -- the exact
+        /// per-frame pattern every other diagnostic in this file uses
+        /// (`vblank()` + `tick()`'s own 50,000-instruction step budget
+        /// + 10,000 `step_sound()` calls) -- collecting every distinct
+        /// PC the CPU visits along the way. Returns that set plus the
+        /// final (vram_nonzero, palette_nonzero) counts.
+        fn run_frames_and_observe(machine: &mut crate::apps::neogeo_core::NeoGeoMachine, extra_frames: u32) -> (std::collections::HashSet<u32>, (usize, usize)) {
+            let mut visited = std::collections::HashSet::new();
+            for _ in 0..extra_frames {
+                machine.vblank();
+                for _ in 0..50_000u32 {
+                    visited.insert(machine.cpu.pc);
+                    if !machine.step() {
+                        break;
+                    }
+                }
+                for _ in 0..10_000u32 {
+                    machine.step_sound();
+                }
+            }
+            (visited, machine.bus.debug_nonzero_counts())
+        }
+
+        fn maybe_save_frame(machine: &crate::apps::neogeo_core::NeoGeoMachine, label: &str) {
+            let (w, h, rgba) = machine.bus.render_frame();
+            let non_black = rgba.chunks_exact(4).filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count();
+            eprintln!("{label}: rendering a frame -- {non_black} non-black pixels of {}", w * h);
+            if non_black == 0 {
+                return;
+            }
+            let out_path = std::path::Path::new("/home/user/szyk-scratch-neogeo-fix-attempt.png");
+            let file = std::fs::File::create(out_path).expect("create output file");
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().expect("write PNG header");
+            writer.write_image_data(&rgba).expect("write PNG data");
+            eprintln!("{label}: wrote a non-black frame to {}", out_path.display());
+        }
+
+        eprintln!("=== scenario A: forcing $10FE82 = 0x7070 alone ===");
+        let Some(mut app_a) = boot_to_steady_state() else {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        };
+        let Some(Deck::NeoGeo(machine_a)) = app_a.deck.as_mut() else {
+            eprintln!("deck stopped before scenario A could run: {}", app_a.status);
+            return;
+        };
+        let pc_before_a = machine_a.cpu.pc;
+        let (_, pal_before_a) = machine_a.bus.debug_nonzero_counts();
+        eprintln!(
+            "before poke: pc=0x{pc_before_a:06X} palette_nonzero={pal_before_a} current $10FE82=0x{:04X}",
+            machine_a.bus.read_word(0x0010FE82)
+        );
+        machine_a.bus.write_word(0x0010FE82, 0x7070);
+        assert_eq!(machine_a.bus.read_word(0x0010FE82), 0x7070, "the poke itself must actually land in work RAM");
+        let (visited_a, (vram_a, pal_a)) = run_frames_and_observe(machine_a, 30);
+        let outside_a: Vec<u32> = visited_a.iter().copied().filter(|pc| !BIOS_RANGE.contains(pc)).collect();
+        eprintln!(
+            "scenario A after 30 more frames: distinct_pcs={} outside_known_range={outside_a:?} vram_nonzero={vram_a} palette_nonzero={pal_a} (was {pal_before_a}) final_pc=0x{:06X}",
+            visited_a.len(),
+            machine_a.cpu.pc
+        );
+        if pal_a != pal_before_a || !outside_a.is_empty() {
+            maybe_save_frame(machine_a, "scenario A");
+        }
+
+        eprintln!("=== scenario B: forcing $10FE82=0x7070, $10FE2E=4, $10FDBE=4 (compound guess) ===");
+        let Some(mut app_b) = boot_to_steady_state() else {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        };
+        let Some(Deck::NeoGeo(machine_b)) = app_b.deck.as_mut() else {
+            eprintln!("deck stopped before scenario B could run: {}", app_b.status);
+            return;
+        };
+        let pc_before_b = machine_b.cpu.pc;
+        let (_, pal_before_b) = machine_b.bus.debug_nonzero_counts();
+        eprintln!("before poke: pc=0x{pc_before_b:06X} palette_nonzero={pal_before_b}");
+        machine_b.bus.write_word(0x0010FE82, 0x7070);
+        machine_b.bus.write_word(0x0010FE2E, 4);
+        machine_b.bus.write_word(0x0010FDBE, 4);
+        let (visited_b, (vram_b, pal_b)) = run_frames_and_observe(machine_b, 30);
+        let outside_b: Vec<u32> = visited_b.iter().copied().filter(|pc| !BIOS_RANGE.contains(pc)).collect();
+        eprintln!(
+            "scenario B after 30 more frames: distinct_pcs={} outside_known_range={outside_b:?} vram_nonzero={vram_b} palette_nonzero={pal_b} (was {pal_before_b}) final_pc=0x{:06X}",
+            visited_b.len(),
+            machine_b.cpu.pc
+        );
+        if pal_b != pal_before_b || !outside_b.is_empty() {
+            maybe_save_frame(machine_b, "scenario B");
+        }
+
+        // Control, no poke at all: a third fresh boot to the identical
+        // steady state, run for the same 30 frames untouched. The
+        // ordinary per-frame "service lap" the earlier diagnostics
+        // already confirmed (controller-type check, VRAM-queue flush,
+        // bulk clear loop) is cart-side code, which lives below
+        // $C00000 same as any other cart ROM -- so `outside_a`/
+        // `outside_b` being nonempty is *not* by itself evidence the
+        // poke did anything; that same ordinary lap would also report
+        // "outside BIOS range" addresses with no poke at all. The real
+        // test is whether the *set* of visited addresses differs from
+        // this unpoked control -- genuine new territory the poke
+        // unlocked, not just the same old lap re-observed.
+        eprintln!("=== control: identical steady state, no poke, for comparison ===");
+        let Some(mut app_c) = boot_to_steady_state() else {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        };
+        let Some(Deck::NeoGeo(machine_c)) = app_c.deck.as_mut() else {
+            eprintln!("deck stopped before the control could run: {}", app_c.status);
+            return;
+        };
+        eprintln!("before (no poke): pc=0x{:06X}", machine_c.cpu.pc);
+        let (visited_c, (vram_c, pal_c)) = run_frames_and_observe(machine_c, 30);
+        eprintln!("control after 30 more frames: distinct_pcs={} vram_nonzero={vram_c} palette_nonzero={pal_c} final_pc=0x{:06X}", visited_c.len(), machine_c.cpu.pc);
+
+        let new_in_a: Vec<u32> = visited_a.difference(&visited_c).copied().collect();
+        let new_in_b: Vec<u32> = visited_b.difference(&visited_c).copied().collect();
+        eprintln!(
+            "genuinely new PCs vs the unpoked control -- scenario A: {} addresses {:X?}",
+            new_in_a.len(),
+            new_in_a.iter().map(|pc| pc).collect::<Vec<_>>()
+        );
+        eprintln!("genuinely new PCs vs the unpoked control -- scenario B: {} addresses {:X?}", new_in_b.len(), new_in_b.iter().map(|pc| pc).collect::<Vec<_>>());
+    }
+
     /// Real palette RAM's actual range: $400000-$401FFF backing 256
     /// palettes x 16 colors, mirrored through $7FFFFF (see
     /// `neogeo_core`'s own memory-map doc comment) -- any 68k access
