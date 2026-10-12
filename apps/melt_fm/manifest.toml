@@ -1,0 +1,6 @@
+id = "melt_fm"
+name = "Melt FM"
+category = "instrument"
+description = "A generative radio station: pick a genre and it composes forever. The Weirdness dial decides how long it stays normal; hold to melt the tape."
+audio_outputs = ["Melt FM"]
+mod_inputs = ["Mixer: Melt FM Level"]
