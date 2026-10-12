@@ -2775,6 +2775,27 @@ mod tests {
             panic!("deck must still be Neo Geo after 150 frames: {}", app.status);
         };
 
+        // The wall-clock-paced warmup above is not perfectly
+        // deterministic run to run (sleep(17ms) jitter changes how many
+        // real frames `frame_accum`'s catch-up logic actually ran), so
+        // the inner vblank-wait counter can land at a different phase
+        // of its countdown each time. Run a few more full frames
+        // (vblank + step budget + step_sound, matching tick() exactly)
+        // unprinted first, to guarantee we're past that counter and
+        // into the stable, always-replaying 637-address territory the
+        // other diagnostics already confirmed, before recording.
+        for _ in 0..3 {
+            machine.vblank();
+            for _ in 0..50_000u32 {
+                if !machine.step() {
+                    break;
+                }
+            }
+            for _ in 0..10_000u32 {
+                machine.step_sound();
+            }
+        }
+
         machine.vblank();
         let mut last_pc = u32::MAX;
         let mut printed = 0usize;
