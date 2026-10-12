@@ -12,7 +12,11 @@
 //! * MAP lays the whole library out on screen, similar sounds together
 //!   (the embedding's two main directions). The D-pad walks to the
 //!   nearest sound that way; the pads play the 16 sounds most like the
-//!   one you're on.
+//!   one you're on. Knob 1 zooms (1x to 96x) and the view follows the
+//!   sound you're on, so a library of ten thousand is walked a
+//!   neighbourhood at a time; a corner minimap shows where you are. Each
+//!   sound is a soft orb sized by its length (a ring for a loop), lit
+//!   additively so crowds glow instead of clogging.
 //! * LIST goes through one kind at a time, the most typical first.
 //! * KIT builds a 16-pad kit around the sound you're on: for every slot
 //!   (kick, snare, hats, ...) the sample of that kind that sounds most
@@ -34,6 +38,8 @@ use crate::apps::neural::{self, Decimator, Load, Model, Spectrum};
 use crate::display::FrameBuffer;
 use crate::led_output::PadColor;
 use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::Rectangle;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -64,6 +70,16 @@ fn kind_name(c: usize) -> &'static str {
         CLASSES[c % N_CLASSES]
     }
 }
+/// The most files one scan will take. A big sample library is the point.
+const MAX_FILES: usize = 50_000;
+/// Where the map sits on screen, and the legend beside it.
+const MAP_X: i32 = 12;
+const MAP_Y: i32 = 38;
+const MAP_W: usize = 496;
+const MAP_H: usize = 272;
+const LEGEND_X: i32 = MAP_X + MAP_W as i32 + 8;
+/// The most the map zooms in.
+const MAX_ZOOM: f32 = 96.0;
 /// The longest file analysed (and auditioned), seconds.
 const MAX_SECS: f32 = 20.0;
 
@@ -83,6 +99,87 @@ const COLORS: [(u8, u8, u8); N_CLASSES] = [
     (240, 240, 240),
     (130, 140, 160),
 ];
+
+fn class_rgb(c: usize) -> [f32; 3] {
+    let (r, g, b) = COLORS[c % N_CLASSES];
+    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]
+}
+
+/// 12345 as "12,345".
+fn thousands(n: usize) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// A soft orb: light that falls off smoothly to the edge, added to what's
+/// there, so overlapping sounds glow brighter instead of covering each other.
+fn splat(buf: &mut [[f32; 3]], x: f32, y: f32, r: f32, c: [f32; 3], gain: f32) {
+    let (ix, iy, ri) = (x.round() as i32, y.round() as i32, r.ceil() as i32);
+    for py in (iy - ri).max(0)..=(iy + ri).min(MAP_H as i32 - 1) {
+        for px in (ix - ri).max(0)..=(ix + ri).min(MAP_W as i32 - 1) {
+            let d = ((px as f32 - x).powi(2) + (py as f32 - y).powi(2)).sqrt();
+            if d <= r {
+                let f = 1.0 - d / r;
+                let w = f * f.sqrt() * gain;
+                let b = &mut buf[py as usize * MAP_W + px as usize];
+                b[0] += c[0] * w;
+                b[1] += c[1] * w;
+                b[2] += c[2] * w;
+            }
+        }
+    }
+}
+
+/// A ring: how a loop (a phrase, not a single hit) is told from a one-shot.
+fn splat_ring(buf: &mut [[f32; 3]], x: f32, y: f32, r: f32, c: [f32; 3], gain: f32) {
+    let (ix, iy, ri) = (x.round() as i32, y.round() as i32, r.ceil() as i32 + 1);
+    for py in (iy - ri).max(0)..=(iy + ri).min(MAP_H as i32 - 1) {
+        for px in (ix - ri).max(0)..=(ix + ri).min(MAP_W as i32 - 1) {
+            let d = ((px as f32 - x).powi(2) + (py as f32 - y).powi(2)).sqrt();
+            let w = (1.0 - (d - r).abs() / 0.9).max(0.0) * gain * 1.2;
+            if w > 0.0 {
+                let b = &mut buf[py as usize * MAP_W + px as usize];
+                b[0] += c[0] * w;
+                b[1] += c[1] * w;
+                b[2] += c[2] * w;
+            }
+        }
+    }
+}
+
+/// The part of the segment a-b inside 0..=w, 0..=h, if any (Liang-Barsky).
+fn clip_line(a: (f32, f32), b: (f32, f32), w: f32, h: f32) -> Option<((f32, f32), (f32, f32))> {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p, q) in [(-dx, a.0), (dx, w - a.0), (-dy, a.1), (dy, h - a.1)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                if r > t1 {
+                    return None;
+                }
+                t0 = t0.max(r);
+            } else {
+                if r < t0 {
+                    return None;
+                }
+                t1 = t1.min(r);
+            }
+        }
+    }
+    Some(((a.0 + t0 * dx, a.1 + t0 * dy), (a.0 + t1 * dx, a.1 + t1 * dy)))
+}
 
 fn class_color(c: usize) -> Rgb565 {
     let (r, g, b) = COLORS[c % N_CLASSES];
@@ -481,6 +578,15 @@ pub struct Sorter {
     message: (String, u32),
     saved_at: usize,
     frame: u64,
+    /// The map's zoom (1 = the whole library) easing toward `zoom_target`,
+    /// and the centre of what's in view, in map coordinates (0..1).
+    zoom: f32,
+    zoom_target: f32,
+    pan: (f32, f32),
+    last_project: u64,
+    list_cache: (usize, usize, Vec<usize>),
+    map_px: Vec<Rgb565>,
+    glow: Vec<[f32; 3]>,
 }
 
 impl Sorter {
@@ -488,7 +594,7 @@ impl Sorter {
         sound.set_reverb(0.0);
         sound.set_volume(1.0);
         let s = Arc::new(Shared { entries: Mutex::new(Vec::new()), queue: Mutex::new(Vec::new()), total: AtomicUsize::new(0), done: AtomicUsize::new(0), busy: AtomicBool::new(false), load: Mutex::new(String::new()), root: media.clone() });
-        let mut so = Sorter { sound, s, worker: None, media, index, view: 0, cur: 0, class: 0, list_pos: 0, points: Vec::new(), points_for: usize::MAX, neighbours: Vec::new(), kit: [None; 16], variation: 0, kit_seed: None, play: Arc::new(Mutex::new(None)), cache: HashMap::new(), prev: [false; 16], message: (String::new(), 0), saved_at: 0, frame: 0 };
+        let mut so = Sorter { sound, s, worker: None, media, index, view: 0, cur: 0, class: 0, list_pos: 0, points: Vec::new(), points_for: usize::MAX, neighbours: Vec::new(), kit: [None; 16], variation: 0, kit_seed: None, play: Arc::new(Mutex::new(None)), cache: HashMap::new(), prev: [false; 16], message: (String::new(), 0), saved_at: 0, frame: 0, zoom: 1.0, zoom_target: 1.0, pan: (0.5, 0.5), last_project: 0, list_cache: (usize::MAX, 0, Vec::new()), map_px: vec![Rgb565::new(0, 0, 0); MAP_W * MAP_H], glow: vec![[0.0; 3]; MAP_W * MAP_H] };
         so.load_index();
         so
     }
@@ -555,11 +661,18 @@ impl Sorter {
         self.s.entries.lock().map(|e| e.clone()).unwrap_or_default()
     }
 
+    /// Lays the library out again when it has changed. While the worker is
+    /// still listening this is throttled: with thousands of sounds the
+    /// projection is real work, and it shouldn't run on every new file.
     fn refresh(&mut self) {
-        let es = self.entries();
-        if es.len() != self.points_for {
+        let s = Arc::clone(&self.s);
+        let es = s.entries.lock().unwrap_or_else(|p| p.into_inner());
+        let busy = self.s.busy.load(Ordering::Relaxed);
+        let due = self.points_for == usize::MAX || self.points.is_empty() || !busy || self.frame.saturating_sub(self.last_project) >= 150;
+        if es.len() != self.points_for && due {
             self.points = project(&es);
             self.points_for = es.len();
+            self.last_project = self.frame;
             if self.cur >= es.len() {
                 self.cur = 0;
             }
@@ -632,8 +745,7 @@ impl Sorter {
     }
 
     /// One kind's one-shots, most typical first; `LOOPS` lists the loops.
-    fn class_list(&self, class: usize) -> Vec<usize> {
-        let es = self.entries();
+    fn class_list(es: &[Entry], class: usize) -> Vec<usize> {
         let mut v: Vec<(usize, f32)> = if class == LOOPS {
             es.iter().enumerate().filter(|(_, e)| e.a.is_loop).map(|(i, e)| (i, e.a.hits as f32)).collect()
         } else {
@@ -641,6 +753,21 @@ impl Sorter {
         };
         v.sort_by(|a, b| b.1.total_cmp(&a.1));
         v.into_iter().map(|(i, _)| i).collect()
+    }
+
+    /// The current kind's list, sorted again only when the kind or the
+    /// library changes (it's re-sorted per frame otherwise: costly at 10,000).
+    fn list_with(&mut self, es: &[Entry]) -> Vec<usize> {
+        if self.list_cache.0 != self.class || self.list_cache.1 != es.len() {
+            self.list_cache = (self.class, es.len(), Self::class_list(es, self.class));
+        }
+        self.list_cache.2.clone()
+    }
+
+    fn list(&mut self) -> Vec<usize> {
+        let s = Arc::clone(&self.s);
+        let es = s.entries.lock().unwrap_or_else(|p| p.into_inner());
+        self.list_with(&es)
     }
 
     fn make_kit(&mut self) {
@@ -684,8 +811,213 @@ impl Sorter {
     }
 }
 
+impl Sorter {
+    /// Eases the zoom (on a log scale, so it feels even) and keeps the view
+    /// on the sound you're on, never past the edge of the map.
+    fn ease_view(&mut self) {
+        self.zoom = (self.zoom.ln() + (self.zoom_target.ln() - self.zoom.ln()) * 0.25).exp();
+        if (self.zoom - self.zoom_target).abs() < 0.002 {
+            self.zoom = self.zoom_target;
+        }
+        let want = if self.zoom_target > 1.0 { self.points.get(self.cur).copied().unwrap_or((0.5, 0.5)) } else { (0.5, 0.5) };
+        let half = 0.5 / self.zoom;
+        let goal = (want.0.clamp(half, 1.0 - half), want.1.clamp(half, 1.0 - half));
+        self.pan.0 += (goal.0 - self.pan.0) * 0.3;
+        self.pan.1 += (goal.1 - self.pan.1) * 0.3;
+    }
+
+    /// A sound's on-screen size: longer sounds are bigger, on a log scale.
+    fn orb_size(secs: f32) -> f32 {
+        (0.6 + 0.35 * (1.0 + secs * 4.0).ln()).clamp(0.6, 2.1)
+    }
+
+    /// Where the map point `p` lands in the map's own pixels.
+    fn to_map(&self, p: (f32, f32)) -> (f32, f32) {
+        (((p.0 - self.pan.0) * self.zoom + 0.5) * MAP_W as f32, ((self.pan.1 - p.1) * self.zoom + 0.5) * MAP_H as f32)
+    }
+
+    /// The map: every sound a soft orb (a ring for a loop), lit additively
+    /// so a crowded neighbourhood glows rather than clogging, with the
+    /// pad neighbours tied to the sound you're on by thin lines.
+    fn draw_map(&mut self, fb: &mut FrameBuffer, es: &[Entry], panel: Rgb565, dim: Rgb565) {
+        let (ox, oy) = (MAP_X, MAP_Y);
+        kit::round_rect(fb, ox - 4, oy - 4, MAP_W as i32 + 8, MAP_H as i32 + 8, 12, panel);
+        let z = self.zoom;
+        let lz = z.ln();
+        let t = (lz / 8f32.ln()).clamp(0.0, 1.0);
+        let gain = 0.5 + 0.7 * t;
+        self.glow.iter_mut().for_each(|g| *g = [0.0; 3]);
+        let mut in_view = 0usize;
+        let pad = 10.0;
+        for (e, &p) in es.iter().zip(self.points.iter()) {
+            let (x, y) = self.to_map(p);
+            if x < -pad || y < -pad || x > MAP_W as f32 + pad || y > MAP_H as f32 + pad {
+                continue;
+            }
+            in_view += 1;
+            let sf = Self::orb_size(e.a.secs);
+            let r = ((1.1 * sf) * (1.0 + 0.9 * lz)).clamp(1.0, 12.0);
+            let c = class_rgb(e.a.class);
+            if e.a.is_loop {
+                splat_ring(&mut self.glow, x, y, r.max(2.2), c, gain);
+            } else {
+                splat(&mut self.glow, x, y, r, c, gain);
+                if z >= 2.0 {
+                    splat(&mut self.glow, x, y, (r * 0.4).max(0.9), [1.0, 1.0, 1.0], 0.6);
+                }
+            }
+        }
+        // light to colour, with a faint grid that follows the zoom
+        let step = if z < 3.0 { 1.0 / 8.0 } else if z < 6.0 { 1.0 / 16.0 } else if z < 12.0 { 1.0 / 32.0 } else { 1.0 / 64.0 };
+        let (vx0, vx1) = (self.pan.0 - 0.5 / z, self.pan.0 + 0.5 / z);
+        let (vy0, vy1) = (self.pan.1 - 0.5 / z, self.pan.1 + 0.5 / z);
+        let mut gx = Vec::new();
+        let mut k = (vx0 / step).ceil();
+        while k * step <= vx1 && gx.len() < 80 {
+            gx.push(self.to_map((k * step, 0.0)).0.round() as i32);
+            k += 1.0;
+        }
+        let mut gy = Vec::new();
+        let mut k = (vy0 / step).ceil();
+        while k * step <= vy1 && gy.len() < 80 {
+            gy.push(self.to_map((0.0, k * step)).1.round() as i32);
+            k += 1.0;
+        }
+        let base = [panel.r() as f32 / 31.0 * 0.75, panel.g() as f32 / 63.0 * 0.75, panel.b() as f32 / 31.0 * 0.78];
+        for y in 0..MAP_H {
+            let on_row = gy.contains(&(y as i32));
+            for x in 0..MAP_W {
+                let g = self.glow[y * MAP_W + x];
+                let grid = if on_row || gx.contains(&(x as i32)) { 0.035 } else { 0.0 };
+                let ch = |i: usize| (base[i] + grid + (1.0 - (-g[i] * 1.5).exp()) * (1.0 - base[i])).clamp(0.0, 1.0);
+                self.map_px[y * MAP_W + x] = Rgb565::new((ch(0) * 31.0) as u8, (ch(1) * 63.0) as u8, (ch(2) * 31.0) as u8);
+            }
+        }
+        if z > 1.05 {
+            self.draw_minimap(es);
+        }
+        let area = Rectangle::new(Point::new(ox, oy), Size::new(MAP_W as u32, MAP_H as u32));
+        fb.fill_contiguous(&area, self.map_px.iter().copied()).ok();
+
+        // what you're on, and the sounds the pads play
+        let inside = |x: f32, y: f32, m: f32| x >= m && y >= m && x <= MAP_W as f32 - m && y <= MAP_H as f32 - m;
+        if let Some(&p) = self.points.get(self.cur) {
+            let (cx, cy) = self.to_map(p);
+            for (n, &i) in self.neighbours.iter().enumerate() {
+                let (Some(e), Some(&q)) = (es.get(i), self.points.get(i)) else { continue };
+                let (nx, ny) = self.to_map(q);
+                if let Some((a, b)) = clip_line((cx, cy), (nx, ny), MAP_W as f32 - 1.0, MAP_H as f32 - 1.0) {
+                    kit::line(fb, ox + a.0 as i32, oy + a.1 as i32, ox + b.0 as i32, oy + b.1 as i32, 1, kit::blend(panel, kit::WHITE, 0.2));
+                }
+                if inside(nx, ny, 6.0) {
+                    let (sx, sy) = (ox + nx as i32, oy + ny as i32);
+                    let col = class_color(e.a.class);
+                    let r = (2.0 + 0.5 * lz).min(6.0) as i32;
+                    if e.a.is_loop {
+                        kit::ring(fb, sx, sy, r + 1, 2, col);
+                    } else {
+                        kit::circle(fb, sx, sy, r, col);
+                    }
+                    kit::ring(fb, sx, sy, r + 2, 1, kit::WHITE);
+                    if z >= 2.5 {
+                        let label = format!("{}", n + 1);
+                        kit::text(fb, &label, sx + r + 4, sy - 6, Size2::Small, kit::WHITE, -1);
+                        if z >= 8.0 {
+                            let nm: String = e.name().chars().take(14).collect();
+                            kit::text(fb, &nm, sx + r + 4 + kit::text_width(&label, Size2::Small) + 4, sy - 6, Size2::Small, dim, -1);
+                        }
+                    }
+                }
+            }
+            if inside(cx, cy, 2.0) {
+                let (sx, sy) = (ox + cx as i32, oy + cy as i32);
+                let pulse = ((self.frame as f32 * 0.12).sin() * 1.2) as i32;
+                let r = 9 + pulse;
+                kit::ring(fb, sx, sy, r, 1, kit::WHITE);
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    kit::line(fb, sx + dx * (r + 2), sy + dy * (r + 2), sx + dx * (r + 6), sy + dy * (r + 6), 1, kit::WHITE);
+                }
+                if let Some(e) = es.get(self.cur) {
+                    if z >= 1.5 {
+                        let nm: String = e.name().chars().take(26).collect();
+                        let w = kit::text_width(&nm, Size2::Small);
+                        let lx = (sx + 14).min(ox + MAP_W as i32 - w - 4).max(ox + 4);
+                        kit::round_rect(fb, lx - 3, sy + 12, w + 6, 15, 7, kit::rgb(8, 10, 14));
+                        kit::text(fb, &nm, lx, sy + 14, Size2::Small, kit::WHITE, -1);
+                    }
+                }
+            }
+        }
+        // zoom and what's in view, bottom left
+        let note = if z < 1.05 { "K1: zoom in".to_string() } else { format!("{:.1}x   {} in view", z, thousands(in_view)) };
+        let w = kit::text_width(&note, Size2::Small) + 14;
+        kit::round_rect(fb, ox + 8, oy + MAP_H as i32 - 24, w, 17, 8, kit::rgb(8, 10, 14));
+        kit::text(fb, &note, ox + 15, oy + MAP_H as i32 - 21, Size2::Small, if z < 1.05 { dim } else { kit::WHITE }, -1);
+        if es.is_empty() {
+            kit::paragraph(fb, "No sounds yet. Put WAV files in the media folder (any subfolders) and they'll be heard and sorted here.", ox + 90, oy + 100, MAP_W as i32 - 180, Size2::Small, dim);
+        }
+    }
+
+    /// The whole library in a corner, with a frame on the part in view.
+    fn draw_minimap(&mut self, es: &[Entry]) {
+        let (mw, mh) = (96usize, 62usize);
+        let (mx, my) = (MAP_W - mw - 8, 8usize);
+        let dark = |c: Rgb565, t: f32| Rgb565::new((c.r() as f32 * t) as u8, (c.g() as f32 * t) as u8, (c.b() as f32 * t) as u8);
+        for y in my..my + mh {
+            for x in mx..mx + mw {
+                let c = self.map_px[y * MAP_W + x];
+                self.map_px[y * MAP_W + x] = dark(c, 0.28);
+            }
+        }
+        let n = self.points.len().min(es.len());
+        let skip = (n / 2500).max(1);
+        for i in (0..n).step_by(skip) {
+            let (px, py) = self.points[i];
+            let x = mx + 2 + (px * (mw - 5) as f32) as usize;
+            let y = my + 2 + ((1.0 - py) * (mh - 5) as f32) as usize;
+            let (r, g, b) = COLORS[es[i].a.class % N_CLASSES];
+            self.map_px[y * MAP_W + x] = kit::rgb(r / 3 + 30, g / 3 + 30, b / 3 + 30);
+        }
+        let to_mini = |p: (f32, f32)| (mx as f32 + 2.0 + p.0 * (mw - 5) as f32, my as f32 + 2.0 + (1.0 - p.1) * (mh - 5) as f32);
+        let (a, b) = (to_mini((self.pan.0 - 0.5 / self.zoom, self.pan.1 + 0.5 / self.zoom)), to_mini((self.pan.0 + 0.5 / self.zoom, self.pan.1 - 0.5 / self.zoom)));
+        let (x0, x1, y0, y1) = (a.0.max(mx as f32) as usize, (b.0.min((mx + mw - 1) as f32)) as usize, a.1.max(my as f32) as usize, (b.1.min((my + mh - 1) as f32)) as usize);
+        for x in x0..=x1.max(x0) {
+            self.map_px[y0 * MAP_W + x] = kit::WHITE;
+            self.map_px[y1.max(y0) * MAP_W + x] = kit::WHITE;
+        }
+        for y in y0..=y1.max(y0) {
+            self.map_px[y * MAP_W + x0] = kit::WHITE;
+            self.map_px[y * MAP_W + x1.max(x0)] = kit::WHITE;
+        }
+    }
+
+    /// Kinds down the side, a round swatch each, loops last with its ring.
+    fn draw_legend(&mut self, fb: &mut FrameBuffer, es: &[Entry], panel: Rgb565, dim: Rgb565) {
+        let (lx, lw) = (LEGEND_X, 640 - LEGEND_X - 8);
+        kit::round_rect(fb, lx, MAP_Y - 4, lw, MAP_H as i32 + 8, 12, panel);
+        for c in 0..=N_CLASSES {
+            let y = MAP_Y + 4 + c as i32 * 17;
+            let (count, name) = if c == LOOPS {
+                (es.iter().filter(|e| e.a.is_loop).count(), "loops")
+            } else {
+                (es.iter().filter(|e| e.a.class == c && !e.a.is_loop).count(), CLASSES[c])
+            };
+            let col = if c == LOOPS { kit::rgb(200, 200, 210) } else { class_color(c) };
+            let live = count > 0;
+            if c == LOOPS {
+                kit::ring(fb, lx + 13, y + 6, 4, 2, if live { col } else { dim });
+            } else {
+                kit::circle(fb, lx + 13, y + 6, 4, if live { col } else { kit::blend(panel, col, 0.35) });
+            }
+            kit::text(fb, name, lx + 24, y, Size2::Small, if live { kit::WHITE } else { dim }, -1);
+            kit::text(fb, &thousands(count), lx + lw - 8, y, Size2::Small, dim, 1);
+        }
+    }
+
+}
+
 fn scan(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
-    if depth > 5 || out.len() > 5000 {
+    if depth > 6 || out.len() >= MAX_FILES {
         return;
     }
     let Ok(rd) = std::fs::read_dir(dir) else { return };
@@ -710,10 +1042,11 @@ impl App for Sorter {
         kit::screen_extra(&fb)
     }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
-        let es = self.entries();
+        let es = self.s.entries.lock().unwrap_or_else(|p| p.into_inner());
         vec![
             ("View".into(), format!("{:?}", VIEWS[self.view]), false),
             ("Sounds".into(), format!("{}", es.len()), false),
+            ("Zoom".into(), format!("{:.1}x", self.zoom), false),
             ("Current".into(), es.get(self.cur).map(|e| e.name()).unwrap_or_default(), false),
         ]
     }
@@ -773,10 +1106,14 @@ impl App for Sorter {
                 self.save_index();
             }
         }
+        self.ease_view();
         let pressed: Vec<usize> = (0..16).filter(|&p| input.grid[p] && !self.prev[p]).collect();
         self.prev = input.grid;
         match VIEWS[self.view] {
             View::Map => {
+                if input.knob1 != 0 {
+                    self.zoom_target = (self.zoom_target * 1.5f32.powi(input.knob1.clamp(-4, 4))).clamp(1.0, MAX_ZOOM);
+                }
                 if input.navigation_steps != 0 {
                     self.walk(0.0, -input.navigation_steps.signum() as f32);
                 }
@@ -800,7 +1137,7 @@ impl App for Sorter {
                     self.class = (self.class as i32 + input.knob2.signum()).rem_euclid(N_CLASSES as i32 + 1) as usize;
                     self.list_pos = 0;
                 }
-                let list = self.class_list(self.class);
+                let list = self.list();
                 if input.navigation_steps != 0 && !list.is_empty() {
                     self.list_pos = (self.list_pos as i32 + input.navigation_steps).clamp(0, list.len() as i32 - 1) as usize;
                     let i = list[self.list_pos];
@@ -845,117 +1182,122 @@ impl App for Sorter {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = kit::rgb(14, 18, 24);
-        let panel = kit::rgb(28, 34, 44);
+        let bg = kit::rgb(12, 15, 21);
+        let panel = kit::rgb(24, 29, 39);
         let dim = kit::rgb(125, 135, 150);
         kit::round_rect(fb, 0, 0, 640, 360, 0, bg);
-        kit::text(fb, NAME, 12, 8, Size2::Medium, kit::WHITE, -1);
-        let es = self.entries();
-        if self.points_for != es.len() {
-            self.points = project(&es);
+        // Held for the whole frame: with thousands of sounds, copying the
+        // library 60 times a second is the one thing that would stutter.
+        let shared = Arc::clone(&self.s);
+        let guard = shared.entries.lock().unwrap_or_else(|p| p.into_inner());
+        let es: &[Entry] = &guard;
+        if self.points.is_empty() && !es.is_empty() {
+            self.points = project(es);
             self.points_for = es.len();
-            self.find_neighbours(&es);
+            self.find_neighbours(es);
+        }
+
+        // title, the three views as tabs, and what the ear is doing
+        kit::text(fb, NAME, 14, 9, Size2::Medium, kit::WHITE, -1);
+        let mut tx = 86;
+        for (i, name) in ["MAP", "LIST", "KIT"].iter().enumerate() {
+            let w = kit::text_width(name, Size2::Small) + 16;
+            let on = i == self.view;
+            kit::round_rect(fb, tx, 8, w, 18, 9, if on { kit::blend(panel, kit::WHITE, 0.2) } else { bg });
+            kit::text(fb, name, tx + w / 2, 11, Size2::Small, if on { kit::WHITE } else { dim }, 0);
+            tx += w + 4;
         }
         let busy = self.s.busy.load(Ordering::Relaxed);
         let status = if busy {
             format!("listening {}/{}", self.s.done.load(Ordering::Relaxed), self.s.total.load(Ordering::Relaxed))
         } else {
-            format!("{} sounds", es.len())
+            format!("{} sounds", thousands(es.len()))
         };
-        kit::text(fb, &status, 628, 12, Size2::Small, dim, 1);
+        kit::text(fb, &status, 628, 11, Size2::Small, dim, 1);
         if busy {
             let t = self.s.total.load(Ordering::Relaxed).max(1);
             let d = self.s.done.load(Ordering::Relaxed);
-            kit::round_rect(fb, 110, 16, 200, 8, 3, panel);
-            kit::round_rect(fb, 110, 16, (200 * d / t) as i32 + 2, 8, 3, kit::rgb(120, 220, 160));
+            let sw = kit::text_width(&status, Size2::Small);
+            let (bx, bw) = (628 - sw - 14 - 120, 120);
+            kit::round_rect(fb, bx, 14, bw, 4, 2, panel);
+            kit::round_rect(fb, bx, 14, ((bw * d as i32) / t as i32).max(3), 4, 2, kit::rgb(120, 220, 160));
         }
         let cur = es.get(self.cur);
         match VIEWS[self.view] {
             View::Map => {
-                let (x0, y0, w, h) = (12, 40, 400, 270);
-                kit::round_rect(fb, x0 - 4, y0 - 4, w + 8, h + 8, 8, panel);
-                if es.is_empty() {
-                    kit::paragraph(fb, "No sounds yet. Put WAV files in the media folder (any subfolders) and they'll be heard and sorted here.", x0 + 10, y0 + 100, w - 20, Size2::Small, dim);
-                }
-                for (i, (e, &(px, py))) in es.iter().zip(self.points.iter()).enumerate() {
-                    let x = x0 + (px * w as f32) as i32;
-                    let y = y0 + ((1.0 - py) * h as f32) as i32;
-                    let near = self.neighbours.contains(&i);
-                    let sz = if near { 5 } else { 3 };
-                    if e.a.is_loop {
-                        kit::outline(fb, x - 3, y - 3, 7, 7, 1, 1, class_color(e.a.class));
-                    } else {
-                        kit::round_rect(fb, x - sz / 2, y - sz / 2, sz, sz, 1, class_color(e.a.class));
-                    }
-                }
-                if let Some(&(px, py)) = self.points.get(self.cur) {
-                    let x = x0 + (px * w as f32) as i32;
-                    let y = y0 + ((1.0 - py) * h as f32) as i32;
-                    kit::outline(fb, x - 6, y - 6, 13, 13, 3, 2, kit::WHITE);
-                }
-                // the legend
-                for c in 0..N_CLASSES {
-                    let y = 40 + c as i32 * 19;
-                    let count = es.iter().filter(|e| e.a.class == c && !e.a.is_loop).count();
-                    kit::round_rect(fb, 428, y + 3, 10, 10, 3, class_color(c));
-                    kit::text(fb, CLASSES[c], 444, y + 2, Size2::Small, if count > 0 { kit::WHITE } else { dim }, -1);
-                    kit::text(fb, &format!("{count}"), 628, y + 2, Size2::Small, dim, 1);
-                }
+                self.draw_map(fb, es, panel, dim);
+                self.draw_legend(fb, es, panel, dim);
             }
             View::List => {
                 let head_c = if self.class == LOOPS { kit::rgb(200, 200, 210) } else { class_color(self.class) };
-                kit::round_rect(fb, 8, 36, 624, 28, 6, kit::blend(panel, head_c, 0.3));
-                kit::text(fb, &format!("< {} >", kind_name(self.class)), 320, 42, Size2::Medium, kit::WHITE, 0);
-                let list = self.class_list(self.class);
+                kit::round_rect(fb, 8, 34, 624, 28, 14, kit::blend(panel, head_c, 0.22));
+                kit::text(fb, "<", 24, 41, Size2::Medium, dim, -1);
+                kit::text(fb, ">", 616, 41, Size2::Medium, dim, 1);
+                kit::circle(fb, 320 - kit::text_width(kind_name(self.class), Size2::Medium) / 2 - 14, 48, 5, head_c);
+                kit::text(fb, kind_name(self.class), 320, 41, Size2::Medium, kit::WHITE, 0);
+                let list = self.list_with(es);
                 let first = self.list_pos.saturating_sub(4);
                 for (row, &i) in list.iter().enumerate().skip(first).take(10) {
                     let e = &es[i];
-                    let y = 72 + (row - first) as i32 * 24;
+                    let y = 70 + (row - first) as i32 * 24;
                     let sel = row == self.list_pos;
-                    kit::round_rect(fb, 8, y, 624, 22, 5, if sel { kit::blend(panel, kit::WHITE, 0.15) } else { panel });
+                    kit::round_rect(fb, 8, y, 624, 22, 11, if sel { kit::blend(panel, kit::WHITE, 0.14) } else { panel });
+                    let c = if self.class == LOOPS { class_color(e.a.class) } else { class_color(self.class) };
+                    if e.a.is_loop {
+                        kit::ring(fb, 24, y + 11, 4, 2, class_color(e.a.class));
+                    } else {
+                        kit::circle(fb, 24, y + 11, 4, class_color(e.a.class));
+                    }
                     let name: String = e.name().chars().take(46).collect();
-                    kit::text(fb, &name, 16, y + 5, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
+                    kit::text(fb, &name, 38, y + 5, Size2::Small, if sel { kit::WHITE } else { dim }, -1);
                     let info = if self.class == LOOPS {
                         format!("{} hits, starts {}  {:.2}s", e.a.hits, CLASSES[e.a.class], e.a.secs)
                     } else {
                         format!("{:.0}%  {:.2}s", e.a.probs[self.class] * 100.0, e.a.secs)
                     };
-                    let c = if self.class == LOOPS { class_color(e.a.class) } else { class_color(self.class) };
-                    kit::text(fb, &info, 624, y + 5, Size2::Small, c, 1);
+                    kit::text(fb, &info, 618, y + 5, Size2::Small, c, 1);
                 }
                 if list.is_empty() {
                     kit::text(fb, "none of this kind", 320, 150, Size2::Small, dim, 0);
+                } else {
+                    kit::text(fb, &format!("{} of {}", self.list_pos + 1, thousands(list.len())), 320, 314, Size2::Small, dim, 0);
                 }
             }
             View::Kit => {
                 for p in 0..16 {
                     let (cx, cy) = (p % 4, p / 4);
-                    let (x, y) = (8 + cx as i32 * 104, 40 + cy as i32 * 68);
+                    let (x, y) = (8 + cx as i32 * 104, 38 + cy as i32 * 68);
                     let class = KIT_SLOTS[p];
                     let col = class_color(class);
-                    kit::round_rect(fb, x, y, 98, 62, 8, kit::blend(panel, col, if self.kit[p].is_some() { 0.3 } else { 0.08 }));
-                    kit::text(fb, CLASSES[class], x + 6, y + 6, Size2::Small, col, -1);
+                    let filled = self.kit[p].is_some();
+                    kit::round_rect(fb, x, y, 98, 62, 12, kit::blend(panel, col, if filled { 0.28 } else { 0.07 }));
+                    kit::circle(fb, x + 12, y + 12, 4, if filled { col } else { kit::blend(panel, col, 0.5) });
+                    kit::text(fb, CLASSES[class], x + 22, y + 6, Size2::Small, col, -1);
                     if let Some(e) = self.kit[p].and_then(|i| es.get(i)) {
                         let name: String = e.name().chars().take(15).collect();
-                        kit::text(fb, &name, x + 6, y + 26, Size2::Small, kit::WHITE, -1);
-                        kit::text(fb, &format!("{:.2}s", e.a.secs), x + 6, y + 44, Size2::Small, dim, -1);
+                        kit::text(fb, &name, x + 8, y + 28, Size2::Small, kit::WHITE, -1);
+                        kit::text(fb, &format!("{:.2}s", e.a.secs), x + 8, y + 44, Size2::Small, dim, -1);
                     } else {
-                        kit::text(fb, "-", x + 6, y + 26, Size2::Small, dim, -1);
+                        kit::text(fb, "-", x + 8, y + 28, Size2::Small, dim, -1);
                     }
                 }
                 let seed = self.kit_seed.and_then(|i| es.get(i)).map(|e| e.name()).unwrap_or_else(|| "(none yet)".into());
-                kit::text(fb, "built around", 428, 44, Size2::Small, dim, -1);
+                kit::text(fb, "built around", 436, 42, Size2::Small, dim, -1);
                 let s: String = seed.chars().take(30).collect();
-                kit::text(fb, &s, 428, 62, Size2::Small, kit::WHITE, -1);
-                kit::text(fb, &format!("variation {}", self.variation + 1), 428, 90, Size2::Small, dim, -1);
-                kit::paragraph(fb, "SELECT builds a kit around the sound you're on (pick it in MAP or LIST). Left/right: other takes. Down: export to media/Kits.", 428, 120, 200, Size2::Small, dim);
+                kit::text(fb, &s, 436, 60, Size2::Small, kit::WHITE, -1);
+                kit::text(fb, &format!("variation {}", self.variation + 1), 436, 88, Size2::Small, dim, -1);
+                kit::paragraph(fb, "SELECT builds a kit around the sound you're on (pick it in MAP or LIST). Left/right: other takes. Down: export to media/Kits.", 436, 118, 192, Size2::Small, dim);
             }
         }
         if let Some(e) = cur {
             let name: String = e.name().chars().take(40).collect();
-            kit::round_rect(fb, 8, 316, 624, 20, 5, panel);
-            kit::round_rect(fb, 14, 321, 10, 10, 3, class_color(e.a.class));
-            kit::text(fb, &name, 30, 320, Size2::Small, kit::WHITE, -1);
+            kit::round_rect(fb, 8, 318, 624, 20, 10, panel);
+            if e.a.is_loop {
+                kit::ring(fb, 22, 328, 4, 2, class_color(e.a.class));
+            } else {
+                kit::circle(fb, 22, 328, 4, class_color(e.a.class));
+            }
+            kit::text(fb, &name, 34, 322, Size2::Small, kit::WHITE, -1);
             let what = if e.a.is_loop {
                 format!("loop, {} hits, starts {}", e.a.hits, CLASSES[e.a.class])
             } else if e.a.confident() {
@@ -963,21 +1305,17 @@ impl App for Sorter {
             } else {
                 format!("{}? {:.0}%", CLASSES[e.a.class], e.a.probs[e.a.class] * 100.0)
             };
-            kit::text(fb, &format!("{what}   {:.2}s", e.a.secs), 624, 320, Size2::Small, dim, 1);
+            kit::text(fb, &format!("{what}   {:.2}s", e.a.secs), 622, 322, Size2::Small, dim, 1);
         }
         if self.message.1 > 0 {
-            kit::round_rect(fb, 140, 290, 360, 24, 6, kit::rgb(110, 90, 40));
-            kit::text(fb, &self.message.0, 320, 296, Size2::Small, kit::WHITE, 0);
+            kit::round_rect(fb, 140, 288, 360, 24, 12, kit::rgb(110, 90, 40));
+            kit::text(fb, &self.message.0, 320, 294, Size2::Small, kit::WHITE, 0);
         }
         let help = match VIEWS[self.view] {
-            View::Map => "F2: view   d-pad: walk the map   pads: the 16 most alike   SELECT: play",
-            View::List => "F2: view   left/right: kind   up/down: sound   pads: play",
-            View::Kit => "F2: view   SELECT: build   left/right: variation   down: export",
+            View::Map => "F2 view   K1 zoom   d-pad walk   pads: 16 most alike   SELECT play",
+            View::List => "F2 view   left/right: kind   up/down: sound   pads: play",
+            View::Kit => "F2 view   SELECT: build   left/right: variation   down: export",
         };
-        if VIEWS[self.view] == View::Map {
-            let load = self.s.load.lock().map(|l| l.clone()).unwrap_or_default();
-            kit::text(fb, &load, 428, 312 - 16, Size2::Small, dim, -1);
-        }
         kit::footer(fb, help, panel, dim);
     }
 
@@ -1001,6 +1339,7 @@ pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn App> {
 mod tests {
     use super::*;
     use crate::apps::kids_kit::tests::render;
+    use std::time::Instant;
     use crate::apps::kids_kit::{Drum, Note, Tone};
 
     #[test]
@@ -1211,5 +1550,99 @@ mod tests {
         loop_kick.probs[0] = 1.0;
         let es = vec![mk(loop_kick)];
         assert_eq!(build_kit(&es, None, 0)[0], None);
+    }
+
+    /// 10,000 sounds in clusters, the way a real library lumps by kind.
+    fn big_library(n: usize) -> Sorter {
+        let mut r = 0x9E37_79B9u32;
+        let mut rnd = move || {
+            r ^= r << 13;
+            r ^= r >> 17;
+            r ^= r << 5;
+            (r >> 8) as f32 / 16_777_216.0
+        };
+        let mut es = Vec::new();
+        let mut pts = Vec::new();
+        let centres: Vec<(f32, f32)> = (0..N_CLASSES).map(|_| (0.1 + 0.8 * rnd(), 0.1 + 0.8 * rnd())).collect();
+        for i in 0..n {
+            let class = (rnd() * N_CLASSES as f32) as usize % N_CLASSES;
+            let (cx, cy) = centres[class];
+            let (gx, gy) = ((rnd() + rnd() + rnd() - 1.5) * 0.28, (rnd() + rnd() + rnd() - 1.5) * 0.28);
+            pts.push(((cx + gx).clamp(0.0, 1.0), (cy + gy).clamp(0.0, 1.0)));
+            let mut probs = vec![0.01; N_CLASSES];
+            probs[class] = 0.8;
+            es.push(Entry { path: format!("lib/{class}/sample {i}.wav"), bytes: 0, modified: 0, a: Analysis { class, probs, emb: vec![0.0; EMBED], secs: 0.05 + rnd() * rnd() * 4.0, hits: 1, is_loop: i % 9 == 0 } });
+        }
+        let mut s = Sorter::new(Sound::detached(), PathBuf::from("/nonexistent"), None);
+        *s.s.entries.lock().unwrap() = es;
+        s.points = pts;
+        s.points_for = n;
+        s.cur = n / 3;
+        s.neighbours = (1..=16).map(|k| (n / 3 + k * 7) % n).collect();
+        s
+    }
+
+    fn dump(fb: &FrameBuffer, path: &str) {
+        let mut out = format!("P6\n{} {}\n255\n", crate::display::WIDTH, crate::display::HEIGHT).into_bytes();
+        for c in fb.buffer() {
+            out.extend_from_slice(&[(c >> 16) as u8, (c >> 8) as u8, *c as u8]);
+        }
+        std::fs::write(path, out).unwrap();
+    }
+
+    /// With 10,000 sounds the map still draws in a frame's time, at every
+    /// zoom. Set SORTER_PPM_DIR to keep the frames for a look.
+    #[test]
+    fn a_ten_thousand_sound_map_zooms_and_draws_fast() {
+        let mut s = big_library(10_000);
+        let mut fb = FrameBuffer::new();
+        for (name, z) in [("zoom1", 1.0f32), ("zoom6", 6.0), ("zoom30", 30.0)] {
+            s.zoom_target = z;
+            for _ in 0..40 {
+                s.ease_view();
+            }
+            assert!((s.zoom - z).abs() < 0.05, "zoom eases to its target");
+            s.draw(&mut fb);
+            let t = Instant::now();
+            for _ in 0..5 {
+                s.draw(&mut fb);
+            }
+            let ms = t.elapsed().as_secs_f32() * 200.0;
+            eprintln!("{name}: {ms:.1} ms a frame");
+            assert!(ms < 30.0, "{name} took {ms} ms");
+            if let Ok(dir) = std::env::var("SORTER_PPM_DIR") {
+                dump(&fb, &format!("{dir}/{name}.ppm"));
+            }
+        }
+    }
+
+    #[test]
+    fn zoom_is_clamped_and_the_view_stays_on_the_map() {
+        let mut s = big_library(500);
+        s.zoom_target = 9999.0;
+        s.zoom_target = s.zoom_target.clamp(1.0, MAX_ZOOM);
+        for _ in 0..60 {
+            s.ease_view();
+        }
+        assert!((s.zoom - MAX_ZOOM).abs() < 0.5);
+        let half = 0.5 / s.zoom;
+        assert!(s.pan.0 >= half - 0.01 && s.pan.0 <= 1.0 - half + 0.01 && s.pan.1 >= half - 0.01 && s.pan.1 <= 1.0 - half + 0.01);
+        // the sound you're on is on screen
+        let (x, y) = s.to_map(s.points[s.cur]);
+        assert!(x >= 0.0 && x <= MAP_W as f32 && y >= 0.0 && y <= MAP_H as f32, "({x}, {y})");
+        // and the knob zooms it in a step at a time
+        let mut s = big_library(100);
+        s.view = 0;
+        s.tick(&Input { knob1: 1, ..Default::default() });
+        assert!(s.zoom_target > 1.4 && s.zoom_target < 1.6);
+        s.tick(&Input { knob1: -3, ..Default::default() });
+        assert_eq!(s.zoom_target, 1.0);
+    }
+
+    #[test]
+    fn the_library_scan_takes_more_than_the_old_5000() {
+        assert!(MAX_FILES >= 20_000);
+        assert_eq!(thousands(10402), "10,402");
+        assert_eq!(thousands(12), "12");
     }
 }

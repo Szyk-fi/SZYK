@@ -89,6 +89,37 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-12: Claude: Sorter map zoom and a new look
+- Branch: claude/sorter-zoom (not committed; branched with the uncommitted Melt FM
+  files still in the tree, they are separate)
+- Changed: src/apps/sorter.rs only. MAP: knob 1 zooms 1x-96x, the view follows
+  the sound you're on, minimap, pad numbers and names on the neighbours when
+  zoomed; sounds are glowing orbs sized by length (rings for loops) instead of
+  squares; right-hand legend 200 px -> 116 px; tabs for MAP/LIST/KIT; round
+  swatches throughout. Scale work for 10,000 sounds: the scan limit was 5,000
+  files (now 50,000), the library was copied on every frame, the list re-sorted
+  every tick, and the layout was recomputed on every new file while listening.
+- Status: done. Tested with a synthetic 10,000-sound library (a frame is under
+  5 ms at every zoom); not tried on a real 10,000-sample folder.
+- Tests: all sorter tests pass, plus three new ones.
+- Notes for the other assistant: nothing needed.
+
+### 2026-10-12: Claude: Melt FM app (port of Max's Web Audio page)
+- Branch: claude/melt-fm (not committed yet)
+- Changed: new src/apps/melt_fm.rs and apps/melt_fm/manifest.toml. Nothing shared
+  was edited. A native port of the Melt FM web page: ten genres, a 32-bar
+  composer, Weirdness/Space sliders, hold-to-melt, wander, and the page's
+  full-screen shader tunnel with a clickable control panel. Fixed voice pool and
+  preallocated reverb/delay, so the audio thread never allocates.
+- Differences from the page: comb/all-pass reverb instead of a noise-IR
+  convolver; fixed compressor makeup instead of the browser's automatic one.
+- Status: done. Not yet listened to against the web page; levels and
+  finiteness are tested, the sound itself is unchecked.
+- Tests: melt_fm (9) and the registry wiring test pass; 10 s of the busiest
+  case renders in about 0.2 s. `cargo test` as a whole doesn't build because of
+  examples/slint_sequencer_live (`crate::note_bus`), which was already broken.
+- Notes for the other assistant: nothing needed.
+
 ### 2026-10-10: Claude: Rev2 Livid Saws silent; amp velocity now adds; positive filter sweeps x1.5
 - Branch: main (local)
 - Changed: src/apps/prophet/dsp.rs (amp amount = amount + velocity sensitivity x
