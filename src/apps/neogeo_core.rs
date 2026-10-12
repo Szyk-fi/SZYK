@@ -63,6 +63,23 @@
 //! guessed-at one -- and no patch for it is hardcoded here; it's
 //! recorded as the next real gap to close.
 //!
+//! **A reviewer-flagged confound on the above was checked, not just
+//! reasoned about, and ruled out**: `cpu.reset` loading A7 from the
+//! *cart's* header SSP (see above) rather than the BIOS's own, while
+//! PC starts in BIOS code, could in principle have been feeding real
+//! POST code a wrong stack and causing a spin that only looked like
+//! the LSPC gap above. A dedicated test
+//! (`retro.rs`'s `rule_out_the_initial_ssp_as_the_cause_of_the_bios_
+//! post_stuck_loop_if_a_cartridge_is_present`) boots the real Metal
+//! Slug 3 + Uni-BIOS 4.0 combination twice, once normally and once
+//! with A7 forced to the BIOS's own SSP (read from `bios_rom[0..4]`)
+//! immediately after construction, before any instruction executes.
+//! Against this real ROM pair the two SSPs turn out to be byte-
+//! identical ($0010F300, both landing on the same shared work-RAM top
+//! per standard Neo Geo convention), and -- independent of that --
+//! both runs park at the exact same $C0996E-$C09980 loop either way.
+//! The initial SSP is not the cause of the stuck point above.
+//!
 //! **With no BIOS supplied**, `NeoGeoMachine::new` falls back to
 //! exactly its old behavior: jump straight to the cart's own
 //! documented entry trampoline (`HEADER_ENTRY_TRAMPOLINE` below, a

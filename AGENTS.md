@@ -101,6 +101,59 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-12: Claude: Neo Geo: ruled out the SSP confound, fixed decode_one's shift/rotate gap
+- Branch: claude/neogeo
+- Changed: `src/apps/retro.rs` (`decode_one`: added the 0xE-class
+  ASR/ASL/LSR/LSL/ROXR/ROXL/ROR/ROL decode -- both the register
+  count-or-immediate short form and the `<ea>` memory-shift form --
+  matching `m68k`'s own `dasm/format.rs::disasm_shift`'s bit layout
+  but resolving real operands, same as every other class `decode_one`
+  already handles; one new `#[ignore]`d test,
+  `rule_out_the_initial_ssp_as_the_cause_of_the_bios_post_stuck_loop_
+  if_a_cartridge_is_present`, reusing the existing `decode_one`/
+  `resolve_ea` helpers, no new ones added), `src/apps/neogeo_core.rs`
+  (module doc comment only -- recorded the SSP finding below; no
+  logic change).
+- Result: both of the prior session's review nitpicks addressed.
+  (1) The SSP confound a reviewer flagged (`cpu.reset` loading A7 from
+  the cart's header SSP, not the BIOS's own, while PC now starts in
+  BIOS code) was checked empirically, not just reasoned about: booted
+  the real Metal Slug 3 + Uni-BIOS 4.0 combo twice -- once normally
+  and once with A7 (plus both `m68k` supervisor-mode `sp[]` banks)
+  forced to the BIOS's own SSP immediately after construction, before
+  any instruction executes (bit-for-bit what `cpu.reset` would have
+  produced had it read vector 0 from the BIOS instead of the cart).
+  Against this real ROM pair the two SSPs are byte-identical
+  (`$0010F300`), and -- independently -- both runs park at the exact
+  same `$C0996E-$C09980` loop either way. The initial SSP is ruled out
+  as the cause of the BIOS-POST stuck point. (2) `decode_one`'s
+  missing 0xE-class (shift/rotate) coverage is fixed: `LSR.W #7,D1`
+  (`0xEE49`, the stuck loop's own instruction) now decodes correctly
+  instead of falling through to `DC.W $EE49` -- verified against a
+  fresh run of `find_what_the_neogeo_bios_post_boot_loop_is_stuck_
+  on_if_a_cartridge_is_present`.
+- Status: done, within the above scope. The LSPC-status-readback gap
+  itself (the actual cause of the stuck point) is still open -- not
+  attempted here, per this task's own scope.
+- Tests: `cargo test --release --bin portamax-sim --tests` (0 compile
+  errors). `cargo test --release --bin portamax-sim rule_out_the_
+  initial_ssp -- --ignored --nocapture` (1 passed; prints both SSPs
+  and both final PCs). `cargo test --release --bin portamax-sim
+  find_what_the_neogeo_bios_post_boot_loop -- --ignored --nocapture`
+  (1 passed; `LSR.W #7,D1` now prints correctly). `cargo test
+  --release --bin portamax-sim neogeo` (41 passed, 0 failed, 8
+  ignored -- unchanged; the new SSP test's name doesn't contain
+  "neogeo" so this filter doesn't catch it, confirmed separately
+  above). Full suite (`-- --test-threads=1`): hit the long-known,
+  already-documented (2026-10-04 entry below) intermittent SIGSEGV in
+  `stages::every_preset_runs_without_blowing_up`, unrelated to this
+  change; a rerun with `--skip` on just that one test finished clean:
+  1138 passed, 19 failed (the exact same long-documented samples/-
+  dependent `sample_drum`/`sequencer` baseline, unrelated), 20 ignored
+  (19 baseline + this session's 1 new `#[ignore]`d test), 1 filtered
+  out (the skipped `stages` test) -- no new failures anywhere.
+- Notes for the other assistant: none.
+
 ### 2026-10-12: Claude: Neo Geo: real BIOS POST now runs at boot; new stuck point found, not fixed
 - Branch: claude/neogeo
 - Changed: `src/apps/neogeo_core.rs` (`NeoGeoMachine::new`: with a real,

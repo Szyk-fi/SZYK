@@ -2760,6 +2760,56 @@ mod tests {
                     (format!("{base_name}{} D{reg},{ea}", size_name(size)), cursor - pc)
                 }
             }
+            // ASR/ASL, LSR/LSL, ROXR/ROXL, ROR/ROL -- the real 0xE-
+            // class bit layout per the 68000 PRM (same one `m68k`'s own
+            // `dasm/format.rs::disasm_shift` uses for its unresolved-
+            // placeholder version): bits11-9 select the op (and, for
+            // the register form, double as the immediate shift count
+            // or the count register number), bit8 is direction
+            // (0=right/1=left), bits7-6 are size -- except size==3
+            // marks the memory-operand form entirely, consuming what
+            // would otherwise be the size field -- bit5 picks
+            // immediate-count vs register-count, bits4-3 pick the
+            // op within direction (0=AS, 1=LS, 2=ROX, 3=RO), and
+            // bits2-0 are the destination data register (register
+            // form) or the <ea> register field (memory form).
+            0xE => {
+                let size = (opcode >> 6) & 3;
+                if size == 3 {
+                    // Memory-operand form: no Dn destination, a full
+                    // <ea> instead, word-sized only (the size field
+                    // itself is consumed selecting this form, so
+                    // there's no byte/long variant of it) -- confirmed
+                    // against `m68k`'s own `disasm_shift`.
+                    let op_idx = (opcode >> 9) & 7;
+                    let op = ["ASR", "ASL", "LSR", "LSL", "ROXR", "ROXL", "ROR", "ROL"][op_idx as usize];
+                    let mode = (opcode >> 3) & 7;
+                    let reg = opcode & 7;
+                    let ea = resolve_ea(bus, &mut cursor, mode, reg, 1);
+                    return (format!("{op}.W {ea}"), cursor - pc);
+                }
+                let dr = (opcode >> 8) & 1; // 0=right, 1=left
+                let ir = (opcode >> 5) & 1; // 0=immediate count, 1=count register
+                let op_type = (opcode >> 3) & 3;
+                let op = match (op_type, dr) {
+                    (0, 0) => "ASR",
+                    (0, _) => "ASL",
+                    (1, 0) => "LSR",
+                    (1, _) => "LSL",
+                    (2, 0) => "ROXR",
+                    (2, _) => "ROXL",
+                    (3, 0) => "ROR",
+                    (_, _) => "ROL",
+                };
+                let reg = opcode & 7;
+                let cnt = (opcode >> 9) & 7;
+                if ir == 0 {
+                    let cnt = if cnt == 0 { 8 } else { cnt };
+                    (format!("{op}{} #{cnt},D{reg}", size_name(size)), 2)
+                } else {
+                    (format!("{op}{} D{cnt},D{reg}", size_name(size)), 2)
+                }
+            }
             _ => (format!("DC.W ${opcode:04X}"), 2),
         }
     }
@@ -3208,6 +3258,122 @@ mod tests {
             }
         }
         eprintln!("=== {transitions} distinct-pc transitions over 20,000 steps, final pc=0x{:06X} ===", machine.cpu.pc);
+    }
+
+    /// Rules out, empirically rather than by reasoning about it, a
+    /// confound a reviewer flagged against `find_what_the_neogeo_
+    /// bios_post_boot_loop_is_stuck_on_if_a_cartridge_is_present`'s
+    /// finding: `NeoGeoMachine::new`'s `cpu.reset(&mut bus)` call
+    /// loads the initial stack pointer (A7/SSP) from `bus.read_long(0)`
+    /// -- the *cartridge's* own header, since this core's bus
+    /// permanently maps the cart at address 0 and never models real
+    /// hardware's transient power-on BIOS overlay there -- even though
+    /// `NeoGeoMachine::new` now starts PC at the BIOS's own real reset
+    /// vector. If the cart's header SSP and the BIOS's own SSP (the
+    /// big-endian u32 the BIOS's own reset vector table would hand a
+    /// real 68000 at address 0, read here via `bus.read_long(0xC00000)`
+    /// -- the same already-word-swapped BIOS window the production
+    /// vector-read code uses, just four bytes earlier) differ, a wrong
+    /// initial SP feeding real BIOS POST code could itself cause a
+    /// spin that only looks like the missing-LSPC-status-readback gap
+    /// `find_what_the_neogeo_bios_post_boot_loop_is_stuck_on` names.
+    ///
+    /// This does not change `neogeo_core.rs` -- it boots one machine
+    /// completely normally (`NeoGeoMachine::new`'s own real `cpu.reset`
+    /// call, cart-header SSP) as a control, and a second, identical
+    /// machine where the test directly overwrites `cpu.dar[15]` (A7)
+    /// and both of `m68k`'s supervisor-mode stack-pointer banks right
+    /// after construction -- before the first `step()` ever runs, so
+    /// before any prefetch or execution has happened -- with the
+    /// BIOS's own SSP instead. That is bit-for-bit what `cpu.reset`
+    /// would have produced had it read vector 0 from the BIOS instead
+    /// of the cart, since `reset()` itself does nothing else with the
+    /// SSP (confirmed by reading `m68k` 0.14.3's own `CpuCore::reset`).
+    /// Both machines then run the identical real warmup
+    /// (`find_what_the_neogeo_bios_post_boot_loop_is_stuck_on`'s own
+    /// 10-frame vblank/step/step_sound cadence) and the result reports
+    /// whether they land in the same stuck loop or not.
+    ///
+    /// `#[ignore]`d for the same reason as its siblings -- run
+    /// explicitly with `cargo test --release --bin portamax-sim
+    /// rule_out_the_initial_ssp -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn rule_out_the_initial_ssp_as_the_cause_of_the_bios_post_stuck_loop_if_a_cartridge_is_present() {
+        use m68k::AddressBus;
+
+        fn boot(override_ssp_from_bios: bool) -> Option<(u32, u32, u32)> {
+            let mut app = new_app();
+            app.console = Console::NeoGeo;
+            app.rescan_roms();
+            if app.roms.is_empty() {
+                return None;
+            }
+            app.load_selected_rom();
+            assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+            let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+                panic!("deck must be Neo Geo after loading a real cartridge: {}", app.status);
+            };
+
+            // The real cart-header SSP `cpu.reset` already loaded,
+            // captured before any override so both runs can be logged
+            // against it.
+            let cart_ssp = machine.cpu.dar[15];
+            // The BIOS's own SSP, read the same way `NeoGeoMachine::new`
+            // reads the BIOS's reset PC (four bytes later in the same
+            // already-word-swapped window), just via the bus's real
+            // $C00000-mapped window instead of the private `bios_rom`
+            // field, since this test lives outside `neogeo_core`'s own
+            // module.
+            let bios_ssp = machine.bus.read_long(0xC00000);
+
+            if override_ssp_from_bios {
+                // Exactly what `m68k` 0.14.3's own `CpuCore::reset`
+                // does with whatever `bus.read_long(0)` returns --
+                // `dar[15]` plus both supervisor-mode `sp[]` banks
+                // (indices 4 and 6, i.e. `SFLAG_SET` and
+                // `SFLAG_SET|MFLAG_SET`; harmless on a 68000, which
+                // never uses the MSP bank) -- just with the BIOS's own
+                // value instead of the cart's.
+                machine.cpu.dar[15] = bios_ssp;
+                machine.cpu.sp[4] = bios_ssp;
+                machine.cpu.sp[6] = bios_ssp;
+            }
+
+            for _ in 0..10 {
+                machine.vblank();
+                for _ in 0..50_000u32 {
+                    if !machine.step() {
+                        break;
+                    }
+                }
+                for _ in 0..10_000u32 {
+                    machine.step_sound();
+                }
+            }
+            Some((cart_ssp, bios_ssp, machine.cpu.pc))
+        }
+
+        const STUCK_LOOP: std::ops::RangeInclusive<u32> = 0xC0996E..=0xC09980;
+
+        let Some((cart_ssp_a, bios_ssp_a, pc_control)) = boot(false) else {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        };
+        let Some((cart_ssp_b, bios_ssp_b, pc_overridden)) = boot(true) else {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        };
+        assert_eq!(cart_ssp_a, cart_ssp_b, "the cart's own header SSP must be deterministic across two fresh boots");
+        assert_eq!(bios_ssp_a, bios_ssp_b, "the BIOS's own SSP must be deterministic across two fresh boots");
+
+        eprintln!(
+            "cart-header SSP=0x{cart_ssp_a:08X}  bios-own SSP=0x{bios_ssp_a:08X}  ssps_identical={}",
+            cart_ssp_a == bios_ssp_a
+        );
+        eprintln!("control (cart SSP):      stuck at pc=0x{pc_control:06X}  in_known_stuck_loop={}", STUCK_LOOP.contains(&pc_control));
+        eprintln!("overridden (BIOS SSP):   stuck at pc=0x{pc_overridden:06X}  in_known_stuck_loop={}", STUCK_LOOP.contains(&pc_overridden));
+        eprintln!("=== same final pc regardless of which SSP was used: {} ===", pc_control == pc_overridden);
     }
 
     /// Direct causal test of the leading hypothesis coming out of
