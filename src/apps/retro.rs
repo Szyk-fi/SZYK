@@ -2883,6 +2883,244 @@ mod tests {
         );
     }
 
+    /// The decisive next step the prior diagnostics' own synthesis
+    /// pointed at: `disassemble_neogeo_stuck_loop_if_a_cartridge_is_
+    /// present`'s own trace (and the separate set-diff confirming
+    /// `new_vs_prev_round=0` every checkpoint) established that every
+    /// conditional branch anywhere inside the repeating per-frame lap
+    /// takes the exact same direction every single time -- which means
+    /// every such branch has a real, present, but never-executed
+    /// alternate target sitting in real ROM bytes that cost nothing to
+    /// read (no execution, just more `decode_one` calls at a different
+    /// address). This test builds the actual map: a true sequential
+    /// single-step trace of one full real frame (the PC is read and
+    /// decoded *before* every single `step()` call -- not periodic
+    /// sampling -- and the direction actually taken is read off the
+    /// *next* step's real PC), recording one entry per distinct branch
+    /// address with both candidate targets and which one it actually
+    /// took; then statically disassembles a chunk at every distinct
+    /// untaken target to look for a real palette-load routine or any
+    /// other obviously distinct "next phase of boot" code, as opposed
+    /// to more of the same housekeeping already seen in the lap.
+    ///
+    /// A branch that goes *both* ways within this one frame (a DBcc
+    /// loop counting down, or an ordinary poll that spins a few times
+    /// then exits) is an ordinary counted loop/poll, not a one-way
+    /// gate -- both of its sides already run inside this very trace, so
+    /// there is no genuinely untaken side to disassemble, and it's
+    /// skipped from that part of the report (but still printed, so
+    /// nothing is silently dropped).
+    ///
+    /// `#[ignore]`d for the same reason as its siblings -- run
+    /// explicitly with `cargo test --release --bin portamax-sim
+    /// map_every_branch_in_the_neogeo_stuck_loop_and_disassemble_its_untaken_targets
+    /// -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn map_every_branch_in_the_neogeo_stuck_loop_and_disassemble_its_untaken_targets_if_a_cartridge_is_present() {
+        use m68k::AddressBus;
+
+        let mut app = new_app();
+        app.console = Console::NeoGeo;
+        app.rescan_roms();
+        if app.roms.is_empty() {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        }
+        app.load_selected_rom();
+        assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+        // Identical warmup to every sibling diagnostic in this file:
+        // 150 real-time-paced frames with a Start press every 60, then
+        // 3 more deterministic frames (vblank + step budget +
+        // step_sound, matching `tick()` exactly) to clear sleep-jitter
+        // phase in the inner vblank-wait counter before recording.
+        for frame in 0..150 {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            let press_start = frame % 60 == 0;
+            app.tick(&Input { grid: std::array::from_fn(|pad| pad == 7 && press_start), ..Default::default() });
+            if app.deck.is_none() {
+                eprintln!("deck stopped early at frame {frame}: {}", app.status);
+                return;
+            }
+        }
+
+        let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+            panic!("deck must still be Neo Geo after 150 frames: {}", app.status);
+        };
+
+        for _ in 0..3 {
+            machine.vblank();
+            for _ in 0..50_000u32 {
+                if !machine.step() {
+                    break;
+                }
+            }
+            for _ in 0..10_000u32 {
+                machine.step_sound();
+            }
+        }
+
+        // `decode_one`'s own text is exactly "B" + a real two-letter
+        // 68000 condition code for every Bcc it decodes (BRA/BSR are
+        // spelled out in full, so they never match this), or "DB" + a
+        // condition code for every DBcc (including DBF, the common
+        // "DBRA" loop-counter form, and DBT). This is a plain textual
+        // check on `decode_one`'s own output, not a re-decode of the
+        // opcode -- the entire point of reusing it instead.
+        fn is_tracked_conditional_branch(text: &str) -> bool {
+            const CONDS: [&str; 14] = ["HI", "LS", "CC", "CS", "NE", "EQ", "VC", "VS", "PL", "MI", "GE", "LT", "GT", "LE"];
+            let mnemonic = text.split_whitespace().next().unwrap_or("");
+            if mnemonic.starts_with("DB") {
+                return true;
+            }
+            if let Some(cond) = mnemonic.strip_prefix('B') {
+                return CONDS.contains(&cond);
+            }
+            false
+        }
+
+        // Every tracked mnemonic's text ends in `$<hex>` -- the one
+        // real resolved address `decode_one` already computed for that
+        // branch/loop target -- so pull it back out rather than
+        // re-deriving it from the raw opcode a second time.
+        fn target_after_last_dollar(text: &str) -> u32 {
+            let hex = text.rsplit('$').next().expect("a tracked branch's own text must contain '$<target>'");
+            u32::from_str_radix(hex, 16).unwrap_or_else(|e| panic!("decode_one produced a non-hex branch target in {text:?}: {e}"))
+        }
+
+        // A crude but exact scan for any `$<hex>` operand in a decoded
+        // instruction's text -- a branch target or a resolved absolute
+        // <ea> alike -- whose numeric value falls inside `range`. Used
+        // below to flag an untaken-path instruction that itself names
+        // an address inside palette RAM.
+        fn mentions_address_in(text: &str, range: std::ops::RangeInclusive<u32>) -> bool {
+            text.split('$').skip(1).any(|tail| {
+                let hex: String = tail.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+                !hex.is_empty() && u32::from_str_radix(&hex, 16).map(|v| range.contains(&v)).unwrap_or(false)
+            })
+        }
+
+        #[derive(Clone)]
+        struct Branch {
+            text: String,
+            target: u32,
+            fallthrough: u32,
+            taken_target: u32,
+            taken_fallthrough: u32,
+            taken_other: u32,
+        }
+
+        let mut branches: std::collections::HashMap<u32, Branch> = std::collections::HashMap::new();
+        let mut branch_instructions_executed = 0u32;
+
+        machine.vblank();
+        let mut steps_run = 0u32;
+        for i in 0..50_000u32 {
+            let pc = machine.cpu.pc;
+            let (text, len) = decode_one(&mut machine.bus, pc);
+            let tracked = is_tracked_conditional_branch(&text);
+            let (target, fallthrough) = if tracked { (target_after_last_dollar(&text), pc + len) } else { (0, 0) };
+            if !machine.step() {
+                eprintln!("CPU halted/faulted at step {i}, pc=0x{pc:06X}");
+                break;
+            }
+            steps_run += 1;
+            if tracked {
+                branch_instructions_executed += 1;
+                let next_pc = machine.cpu.pc;
+                let entry = branches.entry(pc).or_insert_with(|| Branch {
+                    text: text.clone(),
+                    target,
+                    fallthrough,
+                    taken_target: 0,
+                    taken_fallthrough: 0,
+                    taken_other: 0,
+                });
+                // `decode_one` is a pure static read of fixed ROM
+                // bytes at a fixed address -- this must be the same
+                // every time this address recurs, or something is
+                // badly wrong (e.g. self-modifying code, which real
+                // Neo Geo cart ROM never is).
+                assert_eq!(entry.target, target, "decode_one disagreed with its own earlier decode of the same static ROM bytes at 0x{pc:06X}");
+                assert_eq!(entry.fallthrough, fallthrough, "decode_one disagreed with its own earlier decode of the same static ROM bytes at 0x{pc:06X}");
+                if next_pc == target {
+                    entry.taken_target += 1;
+                } else if next_pc == fallthrough {
+                    entry.taken_fallthrough += 1;
+                } else {
+                    // Neither candidate -- most likely an interrupt
+                    // (vblank) got taken instead of the instruction at
+                    // this PC proceeding normally. Recorded, not
+                    // panicked on: real hardware can genuinely do this.
+                    entry.taken_other += 1;
+                }
+            }
+        }
+
+        eprintln!(
+            "=== traced one full real frame: {steps_run} single steps, {branch_instructions_executed} conditional-branch instructions executed, {} distinct branch addresses ===",
+            branches.len()
+        );
+
+        let mut by_addr: Vec<(u32, Branch)> = branches.into_iter().collect();
+        by_addr.sort_by_key(|(addr, _)| *addr);
+
+        let mut untaken_targets: Vec<u32> = Vec::new();
+        for (addr, b) in &by_addr {
+            let ways_taken = (b.taken_target > 0) as u8 + (b.taken_fallthrough > 0) as u8 + (b.taken_other > 0) as u8;
+            if ways_taken != 1 {
+                eprintln!(
+                    "  0x{addr:06X}: {} -- goes BOTH ways within this one frame (target_count={} fallthrough_count={} other_count={}) -- an ordinary counted loop/poll, not a one-way gate; both sides already ran in this very trace, so there is no untaken side to disassemble",
+                    b.text, b.taken_target, b.taken_fallthrough, b.taken_other
+                );
+                continue;
+            }
+            let (taken_desc, taken_count, untaken_desc, untaken_addr) = if b.taken_target > 0 {
+                ("target", b.taken_target, "fallthrough", b.fallthrough)
+            } else if b.taken_fallthrough > 0 {
+                ("fallthrough", b.taken_fallthrough, "target", b.target)
+            } else {
+                ("an interrupt redirect (neither target nor fallthrough)", b.taken_other, "target-or-fallthrough (ambiguous)", b.target)
+            };
+            eprintln!(
+                "  0x{addr:06X}: {} -- target=0x{:06X} fallthrough=0x{:06X} -- always takes {taken_desc} ({taken_count}/{taken_count} times) -- untaken: {untaken_desc}=0x{untaken_addr:06X}",
+                b.text, b.target, b.fallthrough
+            );
+            untaken_targets.push(untaken_addr);
+        }
+
+        untaken_targets.sort_unstable();
+        untaken_targets.dedup();
+
+        eprintln!("=== disassembling every distinct untaken alternate target found above ({} total) ===", untaken_targets.len());
+        let mut any_touches_palette = false;
+        for &start in &untaken_targets {
+            eprintln!("--- untaken target 0x{start:06X} ---");
+            let mut cursor = start;
+            for _ in 0..25 {
+                let (text, len) = decode_one(&mut machine.bus, cursor);
+                let touches_palette = mentions_address_in(&text, 0x400000..=0x401FFF);
+                if touches_palette {
+                    any_touches_palette = true;
+                }
+                eprintln!("    0x{cursor:06X}: {text}{}", if touches_palette { "   <-- names an address inside palette RAM ($400000-$401FFF)" } else { "" });
+                // `decode_one` always returns a real >=2-byte 68000
+                // instruction length; `.max(2)` is only a guard against
+                // this disassembly loop ever stalling if that somehow
+                // didn't hold (e.g. a decode landing mid-instruction on
+                // unlucky bytes), not evidence it's expected to happen.
+                cursor += len.max(2);
+            }
+        }
+
+        eprintln!(
+            "=== summary: {} distinct conditional branches mapped, {} distinct untaken targets disassembled, any_untaken_path_names_a_palette_ram_address={any_touches_palette} ===",
+            by_addr.len(),
+            untaken_targets.len()
+        );
+    }
+
     /// Direct causal test of the leading hypothesis coming out of
     /// `disassemble_neogeo_stuck_loop_if_a_cartridge_is_present`'s own
     /// trace: the main loop's every-frame idle wait (`CMPI.W
