@@ -20,14 +20,57 @@
 //! regional/Uni-BIOS) ROM, which this project does not ship -- same
 //! "user-supplied, never committed" stance `retro.rs`'s module doc
 //! comment already takes for cartridge ROMs (see `roms/` in
-//! `.gitignore`). `NeoGeoMachine::new` still does the one thing the
-//! real BIOS does that's required just to *start* running a cart:
-//! read the cart's own header (present on every real cartridge, not
-//! BIOS-supplied) and jump to its documented entry trampoline -- see
-//! `boot_pc` below, a real, publicly documented convention
-//! (<https://wiki.neogeodev.org/index.php?title=68k_program_header>),
-//! not a copy of SNK's code. No POST/memory-card/system-mode work the
-//! BIOS also does at reset is attempted.
+//! `.gitignore`).
+//!
+//! **When a real BIOS dump *is* supplied, `NeoGeoMachine::new` now
+//! boots it the way real hardware actually does**: `cpu.reset` still
+//! loads the cartridge's own initial SSP from address 0 (real,
+//! meaningful header data), but PC is then set to the *BIOS's own*
+//! real reset vector -- read directly out of the already-loaded,
+//! already-word-swapped `bios_rom` bytes, not through the bus (this
+//! core's bus keeps the cart permanently mapped at $000000-$0FFFFF and
+//! doesn't model the brief real-hardware overlay that puts the BIOS
+//! there transiently at power-on, so the vector has to be read out of
+//! the ROM bytes directly instead; confirmed against the real Uni-BIOS
+//! 4.0 dump, it decodes to $00C00402, already a live address inside
+//! the BIOS's own permanent $C00000-$C1FFFF window, not a small
+//! ROM-relative offset needing re-basing). Real BIOS POST code runs
+//! first from there and is expected to find and jump into the cart's
+//! own documented entry trampoline on its own, the same real handoff
+//! actual hardware performs -- this core deliberately does not
+//! hardcode that jump.
+//!
+//! **It doesn't get that far yet.** Real BIOS POST execution now
+//! genuinely runs (confirmed: real BIOS code at $C00402 onward,
+//! correctly kicking the watchdog and reading the sound latch), but it
+//! parks permanently at a newly-found, distinct stuck point inside the
+//! BIOS's own code, before it ever reaches the cart -- a different gap
+//! from the old cart-side `$10FE8C` spin this module's history already
+//! investigated at length (see `retro.rs`'s test module and git log
+//! for that trail). The new stuck point, traced the same way (a true
+//! per-step disassembly, not sampling -- see `retro.rs`'s
+//! `find_what_the_neogeo_bios_post_boot_loop_is_stuck_on_if_a_
+//! cartridge_is_present`): a tight loop at $C0996E-$C09980 that kicks
+//! the real watchdog ($300001) and polls `REG_LSPCMODE` ($3C0006),
+//! shifting the result right 7 bits and comparing against $F8 --
+//! i.e. waiting for a live readback whose upper bits form roughly
+//! $7C00. This core's `read_word` for that address only ever returns
+//! `Lspc::anim_counter`, a 3-bit auto-animation counter (0-7); it has
+//! no real status/ID value in the upper bits at all, so that
+//! comparison can never succeed and POST never leaves this loop. This
+//! is a real, concrete, not-yet-modeled piece of LSPC hardware (some
+//! real status or revision-ID bit real POST checks at reset), not a
+//! guessed-at one -- and no patch for it is hardcoded here; it's
+//! recorded as the next real gap to close.
+//!
+//! **With no BIOS supplied**, `NeoGeoMachine::new` falls back to
+//! exactly its old behavior: jump straight to the cart's own
+//! documented entry trampoline (`HEADER_ENTRY_TRAMPOLINE` below, a
+//! real, publicly documented convention,
+//! <https://wiki.neogeodev.org/index.php?title=68k_program_header>,
+//! not a copy of SNK's code), with no POST/memory-card/system-mode
+//! work attempted at all -- there is no real BIOS code to run in that
+//! case.
 //!
 //! Real cartridges, though, don't just run standalone after that --
 //! they make ongoing calls into the BIOS's own fixed $C00000-$C1FFFF
@@ -70,9 +113,11 @@
 //! separate CMC42 graphics-decryption chip (sprite/fix-layer C-ROM
 //! data, also reimplemented from MAME's own source -- see `cmc42`'s
 //! own module doc comment), and real sprite auto-animation (`Lspc`'s
-//! own doc comment). See the module's own test coverage for exactly
-//! what is and isn't
-//! verified so far.
+//! own doc comment). Real BIOS POST execution (above) is new and only
+//! gets partway: confirmed running, confirmed stuck on a concrete,
+//! not-yet-modeled LSPC status read, not confirmed to ever reach the
+//! cart. See the module's own test coverage for exactly what is and
+//! isn't verified so far.
 
 use m68k::{AddressBus, CpuCore, CpuType, StepResult};
 use std::cell::Cell;
@@ -898,14 +943,41 @@ impl NeoGeoMachine {
         cpu.set_cpu_type(CpuType::M68000);
         let mut bus = NeoGeoBus::new(p1_rom, p2_rom, s1_rom, &c_roms, sound_latch.clone(), protection, bios_rom);
         // `reset` reads the cartridge's own initial SSP from address 0
-        // (real, meaningful data -- see the module doc comment) but
-        // its initial PC is not how real hardware enters cartridge
-        // code (the raw reset vector's PC slot instead holds a
-        // pointer used elsewhere in the header format); jumping to the
-        // documented entry trampoline afterward is what the real BIOS
-        // does in its place.
+        // (real, meaningful data -- see the module doc comment); what
+        // happens to PC next depends on whether a real BIOS dump was
+        // supplied.
         cpu.reset(&mut bus);
-        cpu.pc = HEADER_ENTRY_TRAMPOLINE;
+        if bus.bios_rom.len() >= 8 {
+            // A real BIOS was supplied: boot the way real hardware
+            // actually does, through the BIOS's own reset-time POST,
+            // not straight into the cart. On real 68000 hardware, the
+            // reset vector's PC is the 32-bit value at address 4 of
+            // whatever ROM is mapped at address $000000 at power-on --
+            // which is the BIOS, not the cart, for the brief window
+            // before the BIOS's own startup code hands off (real
+            // hardware overlays the BIOS at $000000-$000007 only
+            // transiently for this; this core's bus keeps the cart
+            // permanently mapped there instead and doesn't model that
+            // overlay, so the vector is read directly out of the
+            // already-loaded, already-word-swapped `bios_rom` bytes
+            // rather than through the bus). Confirmed against the real
+            // Uni-BIOS 4.0 dump: this decodes to $00C00402, already a
+            // live address inside the BIOS's own permanent $C00000-
+            // $C1FFFF window (not a small ROM-relative offset that
+            // would need re-basing), so it's used as-is.
+            let reset_pc = u32::from_be_bytes([bus.bios_rom[4], bus.bios_rom[5], bus.bios_rom[6], bus.bios_rom[7]]);
+            cpu.pc = reset_pc;
+        } else {
+            // No real BIOS supplied (see the module doc comment on why
+            // none is vendored) -- there is no real reset-time POST to
+            // run, so fall back to the documented header entry
+            // trampoline every real cartridge has, the same thing this
+            // core always did before BIOS support existed. The raw
+            // reset vector's PC slot in a cart's own header holds a
+            // pointer used elsewhere in the header format, not a real
+            // entry point, so it's never used directly.
+            cpu.pc = HEADER_ENTRY_TRAMPOLINE;
+        }
 
         // The Z80, unlike the 68000, has no vector table to read --
         // real hardware simply starts fetching from address 0 on
@@ -1562,6 +1634,66 @@ mod tests {
         let mut machine = NeoGeoMachine::new(rom, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, Vec::new());
         assert!(machine.step(), "the header's own JMP.L must execute cleanly");
         assert_eq!(machine.cpu.pc, 0x0001C4, "PC must land exactly on the cartridge's own declared entry point");
+    }
+
+    /// A minimal synthetic BIOS: a real reset vector at offset 4 (the
+    /// same slot a real 68000 reads its own reset PC from) pointing at
+    /// a real, verifiable marker instruction (`MOVEQ #5,D0`) placed at
+    /// that same address's own offset into the ROM -- so a passing
+    /// test proves not just that PC moved, but that real code at that
+    /// address actually ran. `reset_pc` must be inside the BIOS's own
+    /// real $C00000-$C1FFFF window for the marker to land somewhere
+    /// `read_bios` can find it.
+    fn synthetic_bios_with_reset_vector(reset_pc: u32) -> Vec<u8> {
+        let mut rom = vec![0u8; 0x100];
+        rom[4..8].copy_from_slice(&reset_pc.to_be_bytes());
+        let offset = (reset_pc - 0xC00000) as usize;
+        rom[offset..offset + 2].copy_from_slice(&0x7005u16.to_be_bytes()); // MOVEQ #5,D0
+        word_swap(rom)
+    }
+
+    /// The real behavioral change this file's `NeoGeoMachine::new` doc
+    /// comment describes: with a real BIOS dump supplied, boot must
+    /// start at the *BIOS's own* real reset vector (and real code
+    /// there must actually execute), not the cartridge's header
+    /// trampoline -- even though a cartridge with its own, different
+    /// declared entry point is present, proving the BIOS path doesn't
+    /// quietly fall back to the cart's.
+    #[test]
+    fn a_supplied_bios_boots_from_its_own_real_reset_vector_not_the_carts_header() {
+        let cart = synthetic_cartridge_with_entry_point(0x000180);
+        let bios = synthetic_bios_with_reset_vector(0xC00010);
+        let mut machine = NeoGeoMachine::new(cart, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, bios);
+        assert_eq!(machine.cpu.pc, 0xC00010, "with a real BIOS supplied, PC must start at the BIOS's own real reset vector, not the cart's header trampoline");
+        assert!(machine.step(), "the BIOS's own real code at its reset vector must execute cleanly");
+        assert_eq!(machine.cpu.d(0), 5, "the marker instruction at the BIOS's own reset vector must actually have executed, proving real code ran from there, not just that PC moved");
+    }
+
+    /// Cross-checks `NeoGeoMachine::new`'s real BIOS-boot logic against
+    /// the real, user-supplied BIOS dump (see `load_real_bios`'s own
+    /// doc comment) by computing the expected reset vector independently
+    /// here -- a hand-rolled word-swap and a direct byte read, not a
+    /// call into `word_swap` or any of `NeoGeoMachine::new`'s own code
+    /// -- so a bug shared between the implementation and this check
+    /// couldn't make both agree on a wrong answer. Skips (doesn't fail)
+    /// when no BIOS is present.
+    #[test]
+    fn a_real_bios_boots_from_its_own_real_reset_vector_if_present() {
+        let bios = load_real_bios();
+        if bios.is_empty() {
+            eprintln!("skipping: no BIOS dump in {BIOS_DIR} (this is expected in a fresh checkout)");
+            return;
+        }
+        let mut swapped = bios.clone();
+        let mut i = 0;
+        while i + 1 < swapped.len() {
+            swapped.swap(i, i + 1);
+            i += 2;
+        }
+        let expected_pc = u32::from_be_bytes([swapped[4], swapped[5], swapped[6], swapped[7]]);
+        assert!((0xC00000..=0xC1FFFF).contains(&expected_pc), "a real BIOS's own reset vector should land inside its documented $C00000-$C1FFFF window, got 0x{expected_pc:06X}");
+        let machine = NeoGeoMachine::new(vec![0u8; 0x200], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Protection::None, bios);
+        assert_eq!(machine.cpu.pc, expected_pc, "with this real BIOS supplied, PC must start at exactly its own real reset vector");
     }
 
     /// Raising VBlank must actually redirect the CPU to the real
@@ -2230,6 +2362,12 @@ mod tests {
     /// SMA-decrypted code, is a meaningful signal the transform is
     /// right. Skips (doesn't fail) when no ROM is present.
     ///
+    /// **This no longer reaches that deep into cart code**, now that
+    /// `NeoGeoMachine::new` boots a real, supplied BIOS through its
+    /// own real reset vector instead of straight into the cart -- see
+    /// the inline comment right above the `NeoGeoMachine::new` call
+    /// below for exactly what this run proves now instead.
+    ///
     /// **Real bug found and fixed here**: an earlier version of
     /// `sma_decrypt_68k` truncated the decrypted fixed bank to just the
     /// 0xC0000 bytes its relocate step actually writes, discarding the
@@ -2257,10 +2395,37 @@ mod tests {
         // the full evidence (file timestamps predating NEO-SMA's public
         // disclosure, a real, correct SSP/entry point with no
         // decryption applied at all). Loads a real, user-supplied BIOS
-        // if one is present (see `NeoGeoBus`'s own doc comment) -- the
-        // cartridge makes real calls into it, so without one, execution
-        // runs off into unmapped, zeroed memory well before producing
-        // any real video output.
+        // if one is present (see `NeoGeoBus`'s own doc comment) --
+        // *not* optional here: tried without one (`Vec::new()`
+        // instead), this test's own CPU run faults on a real illegal
+        // instruction after ~1,000,000 steps, because the cart's own
+        // code makes real ongoing calls into the BIOS's fixed
+        // $C00000-$C1FFFF window for standard system services, and
+        // without a real BIOS mapped there it runs off into unmapped,
+        // zeroed memory as garbage. This is a separate, older fix from
+        // the one this test's own history section documents below,
+        // and it's still load-bearing.
+        //
+        // **What this specific run now actually exercises changed**,
+        // though, with `NeoGeoMachine::new` booting a real, supplied
+        // BIOS through its own real reset vector (see that function's
+        // own doc comment): PC now starts in the BIOS, not the cart,
+        // so this run no longer gets "deep into genuinely SMA-decrypted
+        // [cart] code" the way it used to -- it only reaches real BIOS
+        // POST code, which (as of this writing) never reaches the cart
+        // at all, parking permanently in a real, distinct, not-yet-
+        // modeled LSPC-status wait (see `retro.rs`'s
+        // `find_what_the_neogeo_bios_post_boot_loop_is_stuck_on_if_a_
+        // cartridge_is_present` for the full trace). The assertion
+        // below (the CPU never faults over 2,000,000 steps) still
+        // holds and is still a real, meaningful signal -- just a
+        // narrower one now: real BIOS POST code runs that long without
+        // a CPU fault, not "real cart code this deep decodes/decrypts
+        // correctly" the way it originally did. That narrower, cart-
+        // side-decrypt-specific proof doesn't have its own test right
+        // now; restoring it would need a way to map the BIOS's ongoing
+        // service-call window without also redirecting the initial PC
+        // there, which `NeoGeoMachine::new` doesn't expose.
         let mut machine = NeoGeoMachine::new(p1, p2, m1, s1, Vec::new(), Vec::new(), Protection::None, load_real_bios());
 
         // Real code almost universally waits on VBlank before doing

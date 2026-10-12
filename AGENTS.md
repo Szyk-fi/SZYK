@@ -101,6 +101,66 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-12: Claude: Neo Geo: real BIOS POST now runs at boot; new stuck point found, not fixed
+- Branch: claude/neogeo
+- Changed: `src/apps/neogeo_core.rs` (`NeoGeoMachine::new`: with a real,
+  supplied BIOS dump, PC now starts at the BIOS's own real reset
+  vector -- read directly out of the already-word-swapped `bios_rom`
+  bytes, since this core's bus never models the transient real-
+  hardware address-0 BIOS overlay -- instead of jumping straight to
+  the cart's header trampoline; with no BIOS supplied, behavior is
+  unchanged. Module doc comment rewritten to match. 2 new tests: a
+  synthetic-BIOS unit test and a real-Uni-BIOS cross-check that
+  independently recomputes the expected vector. Also had to rewrite
+  `a_real_metal_slug_3_cartridge_boots_into_its_own_code_if_present`'s
+  doc comment and fix my own first attempt at "fixing" it -- it still
+  needs the real BIOS (for the cart's own ongoing $C00000+ service
+  calls, a separate, older mechanism), so removing it faults the CPU
+  on a real illegal instruction; kept it, documented what the run
+  proves now instead), `src/apps/retro.rs` (one new `#[ignore]`d
+  diagnostic test, `find_what_the_neogeo_bios_post_boot_loop_is_
+  stuck_on_if_a_cartridge_is_present`, reusing the existing
+  `decode_one`/`resolve_ea` disassembler helpers, no new ones added).
+- Result, against the real Metal Slug 3 dump + Uni-BIOS 4.0: real BIOS
+  POST genuinely executes now (confirmed: real code from $C00402),
+  but parks permanently in a newly found, different stuck point --
+  `$C0996E-$C09980`, a tight loop that kicks the watchdog ($300001)
+  and polls `REG_LSPCMODE` ($3C0006), shifted right 7 bits and
+  compared against `$F8`. This core's `read_word` for that address
+  only ever returns the 3-bit auto-animation counter, never the real
+  status/ID bits POST is waiting for in the upper bits, so the
+  comparison can never pass. Still an all-black frame; did not reach
+  the cart at all this time (a step back from the *previous* session's
+  stuck point, which was cart-side and much further along -- this one
+  is BIOS-side and earlier). Did not guess at a fix for the new gap;
+  recorded it in the module doc comment and left it there.
+- Status: partial by design -- this was always going to be either "it
+  boots" or "found the next real gap," and it's the latter. The no-
+  BIOS fallback path is unaffected (checked, not assumed): all three
+  tests that exercise it directly still pass unchanged.
+- Tests: `cargo test --release --bin portamax-sim neogeo` (41 passed,
+  0 failed, 8 ignored -- was 39 passed before this session's 2 new
+  tests). Full suite: `cargo test --release --bin portamax-sim --
+  --test-threads=1`: 1139 passed, 19 failed (all 19 are the long-
+  documented samples/-dependent sample_drum/sequencer tests, unrelated
+  to this change), 19 ignored -- matches the existing baseline
+  exactly, no new failures, no flaky SIGABRT this run. Note: the
+  *literal* `cargo test --release` (no `--bin` filter, which also
+  builds every `examples/*.rs` target) does not currently finish
+  compiling at all, on a completely pre-existing, unrelated bug: at
+  least `examples/slint_nebula_live.rs` and `examples/slint_bloom_
+  live.rs` pull in `src/apps/nebula.rs`/`bloom.rs` via `#[path]` but
+  never declare `mod note_bus;`, even though those app files use
+  `crate::note_bus` (introduced by an earlier, unrelated commit,
+  16ff658). Every prior "full suite" entry in this log used `--bin
+  portamax-sim`, which never builds `examples/`, so this was never
+  caught before. Not fixed here (unrelated files, out of scope) --
+  flagged via `spawn_task` instead.
+- Notes for the other assistant: none. The `examples/slint_nebula_
+  live.rs`/`slint_bloom_live.rs` missing-`mod note_bus` build gap
+  above is real and pre-existing but unrelated to Neo Geo; a separate
+  task suggestion for it was queued.
+
 ### 2026-10-07: Claude: Neo Geo: status check and stale-doc fixes
 - Branch: claude/neogeo
 - Changed: src/apps/neogeo_core.rs, src/apps/retro.rs, docs/USER_MANUAL.md.

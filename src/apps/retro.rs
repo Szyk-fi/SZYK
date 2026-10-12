@@ -3121,6 +3121,95 @@ mod tests {
         );
     }
 
+    /// With `NeoGeoMachine::new` now booting a real, supplied BIOS dump
+    /// through its own real reset vector (see the module doc comment
+    /// and `neogeo_core.rs`'s own on `NeoGeoMachine::new`) instead of
+    /// jumping straight into the cart, `dump_a_real_neogeo_frame_to_
+    /// disk_if_a_cartridge_is_present`'s own output showed real BIOS
+    /// POST code now running -- but parking, from frame 0 onward, at a
+    /// single fixed PC inside the BIOS's own mapped window
+    /// (confirmed: `pc=0xC0997A` every 100 frames, all the way to
+    /// frame 800), not inside the cart at all. This is a genuinely new
+    /// stuck point, not the old cart-side `$10FE8C` spin the module's
+    /// prior investigation mapped -- this test applies that same
+    /// sequential single-step tracing technique to it, to read off
+    /// concretely what real condition it's testing rather than
+    /// guessing. `#[ignore]`d for the same reason as its siblings --
+    /// run explicitly with `cargo test --release --bin portamax-sim
+    /// find_what_the_neogeo_bios_post_boot_loop_is_stuck_on -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn find_what_the_neogeo_bios_post_boot_loop_is_stuck_on_if_a_cartridge_is_present() {
+        use m68k::AddressBus;
+
+        let mut app = new_app();
+        app.console = Console::NeoGeo;
+        app.rescan_roms();
+        if app.roms.is_empty() {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        }
+        app.load_selected_rom();
+        assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+        // The sibling frame-dump test already showed this PC frozen
+        // from frame 0 onward, so there's no need for its long real-
+        // time-paced warmup here -- a handful of deterministic frames
+        // (vblank + step budget + step_sound, matching `tick()`'s own
+        // per-frame cadence exactly) reaches the identical steady
+        // state.
+        let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+            panic!("deck must be Neo Geo after loading a real cartridge: {}", app.status);
+        };
+        for _ in 0..10 {
+            machine.vblank();
+            for _ in 0..50_000u32 {
+                if !machine.step() {
+                    break;
+                }
+            }
+            for _ in 0..10_000u32 {
+                machine.step_sound();
+            }
+        }
+
+        let sr = machine.cpu.get_sr();
+        eprintln!("stuck at pc=0x{:06X}, sr=0x{sr:04X} (interrupt mask={})", machine.cpu.pc, (sr >> 8) & 7);
+        for r in 0..8 {
+            eprintln!("  d{r}=0x{:08X}  a{r}=0x{:08X}", machine.cpu.d(r), machine.cpu.a(r));
+        }
+        eprintln!("opcode words around pc:");
+        for off in [-8i32, -6, -4, -2, 0, 2, 4, 6, 8, 10, 12] {
+            let addr = (machine.cpu.pc as i64 + off as i64) as u32;
+            eprintln!("  [{off:+}] 0x{addr:06X}: {:04X}", machine.bus.read_word(addr));
+        }
+
+        // A true, consecutive, run-length-collapsed single-step trace
+        // (every instruction decoded by `decode_one` before it
+        // executes, not periodic sampling) over several thousand
+        // steps -- enough to see the real loop shape and, for the
+        // instruction right before each distinct address repeats, the
+        // actual register/flag state the branch decision was made on.
+        let mut last_pc = u32::MAX;
+        let mut transitions = 0usize;
+        for i in 0..20_000u32 {
+            let pc = machine.cpu.pc;
+            if pc != last_pc {
+                if transitions < 400 {
+                    let (text, _len) = decode_one(&mut machine.bus, pc);
+                    eprintln!("  step {i} 0x{pc:06X}: {text}   d0=0x{:08X} d1=0x{:08X} d7=0x{:08X} a6=0x{:08X}", machine.cpu.d(0), machine.cpu.d(1), machine.cpu.d(7), machine.cpu.a(6));
+                }
+                transitions += 1;
+                last_pc = pc;
+            }
+            if !machine.step() {
+                eprintln!("  CPU halted/faulted at step {i}, pc=0x{pc:06X}");
+                break;
+            }
+        }
+        eprintln!("=== {transitions} distinct-pc transitions over 20,000 steps, final pc=0x{:06X} ===", machine.cpu.pc);
+    }
+
     /// Direct causal test of the leading hypothesis coming out of
     /// `disassemble_neogeo_stuck_loop_if_a_cartridge_is_present`'s own
     /// trace: the main loop's every-frame idle wait (`CMPI.W
