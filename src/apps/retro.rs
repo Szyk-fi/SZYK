@@ -2796,29 +2796,51 @@ mod tests {
             }
         }
 
+        let sr_before = machine.cpu.get_sr();
+        let watched = 0x0010FE8Cu32;
+        {
+            use m68k::AddressBus;
+            eprintln!(
+                "before the recorded frame's vblank: sr=0x{sr_before:04X} (interrupt mask={}), $10FE8C=0x{:02X}",
+                (sr_before >> 8) & 7,
+                machine.bus.read_byte(watched)
+            );
+        }
         machine.vblank();
         let mut last_pc = u32::MAX;
         let mut printed = 0usize;
-        for _ in 0..50_000u32 {
+        let mut left_trivial_loop = false;
+        for i in 0..50_000u32 {
             let pc = machine.cpu.pc;
             if pc != last_pc {
-                if printed < 1500 {
+                if pc != 0xC18714 && pc != 0xC1871A {
+                    left_trivial_loop = true;
+                }
+                if printed < 60 {
                     use m68k::AddressBus;
                     let raw = machine.bus.read_word(pc);
                     let (text, _len) = decode_one(&mut machine.bus, pc);
-                    eprintln!("  0x{pc:06X} [{raw:04X}]: {text}");
+                    eprintln!("  step {i} 0x{pc:06X} [{raw:04X}]: {text}");
                     printed += 1;
-                } else if printed == 1500 {
-                    eprintln!("  ... (truncated after 1500 distinct transitions)");
+                } else if printed == 60 {
+                    eprintln!("  ... (truncated after 60 transitions; still watching silently)");
                     printed += 1;
                 }
                 last_pc = pc;
             }
             if !machine.step() {
-                eprintln!("  CPU halted/faulted");
+                eprintln!("  CPU halted/faulted at step {i}");
                 break;
             }
         }
+        use m68k::AddressBus;
+        eprintln!(
+            "after the full recorded frame: pc=0x{:06X} sr=0x{:04X} (interrupt mask={}) $10FE8C=0x{:02X} ever_left_trivial_loop={left_trivial_loop}",
+            machine.cpu.pc,
+            machine.cpu.get_sr(),
+            (machine.cpu.get_sr() >> 8) & 7,
+            machine.bus.read_byte(watched)
+        );
     }
 
     /// No real arcade ROM sets ship with this repo (same legal reasons
