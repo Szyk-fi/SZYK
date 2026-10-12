@@ -3353,6 +3353,225 @@ mod tests {
         }
     }
 
+    /// Investigates whether the Z80 sound CPU is genuinely stuck during
+    /// a real cold boot, or just an ordinary idle-wait that *periodic*
+    /// checkpoint sampling (what every earlier diagnostic here used for
+    /// the Z80 so far) can mistake for "stuck" -- the exact false alarm
+    /// this investigation already hit twice with the 68000's own
+    /// vblank-wait primitive before a true sequential trace cleared it
+    /// up. This test does the Z80 equivalent of that sequential trace:
+    /// `machine.sound_cpu.pc` is read before *every single*
+    /// `step_sound()` call, never sampled at widely-spaced checkpoints.
+    ///
+    /// Pass 1, at the same confirmed-stuck 68k steady state the other
+    /// diagnostics reach (`boot_to_steady_state` below is byte-for-byte
+    /// the same helper
+    /// `poke_suspected_bios_sentinel_and_check_for_real_boot_progress_
+    /// if_a_cartridge_is_present` already uses), steps the Z80 alone for
+    /// one real frame's worth of budget (10,000 `step_sound` calls,
+    /// matching `tick`'s own `Deck::NeoGeo` arm) and records every
+    /// distinct PC in true first-visit order plus a visit count per
+    /// distinct PC -- enough to tell a genuine 1-3 instruction stall
+    /// (one or two addresses eating nearly the whole budget) apart from
+    /// real, varied driver code by construction, not by sampling gaps.
+    /// It also dumps the real M1 ROM bytes at each of the busiest PCs
+    /// (via `SoundBus`'s own `Z80_io::read_byte`, which is bank-aware)
+    /// so the actual opcode can be hand-decoded against the real Z80
+    /// opcode table instead of guessed at.
+    ///
+    /// Pass 2 runs 60 more full real machine frames (`vblank()` + the
+    /// same 50,000-instruction 68k budget + 10,000 `step_sound` calls
+    /// each, exactly `tick`'s own per-frame shape) and tracks, with the
+    /// same per-call resolution: whether the Z80's cumulative PC
+    /// footprint ever grows past what pass 1 already found; the real
+    /// command byte sitting at port $00 (`SoundLatch::command`, what
+    /// the 68k last wrote to `REG_SOUND`) before/after each frame, to
+    /// see whether the 68k is re-sending a command every frame or the
+    /// Z80 is just replaying a stale one from early boot; whether PC
+    /// ever reaches the Z80's real hardware NMI vector ($0066); whether
+    /// any newly-visited address decodes to a real `OUT ($0C),A`
+    /// instruction (`SoundBus::port_out`'s only path to changing
+    /// `SoundLatch::reply`, found by scanning bytes at addresses PC
+    /// actually visited, not guessed from static ROM); and the exact
+    /// `step_sound` call (frame + step index) where `REG_SOUND`'s reply
+    /// byte, if ever, first leaves `SoundLatch::new`'s untouched `0x00`
+    /// default -- checked after *every* call across all 610,000 of
+    /// them, not just once per frame, so a reply that flips and then
+    /// gets overwritten again before the next frame boundary can't be
+    /// missed.
+    ///
+    /// `#[ignore]`d for the same reason as its siblings -- run
+    /// explicitly with `cargo test --release --bin portamax-sim
+    /// trace_neogeo_sound_cpu_sequentially_if_a_cartridge_is_present --
+    /// --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn trace_neogeo_sound_cpu_sequentially_if_a_cartridge_is_present() {
+        use m68k::AddressBus;
+        use z80::Z80_io;
+
+        /// Identical warmup to `poke_suspected_bios_sentinel_and_check_
+        /// for_real_boot_progress_if_a_cartridge_is_present`'s own
+        /// `boot_to_steady_state`: 150 real-time-paced frames with a
+        /// Start press every 60, then 3 more deterministic frames to
+        /// clear sleep-jitter phase in the inner vblank-wait counter.
+        fn boot_to_steady_state() -> Option<RetroApp> {
+            let mut app = new_app();
+            app.console = Console::NeoGeo;
+            app.rescan_roms();
+            if app.roms.is_empty() {
+                return None;
+            }
+            app.load_selected_rom();
+            assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+            for frame in 0..150 {
+                std::thread::sleep(std::time::Duration::from_millis(17));
+                let press_start = frame % 60 == 0;
+                app.tick(&Input { grid: std::array::from_fn(|pad| pad == 7 && press_start), ..Default::default() });
+                if app.deck.is_none() {
+                    return Some(app); // caller reports the early stop
+                }
+            }
+            if let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() {
+                for _ in 0..3 {
+                    machine.vblank();
+                    for _ in 0..50_000u32 {
+                        if !machine.step() {
+                            break;
+                        }
+                    }
+                    for _ in 0..10_000u32 {
+                        machine.step_sound();
+                    }
+                }
+            }
+            Some(app)
+        }
+
+        let Some(mut app) = boot_to_steady_state() else {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        };
+        let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+            eprintln!("deck stopped before the trace could run: {}", app.status);
+            return;
+        };
+
+        eprintln!("=== pass 1: true sequential per-call trace of the Z80 alone, one real frame's budget (10,000 step_sound calls) ===");
+        let reply_before_pass1 = machine.bus.read_byte(0x320000);
+        let mut seen: std::collections::HashSet<u16> = std::collections::HashSet::new();
+        let mut first_visits: Vec<u16> = Vec::new();
+        let mut counts: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
+        const PASS1_STEPS: u32 = 10_000;
+        for _ in 0..PASS1_STEPS {
+            let pc = machine.sound_cpu.pc;
+            if seen.insert(pc) && first_visits.len() < 64 {
+                first_visits.push(pc);
+            }
+            *counts.entry(pc).or_insert(0) += 1;
+            machine.step_sound();
+        }
+        let reply_after_pass1 = machine.bus.read_byte(0x320000);
+        eprintln!("distinct z80 pcs visited across {PASS1_STEPS} step_sound calls: {}", seen.len());
+        eprintln!("REG_SOUND reply (0x320000): before=0x{reply_before_pass1:02X} after=0x{reply_after_pass1:02X}");
+        eprintln!("first {} distinct pcs, in true visit order:", first_visits.len());
+        for chunk in first_visits.chunks(8) {
+            let line: Vec<String> = chunk.iter().map(|pc| format!("0x{pc:04X}")).collect();
+            eprintln!("    {}", line.join(" "));
+        }
+        let mut by_count: Vec<(u16, u32)> = counts.into_iter().collect();
+        by_count.sort_by(|a, b| b.1.cmp(&a.1));
+        eprintln!("top pcs by visit count (of {PASS1_STEPS} steps):");
+        for (pc, count) in by_count.iter().take(10) {
+            let bytes: Vec<u8> = (0u16..6).map(|i| machine.sound_bus.read_byte(pc.wrapping_add(i))).collect();
+            eprintln!(
+                "  pc=0x{pc:04X} visited {count} times -- bytes at pc: {}",
+                bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
+            );
+        }
+
+        eprintln!("the real bytes at the Z80's own hardware NMI vector (0x0066), per the z80 crate's own `call(z, io, 0x66)` on a pulsed NMI:");
+        let nmi_vector_bytes: Vec<u8> = (0u16..16).map(|i| machine.sound_bus.read_byte(0x0066u16.wrapping_add(i))).collect();
+        eprintln!("  {}", nmi_vector_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "));
+
+        eprintln!("=== pass 2: 60 more full real machine frames, tracking the Z80's cumulative footprint and REG_SOUND reply at full per-call resolution ===");
+        let mut all_seen = seen.clone();
+        let mut reply_left_zero_at: Option<(u32, u32, u8)> = None;
+        let mut visited_nmi_vector_at: Option<u32> = None;
+        // Did the real executed path ever run an instruction that
+        // writes port $0C (the only way `SoundLatch::reply` can change,
+        // per `SoundBus`'s own `Z80_io::port_out`) -- found by scanning
+        // the *actually-visited* addresses for the real Z80 opcode `D3
+        // 0C` (`OUT ($0C),A`), not by guessing from static ROM bytes
+        // that might never execute. This is the only way to tell "the
+        // driver never reaches its reply code" apart from "the driver
+        // reaches it and writes a real, intentional zero" -- both look
+        // identical from `REG_SOUND`'s reply value alone.
+        let mut out_0c_found_at: Option<u16> = None;
+        for frame in 0..60u32 {
+            // `port_in(0x00)` is `SoundLatch::command`'s raw value as
+            // the Z80 itself would read it -- the real command the 68k
+            // last wrote to REG_SOUND, independent of whether the Z80
+            // ever echoes a reply back. Comparing this before/after
+            // each frame says whether the 68k is sending a *new*
+            // command every frame (a real, repeating keepalive/tick)
+            // or the same stale byte from early boot.
+            let command_before = machine.sound_bus.port_in(0x00);
+            let mut new_pcs_this_frame: Vec<u16> = Vec::new();
+            machine.vblank();
+            for _ in 0..50_000u32 {
+                if !machine.step() {
+                    break;
+                }
+            }
+            for step in 0..10_000u32 {
+                let pc = machine.sound_cpu.pc;
+                if all_seen.insert(pc) {
+                    new_pcs_this_frame.push(pc);
+                }
+                if pc == 0x0066 && visited_nmi_vector_at.is_none() {
+                    visited_nmi_vector_at = Some(frame);
+                }
+                machine.step_sound();
+                if reply_left_zero_at.is_none() {
+                    let reply = machine.bus.read_byte(0x320000);
+                    if reply != 0 {
+                        reply_left_zero_at = Some((frame, step, reply));
+                    }
+                }
+            }
+            if out_0c_found_at.is_none() {
+                for &pc in &new_pcs_this_frame {
+                    if machine.sound_bus.read_byte(pc) == 0xD3 && machine.sound_bus.read_byte(pc.wrapping_add(1)) == 0x0C {
+                        out_0c_found_at = Some(pc);
+                        break;
+                    }
+                }
+            }
+            let new_this_frame = new_pcs_this_frame.len();
+            let command_after = machine.sound_bus.port_in(0x00);
+            if frame < 5 || frame % 10 == 0 || frame == 59 || new_this_frame > 0 || command_after != command_before {
+                eprintln!(
+                    "  frame {frame:2}: reg_sound_reply=0x{:02X} z80_pc=0x{:04X} new_z80_pcs_this_frame={new_this_frame} cumulative_distinct_z80_pcs={} command_latch_before=0x{command_before:02X} after=0x{command_after:02X}",
+                    machine.bus.read_byte(0x320000),
+                    machine.sound_cpu.pc,
+                    all_seen.len()
+                );
+            }
+        }
+        eprintln!("z80 pc ever visited the real NMI vector (0x0066) during pass 2: {visited_nmi_vector_at:?}");
+        eprintln!("a real `OUT ($0C),A` instruction (the only real way to change REG_SOUND's reply) was actually executed at: {out_0c_found_at:?}");
+
+        eprintln!("=== summary ===");
+        eprintln!("cumulative distinct z80 pcs across pass 1 + 60 more real frames (610,000 step_sound calls total): {}", all_seen.len());
+        match reply_left_zero_at {
+            Some((frame, step, value)) => eprintln!("REG_SOUND reply first left 0x00 during pass 2, frame {frame} step {step}: became 0x{value:02X}"),
+            None => eprintln!("REG_SOUND reply never left its SoundLatch::new() default of 0x00 across the entire run"),
+        }
+        eprintln!("final REG_SOUND reply (0x320000) = 0x{:02X}, final z80 pc = 0x{:04X}", machine.bus.read_byte(0x320000), machine.sound_cpu.pc);
+    }
+
     /// No real arcade ROM sets ship with this repo (same legal reasons
     /// as NES/SNES), but `phosphor_machines`' own `MachineEntry::
     /// create_bare` builds a real, fully wired machine with zero-filled
