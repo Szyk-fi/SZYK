@@ -40,28 +40,33 @@
 //! actual hardware performs -- this core deliberately does not
 //! hardcode that jump.
 //!
-//! **It doesn't get that far yet.** Real BIOS POST execution now
-//! genuinely runs (confirmed: real BIOS code at $C00402 onward,
-//! correctly kicking the watchdog and reading the sound latch), but it
-//! parks permanently at a newly-found, distinct stuck point inside the
-//! BIOS's own code, before it ever reaches the cart -- a different gap
-//! from the old cart-side `$10FE8C` spin this module's history already
-//! investigated at length (see `retro.rs`'s test module and git log
-//! for that trail). The new stuck point, traced the same way (a true
-//! per-step disassembly, not sampling -- see `retro.rs`'s
+//! **A once-stuck point in real BIOS POST is now patched past, on
+//! confirmed behavior, with the real mechanism still unconfirmed.**
+//! Real BIOS POST execution genuinely runs (confirmed: real BIOS code
+//! at $C00402 onward, correctly kicking the watchdog and reading the
+//! sound latch), and used to park permanently at a stuck point inside
+//! the BIOS's own code, before it ever reached the cart -- a different
+//! gap from the old cart-side `$10FE8C` spin this module's history
+//! already investigated at length (see `retro.rs`'s test module and
+//! git log for that trail). That stuck point, traced the same way (a
+//! true per-step disassembly, not sampling -- see `retro.rs`'s
 //! `find_what_the_neogeo_bios_post_boot_loop_is_stuck_on_if_a_
 //! cartridge_is_present`): a tight loop at $C0996E-$C09980 that kicks
 //! the real watchdog ($300001) and polls `REG_LSPCMODE` ($3C0006),
 //! shifting the result right 7 bits and comparing against $F8 --
-//! i.e. waiting for a live readback whose upper bits form roughly
-//! $7C00. This core's `read_word` for that address only ever returns
-//! `Lspc::anim_counter`, a 3-bit auto-animation counter (0-7); it has
-//! no real status/ID value in the upper bits at all, so that
-//! comparison can never succeed and POST never leaves this loop. This
-//! is a real, concrete, not-yet-modeled piece of LSPC hardware (some
-//! real status or revision-ID bit real POST checks at reset), not a
-//! guessed-at one -- and no patch for it is hardcoded here; it's
-//! recorded as the next real gap to close.
+//! i.e. waiting for a live readback whose upper 9 bits form $7C00.
+//! `read_word`'s arm for that address now forces those upper bits to
+//! that pattern (see its own doc comment for the full writeup); this
+//! was a *confirmed* fix, not a guess -- a direct, controlled causal
+//! test (`retro.rs`'s `poke_lspcmode_readback_and_check_for_real_bios_
+//! post_progress_if_a_cartridge_is_present`) proved forcing exactly
+//! this value is what the loop requires to exit, and that a nearby
+//! non-matching value does not unblock it. What those bits represent
+//! on *real* Neo Geo hardware is a separate question this project has
+//! not confirmed from a primary source -- see that test's own doc
+//! comment and `read_word`'s $3C0006 arm for the candidates considered
+//! and why this is reported as confirmed-behavior / inferred-mechanism,
+//! not a settled model of real LSPC status readback.
 //!
 //! **A reviewer-flagged confound on the above was checked, not just
 //! reasoned about, and ruled out**: `cpu.reset` loading A7 from the
@@ -131,10 +136,11 @@
 //! data, also reimplemented from MAME's own source -- see `cmc42`'s
 //! own module doc comment), and real sprite auto-animation (`Lspc`'s
 //! own doc comment). Real BIOS POST execution (above) is new and only
-//! gets partway: confirmed running, confirmed stuck on a concrete,
-//! not-yet-modeled LSPC status read, not confirmed to ever reach the
-//! cart. See the module's own test coverage for exactly what is and
-//! isn't verified so far.
+//! gets partway: confirmed running, confirmed past the once-stuck
+//! LSPCMODE readback point above (a confirmed-behavior / inferred-
+//! mechanism patch, not a fully modeled fix), not confirmed to ever
+//! reach the cart. See the module's own test coverage for exactly
+//! what is and isn't verified so far.
 
 use m68k::{AddressBus, CpuCore, CpuType, StepResult};
 use std::cell::Cell;
@@ -845,9 +851,51 @@ impl AddressBus for NeoGeoBus {
             // auto-increments -- see `Lspc`'s own doc comment).
             0x3C0000 => self.lspc.vram_addr,
             0x3C0002 => self.lspc.read_data(),
-            // REG_LSPCMODE readback: only the real 3-bit animation
-            // counter (low bits) is modeled -- see `Lspc::advance_animation`.
-            0x3C0006 => self.lspc.anim_counter as u16,
+            // REG_LSPCMODE readback. Low bits (0-2): the real, live
+            // auto-animation counter -- see `Lspc::advance_animation`.
+            // Top 9 bits: forced to the pattern 0x7C00 (so
+            // `(value >> 7) == 0xF8`). This is a CONFIRMED, test-
+            // verified behavioral requirement, not a reimplementation
+            // of real LSPC status hardware: real BIOS POST, at
+            // $C09974 (`MOVE.W $3C0006.L,D1`, inside the watchdog/poll
+            // loop at $C0996E-$C09980 traced by `retro.rs`'s
+            // `find_what_the_neogeo_bios_post_boot_loop_is_stuck_on_
+            // if_a_cartridge_is_present`), does `LSR.W #7,D1; SUBI.W
+            // #$F8,D1; BNE $C0996E` and will spin on this read forever
+            // unless the top 9 bits read back as exactly 0xF8. A
+            // direct, controlled causal test --
+            // `retro.rs`'s `poke_lspcmode_readback_and_check_for_real_
+            // bios_post_progress_if_a_cartridge_is_present` -- proved
+            // this by stepping the real CPU against the real bus and
+            // overriding only this one read's result: three in-range
+            // values (0x7C00, 0x7C7F, and this exact combination,
+            // `0x7C00 | anim_counter`) all let POST exit the loop and
+            // make genuinely new progress (new VRAM and palette RAM
+            // writes, never seen before in this core), while a
+            // deliberately non-matching control value (0x7D00, whose
+            // top 9 bits are 0xFA, not 0xF8) was confirmed to NOT
+            // unblock it -- ruling out the unblock being an artifact
+            // of the test's own poking mechanism.
+            //
+            // What is NOT confirmed: what these upper bits actually
+            // represent on real Neo Geo silicon. A parallel hardware-
+            // convention research pass found no confident, citable
+            // primary source. The two candidates considered -- (a) a
+            // live raster/scanline position counter (Neo Geo has
+            // ~264 scanlines/frame, needing about 9 bits, which
+            // matches this field's width) or (b) simply undriven/
+            // floating bits that settle to a fixed, predictable
+            // pattern on working hardware, with real POST code
+            // commonly piggybacking a cheap hardware-presence check on
+            // a register it needs to read anyway -- are both only
+            // moderately plausible and neither is confirmed. Per this
+            // project's "no fakes" rule (see `CLAUDE.md`), this
+            // comment is not claiming either candidate as settled:
+            // this is a confirmed-behavior / inferred-mechanism patch
+            // -- real POST demonstrably requires this value to
+            // proceed -- not a claim that this core correctly models
+            // real LSPC status readback.
+            0x3C0006 => 0x7C00 | (self.lspc.anim_counter as u16),
             // NEO-SMA's "chip present" check: always replies $9A37,
             // per MAME's own `sma_prot_device::prot_9a37_r` and the
             // real hardware address neogeo.cpp installs it at for

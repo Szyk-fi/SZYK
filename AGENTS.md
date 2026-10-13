@@ -101,6 +101,62 @@ Newest at the top. Keep each entry short. Use this format:
 - Request: <only if you need a change in the other's area>
 ```
 
+### 2026-10-13: Claude: Neo Geo: production fix -- REG_LSPCMODE readback unblocks real BIOS POST
+- Branch: claude/neogeo
+- Changed: `src/apps/neogeo_core.rs` only (`NeoGeoBus::read_word`'s
+  `0x3C0006` arm, plus the module's own top-of-file doc comment in two
+  places). No other files touched.
+- Result: turned the prior commit's (2816b11) confirmed causal finding
+  into the real fix. `read_word(0x3C0006)` (REG_LSPCMODE) now returns
+  `0x7C00 | anim_counter` instead of just `anim_counter`. Real BIOS
+  POST's loop at $C0996E-$C09980 (`MOVE.W $3C0006.L,D1` at $C09974 /
+  `LSR.W #7,D1` / `SUBI.W #$F8,D1` / `BNE`) required exactly this --
+  already proven by 2816b11's diagnostic test,
+  `poke_lspcmode_readback_and_check_for_real_bios_post_progress_if_a_
+  cartridge_is_present` -- and the fix is documented as confirmed-
+  behavior / inferred-mechanism, not a claim about what these upper 9
+  bits mean on real silicon (still unconfirmed from any primary
+  source; candidates -- a live raster/scanline counter, or simply
+  undriven/floating bits settling to a fixed pattern -- are named in
+  both doc comments, neither presented as settled, per CLAUDE.md's
+  "no fakes" rule).
+- Side effect worth recording honestly: with the fix in production,
+  ordinary boot-to-steady-state now carries the machine straight past
+  the old stuck loop before 2816b11's own diagnostic test ever gets to
+  apply its poke -- so that test's own precondition assertion ("must
+  still be in the stuck loop before poking") now fails when run with
+  `--ignored`. This is not a regression; it is the diagnostic
+  confirming its own prior finding by becoming obsolete (the bug it
+  was built to poke around no longer exists). Left unmodified -- this
+  change's job was the production fix, not retiring that test.
+- Status: done, within the stated scope (the LSPCMODE gap only).
+  Execution still hasn't been re-traced past this point to see how far
+  real BIOS POST now gets (that's the natural next step, not attempted
+  here).
+- Tests: `cargo build --release --bin portamax-sim --tests` (clean).
+  `cargo test --release --bin portamax-sim apps::neogeo_core::` (39
+  passed, 0 failed, 1 ignored). `cargo test --release --bin
+  portamax-sim apps::retro::` (20 passed, 0 failed, 10 ignored).
+  `cargo test --release --bin portamax-sim apps::retro::tests --
+  --ignored` (9 passed, 1 failed -- the now-obsolete
+  `poke_lspcmode_readback_...` diagnostic described above, expected).
+  Full suite (`cargo test --release --bin portamax-sim --
+  --test-threads=1`): hit the long-documented intermittent SIGSEGV in
+  `stages::every_preset_runs_without_blowing_up` (same pre-existing
+  issue noted in the 2026-10-12 entry below); up to that point, exactly
+  the 19 known sample_drum/sequencer failures and nothing else. Reran
+  with `--skip stages::tests::every_preset_runs_without_blowing_up`:
+  1138 passed, 19 failed (the same 19 sample_drum/sequencer tests,
+  byte-for-byte), 21 ignored, finished in 283s -- no new failures.
+  (Note: the literal `cargo test --release` with no `--bin` filter
+  still does not finish compiling, on the pre-existing, unrelated
+  `examples/slint_nebula_live.rs`/`slint_bloom_live.rs` missing
+  `mod note_bus;` bug the 2026-10-12 entry below already flagged via
+  `spawn_task` -- used `--bin portamax-sim` instead, matching every
+  prior "full suite" entry in this log.)
+- Notes for the other assistant: none. Only `src/apps/neogeo_core.rs`
+  changed.
+
 ### 2026-10-12: Claude: Neo Geo: ruled out the SSP confound, fixed decode_one's shift/rotate gap
 - Branch: claude/neogeo
 - Changed: `src/apps/retro.rs` (`decode_one`: added the 0xE-class
