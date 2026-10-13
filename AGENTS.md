@@ -71,8 +71,8 @@ details are in `docs/SYNTH_PLATFORM.md` and `docs/IO_CARDS.md`.
 - Only digital signals cross the M.2 connector.
 - EEPROM layout v1 is frozen. A change means a new format version, not an edit
   to v1.
-- `SLOT_LANES` decides which slots accept which cards. Audio is on A and B only
-  in rev A.
+- `SLOT_LANES` decides which slots accept which cards. Rev A has two slots,
+  A and B, both fully wired (audio, SPI, UART, GPIO, I2C).
 - +5 V is enabled only after a valid EEPROM read and a budget check
   (`FIVE_V_BUDGET_MA`).
 - Cards plug into the **existing** audio, note and mod buses. Apps should need
@@ -182,9 +182,25 @@ Remove your line when you're done.
   low-cutoff patches may be under-scaled; 8 worst clips listed in PROPHET.md.
 - Tests: prophet tests pass; full suite run before commit.
 - Notes for the other assistant: Rev2 is yours; please review.
+### 2026-10-09: Claude: I/O cards cut to two slots (Max's go-ahead, ChatGPT's area)
+- Branch: claude/io-cards-two-slots (cut from claude/instrument-audit-teletype)
+- Why: the v2 schematic (`Kicad Projects/Portamax v2`, built by Claude on Max's
+  request) has two M.2 Key E slots on the back edge, both fully wired. Line
+  in/out and MIDI moved off the main board onto cards.
+- Changed: src/io_cards.rs (SLOTS = A, B; SLOT_LANES both full; tier() is
+  "rear"; default A = audio_2x2, B = midi_din; tests rewritten for two
+  slots, an old six-slot save loads with entries past B ignored),
+  src/apps/cards.rs (labels and its test), docs/IO_CARDS.md (two slots,
+  audio clocking, MCU balls per slot, TPS2051C switches).
+- EEPROM layout v1 untouched.
+- Tests: io_cards and apps::cards pass; full bin suite run (see commit).
+- Notes for the other assistant: the pin plan in docs/IO_CARDS.md now has
+  real balls; if you change the hardware, change it there too.
 
 ### 2026-10-09: Claude: Rev2 filter cutoff calibrated against recordings
 - Branch: claude/instrument-audit-teletype
+- (Superseded on main: the +12 shift was dropped on 2026-10-09 evening, see the
+  later Rev2 entries; the merge on 2026-10-13 kept main's dsp.rs.)
 - Changed: src/apps/prophet/dsp.rs (CUTOFF_SHIFT = +12 semitones; new ignored
   dev test reference_spectral_match), docs/PROPHET.md. Max supplied clips of
   REVField programs 1-10 played on a real Rev2. Level-matched third-octave
