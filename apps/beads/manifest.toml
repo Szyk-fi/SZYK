@@ -1,9 +1,19 @@
 id = "beads"
 name = "Beads"
 category = "effect"
-description = "A granular texture processor on a live capture buffer."
+description = "Mutable Instruments Beads, the module's own code: granular textures, delay, and a wavetable synth with nothing patched."
 audio_outputs = ["Beads"]
 # Modulation inputs this app registers (checked by registry.rs's tests).
 mod_inputs = [
     "Mixer: Beads Level",
+    "Beads: Time",
+    "Beads: Size",
+    "Beads: Shape",
+    "Beads: Pitch",
+    "Beads: Density",
+    "Beads: Feedback",
+    "Beads: Dry/Wet",
+    "Beads: Reverb",
+    "Beads: Seed Gate",
+    "Beads: Freeze Gate",
 ]

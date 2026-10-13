@@ -1,0 +1,12 @@
+# Sources for beads_bridge.cc, relative to vendor/eurorack -- the same list
+# as beads/test/makefile's CC_FILES, minus its test harness. gain_control.cc
+# is compiled inside beads_bridge.cc itself (see its top comment).
+beads/dsp/processor.cc
+beads/dsp/synth.cc
+beads/dsp/mu_law.cc
+beads/dsp/delay_clock.cc
+beads/dsp/delay_controller.cc
+beads/dsp/trigger_generator.cc
+beads/resources.cc
+stmlib/utils/random.cc
+stmlib/dsp/units.cc

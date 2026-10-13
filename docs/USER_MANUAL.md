@@ -484,7 +484,7 @@ row) rather than generating their own signal.
 | App | What it does |
 |---|---|
 | **Warps** | Mutable Instruments Warps clone: cross-modulates two live app outputs (carrier/modulator). |
-| **Beads** | Mutable Instruments Beads clone: granular texture synth built on a live circular capture buffer. |
+| **Beads** | The real Mutable Instruments Beads (the module's own code, open-sourced Oct 2026): granular textures, "Beads as a delay", four recording media, and its wavetable synth when nothing is patched. In L / In R pick sources (one = mono, twice the buffer); the pads are SEED (tap, or hold 1.5 s to free-run). |
 | **Clouds** | The real Mutable Instruments Clouds granular processor (ported DSP). |
 | **Nautilus** | Qu-Bit Nautilus-inspired 8-line codependent stereo delay network. |
 | **Black Hole** | Erica Synths Black Hole-inspired 24-algorithm glitch/texture multi-effect. |

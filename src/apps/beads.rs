@@ -1,42 +1,42 @@
-//! A clone of Qu-Bit^H^H^H^HMutable Instruments Beads: a granular
-//! texture synthesizer built around a live circular capture buffer,
-//! not a sample player -- it taps another app's output (see
-//! audio_bus.rs, the same technique Clouds already uses) into a
-//! rolling buffer and scatters overlapping grains back out of it.
-//! Feature set follows the real module's manual (mutable-instruments.
-//! net/modules/beads/manual) as closely as this sim's architecture
-//! allows:
+//! Mutable Instruments Beads, running the module's own firmware DSP.
 //!
-//! - 4 recording-quality modes (bit depth/rate/buffer length), always
-//!   applied to the captured/wet signal only -- the dry path stays
-//!   full quality, same as the real module.
-//! - FREEZE: stops writing new audio into the capture buffer.
-//! - 3 grain-generation modes -- Latched (continuous, DENSITY sets
-//!   rate), Gated (grains only while a pad is held), Clocked (pad
-//!   presses act as clock ticks, DENSITY becomes a probability/
-//!   divider) -- standing in for the real SEED button + SEED CV/gate
-//!   input, which this sim has no generic per-app gate-patching for.
-//! - TIME/SIZE/SHAPE/PITCH grain parameters, each with its own
-//!   randomization amount (standing in for the real module's
-//!   "attenurandomizers", which blend external CV against internal
-//!   randomization -- this sim only has the randomization half).
-//! - Feedback, Dry/Wet, and a small Reverb, matching the real
-//!   module's IN -> grains -> (feedback loop) -> reverb -> dry/wet ->
-//!   OUT signal flow.
-//! - "Beads as a delay": turning SIZE fully clockwise collapses the
-//!   grain cloud into a single continuously-retriggering tap, using
-//!   TIME as the delay length -- a simplified stand-in for the real
-//!   module's dual DENSITY/TIME delay-time system (which needs an
-//!   external clock/tap-tempo input this sim doesn't generically
-//!   have), but a real, working delay/echo rather than a fake one.
+//! Emilie Gillet published the Beads source under the MIT licence on
+//! 12 Oct 2026 (pichenettes/eurorack, commit d8f4739). Everything that
+//! shapes the sound here is that code, unmodified, compiled by build.rs
+//! through vendor/bridge/beads_bridge.cc: the granular player and its 32
+//! grains, the delay controller ("Beads as a delay"), the four recording
+//! media and the sample rates they run at, wow and flutter, the reverb, the
+//! limiters, the input AGC, the attenurandomizer and PITCH knob laws, and
+//! the wavetable synth Beads falls back to after 10 seconds with nothing
+//! patched. See the bridge's own top comment for the few things it had to
+//! provide itself (the codec's sample-rate conversion, mainly).
 //!
-//! Deliberately not implemented: the real module's "granular
-//! wavetable synth" auto-fallback (after 10s with nothing patched
-//! into either input, Beads granularizes internal Plaits wavetables
-//! instead) -- that needs a direct coupling into Plaits' wavetable
-//! data this sim doesn't have a path for yet.
+//! How the panel maps onto Portamax:
+//!
+//! - **IN L / IN R** are two Source rows. With only one picked, the other
+//!   is normalled to it and Beads records in mono, with twice the buffer,
+//!   exactly as on the module. With neither, the synth takes over after the
+//!   module's 10 seconds.
+//! - **The 12 knobs** are raw pot positions, run through the firmware's own
+//!   pot laws (so PITCH snaps to 0/1/3/4/7/12/24 semitones and the
+//!   attenurandomizers have their centre detent).
+//! - **QUALITY** (the module's media button) cycles the four media, **FREEZE**
+//!   is a toggle, and **the pads are the SEED button**: tap for a grain or a
+//!   manual tempo, hold 1.5 s to lock it back into free-running mode, the
+//!   firmware's own rules (ui.cc).
+//! - **Modulation** adds onto the knobs, the way it does across this sim, so
+//!   the attenurandomizers behave as on a module with no CV patched (their
+//!   internal-randomness half). DENSITY's modulation enters as its CV.
+//!   `Beads: Seed Gate` and `Beads: Freeze Gate` are the two gate inputs; the
+//!   seed input counts as patched while it has gone high in the last 4 s.
+//! - The output is true stereo (grains are panned); the audio bus gets the
+//!   mono sum, like Elements.
+//!
+//! Not here: the ASSIGN button's CV routing (the modulation bus replaces
+//! it), the manual-gain chord on the hardware (it's an Input gain row), the
+//! gate output mode, calibration and the buffer backup to flash.
 
-use crate::app::play_kit::{self as kit, KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
+use crate::app::play_kit::{KitConfig, Knob, Layer, PlayHost, PlayKit, Routes, Throw};
 use crate::app::{App, Input};
 use crate::audio::AudioProcessor;
 use crate::audio_bus::AudioBus;
@@ -44,111 +44,408 @@ use crate::display::{FrameBuffer, HEIGHT, WIDTH};
 use crate::mixer_bus::MixerBus;
 use crate::modbus::ModBus;
 use crate::paramlist::ParamList;
+use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12, SPLEEN_8X16};
 use crate::util::{accelerate, AtomicF32};
-use crate::spleen_fonts::{SPLEEN_16X32, SPLEEN_6X12};
-use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{Arc as ArcShape, Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::text::Text;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::ffi::c_void;
+use std::os::raw::c_int;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-const MAX_CAPTURE_SECONDS: f32 = 32.0;
-const MAX_GRAINS: usize = 8;
-const MIN_GRAIN_MS: f32 = 30.0;
-const MAX_GRAIN_MS: f32 = 4000.0;
-/// SIZE at or above this (fraction of full CW rotation) collapses the
-/// grain cloud into a single continuously-retriggering delay tap --
-/// see module doc comment, "Beads as a delay".
-const DELAY_MODE_THRESHOLD: f32 = 0.98;
+// --- The engine (vendor/bridge/beads_bridge.cc) -------------------------
 
-const QUALITY_NAMES: [&str; 4] = ["Bright digital", "Cold digital", "Sunny tape", "Scorched cassette"];
-const GRAIN_MODE_NAMES: [&str; 3] = ["Latched", "Gated", "Clocked"];
+/// Pot indices, in the firmware's `PotsAdcChannel` order.
+const POT_FEEDBACK: usize = 0;
+const POT_DRY_WET: usize = 1;
+const POT_REVERB: usize = 2;
+const POT_TIME_AMT: usize = 3;
+const POT_SIZE_AMT: usize = 4;
+const POT_SHAPE_AMT: usize = 5;
+const POT_PITCH_AMT: usize = 6;
+const POT_TIME: usize = 7;
+const POT_DENSITY: usize = 8;
+const POT_PITCH: usize = 9;
+const POT_SIZE: usize = 10;
+const POT_SHAPE: usize = 11;
+const NUM_POTS: usize = 12;
 
-struct QualityProfile {
-    /// Sample-and-hold decimation factor applied to the captured
-    /// (wet) signal only -- 1 = full 48kHz, higher = lower effective
-    /// rate.
-    rate_div: u32,
-    /// Amplitude quantization depth applied to the captured signal.
-    bits: u32,
-    /// How much of `MAX_CAPTURE_SECONDS` this mode's buffer actually
-    /// uses (mono figures from the manual, scaled against the max).
-    buffer_seconds: f32,
-    /// Slow pitch-wobble depth (tape-style wow/flutter), 0 = none.
-    wow_depth: f32,
+const MAX_GRAINS: usize = 32;
+const OVERVIEW: usize = 256;
+const SCOPE: usize = 256;
+
+/// Mirrors `BeadsControls` in the bridge (checked by a test).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Controls {
+    pots: [f32; NUM_POTS],
+    time_offset: f32,
+    size_offset: f32,
+    shape_offset: f32,
+    pitch_offset: f32,
+    density_cv: f32,
+    mix_offset: [f32; 3],
+    media: i32,
+    gain: i32,
+    has_left: i32,
+    has_right: i32,
+    seed_button: i32,
+    seed_patched: i32,
+    seed_gate: i32,
+    freeze_button: i32,
+    freeze_gate: i32,
 }
 
-fn quality_profile(mode: u32) -> QualityProfile {
-    match mode % 4 {
-        0 => QualityProfile { rate_div: 1, bits: 16, buffer_seconds: 8.0, wow_depth: 0.0 },
-        1 => QualityProfile { rate_div: 2, bits: 12, buffer_seconds: 16.0, wow_depth: 0.0 },
-        2 => QualityProfile { rate_div: 2, bits: 12, buffer_seconds: 20.0, wow_depth: 0.0015 },
-        _ => QualityProfile { rate_div: 3, bits: 8, buffer_seconds: 32.0, wow_depth: 0.004 },
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct GrainView {
+    /// 0 = at the record head, 1 = the far end of the buffer (synth mode:
+    /// the grain's wavetable phase).
+    pub age: f32,
+    pub env: f32,
+    /// 0 = left, 1 = right.
+    pub pan: f32,
+    /// Playback speed, negative when reversed (synth mode: Hz).
+    pub speed: f32,
+}
+
+/// Mirrors `BeadsView` in the bridge: what the engine is doing right now,
+/// read straight out of it once per audio block.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct View {
+    /// 0 granular, 1 delay, 2 synth, 3 codec restarting.
+    pub mode: i32,
+    pub media: i32,
+    pub mono: i32,
+    pub frozen: i32,
+    pub codec_rate: f32,
+    pub buffer_seconds: f32,
+    pub recorded: f32,
+    pub overwrite_reserve: f32,
+    pub vu: f32,
+    pub agc_adjusting: i32,
+    pub synth_countdown: f32,
+    pub seed_led: i32,
+    pub num_grains: i32,
+    pub grains: [GrainView; MAX_GRAINS],
+    /// Peak level of the recording buffer by age, 0 = newest.
+    pub overview: [f32; OVERVIEW],
+    /// The latest output (every 4th sample), oldest first.
+    pub scope: [f32; SCOPE],
+}
+
+impl Default for View {
+    fn default() -> Self {
+        View {
+            mode: 0,
+            media: 3,
+            mono: 0,
+            frozen: 0,
+            codec_rate: 48000.0,
+            buffer_seconds: 4.0,
+            recorded: 0.0,
+            overwrite_reserve: 1.0,
+            vu: 0.0,
+            agc_adjusting: 0,
+            synth_countdown: -1.0,
+            seed_led: 0,
+            num_grains: 0,
+            grains: [GrainView::default(); MAX_GRAINS],
+            overview: [0.0; OVERVIEW],
+            scope: [0.0; SCOPE],
+        }
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+impl View {
+    fn grains(&self) -> &[GrainView] {
+        &self.grains[..(self.num_grains.max(0) as usize).min(MAX_GRAINS)]
+    }
+}
+
+unsafe extern "C" {
+    #[allow(dead_code)] // the layout test
+    fn beads_controls_size() -> c_int;
+    #[allow(dead_code)] // the layout test
+    fn beads_view_size() -> c_int;
+    fn beads_create(host_rate: f32) -> *mut c_void;
+    fn beads_destroy(handle: *mut c_void);
+    #[allow(clippy::too_many_arguments)]
+    fn beads_render(handle: *mut c_void, controls: *const Controls, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, n: c_int, host_rate: f32);
+    fn beads_view(handle: *mut c_void, view: *mut View);
+}
+
+/// Owns one engine (about a megabyte: the module's 768 KB of recording RAM
+/// plus its reverb buffer).
+struct Engine {
+    handle: *mut c_void,
+}
+
+// Only ever used from one thread at a time: built on the UI thread, then
+// moved into the processor and touched only by the audio callback.
+unsafe impl Send for Engine {}
+
+impl Engine {
+    fn new(host_rate: f32) -> Option<Engine> {
+        let handle = unsafe { beads_create(host_rate) };
+        (!handle.is_null()).then_some(Engine { handle })
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        unsafe { beads_destroy(self.handle) };
+    }
+}
+
+// --- What the knobs mean (display only; the engine applies the real laws)
+
+/// The four recording media, in the firmware's order (`Processor::Media`),
+/// with the colour the module's QUALITY LED shows for each (ui.cc's
+/// `media_palette_`, brightened for a screen).
+const MEDIA: [(&str, &str, Rgb); 4] = [
+    ("Dirty tape", "DIRTY TAPE", (236, 52, 104)),
+    ("Clean tape", "CLEAN TAPE", (255, 158, 44)),
+    ("Vintage digital", "VINTAGE DIGITAL", (40, 232, 190)),
+    ("Digital", "DIGITAL", (206, 210, 232)),
+];
+
+/// cv_reader.h's LAW_DETUNE, for the PITCH value shown.
+fn pitch_semitones(raw: f32) -> f32 {
+    let detune = 2.0 * raw.clamp(0.0, 1.0) - 1.0;
+    let sign = if detune < 0.0 { -1.0 } else { 1.0 };
+    let d = detune * sign * 6.0;
+    let integral = (d as usize).min(6);
+    let fractional = ((d - integral as f32 - 0.333_333_33) * 1.5).max(0.0);
+    const INTERVALS: [f32; 8] = [0.0, 1.0, 3.0, 4.0, 7.0, 12.0, 24.0, 24.0];
+    let t = fractional.clamp(0.0, 1.0);
+    let smooth = t * t * (3.0 - 2.0 * t);
+    (INTERVALS[integral] + (INTERVALS[integral + 1] - INTERVALS[integral]) * smooth) * sign
+}
+
+/// cv_reader.h's LAW_ATTENUVERTER: -1..1 with a dead zone at the centre.
+fn attenurandomizer(raw: f32) -> f32 {
+    let v = raw.clamp(0.0, 1.0) - 0.5;
+    (2.0 / 0.47) * v * (v.abs() - 0.03).max(0.0)
+}
+
+/// granular_player.h's ComputeGrainDuration, in seconds (max 4 s).
+fn grain_seconds(size: f32) -> (f32, bool) {
+    let d = size.clamp(0.0, 1.0);
+    let reverse = d < 1.0 / 3.0;
+    let clamped = if reverse { d * 3.0 * (2.0 - d * 3.0) } else { 1.0 - 1.5 * (d - 1.0 / 3.0) };
+    let shortness = (1.025 * clamped).min(1.0);
+    (2f32.powf(shortness * -108.0 / 12.0) * 4.0, reverse)
+}
+
+/// trigger_generator.cc: what DENSITY does with no seed cable.
+fn density_text(density: f32) -> String {
+    const MAX_HZ: f32 = 130.812_78;
+    if density < 0.48 {
+        format!("{} regular", hz(MAX_HZ * 2f32.powf(-density * 16.0)))
+    } else if density > 0.52 {
+        format!("{} random", hz(0.5 * MAX_HZ * 2f32.powf(-(1.0 - density) * 16.0)))
+    } else {
+        "seed only".into()
+    }
+}
+
+fn hz(f: f32) -> String {
+    if f >= 10.0 {
+        format!("{f:.0} Hz")
+    } else if f >= 1.0 {
+        format!("{f:.1} Hz")
+    } else {
+        format!("{:.1} s", 1.0 / f.max(1e-3))
+    }
+}
+
+fn shape_name(shape: f32) -> &'static str {
+    // grain_envelope.h's table: square, decay, bell, reverse.
+    match shape {
+        s if s < 0.2 => "square",
+        s if s < 0.45 => "decay",
+        s if s < 0.8 => "bell",
+        _ => "reverse",
+    }
+}
+
+/// gain_control.cc's manual gain, in dB (0 = automatic).
+fn gain_text(gain: u32) -> String {
+    if gain == 0 {
+        return "auto".into();
+    }
+    let g = (gain.min(255) as f32 / 255.0).powi(4);
+    format!("{:+.1} dB", 20.0 * (1.0 + 39.0 * g).log10())
+}
+
+// --- Parameters shared with the audio thread -----------------------------
+
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Selection {
-    Source,
+    SourceL,
+    SourceR,
     Quality,
+    Gain,
     Freeze,
-    GrainMode,
     Time,
     Size,
     Shape,
     Pitch,
-    TimeRandom,
-    SizeRandom,
-    ShapeRandom,
-    PitchRandom,
     Density,
+    TimeAmt,
+    SizeAmt,
+    ShapeAmt,
+    PitchAmt,
     Feedback,
     DryWet,
     Reverb,
 }
 
-#[derive(Clone, Copy)]
-enum Row {
-    Group(usize),
-    Leaf(Selection),
+impl Selection {
+    fn pot(self) -> Option<usize> {
+        Some(match self {
+            Selection::Time => POT_TIME,
+            Selection::Size => POT_SIZE,
+            Selection::Shape => POT_SHAPE,
+            Selection::Pitch => POT_PITCH,
+            Selection::Density => POT_DENSITY,
+            Selection::TimeAmt => POT_TIME_AMT,
+            Selection::SizeAmt => POT_SIZE_AMT,
+            Selection::ShapeAmt => POT_SHAPE_AMT,
+            Selection::PitchAmt => POT_PITCH_AMT,
+            Selection::Feedback => POT_FEEDBACK,
+            Selection::DryWet => POT_DRY_WET,
+            Selection::Reverb => POT_REVERB,
+            _ => return None,
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Selection::SourceL => "In L",
+            Selection::SourceR => "In R",
+            Selection::Quality => "Quality",
+            Selection::Gain => "Input gain",
+            Selection::Freeze => "Freeze",
+            Selection::Time => "Time",
+            Selection::Size => "Size",
+            Selection::Shape => "Shape",
+            Selection::Pitch => "Pitch",
+            Selection::Density => "Density",
+            Selection::TimeAmt => "Time random",
+            Selection::SizeAmt => "Size random",
+            Selection::ShapeAmt => "Shape random",
+            Selection::PitchAmt => "Pitch random",
+            Selection::Feedback => "Feedback",
+            Selection::DryWet => "Dry/Wet",
+            Selection::Reverb => "Reverb",
+        }
+    }
 }
 
-const NUM_GROUPS: usize = 4;
+/// Where the knobs start: a cloud of medium grains a moment back in the
+/// buffer, mostly wet, a little reverb. The attenurandomizers sit on their
+/// centre detent, as on a module fresh out of the box.
+const DEFAULT_POTS: [f32; NUM_POTS] = [
+    0.0,  // feedback
+    0.65, // dry/wet
+    0.3,  // reverb
+    0.5, 0.5, 0.5, 0.5, // amounts
+    0.12, // time
+    0.8,  // density
+    0.5,  // pitch
+    0.62, // size
+    0.5,  // shape
+];
+const DEFAULT_MEDIA: u32 = 3;
 
-#[allow(dead_code)] // not used by the main binary
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum SeedState {
+    Off = 0,
+    On = 1,
+    Locked = 2,
+}
+
+/// The SEED button's rules from ui.cc: it starts locked (grains run free at
+/// DENSITY); a press unlocks it and is a tap; holding it 1.5 s locks it again.
+#[derive(Clone, Copy, Debug)]
+struct SeedButton {
+    locked: bool,
+    on: bool,
+    held: bool,
+    ignore_release: bool,
+    held_for: Duration,
+}
+
+const SEED_LONG_PRESS: Duration = Duration::from_millis(1500);
+
+impl SeedButton {
+    fn new() -> SeedButton {
+        SeedButton { locked: true, on: false, held: false, ignore_release: false, held_for: Duration::ZERO }
+    }
+
+    /// `down`: any SEED pad held; `dt`: time since the last update.
+    fn update(&mut self, down: bool, dt: Duration) {
+        if down && !self.held {
+            self.held = true;
+            self.ignore_release = false;
+            self.held_for = Duration::ZERO;
+            self.locked = false;
+            self.on = true;
+        } else if down {
+            self.held_for += dt;
+            if !self.ignore_release && self.held_for >= SEED_LONG_PRESS {
+                self.locked = true;
+                self.on = false;
+                self.ignore_release = true;
+            }
+        } else if self.held {
+            self.held = false;
+            self.on = false;
+        }
+    }
+
+    fn state(&self) -> SeedState {
+        if self.locked {
+            SeedState::Locked
+        } else if self.on {
+            SeedState::On
+        } else {
+            SeedState::Off
+        }
+    }
+}
+
 struct Params {
-    source: AtomicUsize,
-    quality: AtomicU32,
+    source_l: AtomicUsize,
+    source_r: AtomicUsize,
+    pots: [AtomicF32; NUM_POTS],
+    media: AtomicU32,
+    gain: AtomicU32,
     freeze: AtomicBool,
-    grain_mode: AtomicU32,
-    time: AtomicF32,   // 0..1, buffer read position: 0 = most recent, 1 = oldest
-    size: AtomicF32,   // 0..1 -> 30ms..4s (exponential); >=DELAY_MODE_THRESHOLD = delay mode
-    shape: AtomicF32,  // 0..1, grain envelope: 0 = clicky/rectangular, 1 = slow attack
-    pitch: AtomicF32,  // 0..1 -> -24..+24 semitones
-    time_random: AtomicF32,
-    size_random: AtomicF32,
-    shape_random: AtomicF32,
-    pitch_random: AtomicF32,
-    density: AtomicF32, // 0..1, centered at 0.5 (see grain-mode-dependent meaning)
-    feedback: AtomicF32,
-    dry_wet: AtomicF32,
-    reverb: AtomicF32,
-    /// Real pad-hold state, updated every `tick()` -- this sim's
-    /// stand-in for the real module's SEED button/gate input, read by
-    /// the audio thread for Gated/Clocked grain generation.
-    held: Mutex<[bool; 16]>,
-    /// A small downsampled snapshot of the current quality mode's
-    /// capture window, refreshed once per audio block -- real, live
-    /// buffer content for the Slint "grain cloud" visual (not a
-    /// fabricated waveform).
-    waveform_snapshot: Mutex<Vec<f32>>,
-    /// One entry per currently active grain: `(position fraction
-    /// 0..1 within that same capture window, envelope amplitude
-    /// 0..1)`, refreshed once per audio block -- real live grain
-    /// state, same envelope value `process()` actually mixes in.
-    grain_dots: Mutex<Vec<(f32, f32)>>,
+    seed: AtomicU32,
+    ext_time: Arc<AtomicF32>,
+    ext_size: Arc<AtomicF32>,
+    ext_shape: Arc<AtomicF32>,
+    ext_pitch: Arc<AtomicF32>,
+    ext_density: Arc<AtomicF32>,
+    ext_feedback: Arc<AtomicF32>,
+    ext_dry_wet: Arc<AtomicF32>,
+    ext_reverb: Arc<AtomicF32>,
+    ext_seed: Arc<AtomicF32>,
+    ext_freeze: Arc<AtomicF32>,
+    /// The engine's state, copied out once per audio block.
+    view: Mutex<View>,
+    /// The last block's output peak, for the meter.
+    out_peak: AtomicF32,
+    /// Audio frames since the seed gate was last high (saturating).
+    seed_quiet_frames: AtomicU64,
     bus_out: Arc<Mutex<Vec<f32>>>,
     mix_level: Arc<AtomicF32>,
     ext_mix_level: Arc<AtomicF32>,
@@ -158,29 +455,108 @@ impl Params {
     fn new(modbus: &ModBus, audio_bus: &AudioBus, mixer_bus: &MixerBus) -> Self {
         let (mix_level, ext_mix_level) = mixer_bus.register("Beads", modbus);
         Self {
-            source: AtomicUsize::new(crate::audio_bus::NO_SOURCE),
-            quality: AtomicU32::new(0),
+            source_l: AtomicUsize::new(crate::audio_bus::NO_SOURCE),
+            source_r: AtomicUsize::new(crate::audio_bus::NO_SOURCE),
+            pots: std::array::from_fn(|i| AtomicF32::new(DEFAULT_POTS[i])),
+            media: AtomicU32::new(DEFAULT_MEDIA),
+            gain: AtomicU32::new(0),
             freeze: AtomicBool::new(false),
-            grain_mode: AtomicU32::new(0),
-            time: AtomicF32::new(0.0),
-            size: AtomicF32::new(0.3),
-            shape: AtomicF32::new(0.0),
-            pitch: AtomicF32::new(0.5),
-            time_random: AtomicF32::new(0.0),
-            size_random: AtomicF32::new(0.0),
-            shape_random: AtomicF32::new(0.0),
-            pitch_random: AtomicF32::new(0.0),
-            density: AtomicF32::new(0.65),
-            feedback: AtomicF32::new(0.0),
-            dry_wet: AtomicF32::new(1.0),
-            reverb: AtomicF32::new(0.0),
-            held: Mutex::new([false; 16]),
-            waveform_snapshot: Mutex::new(Vec::new()),
-            grain_dots: Mutex::new(Vec::new()),
+            seed: AtomicU32::new(SeedState::Locked as u32),
+            ext_time: modbus.register("Beads: Time"),
+            ext_size: modbus.register("Beads: Size"),
+            ext_shape: modbus.register("Beads: Shape"),
+            ext_pitch: modbus.register("Beads: Pitch"),
+            ext_density: modbus.register("Beads: Density"),
+            ext_feedback: modbus.register("Beads: Feedback"),
+            ext_dry_wet: modbus.register("Beads: Dry/Wet"),
+            ext_reverb: modbus.register("Beads: Reverb"),
+            ext_seed: modbus.register("Beads: Seed Gate"),
+            ext_freeze: modbus.register("Beads: Freeze Gate"),
+            view: Mutex::new(View::default()),
+            out_peak: AtomicF32::new(0.0),
+            seed_quiet_frames: AtomicU64::new(u64::MAX),
             bus_out: audio_bus.register("Beads"),
             mix_level,
             ext_mix_level,
         }
+    }
+
+    fn pot(&self, i: usize) -> f32 {
+        self.pots[i].get()
+    }
+
+    fn media(&self) -> usize {
+        self.media.load(Ordering::Relaxed) as usize % 4
+    }
+
+    fn has_input(&self) -> bool {
+        self.source_l.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE || self.source_r.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE
+    }
+}
+
+// --- The app -------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+enum Row {
+    Group(usize),
+    Leaf(Selection),
+}
+
+const GROUPS: [(&str, &[Selection]); 4] = [
+    ("Inputs", &[Selection::SourceL, Selection::SourceR, Selection::Quality, Selection::Gain, Selection::Freeze]),
+    ("Grains", &[Selection::Density, Selection::Time, Selection::Size, Selection::Shape, Selection::Pitch]),
+    ("Randomize", &[Selection::TimeAmt, Selection::SizeAmt, Selection::ShapeAmt, Selection::PitchAmt]),
+    ("Mix", &[Selection::Feedback, Selection::DryWet, Selection::Reverb]),
+];
+
+/// The play view's controls, most important first: where in the buffer and
+/// how long, then how many and how high, the envelope and the loop, the mix,
+/// the four attenurandomizers, and the two buttons.
+const CONTROLS: [Selection; 14] = [
+    Selection::Time,
+    Selection::Size,
+    Selection::Density,
+    Selection::Pitch,
+    Selection::Shape,
+    Selection::Feedback,
+    Selection::DryWet,
+    Selection::Reverb,
+    Selection::TimeAmt,
+    Selection::SizeAmt,
+    Selection::PitchAmt,
+    Selection::ShapeAmt,
+    Selection::Freeze,
+    Selection::Quality,
+];
+const C_FREEZE: usize = 12;
+const C_QUALITY: usize = 13;
+
+fn kit_config() -> KitConfig {
+    KitConfig {
+        app_id: "beads",
+        // The pads are the module's SEED button.
+        layers: vec![Layer::Native(0, "SEED"), Layer::Throws, Layer::Controls, Layer::Moments],
+        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
+        // The QUALITY button is the one a player reaches for most.
+        browse: Some(C_QUALITY),
+        // Stick: scrub the buffer on X, grain size on Y (pushed to the top
+        // it tips into delay mode). Hands: density, and reverb.
+        routes: Routes { stick_x: Some(0), stick_y: Some(1), hand_l: Some(2), hand_r: Some(7) },
+        throws: vec![
+            Throw { control: C_FREEZE, to: 1.0, label: "FREEZE" },
+            // SIZE fully clockwise is "Beads as a delay".
+            Throw { control: 1, to: 1.0, label: "DELAY" },
+            // Below a third of its travel, SIZE plays grains backwards.
+            Throw { control: 1, to: 0.22, label: "REVERSE" },
+            Throw { control: 8, to: 1.0, label: "SCATTER" },
+            Throw { control: 10, to: 1.0, label: "SPRAY" },
+            Throw { control: 5, to: 0.85, label: "FEEDBACK" },
+            // PITCH's law snaps to +12 at 11/12 of its travel.
+            Throw { control: 3, to: 11.0 / 12.0, label: "OCT UP" },
+            Throw { control: 3, to: 1.0 / 12.0, label: "OCT DN" },
+        ],
+        midi_to_pads: true,
+        own_expression: false,
     }
 }
 
@@ -190,75 +566,16 @@ pub struct BeadsApp {
     sensitivity: Arc<AtomicF32>,
     nav_speed: Arc<AtomicF32>,
     list: ParamList,
-    expanded: [bool; NUM_GROUPS],
-    /// The shared play view (play_kit.rs).
+    expanded: [bool; GROUPS.len()],
     kit: PlayKit,
+    seed: SeedButton,
+    last_tick: Option<Instant>,
+    /// Frames drawn, for the SEED LED's slow pulse while locked.
+    frame: u32,
+    /// Output meter, decaying between frames.
+    meter: f32,
 }
 
-/// The play view's controls, most important first: where in the buffer
-/// and how long the grains are, then how many and at what pitch, their
-/// envelope and the feedback loop, the mix stage, the four randomizers,
-/// and the stepped modes on the top pads. The Source row stays menu-only.
-const CONTROLS: [(Selection, &str); 15] = [
-    (Selection::Time, "Time"),
-    (Selection::Size, "Size"),
-    (Selection::Density, "Density"),
-    (Selection::Pitch, "Pitch"),
-    (Selection::Shape, "Shape"),
-    (Selection::Feedback, "Feedback"),
-    (Selection::DryWet, "Dry/Wet"),
-    (Selection::Reverb, "Reverb"),
-    (Selection::TimeRandom, "Time Rnd"),
-    (Selection::SizeRandom, "Size Rnd"),
-    (Selection::PitchRandom, "Pitch Rnd"),
-    (Selection::ShapeRandom, "Shape Rnd"),
-    (Selection::Freeze, "Freeze"),
-    (Selection::GrainMode, "Grain Mode"),
-    (Selection::Quality, "Quality"),
-];
-const C_GRAIN_MODE: usize = 13;
-
-fn kit_config() -> KitConfig {
-    KitConfig {
-        app_id: "beads",
-        // The pads were (and on SEED still are) the real module's SEED
-        // button: a gate in Gated mode, clock ticks in Clocked mode.
-        layers: vec![Layer::Native(0, "SEED"), Layer::Throws, Layer::Controls, Layer::Moments],
-        hero: vec![[0, 1], [2, 3], [4, 5], [6, 7]],
-        // Grain mode decides what the SEED pads do at all, so it's the
-        // choice a player flips most.
-        browse: Some(C_GRAIN_MODE),
-        // Stick: scrub through the buffer on X, grain size on Y (pushed
-        // to the top it falls into delay mode). Hands: density, and
-        // reverb to wash the cloud out.
-        routes: Routes { stick_x: Some(0), stick_y: Some(1), hand_l: Some(2), hand_r: Some(7) },
-        throws: vec![
-            Throw { control: 12, to: 1.0, label: "FREEZE" },
-            // Size fully clockwise = "Beads as a delay".
-            Throw { control: 1, to: 1.0, label: "DELAY" },
-            Throw { control: 8, to: 1.0, label: "SCATTER" },
-            Throw { control: 10, to: 1.0, label: "SPRAY" },
-            Throw { control: 5, to: 1.0, label: "FEEDBACK" },
-            // Pitch 0..1 spans -24..+24 st, so 0.75 / 0.25 are +-12.
-            Throw { control: 3, to: 0.75, label: "OCT UP" },
-            Throw { control: 3, to: 0.25, label: "OCT DN" },
-            Throw { control: 6, to: 0.0, label: "DRY" },
-        ],
-        midi_to_pads: true,
-        own_expression: false,
-    }
-}
-
-// --- Beads's own palette: flat solid colors, not a
-// device-wide theme -- Warm sand and terracotta grains on dark, tactile earth -- the color of beads scattering through fingers. ---
-
-const BEADS_BG: Rgb565 = Rgb565::new(4, 7, 2);
-const BEADS_TITLE: Rgb565 = Rgb565::new(29, 54, 23);
-const BEADS_ACCENT: Rgb565 = Rgb565::new(26, 34, 9);
-const BEADS_DIM: Rgb565 = Rgb565::new(17, 28, 11);
-const BEADS_FAINT: Rgb565 = Rgb565::new(8, 13, 5);
-
-#[allow(dead_code)] // not used by the main binary
 impl BeadsApp {
     pub fn new(sensitivity: Arc<AtomicF32>, nav_speed: Arc<AtomicF32>, modbus: Arc<ModBus>, audio_bus: Arc<AudioBus>, mixer_bus: Arc<MixerBus>) -> Self {
         Self {
@@ -267,119 +584,89 @@ impl BeadsApp {
             sensitivity,
             nav_speed,
             list: ParamList::new(),
-            expanded: [false; NUM_GROUPS],
+            expanded: [false; GROUPS.len()],
             kit: PlayKit::new(kit_config(), !cfg!(test)),
+            seed: SeedButton::new(),
+            last_tick: None,
+            frame: 0,
+            meter: 0.0,
         }
     }
 
-    fn group_leaves(&self, g: usize) -> Vec<Selection> {
-        match g {
-            0 => vec![Selection::Source, Selection::Quality, Selection::Freeze],
-            1 => vec![Selection::GrainMode, Selection::Density, Selection::Time, Selection::Size, Selection::Shape, Selection::Pitch],
-            2 => vec![Selection::TimeRandom, Selection::SizeRandom, Selection::ShapeRandom, Selection::PitchRandom],
-            _ => vec![Selection::Feedback, Selection::DryWet, Selection::Reverb],
-        }
+    fn view(&self) -> View {
+        *self.params.view.lock().unwrap()
     }
 
     fn visible_rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
-        for g in 0..NUM_GROUPS {
+        for (g, (_, leaves)) in GROUPS.iter().enumerate() {
             rows.push(Row::Group(g));
             if self.expanded[g] {
-                for sel in self.group_leaves(g) {
-                    rows.push(Row::Leaf(sel));
-                }
+                rows.extend(leaves.iter().map(|s| Row::Leaf(*s)));
             }
         }
         rows
     }
 
-    fn group_name(&self, g: usize) -> &'static str {
-        match g {
-            0 => "Input",
-            1 => "Grain",
-            2 => "Randomize",
-            _ => "Mix",
-        }
+    fn source_name(&self, idx: usize) -> String {
+        self.audio_bus.source_name(idx)
     }
 
     fn group_summary(&self, g: usize) -> String {
+        let p = &self.params;
         match g {
-            0 => format!(
-                "{}, {}{}",
-                self.source_name(),
-                QUALITY_NAMES[self.params.quality.load(Ordering::Relaxed) as usize % 4],
-                if self.params.freeze.load(Ordering::Relaxed) { ", frozen" } else { "" }
-            ),
-            1 => {
-                if self.params.size.get() >= DELAY_MODE_THRESHOLD {
-                    format!("{}, delay", GRAIN_MODE_NAMES[self.params.grain_mode.load(Ordering::Relaxed) as usize % 3])
-                } else {
-                    format!("{}, {:.0}ms", GRAIN_MODE_NAMES[self.params.grain_mode.load(Ordering::Relaxed) as usize % 3], self.grain_ms())
-                }
+            0 => {
+                let l = p.source_l.load(Ordering::Relaxed);
+                let r = p.source_r.load(Ordering::Relaxed);
+                let input = match (l != crate::audio_bus::NO_SOURCE, r != crate::audio_bus::NO_SOURCE) {
+                    (false, false) => "no input".to_string(),
+                    (true, false) => format!("{} (mono)", self.source_name(l)),
+                    (false, true) => format!("{} (mono)", self.source_name(r)),
+                    (true, true) => format!("{} + {}", self.source_name(l), self.source_name(r)),
+                };
+                format!("{input}, {}{}", MEDIA[p.media()].0, if p.freeze.load(Ordering::Relaxed) { ", frozen" } else { "" })
             }
+            1 => format!("{}, {}", self.leaf_value(Selection::Density), self.leaf_value(Selection::Size)),
             2 => {
-                let avg = (self.params.time_random.get() + self.params.size_random.get() + self.params.shape_random.get() + self.params.pitch_random.get()) / 4.0;
-                format!("{:.0}% avg", avg * 100.0)
+                let on = [POT_TIME_AMT, POT_SIZE_AMT, POT_SHAPE_AMT, POT_PITCH_AMT].iter().filter(|&&i| attenurandomizer(p.pot(i)) != 0.0).count();
+                if on == 0 { "all off".into() } else { format!("{on} of 4 on") }
             }
-            _ => format!("{:.0}%fb, {:.0}% wet", self.params.feedback.get() * 100.0, self.params.dry_wet.get() * 100.0),
-        }
-    }
-
-    fn grain_ms(&self) -> f32 {
-        let size = self.params.size.get().clamp(0.0, 1.0);
-        MIN_GRAIN_MS * (MAX_GRAIN_MS / MIN_GRAIN_MS).powf(size)
-    }
-
-    fn source_name(&self) -> String {
-        self.audio_bus.source_name(self.params.source.load(Ordering::Relaxed))
-    }
-
-    fn leaf_name(&self, sel: Selection) -> String {
-        match sel {
-            Selection::Source => "Source".into(),
-            Selection::Quality => "Quality".into(),
-            Selection::Freeze => "Freeze".into(),
-            Selection::GrainMode => "Grain Mode".into(),
-            Selection::Time => "Time".into(),
-            Selection::Size => "Size".into(),
-            Selection::Shape => "Shape".into(),
-            Selection::Pitch => "Pitch".into(),
-            Selection::TimeRandom => "Time Random".into(),
-            Selection::SizeRandom => "Size Random".into(),
-            Selection::ShapeRandom => "Shape Random".into(),
-            Selection::PitchRandom => "Pitch Random".into(),
-            Selection::Density => "Density".into(),
-            Selection::Feedback => "Feedback".into(),
-            Selection::DryWet => "Dry/Wet".into(),
-            Selection::Reverb => "Reverb".into(),
+            _ => format!("{:.0}% wet, {:.0}% fb", p.pot(POT_DRY_WET) * 100.0, p.pot(POT_FEEDBACK) * 100.0),
         }
     }
 
     fn leaf_value(&self, sel: Selection) -> String {
+        let p = &self.params;
         match sel {
-            Selection::Source => self.source_name(),
-            Selection::Quality => QUALITY_NAMES[self.params.quality.load(Ordering::Relaxed) as usize % 4].into(),
-            Selection::Freeze => if self.params.freeze.load(Ordering::Relaxed) { "on".into() } else { "off".into() },
-            Selection::GrainMode => GRAIN_MODE_NAMES[self.params.grain_mode.load(Ordering::Relaxed) as usize % 3].into(),
-            Selection::Time => format!("{:.0}%", self.params.time.get() * 100.0),
-            Selection::Size => {
-                if self.params.size.get() >= DELAY_MODE_THRESHOLD {
-                    "delay".into()
-                } else {
-                    format!("{:.0} ms", self.grain_ms())
-                }
+            Selection::SourceL => self.source_name(p.source_l.load(Ordering::Relaxed)),
+            Selection::SourceR => {
+                let r = p.source_r.load(Ordering::Relaxed);
+                if r == crate::audio_bus::NO_SOURCE { "normalled to L".into() } else { self.source_name(r) }
             }
-            Selection::Shape => format!("{:.0}%", self.params.shape.get() * 100.0),
-            Selection::Pitch => format!("{:+.0} st", (self.params.pitch.get() - 0.5) * 48.0),
-            Selection::TimeRandom => format!("{:.0}%", self.params.time_random.get() * 100.0),
-            Selection::SizeRandom => format!("{:.0}%", self.params.size_random.get() * 100.0),
-            Selection::ShapeRandom => format!("{:.0}%", self.params.shape_random.get() * 100.0),
-            Selection::PitchRandom => format!("{:.0}%", self.params.pitch_random.get() * 100.0),
-            Selection::Density => format!("{:.0}%", self.params.density.get() * 100.0),
-            Selection::Feedback => format!("{:.0}%", self.params.feedback.get() * 100.0),
-            Selection::DryWet => format!("{:.0}%", self.params.dry_wet.get() * 100.0),
-            Selection::Reverb => format!("{:.0}%", self.params.reverb.get() * 100.0),
+            Selection::Quality => MEDIA[p.media()].0.into(),
+            Selection::Gain => gain_text(p.gain.load(Ordering::Relaxed)),
+            Selection::Freeze => if p.freeze.load(Ordering::Relaxed) { "on".into() } else { "off".into() },
+            Selection::Time => {
+                let seconds = self.view().buffer_seconds * p.pot(POT_TIME);
+                format!("{seconds:.1} s back")
+            }
+            Selection::Size => {
+                let size = p.pot(POT_SIZE);
+                if size > 0.99 {
+                    return "delay".into();
+                }
+                let (s, reverse) = grain_seconds(size);
+                let len = if s >= 1.0 { format!("{s:.1} s") } else { format!("{:.0} ms", s * 1000.0) };
+                if reverse { format!("{len} rev") } else { len }
+            }
+            Selection::Shape => shape_name(p.pot(POT_SHAPE)).into(),
+            Selection::Pitch => format!("{:+.0} st", pitch_semitones(p.pot(POT_PITCH))),
+            Selection::Density => density_text(p.pot(POT_DENSITY)),
+            Selection::TimeAmt | Selection::SizeAmt | Selection::ShapeAmt | Selection::PitchAmt => {
+                let a = attenurandomizer(p.pot(sel.pot().unwrap()));
+                if a == 0.0 { "off".into() } else { format!("{:+.0}%", a * 100.0) }
+            }
+            Selection::Feedback | Selection::DryWet | Selection::Reverb => format!("{:.0}%", p.pot(sel.pot().unwrap()) * 100.0),
         }
     }
 
@@ -387,55 +674,46 @@ impl BeadsApp {
         if delta == 0 {
             return;
         }
-        let sensitivity = self.sensitivity.get();
+        let p = &self.params;
         let step = delta.signum();
         match sel {
-            Selection::Source => {
-                let cur = self.params.source.load(Ordering::Relaxed);
-                self.params.source.store(crate::audio_bus::cycle_source(cur, step, self.audio_bus.len()), Ordering::Relaxed);
+            Selection::SourceL => {
+                let cur = p.source_l.load(Ordering::Relaxed);
+                p.source_l.store(crate::audio_bus::cycle_source(cur, step, self.audio_bus.len()), Ordering::Relaxed);
+            }
+            Selection::SourceR => {
+                let cur = p.source_r.load(Ordering::Relaxed);
+                p.source_r.store(crate::audio_bus::cycle_source(cur, step, self.audio_bus.len()), Ordering::Relaxed);
             }
             Selection::Quality => {
-                let cur = self.params.quality.load(Ordering::Relaxed) as i32;
-                self.params.quality.store((cur + step).rem_euclid(4) as u32, Ordering::Relaxed);
+                let cur = p.media.load(Ordering::Relaxed) as i32;
+                p.media.store((cur + step).rem_euclid(4) as u32, Ordering::Relaxed);
             }
-            Selection::Freeze => self.params.freeze.store(delta > 0, Ordering::Relaxed),
-            Selection::GrainMode => {
-                let cur = self.params.grain_mode.load(Ordering::Relaxed) as i32;
-                self.params.grain_mode.store((cur + step).rem_euclid(3) as u32, Ordering::Relaxed);
+            Selection::Gain => {
+                let cur = p.gain.load(Ordering::Relaxed) as i32;
+                let next = (cur + accelerate(delta).round() as i32).clamp(0, 255);
+                p.gain.store(next as u32, Ordering::Relaxed);
             }
-            Selection::Time => bump(&self.params.time, delta, sensitivity, 0.0, 1.0),
-            Selection::Size => bump(&self.params.size, delta, sensitivity, 0.0, 1.0),
-            Selection::Shape => bump(&self.params.shape, delta, sensitivity, 0.0, 1.0),
-            Selection::Pitch => bump(&self.params.pitch, delta, sensitivity, 0.0, 1.0),
-            Selection::TimeRandom => bump(&self.params.time_random, delta, sensitivity, 0.0, 1.0),
-            Selection::SizeRandom => bump(&self.params.size_random, delta, sensitivity, 0.0, 1.0),
-            Selection::ShapeRandom => bump(&self.params.shape_random, delta, sensitivity, 0.0, 1.0),
-            Selection::PitchRandom => bump(&self.params.pitch_random, delta, sensitivity, 0.0, 1.0),
-            Selection::Density => bump(&self.params.density, delta, sensitivity, 0.0, 1.0),
-            Selection::Feedback => bump(&self.params.feedback, delta, sensitivity, 0.0, 0.97),
-            Selection::DryWet => bump(&self.params.dry_wet, delta, sensitivity, 0.0, 1.0),
-            Selection::Reverb => bump(&self.params.reverb, delta, sensitivity, 0.0, 1.0),
+            Selection::Freeze => p.freeze.store(delta > 0, Ordering::Relaxed),
+            _ => {
+                let pot = &p.pots[sel.pot().unwrap()];
+                pot.set((pot.get() + accelerate(delta) * self.sensitivity.get() * 0.01).clamp(0.0, 1.0));
+            }
         }
     }
 
     fn reset(&mut self, sel: Selection) {
+        let p = &self.params;
         match sel {
-            Selection::Source => self.params.source.store(crate::audio_bus::NO_SOURCE, Ordering::Relaxed),
-            Selection::Quality => self.params.quality.store(0, Ordering::Relaxed),
-            Selection::Freeze => self.params.freeze.store(false, Ordering::Relaxed),
-            Selection::GrainMode => self.params.grain_mode.store(0, Ordering::Relaxed),
-            Selection::Time => self.params.time.set(0.0),
-            Selection::Size => self.params.size.set(0.3),
-            Selection::Shape => self.params.shape.set(0.0),
-            Selection::Pitch => self.params.pitch.set(0.5),
-            Selection::TimeRandom => self.params.time_random.set(0.0),
-            Selection::SizeRandom => self.params.size_random.set(0.0),
-            Selection::ShapeRandom => self.params.shape_random.set(0.0),
-            Selection::PitchRandom => self.params.pitch_random.set(0.0),
-            Selection::Density => self.params.density.set(0.65),
-            Selection::Feedback => self.params.feedback.set(0.0),
-            Selection::DryWet => self.params.dry_wet.set(1.0),
-            Selection::Reverb => self.params.reverb.set(0.0),
+            Selection::SourceL => p.source_l.store(crate::audio_bus::NO_SOURCE, Ordering::Relaxed),
+            Selection::SourceR => p.source_r.store(crate::audio_bus::NO_SOURCE, Ordering::Relaxed),
+            Selection::Quality => p.media.store(DEFAULT_MEDIA, Ordering::Relaxed),
+            Selection::Gain => p.gain.store(0, Ordering::Relaxed),
+            Selection::Freeze => p.freeze.store(false, Ordering::Relaxed),
+            _ => {
+                let i = sel.pot().unwrap();
+                p.pots[i].set(DEFAULT_POTS[i]);
+            }
         }
     }
 
@@ -445,17 +723,19 @@ impl BeadsApp {
             .map(|row| match row {
                 Row::Group(g) => {
                     let arrow = if self.expanded[*g] { "v" } else { ">" };
-                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g), true)
+                    (format!("{arrow} {}", GROUPS[*g].0), self.group_summary(*g), true)
                 }
-                Row::Leaf(sel) => (self.leaf_name(*sel), self.leaf_value(*sel), false),
+                Row::Leaf(sel) => (sel.name().to_string(), self.leaf_value(*sel), false),
             })
             .collect()
     }
 
+    #[allow(dead_code)] // the Slint screens
     pub(crate) fn selected_row(&self) -> usize {
         self.list.selected
     }
 
+    #[allow(dead_code)] // the Slint screens
     pub(crate) fn windowed_rows(&mut self, visible: usize) -> (Vec<(String, String, bool)>, usize, bool, bool) {
         let rows = self.display_rows();
         if rows.is_empty() || visible == 0 {
@@ -466,58 +746,43 @@ impl BeadsApp {
         (window, self.list.selected - start, start > 0, end < rows.len())
     }
 
-    /// The real "grain cloud" -- a scrolling snapshot of the live
-    /// capture buffer plus each currently active grain's real
-    /// position/envelope within it (see `Params::waveform_snapshot`/
-    /// `grain_dots`, both written once per audio block by
-    /// `BeadsProcessor::process`), converted to connected line-
-    /// segment geometry (see `crate::app::polyline_segments`) instead
-    /// of drawn directly.
+    /// For the Slint screen: the recording buffer as a line (oldest on the
+    /// left) and each grain's place in it.
+    #[allow(dead_code)] // the Slint screens
     pub(crate) fn output_visual(&self) -> crate::app::BeadsExtra {
         const PANEL_W: f32 = 260.0;
         const PANEL_H: f32 = 150.0;
-        let raw = self.params.waveform_snapshot.lock().unwrap().clone();
-        let waveform = if raw.len() >= 2 {
-            let (mid_x, mid_y, length, angle_deg) = crate::app::polyline_segments(&raw, PANEL_W, PANEL_H, true);
-            crate::app::CurveSegments { mid_x, mid_y, length, angle_deg }
-        } else {
-            crate::app::CurveSegments::default()
-        };
+        let v = self.view();
+        let raw: Vec<f32> = (0..120).map(|i| v.overview[OVERVIEW - 1 - i * OVERVIEW / 120]).collect();
+        let (mid_x, mid_y, length, angle_deg) = crate::app::polyline_segments(&raw, PANEL_W, PANEL_H, true);
         crate::app::BeadsExtra {
-            mode_name: GRAIN_MODE_NAMES[self.params.grain_mode.load(Ordering::Relaxed) as usize % 3].to_string(),
-            frozen: self.params.freeze.load(Ordering::Relaxed),
-            is_delay_mode: self.params.size.get() >= DELAY_MODE_THRESHOLD,
-            waveform,
-            grain_dots: self.params.grain_dots.lock().unwrap().clone(),
+            mode_name: mode_name(&v).to_string(),
+            frozen: v.frozen != 0 || self.params.freeze.load(Ordering::Relaxed),
+            is_delay_mode: v.mode == 1,
+            waveform: crate::app::CurveSegments { mid_x, mid_y, length, angle_deg },
+            grain_dots: v.grains().iter().map(|g| (1.0 - g.age, g.env)).collect(),
+        }
+    }
+
+    fn knob(&self, i: usize) -> Knob<'_> {
+        let p = &self.params;
+        match CONTROLS[i % CONTROLS.len()] {
+            Selection::Freeze => Knob::B(&p.freeze),
+            Selection::Quality => Knob::U(&p.media, 4),
+            sel => match sel.pot() {
+                Some(pot) => Knob::F(&p.pots[pot], 0.0, 1.0),
+                None => Knob::None,
+            },
         }
     }
 }
 
-impl BeadsApp {
-    fn knob(&self, i: usize) -> Knob<'_> {
-        let p = &self.params;
-        match CONTROLS[i % CONTROLS.len()].0 {
-            Selection::Time => Knob::F(&p.time, 0.0, 1.0),
-            Selection::Size => Knob::F(&p.size, 0.0, 1.0),
-            Selection::Density => Knob::F(&p.density, 0.0, 1.0),
-            Selection::Pitch => Knob::F(&p.pitch, 0.0, 1.0),
-            Selection::Shape => Knob::F(&p.shape, 0.0, 1.0),
-            Selection::Feedback => Knob::F(&p.feedback, 0.0, 0.97),
-            Selection::DryWet => Knob::F(&p.dry_wet, 0.0, 1.0),
-            Selection::Reverb => Knob::F(&p.reverb, 0.0, 1.0),
-            Selection::TimeRandom => Knob::F(&p.time_random, 0.0, 1.0),
-            Selection::SizeRandom => Knob::F(&p.size_random, 0.0, 1.0),
-            Selection::PitchRandom => Knob::F(&p.pitch_random, 0.0, 1.0),
-            Selection::ShapeRandom => Knob::F(&p.shape_random, 0.0, 1.0),
-            Selection::Freeze => Knob::B(&p.freeze),
-            Selection::GrainMode => Knob::U(&p.grain_mode, 3),
-            Selection::Quality => Knob::U(&p.quality, 4),
-            Selection::Source => Knob::None,
-        }
-    }
-
-    fn grain_mode(&self) -> u32 {
-        self.params.grain_mode.load(Ordering::Relaxed) % 3
+fn mode_name(v: &View) -> &'static str {
+    match v.mode {
+        1 => "Delay",
+        2 => "Synth",
+        3 => "Switching",
+        _ => MEDIA[(v.media.clamp(0, 3)) as usize].0,
     }
 }
 
@@ -526,10 +791,17 @@ impl PlayHost for BeadsApp {
         CONTROLS.len()
     }
     fn kit_label(&self, i: usize) -> String {
-        CONTROLS[i % CONTROLS.len()].1.to_string()
+        let sel = CONTROLS[i % CONTROLS.len()];
+        match sel {
+            Selection::TimeAmt => "Time rnd".into(),
+            Selection::SizeAmt => "Size rnd".into(),
+            Selection::ShapeAmt => "Shape rnd".into(),
+            Selection::PitchAmt => "Pitch rnd".into(),
+            _ => sel.name().into(),
+        }
     }
     fn kit_value(&self, i: usize) -> String {
-        self.leaf_value(CONTROLS[i % CONTROLS.len()].0)
+        self.leaf_value(CONTROLS[i % CONTROLS.len()])
     }
     fn kit_norm(&self, i: usize) -> Option<f32> {
         self.knob(i).norm()
@@ -538,49 +810,46 @@ impl PlayHost for BeadsApp {
         self.knob(i).stepped()
     }
     fn kit_edit(&mut self, i: usize, delta: i32) {
-        self.edit(CONTROLS[i % CONTROLS.len()].0, delta);
+        self.edit(CONTROLS[i % CONTROLS.len()], delta);
     }
     fn kit_reset(&mut self, i: usize) {
-        self.reset(CONTROLS[i % CONTROLS.len()].0);
+        self.reset(CONTROLS[i % CONTROLS.len()]);
     }
     fn kit_set_norm(&mut self, i: usize, v: f32) {
         self.knob(i).set(v);
     }
-    /// Every pad is the same SEED gate; the label says what a press means
-    /// in the current grain mode (nothing, in Latched).
     fn kit_pad_label(&self, _layer: u8, _pad: usize) -> String {
-        match self.grain_mode() {
-            1 => "GATE".into(),
-            2 => "CLOCK".into(),
-            _ => String::new(),
-        }
+        "SEED".into()
     }
     fn kit_pad_color(&self, _layer: u8, _pad: usize, held: bool) -> crate::led_output::PadColor {
         use crate::led_output::PadColor;
         if held {
             PadColor::Green
-        } else if self.grain_mode() != 0 {
+        } else if self.seed.locked {
             PadColor::Blue
         } else {
             PadColor::Off
         }
     }
     fn kit_line(&self) -> String {
-        let grains = self.params.grain_dots.lock().unwrap().len();
-        let frozen = if self.params.freeze.load(Ordering::Relaxed) { "  FROZEN" } else { "" };
-        format!("{} {grains} grains{frozen}", GRAIN_MODE_NAMES[self.grain_mode() as usize])
+        if self.seed.locked {
+            "Seed free-running. Tap a pad to seed by hand".into()
+        } else {
+            "Seeding by hand. Hold a pad 1.5 s to free-run".into()
+        }
     }
 }
 
-fn bump(value: &AtomicF32, delta: i32, sensitivity: f32, min: f32, max: f32) {
-    let next = (value.get() + accelerate(delta) * sensitivity * 0.01).clamp(min, max);
-    value.set(next);
-}
-
 impl App for BeadsApp {
-    fn needs_background_audio(&self) -> bool { self.params.source.load(Ordering::Relaxed) != crate::audio_bus::NO_SOURCE || self.params.freeze.load(Ordering::Relaxed) }
-    fn supports_pad_lock(&self) -> bool { true }
-    fn play_surface(&self) -> bool { true }
+    fn needs_background_audio(&self) -> bool {
+        self.params.has_input() || self.params.freeze.load(Ordering::Relaxed)
+    }
+    fn supports_pad_lock(&self) -> bool {
+        true
+    }
+    fn play_surface(&self) -> bool {
+        true
+    }
     fn play_column(&self) -> Option<crate::app::PlayColumn> {
         (!self.kit.menu).then(|| self.kit.column(self))
     }
@@ -596,8 +865,7 @@ impl App for BeadsApp {
 
     fn tick(&mut self, input: &Input) {
         // The play view takes the knobs and D-pad first; in the menu they
-        // pass straight through. The pads reach SEED only on that layer
-        // (on the kit's layers they arrive cleared, so the gate drops).
+        // pass straight through. The pads reach SEED only on that layer.
         let mut play = std::mem::take(&mut self.kit);
         let step = play.tick(self, input);
         self.kit = play;
@@ -605,7 +873,6 @@ impl App for BeadsApp {
         let rows = self.visible_rows();
         self.list.navigate_input(input, rows.len(), self.nav_speed.get() as i32);
         let current = rows.get(self.list.selected).copied();
-
         if input.knob1_press {
             if let Some(Row::Group(g)) = current {
                 self.expanded[g] = !self.expanded[g];
@@ -618,10 +885,11 @@ impl App for BeadsApp {
             }
         }
 
-        let mut held = self.params.held.lock().unwrap();
-        for (i, pressed) in input.grid.iter().enumerate() {
-            held[i] = *pressed;
-        }
+        let now = Instant::now();
+        let dt = self.last_tick.map(|t| now.duration_since(t)).unwrap_or_default();
+        self.last_tick = Some(now);
+        self.seed.update(input.grid.iter().any(|g| *g), dt);
+        self.params.seed.store(self.seed.state() as u32, Ordering::Relaxed);
     }
 
     fn slint_extra(&mut self) -> crate::app::SlintExtra {
@@ -629,49 +897,46 @@ impl App for BeadsApp {
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {
+        let engine = Engine::new(48000.0)?;
         Some(Box::new(BeadsProcessor {
             params: Arc::clone(&self.params),
             audio_bus: Arc::clone(&self.audio_bus),
-            capture: vec![0.0; (MAX_CAPTURE_SECONDS * 48000.0) as usize],
-            write_pos: 0,
-            grains: std::array::from_fn(|_| Grain::default()),
-            spawn_accum: 0.0,
-            rng: 0x1234_5678,
-            was_held: false,
-            clock_div_counter: 0,
-            hold_counter: 0,
-            held_value: 0.0,
-            wow_phase: 0.0,
-            reverb: Reverb::default(),
+            engine,
+            in_l: Vec::new(),
+            in_r: Vec::new(),
+            out_l: Vec::new(),
+            out_r: Vec::new(),
         }))
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, HEIGHT as u32))
-            .into_styled(PrimitiveStyle::with_fill(BEADS_BG))
-            .draw(fb)
-            .ok();
-
-        let title = MonoTextStyle::new(&SPLEEN_16X32, BEADS_TITLE);
-        Text::new("Beads", Point::new(16, 26), title).draw(fb).ok();
-        let dim = MonoTextStyle::new(&SPLEEN_6X12, BEADS_DIM);
-        let rows = self.visible_rows();
-        let display_rows: Vec<(String, String)> = rows
-            .iter()
-            .map(|row| match row {
-                Row::Group(g) => {
-                    let arrow = if self.expanded[*g] { "v" } else { ">" };
-                    (format!("{arrow} {}", self.group_name(*g)), self.group_summary(*g))
-                }
-                Row::Leaf(sel) => (format!("    {}", self.leaf_name(*sel)), self.leaf_value(*sel)),
-            })
-            .collect();
+        self.frame = self.frame.wrapping_add(1);
+        let v = self.view();
+        self.meter = (self.meter * 0.85).max(self.params.out_peak.get());
+        let accent = MEDIA[v.media.clamp(0, 3) as usize].2;
+        let freeze = self.params.freeze.load(Ordering::Relaxed);
+        fill(fb, 0, 0, WIDTH as i32, HEIGHT as i32, BG);
+        self.draw_header(fb, &v, accent);
         if self.kit.menu {
-            self.list.draw_themed(fb, 16, 56, 22, 10, &display_rows, BEADS_BG, BEADS_DIM, BEADS_ACCENT);
-        } else if let Some(col) = self.play_column() {
-            let pal = kit::draw::Palette { bg: BEADS_BG, ink: BEADS_TITLE, accent: BEADS_ACCENT, dim: BEADS_DIM, faint: BEADS_FAINT };
-            kit::draw::column(fb, &col, 16, 44, 380, 280, pal);
-            Text::new("L/R: time/size   U/D: grain mode   F2: pads (seed/throws)   R1: menu", Point::new(16, 345), dim).draw(fb).ok();
+            draw_buffer(fb, &v, freeze, 16, 44, 608, 74, accent, true);
+            let rows: Vec<(String, String)> = self
+                .visible_rows()
+                .iter()
+                .map(|row| match row {
+                    Row::Group(g) => {
+                        let arrow = if self.expanded[*g] { "v" } else { ">" };
+                        (format!("{arrow} {}", GROUPS[*g].0), self.group_summary(*g))
+                    }
+                    Row::Leaf(sel) => (format!("    {}", sel.name()), self.leaf_value(*sel)),
+                })
+                .collect();
+            self.list.draw_themed(fb, 16, 140, 22, 9, &rows, c(BG), c(mix(DIM, INK, 0.45)), c(accent));
+        } else {
+            draw_buffer(fb, &v, freeze, 16, 44, 608, 150, accent, false);
+            self.draw_readout(fb, &v, accent, 226);
+            if let Some(col) = self.play_column() {
+                draw_controls(fb, &col, accent, 240);
+            }
         }
     }
 
@@ -686,586 +951,756 @@ impl App for BeadsApp {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-struct Grain {
-    active: bool,
-    /// Read position into `capture`, advanced by `rate` each sample.
-    pos: f32,
-    rate: f32,
-    /// Samples remaining before this grain ends.
-    remaining: f32,
-    length: f32,
-    shape: f32,
-    /// Set for the single continuously-retriggering grain used by
-    /// delay mode -- lets the spawn code respawn it at exactly its
-    /// own duration without waiting on the normal density scheduler.
-    is_delay_tap: bool,
+// --- Drawing -------------------------------------------------------------
+
+type Rgb = (u8, u8, u8);
+
+const BG: Rgb = (12, 13, 17);
+const PANEL: Rgb = (20, 22, 28);
+const FAINT: Rgb = (40, 43, 53);
+const DIM: Rgb = (118, 124, 140);
+const INK: Rgb = (238, 234, 224);
+const ICE: Rgb = (132, 214, 255);
+const REC: Rgb = (255, 78, 70);
+
+fn c(rgb: Rgb) -> Rgb565 {
+    Rgb565::new(rgb.0 >> 3, rgb.1 >> 2, rgb.2 >> 3)
 }
 
-/// A small 2-comb + 1-allpass reverb -- not the real module's own
-/// algorithm (undocumented), just a modest, genuinely-computed
-/// diffuse tail rather than a fake dry-signal-only knob.
-struct Reverb {
-    comb_a: Vec<f32>,
-    comb_b: Vec<f32>,
-    allpass: Vec<f32>,
-    pos_a: usize,
-    pos_b: usize,
-    pos_ap: usize,
+fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
+    let t = t.clamp(0.0, 1.0);
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    (m(a.0, b.0), m(a.1, b.1), m(a.2, b.2))
 }
 
-impl Default for Reverb {
-    fn default() -> Self {
-        Self { comb_a: vec![0.0; 1687], comb_b: vec![0.0; 2053], allpass: vec![0.0; 347], pos_a: 0, pos_b: 0, pos_ap: 0 }
+fn fill(fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32, color: Rgb) {
+    if w > 0 && h > 0 {
+        Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)).into_styled(PrimitiveStyle::with_fill(c(color))).draw(fb).ok();
     }
 }
 
-impl Reverb {
-    fn process(&mut self, input: f32, amount: f32) -> f32 {
-        if amount <= 0.0001 {
-            return input;
+fn frame(fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32, color: Rgb) {
+    Rectangle::new(Point::new(x, y), Size::new(w.max(1) as u32, h.max(1) as u32)).into_styled(PrimitiveStyle::with_stroke(c(color), 1)).draw(fb).ok();
+}
+
+fn vline(fb: &mut FrameBuffer, x: i32, y0: i32, y1: i32, color: Rgb) {
+    Line::new(Point::new(x, y0), Point::new(x, y1)).into_styled(PrimitiveStyle::with_stroke(c(color), 1)).draw(fb).ok();
+}
+
+fn text(fb: &mut FrameBuffer, s: &str, x: i32, y: i32, font: &MonoFont<'_>, color: Rgb) {
+    Text::new(s, Point::new(x, y), MonoTextStyle::new(font, c(color))).draw(fb).ok();
+}
+
+fn text_width(s: &str, font: &MonoFont<'_>) -> i32 {
+    s.chars().count() as i32 * font.character_size.width as i32
+}
+
+fn text_right(fb: &mut FrameBuffer, s: &str, right: i32, y: i32, font: &MonoFont<'_>, color: Rgb) {
+    text(fb, s, right - text_width(s, font), y, font, color);
+}
+
+fn text_center(fb: &mut FrameBuffer, s: &str, cx: i32, y: i32, font: &MonoFont<'_>, color: Rgb) {
+    text(fb, s, cx - text_width(s, font) / 2, y, font, color);
+}
+
+fn dot(fb: &mut FrameBuffer, cx: i32, cy: i32, d: u32, color: Rgb) {
+    Circle::with_center(Point::new(cx, cy), d).into_styled(PrimitiveStyle::with_fill(c(color))).draw(fb).ok();
+}
+
+fn ring(fb: &mut FrameBuffer, cx: i32, cy: i32, d: u32, color: Rgb) {
+    Circle::with_center(Point::new(cx, cy), d).into_styled(PrimitiveStyle::with_stroke(c(color), 1)).draw(fb).ok();
+}
+
+fn pill(fb: &mut FrameBuffer, x: i32, y: i32, w: i32, h: i32, color: Rgb) {
+    let r = h / 2;
+    fill(fb, x + r, y, w - 2 * r, h, color);
+    dot(fb, x + r, y + r, (2 * r) as u32 + 1, color);
+    dot(fb, x + w - r - 1, y + r, (2 * r) as u32 + 1, color);
+}
+
+fn clip(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+impl BeadsApp {
+    fn draw_header(&self, fb: &mut FrameBuffer, v: &View, accent: Rgb) {
+        text(fb, "Beads", 16, 30, &SPLEEN_16X32, INK);
+        text(fb, "TEXTURE SYNTHESIZER", 102, 22, &SPLEEN_6X12, DIM);
+        let sub = if v.mode == 2 {
+            "synth mode".to_string()
+        } else {
+            format!("{:.0} kHz {} {:.0} s", v.codec_rate / 1000.0, if v.mono != 0 { "mono" } else { "stereo" }, v.buffer_seconds)
+        };
+        text(fb, &sub, 102, 34, &SPLEEN_6X12, mix(DIM, accent, 0.5));
+
+        // The QUALITY chip, in the colour the module's LED shows, dimmed as
+        // the buffer nears overwriting what was there (the LED does too).
+        let name = MEDIA[v.media.clamp(0, 3) as usize].1;
+        let w = text_width(name, &SPLEEN_8X16) + 22;
+        let x = 344 - w / 2;
+        pill(fb, x, 12, w, 20, mix(BG, accent, 0.25 + 0.75 * v.overwrite_reserve));
+        text_center(fb, name, x + w / 2, 27, &SPLEEN_8X16, BG);
+
+        // FREEZE and SEED, as the module's two lit buttons.
+        let frozen = self.params.freeze.load(Ordering::Relaxed) || v.frozen != 0;
+        let fx = 450;
+        dot(fb, fx, 22, 11, if frozen { ICE } else { FAINT });
+        text(fb, "FREEZE", fx + 10, 26, &SPLEEN_6X12, if frozen { ICE } else { DIM });
+        let pulse = {
+            let t = (self.frame % 90) as f32 / 90.0;
+            0.35 + 0.65 * (1.0 - (2.0 * t - 1.0).abs())
+        };
+        let seed_on = self.seed.on || v.seed_led != 0;
+        let seed_color = if seed_on { INK } else if self.seed.locked { mix(FAINT, INK, pulse) } else { FAINT };
+        let sx = 518;
+        dot(fb, sx, 22, 11, seed_color);
+        text(fb, "SEED", sx + 10, 26, &SPLEEN_6X12, if seed_on { INK } else { DIM });
+
+        // Input level: the module's single VU LED as a short bar, blinking
+        // while the automatic gain is still learning the level.
+        let vx = 572;
+        text(fb, "IN", vx, 26, &SPLEEN_6X12, DIM);
+        let segs = 6;
+        for i in 0..segs {
+            let lit = v.vu * segs as f32 > i as f32 + 0.5;
+            let col = if v.agc_adjusting != 0 && (self.frame / 8) % 2 == 0 {
+                FAINT
+            } else if lit {
+                if i == segs - 1 { REC } else { mix(accent, INK, 0.3) }
+            } else {
+                FAINT
+            };
+            fill(fb, vx + 16 + i * 6, 17, 4, 10, col);
         }
-        let fb = 0.78;
-        let a = self.comb_a[self.pos_a];
-        self.comb_a[self.pos_a] = input + a * fb;
-        self.pos_a = (self.pos_a + 1) % self.comb_a.len();
+    }
 
-        let b = self.comb_b[self.pos_b];
-        self.comb_b[self.pos_b] = input + b * fb;
-        self.pos_b = (self.pos_b + 1) % self.comb_b.len();
-
-        let combined = (a + b) * 0.5;
-        let ap_in = self.allpass[self.pos_ap];
-        let ap_out = -combined + ap_in;
-        self.allpass[self.pos_ap] = combined + ap_in * 0.5;
-        self.pos_ap = (self.pos_ap + 1) % self.allpass.len();
-
-        input * (1.0 - amount) + ap_out * amount
+    fn draw_readout(&self, fb: &mut FrameBuffer, v: &View, accent: Rgb, y: i32) {
+        let p = &self.params;
+        let items: Vec<(&str, String)> = if v.mode == 2 {
+            vec![("SYNTH", "no input, so Beads plays its own wavetables".into())]
+        } else {
+            vec![
+                ("GRAINS", v.num_grains.to_string()),
+                ("DENSITY", self.leaf_value(Selection::Density)),
+                ("SIZE", self.leaf_value(Selection::Size)),
+                ("PITCH", self.leaf_value(Selection::Pitch)),
+                ("SHAPE", shape_name(p.pot(POT_SHAPE)).into()),
+            ]
+        };
+        let mut x = 16;
+        for (label, value) in items {
+            text(fb, label, x, y, &SPLEEN_6X12, DIM);
+            let lx = x + text_width(label, &SPLEEN_6X12) + 6;
+            text(fb, &value, lx, y, &SPLEEN_6X12, mix(INK, accent, 0.25));
+            x = lx + text_width(&value, &SPLEEN_6X12) + 16;
+        }
+        let meter = self.meter.min(1.0);
+        text_right(fb, "OUT", 578, y, &SPLEEN_6X12, DIM);
+        fill(fb, 584, y - 7, 40, 4, FAINT);
+        fill(fb, 584, y - 7, (40.0 * meter) as i32, 4, if meter > 0.97 { REC } else { accent });
     }
 }
 
-/// The grain amplitude envelope: `shape` 0 = clicky/rectangular (very
-/// short attack and decay), 1 = a slow attack reminiscent of a
-/// reversed grain -- see module doc comment.
-fn grain_envelope(progress: f32, shape: f32) -> f32 {
-    let attack = (0.02 + shape.clamp(0.0, 1.0) * 0.88).clamp(0.02, 0.95);
-    if progress < attack {
-        0.5 - 0.5 * (std::f32::consts::PI * (progress / attack)).cos()
+/// The recording buffer, newest audio at the right edge (the record head),
+/// with every playing grain as a bead at its place in it: across by how far
+/// back it reads, down by its pan, size and brightness by its envelope.
+#[allow(clippy::too_many_arguments)]
+fn draw_buffer(fb: &mut FrameBuffer, v: &View, freeze_button: bool, x: i32, y: i32, w: i32, h: i32, accent: Rgb, compact: bool) {
+    fill(fb, x, y, w, h, PANEL);
+    if v.mode == 2 {
+        draw_synth(fb, v, x, y, w, h, accent, compact);
+        return;
+    }
+    let frozen = v.frozen != 0 || freeze_button;
+    let mid = y + h / 2;
+
+    // Second marks, behind everything.
+    let secs = v.buffer_seconds.max(0.1);
+    let step = if secs <= 5.0 { 0.5 } else if secs <= 10.0 { 1.0 } else if secs <= 20.0 { 2.0 } else { 4.0 };
+    let mut t = step;
+    while t < secs - step * 0.25 {
+        let gx = x + w - 1 - ((t / secs) * (w - 1) as f32) as i32;
+        let mut gy = y + 2;
+        while gy < y + h - 2 {
+            fill(fb, gx, gy, 1, 2, FAINT);
+            gy += 5;
+        }
+        if !compact {
+            let label = if step < 1.0 { format!("-{t:.1}s") } else { format!("-{t:.0}s") };
+            text_center(fb, &label, gx, y + h + 13, &SPLEEN_6X12, DIM);
+        }
+        t += step;
+    }
+    if !compact {
+        text_right(fb, "now", x + w, y + h + 13, &SPLEEN_6X12, if frozen { ICE } else { REC });
+    }
+
+    // The buffer's contents.
+    let wave = if frozen { mix(FAINT, ICE, 0.45) } else { mix(FAINT, accent, 0.4) };
+    let wave_hot = if frozen { ICE } else { mix(accent, INK, 0.15) };
+    let half = (h / 2 - 6) as f32;
+    for px in 0..w {
+        let age = 1.0 - px as f32 / (w - 1) as f32;
+        let gx = x + px;
+        if age > v.recorded + 1e-3 {
+            if px % 4 == 0 {
+                fill(fb, gx, mid, 1, 1, FAINT);
+            }
+            continue;
+        }
+        let k = ((age * (OVERVIEW - 1) as f32) as usize).min(OVERVIEW - 1);
+        let peak = v.overview[k].clamp(0.0, 1.0);
+        let a = (peak.powf(0.7) * half).max(1.0) as i32;
+        vline(fb, gx, mid - a, mid + a, mix(wave, wave_hot, peak * 0.7));
+    }
+
+    // Grains, or in delay mode the delay controller's play heads.
+    let grains = v.grains();
+    if v.mode == 1 {
+        for g in grains {
+            let gx = x + w - 1 - (g.age * (w - 1) as f32) as i32;
+            let col = mix(PANEL, INK, 0.3 + 0.7 * g.env);
+            let reach = ((h / 2 - 4) as f32 * (0.25 + 0.75 * g.env)) as i32;
+            vline(fb, gx, mid - reach, mid + reach, col);
+            dot(fb, gx, mid - reach, 5, col);
+            dot(fb, gx, mid + reach, 5, col);
+        }
     } else {
-        let d = ((progress - attack) / (1.0 - attack)).clamp(0.0, 1.0);
-        0.5 + 0.5 * (std::f32::consts::PI * d).cos()
+        // Dimmest first, so the loudest beads sit on top.
+        let mut order: Vec<&GrainView> = grains.iter().collect();
+        order.sort_by(|a, b| a.env.total_cmp(&b.env));
+        for g in order {
+            let gx = x + w - 1 - (g.age * (w - 1) as f32) as i32;
+            let gy = y + 9 + (g.pan.clamp(0.0, 1.0) * (h - 18) as f32) as i32;
+            let size = if compact { 3.0 + 5.0 * g.env } else { 4.0 + 11.0 * g.env };
+            dot(fb, gx, gy, (size * 2.3) as u32, mix(PANEL, accent, 0.22 * g.env + 0.06));
+            if g.speed < 0.0 {
+                ring(fb, gx, gy, size as u32 + 2, mix(accent, INK, g.env));
+                ring(fb, gx, gy, size as u32, mix(accent, INK, g.env));
+            } else {
+                dot(fb, gx, gy, size as u32, mix(accent, INK, 0.15 + 0.6 * g.env));
+            }
+        }
     }
+
+    // The record head.
+    let head = if frozen { ICE } else { REC };
+    fill(fb, x + w - 2, y, 2, h, head);
+    if !compact {
+        let label = if frozen { "FROZEN" } else if v.mode == 1 { "DELAY" } else { "REC" };
+        let lw = text_width(label, &SPLEEN_6X12) + 10;
+        fill(fb, x + w - 2 - lw, y, lw, 14, head);
+        text(fb, label, x + w - lw + 3, y + 11, &SPLEEN_6X12, BG);
+    }
+
+    if v.mode == 3 {
+        fill(fb, x + w / 2 - 90, mid - 12, 180, 24, PANEL);
+        text_center(fb, "SWITCHING MEDIUM", x + w / 2, mid + 5, &SPLEEN_8X16, DIM);
+    } else if v.synth_countdown >= 0.0 {
+        let msg = format!("NO INPUT - SYNTH IN {:.0} S", v.synth_countdown.ceil());
+        let bh = if compact { 26 } else { 44 };
+        fill(fb, x + w / 2 - 140, mid - bh / 2, 280, bh, PANEL);
+        frame(fb, x + w / 2 - 140, mid - bh / 2, 280, bh, FAINT);
+        text_center(fb, &msg, x + w / 2, mid + if compact { 5 } else { -2 }, &SPLEEN_8X16, INK);
+        if !compact {
+            text_center(fb, "R1 menu, Inputs, In L picks a source", x + w / 2, mid + 14, &SPLEEN_6X12, DIM);
+        }
+    }
+    frame(fb, x, y, w, h, FAINT);
 }
+
+/// Synth mode: no buffer, so each wavetable grain sits on a pitch axis
+/// (log Hz) and rides its own phase up and down.
+#[allow(clippy::too_many_arguments)]
+fn draw_synth(fb: &mut FrameBuffer, v: &View, x: i32, y: i32, w: i32, h: i32, accent: Rgb, compact: bool) {
+    let lo = 20f32.log2();
+    let hi = 5000f32.log2();
+    for f in [50.0f32, 100.0, 200.0, 500.0, 1000.0, 2000.0] {
+        let gx = x + ((f.log2() - lo) / (hi - lo) * w as f32) as i32;
+        let mut gy = y + 2;
+        while gy < y + h - 2 {
+            fill(fb, gx, gy, 1, 2, FAINT);
+            gy += 5;
+        }
+        if !compact {
+            let label = if f >= 1000.0 { format!("{}k", f / 1000.0) } else { format!("{f:.0}") };
+            text_center(fb, &label, gx, y + h + 13, &SPLEEN_6X12, DIM);
+        }
+    }
+    if !compact {
+        text_right(fb, "Hz", x + w, y + h + 13, &SPLEEN_6X12, DIM);
+    }
+    // The output itself, as a trace across the panel.
+    let mid = y + h / 2;
+    let amp = (h / 2 - 6) as f32;
+    let mut last: Option<Point> = None;
+    for (i, s) in v.scope.iter().enumerate() {
+        let pt = Point::new(x + 1 + (i as i32 * (w - 3)) / (SCOPE as i32 - 1), mid - (s.clamp(-1.0, 1.0) * amp) as i32);
+        if let Some(prev) = last {
+            Line::new(prev, pt).into_styled(PrimitiveStyle::with_stroke(c(mix(PANEL, accent, 0.55)), 1)).draw(fb).ok();
+        }
+        last = Some(pt);
+    }
+    for g in v.grains() {
+        let f = g.speed.abs().max(20.0);
+        let gx = x + ((f.log2() - lo) / (hi - lo) * w as f32).clamp(6.0, (w - 7) as f32) as i32;
+        let gy = y + h / 2 - ((g.age * std::f32::consts::TAU).sin() * (h / 2 - 14) as f32) as i32;
+        let size = if compact { 3.0 + 5.0 * g.env } else { 4.0 + 11.0 * g.env };
+        dot(fb, gx, gy, (size * 2.3) as u32, mix(PANEL, accent, 0.25 * g.env + 0.06));
+        dot(fb, gx, gy, size as u32, mix(accent, INK, 0.2 + 0.6 * g.env));
+    }
+    let label = "SYNTH";
+    let lw = text_width(label, &SPLEEN_6X12) + 10;
+    fill(fb, x + w - lw, y, lw, 14, accent);
+    text(fb, label, x + w - lw + 5, y + 11, &SPLEEN_6X12, BG);
+    frame(fb, x, y, w, h, FAINT);
+}
+
+/// The play view's lower half: the knob pair and its neighbours as dials,
+/// and the pads.
+fn draw_controls(fb: &mut FrameBuffer, col: &crate::app::PlayColumn, accent: Rgb, y: i32) {
+    for (i, d) in col.dials.iter().enumerate().take(4) {
+        let cx = 54 + i as i32 * 96;
+        let cy = y + 36;
+        let diameter = 56u32;
+        let top_left = Point::new(cx - diameter as i32 / 2, cy - diameter as i32 / 2);
+        let track = PrimitiveStyleBuilder::new().stroke_color(c(FAINT)).stroke_width(5).build();
+        ArcShape::new(top_left, diameter, Angle::from_degrees(135.0), Angle::from_degrees(270.0)).into_styled(track).draw(fb).ok();
+        let lit = if d.knob > 0 { accent } else { mix(DIM, accent, 0.3) };
+        let sweep = 270.0 * d.norm.clamp(0.0, 1.0);
+        if sweep > 0.5 {
+            let value = PrimitiveStyleBuilder::new().stroke_color(c(lit)).stroke_width(5).build();
+            ArcShape::new(top_left, diameter, Angle::from_degrees(135.0), Angle::from_degrees(sweep)).into_styled(value).draw(fb).ok();
+        }
+        // The pointer, riding the end of the arc.
+        let a = (135.0f32 + sweep).to_radians();
+        let r = diameter as f32 / 2.0 - 3.0;
+        dot(fb, cx + (a.cos() * r).round() as i32, cy + (a.sin() * r).round() as i32, 9, INK);
+        if d.knob > 0 {
+            dot(fb, cx, cy, 17, lit);
+            text_center(fb, &d.knob.to_string(), cx + 1, cy + 4, &SPLEEN_6X12, BG);
+        }
+        text_center(fb, &clip(&d.label.to_uppercase(), 15), cx, cy + 44, &SPLEEN_6X12, if d.knob > 0 { INK } else { DIM });
+        text_center(fb, &clip(&d.value, 15), cx, cy + 57, &SPLEEN_6X12, mix(DIM, accent, 0.5));
+    }
+
+    let px = 428;
+    let chip = format!("PADS: {}", col.layer);
+    pill(fb, px, y - 3, text_width(&chip, &SPLEEN_6X12) + 16, 15, accent);
+    text(fb, &chip, px + 8, y + 8, &SPLEEN_6X12, BG);
+    text_right(fb, "R1 MENU", 624, y + 8, &SPLEEN_6X12, DIM);
+    let cw = 46;
+    let ch = 20;
+    for i in 0..16usize {
+        let cx = px + (i % 4) as i32 * (cw + 4);
+        let cy = y + 17 + (i / 4) as i32 * (ch + 4);
+        let st = col.pad_state.get(i).copied().unwrap_or(0);
+        let (bg, ink) = match st {
+            4 => (INK, BG),
+            3 => (accent, BG),
+            1 | 2 => (FAINT, INK),
+            _ => (PANEL, DIM),
+        };
+        fill(fb, cx, cy, cw, ch, bg);
+        let label = col.pad_labels.get(i).cloned().unwrap_or_default();
+        text_center(fb, &clip(&label, 7), cx + cw / 2, cy + 14, &SPLEEN_6X12, ink);
+    }
+
+    let line = if !col.status.is_empty() { &col.status } else { &col.line };
+    text(fb, &clip(line, 48), 16, y + 112, &SPLEEN_8X16, mix(INK, accent, 0.35));
+}
+
+// --- Audio ---------------------------------------------------------------
 
 struct BeadsProcessor {
     params: Arc<Params>,
     audio_bus: Arc<AudioBus>,
-    /// A rolling capture of the tapped source -- what grains are cut
-    /// from. Fixed at the largest quality mode's length; each mode
-    /// just uses a shorter prefix of it (see `quality_profile`).
-    capture: Vec<f32>,
-    write_pos: usize,
-    grains: [Grain; MAX_GRAINS],
-    /// Fractional grain-spawn accumulator -- lets density be
-    /// sub-block-accurate without needing per-sample scheduling.
-    spawn_accum: f32,
-    rng: u32,
-    /// Rising/falling edge tracking on `held` for Gated/Clocked modes.
-    was_held: bool,
-    /// Clocked mode's division counter -- counts ticks since the last
-    /// grain was allowed through.
-    clock_div_counter: u32,
-    /// Sample-and-hold state for the quality mode's rate decimation.
-    hold_counter: u32,
-    held_value: f32,
-    wow_phase: f32,
-    reverb: Reverb,
+    engine: Engine,
+    in_l: Vec<f32>,
+    in_r: Vec<f32>,
+    out_l: Vec<f32>,
+    out_r: Vec<f32>,
 }
 
-impl BeadsProcessor {
-    fn next_rand(&mut self) -> f32 {
-        self.rng ^= self.rng << 13;
-        self.rng ^= self.rng >> 17;
-        self.rng ^= self.rng << 5;
-        (self.rng as f32 / u32::MAX as f32) * 2.0 - 1.0
+/// How long the seed input counts as patched after its last high.
+const SEED_PATCHED_SECONDS: f32 = 4.0;
+
+/// Copies one picked source into `dest` (silence if none); true if one is
+/// picked, i.e. a cable is in that jack.
+fn read_source(audio_bus: &AudioBus, idx: usize, dest: &mut [f32]) -> bool {
+    dest.fill(0.0);
+    if idx == crate::audio_bus::NO_SOURCE {
+        return false;
     }
-
-    /// A "peaky" random value in -1..1, clustered toward the middle --
-    /// matches the manual's description of the attenurandomizers'
-    /// internal random source.
-    fn peaky_rand(&mut self) -> f32 {
-        (self.next_rand() + self.next_rand()) * 0.5
-    }
-
-    fn spawn_grain(&mut self, cap_len: usize, length_samples: f32, rate: f32, pitch_random: f32, time_random: f32, size_random: f32, shape_random: f32, shape: f32, time: f32, is_delay_tap: bool) {
-        let cap_len_f = cap_len as f32;
-        let rate = rate * 2f32.powf(self.peaky_rand() * pitch_random * 2.0);
-        let length_samples = (length_samples * (1.0 + self.peaky_rand() * size_random)).max(1.0);
-        let shape = (shape + self.peaky_rand() * shape_random).clamp(0.0, 1.0);
-
-        // TIME picks how far back into the buffer a grain starts: 0 =
-        // most recent audio, 1 = the oldest material still held in
-        // this quality mode's window. Jitter is scaled to a few
-        // grain-lengths (plus TIME's own randomization amount), not
-        // the whole buffer.
-        let base_back = time.clamp(0.0, 1.0) * (cap_len_f - length_samples * rate.max(1.0)).max(0.0);
-        let jitter = self.peaky_rand() * time_random * cap_len_f * 0.5;
-        let start = (self.write_pos as f32 - length_samples * rate.max(1.0) - base_back + jitter).rem_euclid(cap_len_f);
-
-        let slot = if is_delay_tap {
-            // The delay tap always reuses grain slot 0 so there's
-            // never more than one active -- a real single repeating
-            // tap, not a cloud.
-            &mut self.grains[0]
-        } else {
-            match self.grains.iter_mut().find(|g| !g.active) {
-                Some(slot) => slot,
-                None => return,
+    if let Some(buf) = audio_bus.get(idx) {
+        if let Ok(b) = buf.lock() {
+            if !b.is_empty() {
+                for (n, d) in dest.iter_mut().enumerate() {
+                    *d = b[n % b.len()];
+                }
             }
-        };
-        slot.active = true;
-        slot.pos = start;
-        slot.rate = rate;
-        slot.length = length_samples;
-        slot.remaining = length_samples;
-        slot.shape = shape;
-        slot.is_delay_tap = is_delay_tap;
+        }
     }
+    true
 }
 
 impl AudioProcessor for BeadsProcessor {
     fn process(&mut self, buffer: &mut [f32], channels: usize, sample_rate: f32) {
-        for out in buffer.iter_mut() {
-            *out = 0.0;
-        }
-
-        let source_idx = self.params.source.load(Ordering::Relaxed);
-        let tapped = self.audio_bus.get(source_idx).map(|b| b.lock().unwrap().clone());
-
-        let profile = quality_profile(self.params.quality.load(Ordering::Relaxed));
-        let cap_len = ((profile.buffer_seconds / MAX_CAPTURE_SECONDS) * self.capture.len() as f32) as usize;
-        let cap_len = cap_len.clamp(1024, self.capture.len());
-
-        let is_delay_mode = self.params.size.get() >= DELAY_MODE_THRESHOLD;
-        let grain_ms = if is_delay_mode {
-            // TIME sets the delay length directly in this mode (see
-            // module doc comment) -- from ~50ms up to the full
-            // buffer window.
-            let time = self.params.time.get().clamp(0.0, 1.0);
-            (50.0 + time * (cap_len as f32 / sample_rate * 1000.0 - 50.0)).max(20.0)
-        } else {
-            MIN_GRAIN_MS * (MAX_GRAIN_MS / MIN_GRAIN_MS).powf(self.params.size.get().clamp(0.0, 1.0))
-        };
-        let length_samples = (grain_ms * 0.001 * sample_rate).max(1.0);
-        let pitch_oct = (self.params.pitch.get().clamp(0.0, 1.0) - 0.5) * 4.0;
-        let rate = 2f32.powf(pitch_oct);
-        let density = self.params.density.get().clamp(0.0, 1.0);
-        let time = self.params.time.get().clamp(0.0, 1.0);
-        let time_random = self.params.time_random.get().clamp(0.0, 1.0);
-        let size_random = self.params.size_random.get().clamp(0.0, 1.0);
-        let shape_random = self.params.shape_random.get().clamp(0.0, 1.0);
-        let pitch_random = self.params.pitch_random.get().clamp(0.0, 1.0);
-        let shape = self.params.shape.get().clamp(0.0, 1.0);
-        let feedback = self.params.feedback.get().clamp(0.0, 0.97);
-        let dry_wet = self.params.dry_wet.get().clamp(0.0, 1.0);
-        let reverb_amount = self.params.reverb.get().clamp(0.0, 1.0);
-        let frozen = self.params.freeze.load(Ordering::Relaxed);
-        let grain_mode = self.params.grain_mode.load(Ordering::Relaxed) % 3;
-        let is_held = self.params.held.lock().unwrap().iter().any(|&h| h);
-
-        // Latched-mode rate: null at the center (density == 0.5),
-        // randomly-modulated turning CW, constant turning CCW, same
-        // shape as the real DENSITY knob.
-        let (latched_hz, latched_jitter) = if density >= 0.5 {
-            let t = (density - 0.5) * 2.0;
-            (t * 60.0, t)
-        } else {
-            let t = (0.5 - density) * 2.0;
-            (t * 60.0, 0.0)
-        };
-
+        let channels = channels.max(1);
         let frames = buffer.len() / channels;
-        let mut mono = vec![0.0f32; frames];
-
-        for n in 0..frames {
-            // --- Capture write (quality-degraded, frozen = frozen) ---
-            let input_sample = tapped.as_ref().and_then(|b| b.get(n % b.len().max(1)).copied()).unwrap_or(0.0);
-            if !frozen {
-                let write_idx = self.write_pos % cap_len;
-                let fed_back = self.capture[write_idx] * feedback;
-                let mut raw = (input_sample + fed_back).clamp(-4.0, 4.0);
-
-                // Tape-style wow/flutter: a slow pitch wobble applied
-                // by re-reading a slightly time-shifted version of
-                // the signal being written.
-                if profile.wow_depth > 0.0 {
-                    self.wow_phase += 0.6 / sample_rate;
-                    raw *= 1.0 + (self.wow_phase * std::f32::consts::TAU).sin() * profile.wow_depth * 40.0;
-                }
-
-                // Sample-rate decimation (sample-and-hold).
-                if self.hold_counter == 0 {
-                    self.held_value = raw;
-                }
-                self.hold_counter = (self.hold_counter + 1) % profile.rate_div.max(1);
-
-                // Bit-depth quantization.
-                let levels = (1u32 << profile.bits.min(16).max(1)) as f32 / 2.0 - 1.0;
-                let quantized = (self.held_value * levels).round() / levels;
-
-                self.capture[write_idx] = quantized;
-                self.write_pos = (self.write_pos + 1) % cap_len;
-            }
-
-            // --- Grain spawn scheduling, per grain mode ---
-            match grain_mode {
-                0 => {
-                    // Latched: continuous, DENSITY-scheduled.
-                    if latched_hz > 0.01 {
-                        self.spawn_accum += latched_hz / sample_rate;
-                        if self.spawn_accum >= 1.0 {
-                            self.spawn_accum -= 1.0;
-                            let jitter_amt = (time_random + latched_jitter * 0.3).min(1.0);
-                            self.spawn_grain(cap_len, length_samples, rate, pitch_random, jitter_amt, size_random, shape_random, shape, time, false);
-                        }
-                    }
-                }
-                1 => {
-                    // Gated: only while a pad is held. DENSITY near
-                    // center = a single grain per press; otherwise a
-                    // continuous rate while held.
-                    let rising_edge = is_held && !self.was_held;
-                    if (0.4..=0.6).contains(&density) {
-                        if rising_edge {
-                            self.spawn_grain(cap_len, length_samples, rate, pitch_random, time_random, size_random, shape_random, shape, time, false);
-                        }
-                    } else if is_held {
-                        let hz = 1.0 + density * 59.0;
-                        self.spawn_accum += hz / sample_rate;
-                        if self.spawn_accum >= 1.0 {
-                            self.spawn_accum -= 1.0;
-                            self.spawn_grain(cap_len, length_samples, rate, pitch_random, time_random, size_random, shape_random, shape, time, false);
-                        }
-                    } else {
-                        self.spawn_accum = 0.0;
-                    }
-                }
-                _ => {
-                    // Clocked: each pad-press edge is a clock tick.
-                    // DENSITY >= center = probability (0-100%);
-                    // DENSITY < center = a clock divider (1/16..1/1).
-                    let rising_edge = is_held && !self.was_held;
-                    if rising_edge {
-                        let should_spawn = if density >= 0.5 {
-                            let prob = (density - 0.5) * 2.0;
-                            self.next_rand().abs() < prob
-                        } else {
-                            let t = (0.5 - density) * 2.0;
-                            let division = (1.0 + t * 15.0).round() as u32;
-                            self.clock_div_counter += 1;
-                            let hit = self.clock_div_counter >= division;
-                            if hit {
-                                self.clock_div_counter = 0;
-                            }
-                            hit
-                        };
-                        if should_spawn {
-                            self.spawn_grain(cap_len, length_samples, rate, pitch_random, time_random, size_random, shape_random, shape, time, false);
-                        }
-                    }
-                }
-            }
-            self.was_held = is_held;
-
-            // --- Delay mode: a single continuously-retriggering tap,
-            // reusing grain slot 0, independent of grain_mode/DENSITY
-            // scheduling above (see module doc comment). ---
-            if is_delay_mode && !self.grains[0].active {
-                self.spawn_grain(cap_len, length_samples, rate, pitch_random * 0.15, 0.0, 0.0, shape_random, shape, 0.0, true);
-            }
-
-            // --- Sum every active grain ---
-            let mut sample = 0.0f32;
-            for grain in self.grains.iter_mut() {
-                if !grain.active {
-                    continue;
-                }
-                let idx = grain.pos.rem_euclid(cap_len as f32);
-                let i0 = idx as usize;
-                let i1 = (i0 + 1) % cap_len;
-                let frac = idx - i0 as f32;
-                let value = self.capture[i0] * (1.0 - frac) + self.capture[i1] * frac;
-
-                let progress = 1.0 - (grain.remaining / grain.length).clamp(0.0, 1.0);
-                let window = grain_envelope(progress, grain.shape);
-                sample += value * window;
-
-                grain.pos += grain.rate;
-                grain.remaining -= 1.0;
-                if grain.remaining <= 0.0 {
-                    grain.active = false;
-                }
-            }
-            // Headroom-normalize by the max simultaneous grain count
-            // so density alone doesn't make it louder.
-            let wet = self.reverb.process(sample / (MAX_GRAINS as f32).sqrt(), reverb_amount);
-            mono[n] = (input_sample * (1.0 - dry_wet) + wet * dry_wet).tanh();
-        }
-
-        for (out, s) in buffer.chunks_mut(channels).zip(mono.iter()) {
-            for ch in out.iter_mut() {
-                *ch = *s;
+        for v in [&mut self.in_l, &mut self.in_r, &mut self.out_l, &mut self.out_r] {
+            if v.len() < frames {
+                v.resize(frames, 0.0);
             }
         }
-        *self.params.bus_out.lock().unwrap() = mono;
+        let p = &self.params;
+        let has_left = read_source(&self.audio_bus, p.source_l.load(Ordering::Relaxed), &mut self.in_l[..frames]);
+        let has_right = read_source(&self.audio_bus, p.source_r.load(Ordering::Relaxed), &mut self.in_r[..frames]);
 
-        // Once per block (not per-sample): a downsampled snapshot of
-        // the current quality mode's capture window, and each active
-        // grain's real position/envelope within it -- the Slint
-        // "grain cloud" visual reads both directly, no fabricated
-        // data.
-        const SNAPSHOT_POINTS: usize = 120;
-        let snapshot: Vec<f32> = (0..SNAPSHOT_POINTS).map(|i| self.capture[i * cap_len / SNAPSHOT_POINTS]).collect();
-        *self.params.waveform_snapshot.lock().unwrap() = snapshot;
+        let seed_high = p.ext_seed.get() > 0.5;
+        let quiet = if seed_high { 0 } else { p.seed_quiet_frames.load(Ordering::Relaxed).saturating_add(frames as u64) };
+        p.seed_quiet_frames.store(quiet, Ordering::Relaxed);
+        let seed_patched = (quiet as f32) < SEED_PATCHED_SECONDS * sample_rate;
 
-        let dots: Vec<(f32, f32)> = self
-            .grains
-            .iter()
-            .filter(|g| g.active)
-            .map(|g| {
-                let frac = g.pos.rem_euclid(cap_len as f32) / cap_len as f32;
-                let progress = 1.0 - (g.remaining / g.length).clamp(0.0, 1.0);
-                (frac, grain_envelope(progress, g.shape))
-            })
-            .collect();
-        *self.params.grain_dots.lock().unwrap() = dots;
+        let controls = Controls {
+            pots: std::array::from_fn(|i| p.pot(i)),
+            time_offset: p.ext_time.get(),
+            size_offset: p.ext_size.get(),
+            shape_offset: p.ext_shape.get(),
+            pitch_offset: p.ext_pitch.get(),
+            density_cv: p.ext_density.get(),
+            mix_offset: [p.ext_feedback.get(), p.ext_dry_wet.get(), p.ext_reverb.get()],
+            media: p.media() as i32,
+            gain: p.gain.load(Ordering::Relaxed).min(255) as i32,
+            has_left: has_left as i32,
+            has_right: has_right as i32,
+            seed_button: p.seed.load(Ordering::Relaxed) as i32,
+            seed_patched: seed_patched as i32,
+            seed_gate: seed_high as i32,
+            freeze_button: p.freeze.load(Ordering::Relaxed) as i32,
+            freeze_gate: (p.ext_freeze.get() > 0.5) as i32,
+        };
+        // The bridge's GainControl does the normalling (an empty jack copies
+        // the other), as the firmware's does.
+        unsafe {
+            beads_render(
+                self.engine.handle,
+                &controls,
+                self.in_l.as_ptr(),
+                self.in_r.as_ptr(),
+                self.out_l.as_mut_ptr(),
+                self.out_r.as_mut_ptr(),
+                frames as c_int,
+                sample_rate,
+            );
+        }
+
+        let level = (p.mix_level.get() + p.ext_mix_level.get()).clamp(0.0, 2.0);
+        let mut peak = 0.0f32;
+        for (n, out) in buffer.chunks_mut(channels).enumerate() {
+            let l = self.out_l[n];
+            let r = self.out_r[n];
+            peak = peak.max(l.abs()).max(r.abs());
+            if channels >= 2 {
+                out[0] = l * level;
+                out[1] = r * level;
+                for ch in out.iter_mut().skip(2) {
+                    *ch = 0.0;
+                }
+            } else {
+                out[0] = (l + r) * 0.5 * level;
+            }
+        }
+        p.out_peak.set(peak);
+        if let Ok(mut bus) = p.bus_out.lock() {
+            bus.clear();
+            bus.extend(self.out_l[..frames].iter().zip(&self.out_r[..frames]).map(|(l, r)| (l + r) * 0.5));
+        }
+        if let Ok(mut v) = p.view.try_lock() {
+            unsafe { beads_view(self.engine.handle, &mut *v) };
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::play_kit as kit;
 
     fn new_app() -> (BeadsApp, Arc<AudioBus>) {
-        let sensitivity = Arc::new(AtomicF32::new(0.1));
-        let nav_speed = Arc::new(AtomicF32::new(3.0));
-        let modbus = Arc::new(ModBus::new());
         let audio_bus = Arc::new(AudioBus::new());
-        let mixer_bus = Arc::new(MixerBus::new());
-        let app = BeadsApp::new(sensitivity, nav_speed, modbus, Arc::clone(&audio_bus), mixer_bus);
+        let app = BeadsApp::new(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), Arc::new(ModBus::new()), Arc::clone(&audio_bus), Arc::new(MixerBus::new()));
         (app, audio_bus)
     }
 
-    /// No tapped source, no feedback -- Beads must stay silent and
-    /// never panic.
-    #[test]
-    fn no_source_and_no_feedback_is_silence_not_a_panic() {
-        let (mut app, _audio_bus) = new_app();
-        app.params.density.set(1.0); // spawn plenty of grains from an all-zero capture
-        let mut processor = app.audio_processor().unwrap();
-        let mut buffer = vec![0.0f32; 512 * 2];
-        for _ in 0..10 {
-            processor.process(&mut buffer, 2, 48000.0);
-        }
-        assert!(buffer.iter().all(|&s| s == 0.0));
-    }
-
-    /// A loud tapped source must produce audible grains in Latched
-    /// mode (the default).
-    #[test]
-    fn a_loud_tapped_source_produces_audible_grains() {
-        let (mut app, audio_bus) = new_app();
+    /// A 220 Hz sine on the bus as "Source" (index 1: Beads registers its
+    /// own output first), picked as IN L.
+    fn with_sine(app: &BeadsApp, audio_bus: &AudioBus) -> Arc<Mutex<Vec<f32>>> {
         let source = audio_bus.register("Source");
-        app.params.source.store(1, Ordering::Relaxed); // Beads registers its own bus first (index 0) -- "Source" lands at 1.
-        *source.lock().unwrap() = vec![0.8; 512];
-        app.params.density.set(1.0);
-        app.params.dry_wet.set(1.0);
-
-        let mut processor = app.audio_processor().unwrap();
-        let mut buffer = vec![0.0f32; 512 * 2];
-        let mut peak = 0.0f32;
-        for _ in 0..40 {
-            processor.process(&mut buffer, 2, 48000.0);
-            peak = peak.max(buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs())));
-        }
-        assert!(peak > 0.01, "expected audible grains from a loud tapped source, got peak {peak}");
+        app.params.source_l.store(1, Ordering::Relaxed);
+        *source.lock().unwrap() = (0..480).map(|i| 0.5 * (i as f32 * std::f32::consts::TAU * 200.0 / 48000.0).sin()).collect();
+        source
     }
 
-    /// High feedback must never blow up -- output must stay finite
-    /// and bounded even after many blocks of self-feeding texture.
+    fn run(processor: &mut Box<dyn AudioProcessor>, seconds: f32) -> (Vec<f32>, f32) {
+        let mut buffer = vec![0.0f32; 480 * 2];
+        let mut peak = 0.0f32;
+        for _ in 0..(seconds * 100.0) as usize {
+            processor.process(&mut buffer, 2, 48000.0);
+            peak = buffer.iter().fold(peak, |m, s| m.max(s.abs()));
+        }
+        (buffer, peak)
+    }
+
+    #[test]
+    fn the_rust_and_c_layouts_agree() {
+        assert_eq!(unsafe { beads_controls_size() } as usize, std::mem::size_of::<Controls>());
+        assert_eq!(unsafe { beads_view_size() } as usize, std::mem::size_of::<View>());
+    }
+
+    #[test]
+    fn a_source_comes_back_as_grains() {
+        let (mut app, bus) = new_app();
+        with_sine(&app, &bus);
+        app.params.pots[POT_DRY_WET].set(1.0); // wet only: anything heard is grains
+        app.params.pots[POT_TIME].set(0.05);
+        let mut p = app.audio_processor().unwrap();
+        let (_, peak) = run(&mut p, 2.0);
+        assert!(peak > 0.05, "grains should be audible, peak {peak}");
+        let v = app.view();
+        assert_eq!(v.mode, 0);
+        assert_eq!(v.mono, 1, "one source: mono, as with one cable in IN L");
+        assert!((v.buffer_seconds - 8.0).abs() < 0.1, "digital mono holds 8 s, got {}", v.buffer_seconds);
+        assert!(v.overview.iter().take(32).any(|&x| x > 0.1), "the newest part of the buffer holds the sine");
+    }
+
+    #[test]
+    fn grains_are_panned_so_the_output_is_stereo() {
+        let (mut app, bus) = new_app();
+        with_sine(&app, &bus);
+        app.params.pots[POT_DRY_WET].set(1.0);
+        app.params.pots[POT_TIME].set(0.05);
+        app.params.pots[POT_TIME_AMT].set(1.0); // randomness widens the pan spread
+        app.params.pots[POT_DENSITY].set(0.95);
+        let mut p = app.audio_processor().unwrap();
+        let mut differs = false;
+        let mut buffer = vec![0.0f32; 960];
+        for _ in 0..200 {
+            p.process(&mut buffer, 2, 48000.0);
+            differs |= buffer.chunks(2).any(|f| (f[0] - f[1]).abs() > 0.01);
+        }
+        assert!(differs, "left and right should differ");
+    }
+
+    #[test]
+    fn freezing_an_empty_buffer_keeps_the_wet_signal_silent() {
+        let (mut app, bus) = new_app();
+        with_sine(&app, &bus);
+        app.params.freeze.store(true, Ordering::Relaxed);
+        app.params.pots[POT_DRY_WET].set(1.0);
+        app.params.pots[POT_REVERB].set(0.0);
+        let mut p = app.audio_processor().unwrap();
+        let (_, peak) = run(&mut p, 1.5);
+        assert!(peak < 1e-3, "nothing was recorded, so nothing plays: {peak}");
+        assert_eq!(app.view().frozen, 1);
+    }
+
+    #[test]
+    fn size_fully_clockwise_is_the_delay() {
+        let (mut app, bus) = new_app();
+        with_sine(&app, &bus);
+        app.params.pots[POT_SIZE].set(1.0);
+        app.params.pots[POT_DRY_WET].set(1.0);
+        let mut p = app.audio_processor().unwrap();
+        let (buffer, peak) = run(&mut p, 3.0);
+        assert!(buffer.iter().all(|s| s.is_finite()));
+        assert!(peak > 0.05, "the delay should be audible: {peak}");
+        assert_eq!(app.view().mode, 1, "delay mode after the 1.5 s transition");
+    }
+
+    #[test]
+    fn the_tape_media_run_at_24_khz_with_longer_buffers() {
+        let (mut app, bus) = new_app();
+        with_sine(&app, &bus);
+        app.params.media.store(0, Ordering::Relaxed);
+        app.params.pots[POT_TIME].set(0.02);
+        app.params.pots[POT_DRY_WET].set(1.0);
+        let mut p = app.audio_processor().unwrap();
+        let (_, peak) = run(&mut p, 2.0);
+        let v = app.view();
+        assert_eq!(v.codec_rate, 24000.0);
+        assert!((v.buffer_seconds - 32.0).abs() < 0.1, "dirty tape, mono: 32 s, got {}", v.buffer_seconds);
+        assert!(peak > 0.05, "and it plays through the resamplers: {peak}");
+    }
+
+    #[test]
+    fn with_nothing_patched_the_synth_starts_after_ten_seconds() {
+        let (mut app, _bus) = new_app();
+        app.params.pots[POT_DENSITY].set(0.9);
+        let mut p = app.audio_processor().unwrap();
+        let (_, peak) = run(&mut p, 5.0);
+        assert_eq!(peak, 0.0, "silent while counting down");
+        assert!(app.view().synth_countdown > 4.0);
+        let (_, peak) = run(&mut p, 7.0);
+        assert_eq!(app.view().mode, 2);
+        assert!(peak > 0.01, "the wavetable synth plays: {peak}");
+    }
+
     #[test]
     fn high_feedback_stays_bounded_and_finite() {
-        let (mut app, audio_bus) = new_app();
-        let source = audio_bus.register("Source");
-        app.params.source.store(1, Ordering::Relaxed); // Beads registers its own bus first (index 0) -- "Source" lands at 1.
-        *source.lock().unwrap() = vec![0.9; 512];
-        app.params.feedback.set(0.97);
-        app.params.density.set(1.0);
-        app.params.dry_wet.set(1.0);
-
-        let mut processor = app.audio_processor().unwrap();
-        let mut buffer = vec![0.0f32; 512 * 2];
-        for _ in 0..200 {
-            processor.process(&mut buffer, 2, 48000.0);
-        }
-        assert!(buffer.iter().all(|s| s.is_finite()), "output must stay finite under sustained high feedback");
-        let peak = buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-        assert!(peak <= 1.0001, "expected soft-clipped output, got peak {peak}");
+        let (mut app, bus) = new_app();
+        with_sine(&app, &bus);
+        app.params.pots[POT_FEEDBACK].set(1.0);
+        app.params.pots[POT_REVERB].set(1.0);
+        app.params.pots[POT_DRY_WET].set(1.0);
+        app.params.pots[POT_DENSITY].set(1.0);
+        let mut p = app.audio_processor().unwrap();
+        let (buffer, peak) = run(&mut p, 4.0);
+        assert!(buffer.iter().all(|s| s.is_finite()));
+        assert!(peak <= 1.0, "the firmware's limiter holds it: {peak}");
     }
 
-    /// Beads must republish its own output on the audio bus.
     #[test]
     fn republishes_its_output_on_the_audio_bus() {
-        let (mut app, audio_bus) = new_app();
-        let source = audio_bus.register("Source");
-        app.params.source.store(1, Ordering::Relaxed); // Beads registers its own bus first (index 0) -- "Source" lands at 1.
-        *source.lock().unwrap() = vec![0.5; 256];
-        app.params.density.set(1.0);
-
-        let mut processor = app.audio_processor().unwrap();
-        let mut buffer = vec![0.0f32; 256 * 2];
-        processor.process(&mut buffer, 2, 48000.0);
-        let published = app.params.bus_out.lock().unwrap();
-        assert_eq!(published.len(), 256);
-    }
-
-    /// FREEZE must stop new audio from entering the capture buffer --
-    /// frozen immediately (before anything real was ever captured),
-    /// a newly loud source must never reach the (wet) output.
-    #[test]
-    fn freeze_stops_capturing_new_audio() {
-        let (mut app, audio_bus) = new_app();
-        let source = audio_bus.register("Source");
-        app.params.source.store(1, Ordering::Relaxed);
-        app.params.density.set(1.0);
-        app.params.dry_wet.set(1.0);
-        let mut processor = app.audio_processor().unwrap();
-        let mut buffer = vec![0.0f32; 512 * 2];
-
-        // Freeze immediately, before any real audio has ever been
-        // captured (buffer starts silent).
-        app.params.freeze.store(true, Ordering::Relaxed);
-        *source.lock().unwrap() = vec![0.9; 512];
-        for _ in 0..40 {
-            processor.process(&mut buffer, 2, 48000.0);
-        }
-        // With dry_wet fully wet and a still-silent capture buffer
-        // (nothing was ever written into it while frozen), every
-        // grain reads silence -- output must stay exactly zero.
-        assert!(buffer.iter().all(|&s| s == 0.0), "expected silence while frozen, buffer was not all-zero");
-    }
-
-    /// Gated mode must stay silent with no pad held, and produce
-    /// audio once one is.
-    #[test]
-    fn gated_mode_only_sounds_while_a_pad_is_held() {
-        let (mut app, audio_bus) = new_app();
-        let source = audio_bus.register("Source");
-        app.params.source.store(1, Ordering::Relaxed);
-        *source.lock().unwrap() = vec![0.8; 512];
-        app.params.grain_mode.store(1, Ordering::Relaxed); // Gated
-        app.params.density.set(1.0); // continuous rate while held
-        app.params.dry_wet.set(1.0);
-
-        let mut processor = app.audio_processor().unwrap();
-        let mut buffer = vec![0.0f32; 512 * 2];
-        for _ in 0..20 {
-            processor.process(&mut buffer, 2, 48000.0);
-        }
-        let peak_unheld = buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-        assert_eq!(peak_unheld, 0.0, "expected silence in Gated mode with nothing held, got peak {peak_unheld}");
-
-        *app.params.held.lock().unwrap() = [true; 16];
-        let mut peak_held = 0.0f32;
-        for _ in 0..40 {
-            processor.process(&mut buffer, 2, 48000.0);
-            peak_held = peak_held.max(buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs())));
-        }
-        assert!(peak_held > 0.01, "expected audible grains once a pad is held in Gated mode, got peak {peak_held}");
-    }
-
-    /// SIZE turned fully clockwise must engage delay mode and produce
-    /// a genuine repeating tap (bounded, finite, audible) rather than
-    /// a normal grain cloud.
-    #[test]
-    fn size_fully_clockwise_engages_a_bounded_delay() {
-        let (mut app, audio_bus) = new_app();
-        let source = audio_bus.register("Source");
-        app.params.source.store(1, Ordering::Relaxed);
-        *source.lock().unwrap() = vec![0.7; 512];
-        app.params.size.set(1.0);
-        app.params.time.set(0.1);
-        app.params.dry_wet.set(1.0);
-
-        let mut processor = app.audio_processor().unwrap();
-        let mut buffer = vec![0.0f32; 512 * 2];
-        for _ in 0..80 {
-            processor.process(&mut buffer, 2, 48000.0);
-        }
-        assert!(buffer.iter().all(|s| s.is_finite()));
-        let peak = buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-        assert!(peak > 0.01, "expected an audible delay tap, got peak {peak}");
-    }
-
-    /// Reverb must stay finite and bounded even at full amount.
-    #[test]
-    fn reverb_stays_bounded_and_finite() {
-        let (mut app, audio_bus) = new_app();
-        let source = audio_bus.register("Source");
-        app.params.source.store(1, Ordering::Relaxed);
-        *source.lock().unwrap() = vec![0.9; 512];
-        app.params.density.set(1.0);
-        app.params.reverb.set(1.0);
-        app.params.dry_wet.set(1.0);
-
-        let mut processor = app.audio_processor().unwrap();
-        let mut buffer = vec![0.0f32; 512 * 2];
-        for _ in 0..200 {
-            processor.process(&mut buffer, 2, 48000.0);
-        }
-        assert!(buffer.iter().all(|s| s.is_finite()));
-        let peak = buffer.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-        assert!(peak <= 1.0001, "expected soft-clipped output, got peak {peak}");
+        let (mut app, bus) = new_app();
+        with_sine(&app, &bus);
+        let mut p = app.audio_processor().unwrap();
+        run(&mut p, 0.5);
+        assert_eq!(app.params.bus_out.lock().unwrap().len(), 480);
     }
 
     #[test]
-    fn opens_playable_knob1_scrubs_time_and_seed_pads_still_gate() {
+    fn the_seed_button_follows_the_firmware() {
+        let mut s = SeedButton::new();
+        assert_eq!(s.state(), SeedState::Locked, "boots free-running");
+        let frame = Duration::from_millis(16);
+        s.update(true, frame);
+        assert_eq!(s.state(), SeedState::On, "a press unlocks and taps");
+        s.update(false, frame);
+        assert_eq!(s.state(), SeedState::Off);
+        s.update(true, frame);
+        for _ in 0..100 {
+            s.update(true, frame);
+        }
+        assert_eq!(s.state(), SeedState::Locked, "1.5 s held locks it again");
+        s.update(false, frame);
+        assert_eq!(s.state(), SeedState::Locked, "and letting go keeps it locked");
+    }
+
+    #[test]
+    fn the_knob_laws_match_the_firmware() {
+        assert_eq!(pitch_semitones(0.5), 0.0);
+        assert!((pitch_semitones(11.0 / 12.0) - 12.0).abs() < 0.01);
+        assert!((pitch_semitones(1.0 / 12.0) + 12.0).abs() < 0.01);
+        assert_eq!(attenurandomizer(0.5), 0.0);
+        assert_eq!(attenurandomizer(0.52), 0.0, "centre detent");
+        assert!(attenurandomizer(1.0) > 0.9);
+        let (s, reverse) = grain_seconds(0.2);
+        assert!(reverse && s > 0.0);
+    }
+
+    #[test]
+    fn opens_playable_and_the_pads_are_seed() {
         let (mut app, _bus) = new_app();
         assert!(app.play_column().is_some(), "play view first");
-        let time = app.params.time.get();
+        let time = app.params.pot(POT_TIME);
         app.tick(&Input { knob1: 3, ..Default::default() });
-        assert!(app.params.time.get() > time, "knob 1 is Time on the play view");
+        assert!(app.params.pot(POT_TIME) > time, "knob 1 is Time");
         app.tick(&Input { grid: std::array::from_fn(|i| i == 5), ..Default::default() });
-        assert!(app.params.held.lock().unwrap()[5], "SEED layer: a held pad is the gate, as before");
+        assert_eq!(app.params.seed.load(Ordering::Relaxed), SeedState::On as u32, "a pad is the SEED button");
         app.tick(&Input::default());
         app.tick(&Input { navigation_steps: -1, ..Default::default() });
-        assert_eq!(app.params.grain_mode.load(Ordering::Relaxed), 1, "D-pad up = next grain mode (Gated)");
+        assert_ne!(app.params.media(), DEFAULT_MEDIA as usize, "D-pad up/down is QUALITY");
         app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
         assert!(app.play_column().is_none(), "R1 opens the full menu");
     }
 
     #[test]
-    fn throws_freeze_and_spring_back_without_touching_the_seed_gate() {
+    fn throws_freeze_and_spring_back_without_pressing_seed() {
         let (mut app, _bus) = new_app();
         app.toggle_grid_mode();
         assert_eq!(app.grid_mode_label(), Some("THROWS"));
         let freeze = kit::rank_pad(0);
         app.tick(&Input { grid: std::array::from_fn(|i| i == freeze), ..Default::default() });
         assert!(app.params.freeze.load(Ordering::Relaxed), "FREEZE held");
-        assert!(!app.params.held.lock().unwrap().iter().any(|h| *h), "kit layers never open the SEED gate");
+        assert_eq!(app.params.seed.load(Ordering::Relaxed), SeedState::Locked as u32, "kit layers never press SEED");
         app.tick(&Input::default());
-        assert!(!app.params.freeze.load(Ordering::Relaxed), "released, capture runs again");
-        let delay = kit::rank_pad(1);
-        app.tick(&Input { grid: std::array::from_fn(|i| i == delay), ..Default::default() });
-        assert!(app.output_visual().is_delay_mode, "DELAY throws Size fully clockwise");
+        assert!(!app.params.freeze.load(Ordering::Relaxed));
+    }
+
+    /// Renders the play view, the menu and synth mode to PNGs in the folder
+    /// named by PORTAMAX_BEADS_SHOT.
+    #[test]
+    #[ignore = "writes screenshots to the folder in PORTAMAX_BEADS_SHOT"]
+    fn screenshot() {
+        let Ok(dir) = std::env::var("PORTAMAX_BEADS_SHOT") else { return };
+        let shoot = |app: &mut BeadsApp, name: &str| {
+            let mut fb = FrameBuffer::new();
+            app.draw(&mut fb);
+            let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+            let mut enc = png::Encoder::new(std::io::BufWriter::new(file), WIDTH as u32, HEIGHT as u32);
+            enc.set_color(png::ColorType::Rgb);
+            enc.set_depth(png::BitDepth::Eight);
+            let data: Vec<u8> = fb.buffer().iter().flat_map(|px| [(px >> 16) as u8, (px >> 8) as u8, *px as u8]).collect();
+            enc.write_header().unwrap().write_image_data(&data).unwrap();
+        };
+        let (mut app, bus) = new_app();
+        let source = bus.register("Source");
+        app.params.source_l.store(1, Ordering::Relaxed);
+        app.params.pots[POT_TIME].set(0.3);
+        app.params.pots[POT_TIME_AMT].set(0.85);
+        app.params.pots[POT_PITCH_AMT].set(0.75);
+        app.params.pots[POT_SIZE_AMT].set(0.8);
+        app.params.pots[POT_DENSITY].set(0.95);
+        app.params.pots[POT_SIZE].set(0.5);
+        let mut p = app.audio_processor().unwrap();
+        // A plucked phrase, so the buffer has shape.
+        let mut phase = 0.0f32;
+        let mut buffer = vec![0.0f32; 960];
+        let mut play = |p: &mut Box<dyn AudioProcessor>, blocks: usize, buffer: &mut Vec<f32>, phase: &mut f32, start: usize| {
+            for block in start..start + blocks {
+                let note = [220.0, 330.0, 247.0, 392.0][(block / 25) % 4];
+                let env_start = (block % 25) as f32 / 25.0;
+                *source.lock().unwrap() = (0..480)
+                    .map(|i| {
+                        *phase += note / 48000.0;
+                        let e = (-(env_start * 0.25 + i as f32 / 48000.0) * 16.0).exp();
+                        0.7 * e * (*phase * std::f32::consts::TAU).sin()
+                    })
+                    .collect();
+                p.process(buffer, 2, 48000.0);
+            }
+        };
+        play(&mut p, 700, &mut buffer, &mut phase, 0);
         app.tick(&Input::default());
-        assert!((app.params.size.get() - 0.3).abs() < 1e-5, "and back to the knob's size");
+        shoot(&mut app, "beads_play.png");
+        app.params.media.store(1, Ordering::Relaxed);
+        play(&mut p, 900, &mut buffer, &mut phase, 700);
+        app.params.freeze.store(true, Ordering::Relaxed);
+        play(&mut p, 40, &mut buffer, &mut phase, 1600);
+        shoot(&mut app, "beads_frozen_tape.png");
+        app.params.freeze.store(false, Ordering::Relaxed);
+        app.params.media.store(2, Ordering::Relaxed);
+        app.params.pots[POT_SIZE].set(1.0);
+        play(&mut p, 400, &mut buffer, &mut phase, 1640);
+        shoot(&mut app, "beads_delay.png");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        app.expanded[0] = true;
+        app.expanded[1] = true;
+        shoot(&mut app, "beads_menu.png");
+        app.tick(&Input { shoulder_press: [false, true], ..Default::default() });
+        app.params.source_l.store(crate::audio_bus::NO_SOURCE, Ordering::Relaxed);
+        app.params.pots[POT_SIZE].set(0.6);
+        app.params.media.store(0, Ordering::Relaxed);
+        run(&mut p, 3.0);
+        shoot(&mut app, "beads_countdown.png");
+        run(&mut p, 9.0);
+        shoot(&mut app, "beads_synth.png");
     }
 }
 
 /// Builds the app from the shared services (see `AppContext` and
-/// registry.rs) -- the one entry point the app registry needs, so this
-/// file can be dropped in or removed without editing anything else.
+/// registry.rs) -- the one entry point the app registry needs.
 pub fn create(ctx: &crate::app::AppContext, _id: &str) -> Box<dyn crate::app::App> {
     Box::new(BeadsApp::new(ctx.named("sensitivity"), ctx.named("nav_speed"), ctx.get(), ctx.get(), ctx.get()))
 }

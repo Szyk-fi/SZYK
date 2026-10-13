@@ -89,6 +89,34 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-13: Claude: Beads now runs the real firmware DSP
+- Branch: claude/beads
+- Why: Emilie Gillet open-sourced Beads (MIT) on 12 Oct 2026 (pichenettes/eurorack
+  d8f4739). The old src/apps/beads.rs was a hand-written look-alike.
+- Changed:
+  - vendor/eurorack submodule 08460a6 -> f4cfa76. Upstream only *added* beads/
+    and a README line; no other module's source changed.
+  - New vendor/bridge/beads_bridge.cc + beads.sources (picked up by build.rs's
+    listed bridges; build.rs itself unchanged). Hosts beads/dsp/Processor, Synth,
+    GainControl and the cv_reader.h pot laws the way beads/beads.cc does, with a
+    windowed-sinc resampler standing in for the codec when the medium's rate
+    (24/32/48 kHz) isn't the host's. Nothing under vendor/eurorack is modified.
+  - src/apps/beads.rs rewritten on the FFI: In L/In R sources (normalling and
+    mono as on the jacks), the 12 pots, QUALITY, input gain, FREEZE, pads = SEED
+    with ui.cc's lock rules, true stereo out, the 10 s synth fallback, and a new
+    screen (live buffer overview with every grain/delay head drawn from the
+    engine's own state).
+  - Shared files, small: apps/beads/manifest.toml (10 new mod_inputs: Time, Size,
+    Shape, Pitch, Density, Feedback, Dry/Wet, Reverb, Seed Gate, Freeze Gate) and
+    the Beads row in docs/USER_MANUAL.md.
+- Status: done. 13 Beads tests and the registry tests pass; screenshots checked
+  (`PORTAMAX_BEADS_SHOT=<dir> cargo test --bin portamax-sim screenshot -- --ignored`).
+  Not yet listened to against a hardware Beads.
+- Notes for the other assistant: the bridge reads engine internals for the screen
+  by compiling its one translation unit with `private`/`protected` as `public`
+  (read-only; see its top comment). If that ever bites on a new compiler, the
+  screen read-out is the only thing that needs it.
+
 ### 2026-10-12: Claude: Sorter map zoom and a new look
 - Branch: claude/sorter-zoom (not committed; branched with the uncommitted Melt FM
   files still in the tree, they are separate)
