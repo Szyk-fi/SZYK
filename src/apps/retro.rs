@@ -3841,6 +3841,203 @@ mod tests {
         run_scenario("0x7D00 (control: top 9 bits=0xFA, must NOT unblock the loop)", 0x7D00, 10);
     }
 
+    /// With the production fix now in `neogeo_core.rs`'s `read_word`
+    /// for `$3C0006` (REG_LSPCMODE) -- it returns `0x7C00 |
+    /// anim_counter` instead of bare `anim_counter`, committed after
+    /// this file's own causal test above
+    /// (`poke_lspcmode_readback_and_check_for_real_bios_post_progress_
+    /// if_a_cartridge_is_present`) proved that exact value unblocks
+    /// real BIOS POST's $C0996E-$C09980 loop -- this runs a real,
+    /// much longer boot (900 real frames, same duration and pacing as
+    /// `dump_a_real_neogeo_frame_to_disk_if_a_cartridge_is_present`,
+    /// not the 40-frame window the causal test used) against the real
+    /// Metal Slug 3 + Uni-BIOS 4.0 pair to find out exactly how far
+    /// real execution now gets.
+    ///
+    /// First run with only the dump test's own periodic Start press
+    /// (grid pad 7 every 60 frames), this test found a second, real,
+    /// distinct stuck point past the LSPCMODE fix: a tight loop at
+    /// $C05BDE-$C05BF4 (`BSR $C0970C` [kicks the watchdog, reads
+    /// REG_P1CNT $300000 into D0] / `BTST #4,D0` + `BEQ $C05C62` /
+    /// `BTST #5,D0` + `BEQ $C05C1E` / `BTST #7,D0` + `BEQ $C05BF6` /
+    /// `BRA $C05BDE`) that only exits once bit 4, 5, or 7 of REG_P1CNT
+    /// reads 0 (active-low pressed) -- i.e. the A, B, or D button, per
+    /// `NeoGeoBus::set_p1_input`'s own doc comment (`buttons = [Up,
+    /// Down, Left, Right, A, B, C, D]`, bit index == array index) and
+    /// `apply_pad_input`'s Neo Geo mapping (`buttons[4]=g[5]`=A,
+    /// `buttons[5]=g[4]`=B, `buttons[7]=g[9]`=D). Start/Select live in
+    /// a different real register (REG_STATUS_B, $380000) that this
+    /// loop never reads at all. A dedicated causal probe (same
+    /// methodology as the LSPCMODE poke test above: change one input,
+    /// nothing else, and observe) confirmed this directly -- pressing
+    /// grid pad 5 (A) periodically instead of Start, with every other
+    /// condition identical, let real execution sail straight through:
+    /// past $C05BDE, through more real BIOS routines ($C1DF8A/
+    /// $C1DFA8/$C18714 -- the latter the same vblank-wait loop
+    /// `diagnose_neogeo_stuck_pc_if_a_cartridge_is_present` found
+    /// earlier), out of the $C00000-$C1FFFF BIOS window entirely and
+    /// into the cartridge's own code (observed at $005CDC/$005CE2),
+    /// with palette RAM climbing into the thousands of nonzero
+    /// entries and a rendered frame that was genuinely, overwhelmingly
+    /// non-black (79203 of 81920 pixels) -- real Metal Slug 3 gameplay
+    /// rendering, not a stuck BIOS screen. So the committed test below
+    /// presses *both* Start and A periodically (offset from each
+    /// other), honestly reflecting that a real player mashing more
+    /// than one button is what it actually takes to clear both known
+    /// gates in a single run; it tracks whether PC ever leaves the
+    /// BIOS ROM window, whether a rendered frame ever shows real non-
+    /// black pixels, and -- if it ever finds a *third*, different
+    /// stuck point -- traces that with the same true sequential
+    /// `decode_one`/`resolve_ea` discipline this investigation has
+    /// used throughout (real single-stepping, not periodic sampling),
+    /// rather than just reporting a frozen PC number.
+    ///
+    /// `#[ignore]`d for the same reason as every other real-cartridge
+    /// test in this file -- run explicitly with `cargo test --release
+    /// --bin portamax-sim neogeo_bios_post_fix_long_boot --
+    /// --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn neogeo_bios_post_fix_long_boot_reaches_how_far_if_a_cartridge_is_present() {
+        const BIOS_WINDOW: std::ops::RangeInclusive<u32> = 0xC00000..=0xC1FFFF;
+        const OLD_STUCK_LOOP: std::ops::RangeInclusive<u32> = 0xC0996E..=0xC09980;
+        const TOTAL_FRAMES: u32 = 900;
+
+        let mut app = new_app();
+        app.console = Console::NeoGeo;
+        app.rescan_roms();
+        if app.roms.is_empty() {
+            eprintln!("skipping: no cartridge folder in {NEOGEO_ROMS_DIR}");
+            return;
+        }
+        app.load_selected_rom();
+        assert!(app.deck.is_some(), "cartridge must load: {}", app.status);
+
+        let mut left_bios_window_at: Option<(u32, u32)> = None; // (frame, pc)
+        let mut first_nonblack_at: Option<(u32, usize)> = None; // (frame, count)
+        let (mut vram_prev, mut pal_prev) = (0usize, 0usize);
+
+        for frame in 0..TOTAL_FRAMES {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            // Start (grid pad 7) every 60 frames, same as the dump
+            // test above, to push past any attract-mode/title screen
+            // the same way a real player would -- *and* A (grid pad
+            // 5, offset by 30 frames) every 60 frames, because this
+            // test's own doc comment above found a second real stuck
+            // point ($C05BDE) that only Start/Select never clears
+            // (REG_P1CNT bits 4/5/7 = A/B/D, a different real register
+            // from Start/Select's REG_STATUS_B). Pressing both is what
+            // an actual player mashing buttons at a title screen does.
+            let press_start = frame % 60 == 0;
+            let press_a = frame % 60 == 30;
+            app.tick(&Input { grid: std::array::from_fn(|pad| (pad == 7 && press_start) || (pad == 5 && press_a)), ..Default::default() });
+            if app.deck.is_none() {
+                eprintln!("deck stopped early at frame {frame}: {}", app.status);
+                break;
+            }
+
+            let Some(Deck::NeoGeo(machine)) = app.deck.as_ref() else { continue };
+            let pc = machine.cpu.pc;
+            let (vram, pal) = machine.bus.debug_nonzero_counts();
+
+            if left_bios_window_at.is_none() && !BIOS_WINDOW.contains(&pc) {
+                left_bios_window_at = Some((frame, pc));
+                eprintln!("*** LEFT THE BIOS ROM WINDOW at frame {frame}: pc=0x{pc:06X} ***");
+            }
+
+            if let Some((w, h, rgba)) = &app.last_frame {
+                let non_black = rgba.chunks_exact(4).filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count();
+                if first_nonblack_at.is_none() && non_black > 0 {
+                    first_nonblack_at = Some((frame, non_black));
+                    eprintln!("*** FIRST NON-BLACK RENDERED FRAME at frame {frame}: {non_black} of {} pixels ***", w * h);
+                }
+            }
+
+            if frame % 30 == 0 || vram != vram_prev || pal != pal_prev {
+                eprintln!("frame {frame}: pc=0x{pc:06X} (in_bios_window={}) vram_nonzero={vram} palette_nonzero={pal}", BIOS_WINDOW.contains(&pc));
+            }
+            vram_prev = vram;
+            pal_prev = pal;
+        }
+
+        let Some(Deck::NeoGeo(machine)) = app.deck.as_mut() else {
+            eprintln!("deck stopped before the run finished: {}", app.status);
+            return;
+        };
+        let final_pc = machine.cpu.pc;
+        let (vram_final, pal_final) = machine.bus.debug_nonzero_counts();
+        eprintln!(
+            "=== after {TOTAL_FRAMES} real frames: final pc=0x{final_pc:06X} (in_bios_window={}) vram_nonzero={vram_final} palette_nonzero={pal_final} left_bios_window_at={left_bios_window_at:?} first_nonblack_at={first_nonblack_at:?} ===",
+            BIOS_WINDOW.contains(&final_pc)
+        );
+
+        if left_bios_window_at.is_some() || first_nonblack_at.is_some() {
+            let (w, h, rgba) = machine.bus.render_frame();
+            let non_black = rgba.chunks_exact(4).filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count();
+            let out_path = std::path::Path::new("/home/user/szyk-scratch-neogeo-after-lspc-fix.png");
+            let file = std::fs::File::create(out_path).expect("create output file");
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().expect("write PNG header");
+            writer.write_image_data(&rgba).expect("write PNG data");
+            eprintln!("MILESTONE: wrote a frame ({non_black} non-black pixels of {}) to {}", w * h, out_path.display());
+
+            // One last bit of honest context, same `decode_one`
+            // discipline as every other trace in this file: what is
+            // the cartridge's own code actually doing at its final
+            // resting PC, rather than leaving a bare address in the
+            // report. (Purely informational -- not a stuck point to
+            // chase; a tight post-setup idle loop in the cart's own
+            // code is completely normal, unlike the two real BIOS
+            // hangs earlier in this investigation.)
+            let mut probe_pc = final_pc;
+            for _ in 0..4 {
+                let (text, len) = decode_one(&mut machine.bus, probe_pc);
+                eprintln!("  cartridge code at 0x{probe_pc:06X}: {text}");
+                probe_pc += len;
+            }
+        } else {
+            // Still stuck somewhere after 900 real frames -- find out
+            // for real whether it's the *same* old loop or a new one,
+            // via true sequential single-stepping with `decode_one`
+            // at every newly-visited address (same discipline as
+            // `diagnose_neogeo_stuck_pc_if_a_cartridge_is_present` and
+            // the poke test's own post-escape trace above), not
+            // periodic sampling.
+            eprintln!("=== still stuck after {TOTAL_FRAMES} frames -- true sequential trace from pc=0x{final_pc:06X} ===");
+            let mut visited = std::collections::BTreeSet::new();
+            let mut traced = 0usize;
+            let trace_cap = 80usize;
+            for frame_i in 0..10 {
+                machine.vblank();
+                for _ in 0..50_000u32 {
+                    let pc = machine.cpu.pc;
+                    if visited.insert(pc) && traced < trace_cap {
+                        let (text, _len) = decode_one(&mut machine.bus, pc);
+                        eprintln!("  0x{pc:06X}: {text}");
+                        traced += 1;
+                    }
+                    if !machine.step() {
+                        eprintln!("  CPU halted/faulted during trace frame {frame_i}");
+                        break;
+                    }
+                }
+                for _ in 0..10_000u32 {
+                    machine.step_sound();
+                }
+            }
+            let all_in_old_loop = visited.iter().all(|pc| OLD_STUCK_LOOP.contains(pc));
+            eprintln!(
+                "trace summary: distinct_pcs_visited={} pc_range=0x{:06X}..0x{:06X} all_within_old_stuck_loop={}",
+                visited.len(),
+                visited.iter().next().copied().unwrap_or(0),
+                visited.iter().next_back().copied().unwrap_or(0),
+                all_in_old_loop
+            );
+        }
+    }
+
     /// Real palette RAM's actual range: $400000-$401FFF backing 256
     /// palettes x 16 colors, mirrored through $7FFFFF (see
     /// `neogeo_core`'s own memory-map doc comment) -- any 68k access
