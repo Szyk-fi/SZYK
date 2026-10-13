@@ -234,7 +234,7 @@ impl SoundDetective {
         } else {
             let hidden = self.hidden();
             let n = hidden.iter().filter(|&&c| right[c]).count();
-            self.message = (format!("{n} of {} right. The green ones are correct.", hidden.len()), 150);
+            self.message = (format!("{n} of {} matched. Look for OK; keep listening.", hidden.len()), 150);
             self.right = Some(right);
         }
     }
@@ -305,97 +305,82 @@ impl App for SoundDetective {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let bg = kit::PAPER;
-        let panel = kit::rgb(223, 231, 242);
-        let ink = kit::INK;
-        let dim = kit::MUTED;
-        let good = kit::TEAL;
-        kit::clear(fb, bg);
+        let panel = kit::rgb(232, 240, 237);
+        kit::kids_scene(fb, kit::PlayWorld::Pond);
         kit::kids_header(fb, NAME, "AGES 10-12");
-        kit::text(fb, &format!("Case {}   level {} of {}   score {}", self.case_no, self.level, LEVELS, self.score), 12, 38, Size2::Medium, ink, -1);
-        // Solved-at-this-level dots.
-        for k in 0..SOLVES_PER_LEVEL {
-            let c = if k < self.solved { good } else { panel };
-            kit::circle(fb, 600 + k as i32 * 12 - 24, 46, 5, c);
+        kit::round_rect(fb, 10, 37, 620, 24, 12, kit::PAPER);
+        kit::text(fb, &format!("Case {}   Level {}/{}", self.case_no, self.level, LEVELS), 20, 41, Size2::Medium, kit::INK, -1);
+        kit::text(fb, &format!("{} solved   Score {}", self.solved, self.score), 617, 43, Size2::Small, kit::INK, 1);
+        // The four action pads are readable first, before the synth controls.
+        for (i, label) in ["Hear mystery", "Hear mine", "Check", "New case"].iter().enumerate() {
+            let x = 10 + i as i32 * 157;
+            kit::card(fb, x, 68, 149, 45, 14, if i == 2 { kit::rgb(190, 224, 207) } else { kit::PAPER });
+            kit::text(fb, &format!("PAD {}", i + 1), x + 12, 74, Size2::Small, kit::TEAL, -1);
+            kit::text(fb, label, x + 12, 89, Size2::Medium, kit::INK, -1);
         }
         let hidden = self.hidden();
-        let (m, t) = (self.mine(), self.mystery());
+        let (mine, mystery) = (self.mine(), self.mystery());
         for c in 0..CONTROLS {
-            let y = 64 + c as i32 * 40;
-            let is_hidden = hidden.contains(&c);
-            let sel = c == self.control;
-            let bgc = if sel { kit::blend(panel, kit::INK, 0.15) } else { panel };
-            kit::card(fb, 10, y, 300, 36, 8, bgc);
-            if sel { kit::outline(fb, 10, y, 300, 36, 8, 2, kit::TEAL); }
-            let right = self.right.map(|r| r[c]).unwrap_or(false);
-            let name_c = if !is_hidden { dim } else if right { good } else { kit::INK };
-            kit::text(fb, CONTROL_NAMES[c], 20, y + 10, Size2::Medium, name_c, -1);
-            if is_hidden {
-                kit::text(fb, &format!("< {} >", CHOICES[c][m[c]]), 300, y + 10, Size2::Medium, if sel { kit::INK } else { ink }, 1);
-                if right {
-                    kit::text(fb, "ok", 150, y + 12, Size2::Small, good, -1);
-                }
-            } else {
-                kit::text(fb, &format!("{} (given)", CHOICES[c][t[c]]), 300, y + 12, Size2::Small, dim, 1);
+            let y = 126 + c as i32 * 39;
+            let editable = hidden.contains(&c);
+            let selected = c == self.control;
+            kit::card(fb, 10, y, 224, 35, 11, if selected { kit::rgb(200, 229, 220) } else { panel });
+            kit::kids_label(fb, CONTROL_NAMES[c], 22, y + 2, kit::INK, -1);
+            let detail = if editable {
+                if self.right.map(|r| r[c]).unwrap_or(false) { "OK - matched" } else { "Find the match" }
+            } else { CHOICES[c][mystery[c]] };
+            kit::text(fb, detail, 22, y + 22, Size2::Small, kit::INK, -1);
+            if !editable { kit::text(fb, "GIVEN", 222, y + 8, Size2::Small, kit::MUTED, 1); }
+            if selected {
+                kit::outline(fb, 10, y, 224, 35, 11, 2, kit::TEAL);
+                kit::text(fb, ">", 222, y + 8, Size2::Medium, kit::INK, 1);
             }
         }
-
-        // Your sound, drawn: one cycle of the wave and its envelope.
-        let (px, py, pw, ph) = (326, 64, 300, 92);
-        kit::card(fb, px, py, pw, ph, 8, panel);
-        kit::text(fb, "your wave", px + 8, py + 4, Size2::Small, dim, -1);
+        // One large adjustable value, one relevant diagram, one explanation.
+        let c = self.control;
+        kit::card(fb, 248, 126, 382, 202, 18, kit::PAPER);
+        kit::kids_label(fb, CONTROL_NAMES[c], 439, 135, kit::TEAL, 0);
+        kit::kids_title(fb, CHOICES[c][mine[c]], 439, 160, kit::INK, 0);
+        kit::kids_label(fb, "<", 264, 163, kit::INK, -1);
+        kit::kids_label(fb, ">", 612, 163, kit::INK, 1);
+        let (gx, gy, gw, gh) = (268, 202, 342, 44);
+        kit::round_rect(fb, gx - 4, gy - 3, gw + 8, gh + 6, 12, panel);
         let mut last = None;
-        // A one-pole filter over the drawn cycle shows roughly what the
-        // brightness control does to the shape.
-        let k = (CUTOFF[m[2]] / 9000.0).clamp(0.05, 1.0);
-        let mut lp = 0.0;
-        for pass in 0..2 {
-            for i in 0..=200 {
-                let p = (i as f32 / 100.0).fract();
-                let w = match m[0] {
-                    0 => (p * TAU).sin(),
-                    1 => 1.0 - 4.0 * (p - 0.5).abs(),
-                    2 => 2.0 * p - 1.0,
-                    _ => if p < 0.5 { 1.0 } else { -1.0 },
-                };
-                lp += (w - lp) * k;
-                if pass == 1 {
-                    let x = px + 10 + i * (pw - 20) / 200;
-                    let y = py + ph / 2 + 6 - (lp * (ph as f32 / 2.0 - 16.0)) as i32;
-                    if let Some((lx, ly)) = last {
-                        kit::line(fb, lx, ly, x, y, 2, ink);
+        if c <= 2 {
+            let k = (CUTOFF[mine[2]] / 9000.0).clamp(0.05, 1.0);
+            let mut lp = 0.0;
+            for pass in 0..2 {
+                for i in 0..=120 {
+                    let phase = (i as f32 / 60.0).fract();
+                    let wave = match mine[0] {
+                        0 => (phase * TAU).sin(),
+                        1 => 1.0 - 4.0 * (phase - 0.5).abs(),
+                        2 => 2.0 * phase - 1.0,
+                        _ => if phase < 0.5 { 1.0 } else { -1.0 },
+                    };
+                    lp += (wave - lp) * k;
+                    if pass == 1 {
+                        let x = gx + i * gw / 120;
+                        let y = gy + gh / 2 - (lp * 16.0) as i32;
+                        if let Some((lx, ly)) = last { kit::line(fb, lx, ly, x, y, 2, kit::TEAL); }
+                        last = Some((x, y));
                     }
-                    last = Some((x, y));
                 }
             }
-        }
-        let (ex, ey, eh) = (px, py + ph + 8, 60);
-        kit::card(fb, ex, ey, pw, eh, 8, panel);
-        kit::text(fb, "your envelope", ex + 8, ey + 4, Size2::Small, dim, -1);
-        let total = 2.2;
-        let mut last = None;
-        for i in 0..=100 {
-            let tt = i as f32 / 100.0 * total;
-            let a = ATTACK[m[3]];
-            let env = if tt < a { tt / a } else { (-(tt - a) / (LENGTH[m[4]] / 4.6)).exp() };
-            let x = ex + 10 + i * (pw - 20) / 100;
-            let y = ey + eh - 8 - (env * (eh as f32 - 24.0)) as i32;
-            if let Some((lx, ly)) = last {
-                kit::line(fb, lx, ly, x, y, 2, kit::rgb(250, 190, 80));
-            }
-            last = Some((x, y));
-        }
-
-        // What the selected control does.
-        kit::card(fb, 326, 232, 300, 92, 8, panel);
-        kit::paragraph(fb, about(self.control, m[self.control]), 336, 240, 284, Size2::Small, kit::INK);
-        if self.message.1 > 0 {
-            kit::card(fb, 10, 270, 300, 54, 8, kit::blend(panel, good, 0.25));
-            kit::paragraph(fb, &self.message.0, 20, 278, 284, Size2::Small, kit::INK);
         } else {
-            kit::paragraph(fb, "Pad 1: hear the mystery\nPad 2: hear yours\nPad 3 or SELECT: check   Pad 4: new case", 14, 274, 296, Size2::Small, dim);
+            for i in 0..=100 {
+                let time = i as f32 / 100.0 * 2.2;
+                let attack = ATTACK[mine[3]];
+                let env = if time < attack { time / attack } else { (-(time - attack) / (LENGTH[mine[4]] / 4.6)).exp() };
+                let x = gx + i * gw / 100;
+                let y = gy + gh - 3 - (env * (gh - 6) as f32) as i32;
+                if let Some((lx, ly)) = last { kit::line(fb, lx, ly, x, y, 2, kit::TEAL); }
+                last = Some((x, y));
+            }
         }
-        kit::kids_footer(fb, "up/down: control   left/right: change   pads 5-16: play   hold SELECT: new case");
+        let explanation = if self.message.1 > 0 { &self.message.0 } else { about(c, mine[c]) };
+        kit::paragraph(fb, explanation, 262, 260, 354, Size2::Medium, kit::INK);
+        kit::kids_footer(fb, "up/down: control   left/right: change   pads 5-16: play   SELECT: check   hold SELECT: new case");
     }
 
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> {

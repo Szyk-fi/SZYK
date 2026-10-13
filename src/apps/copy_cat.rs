@@ -234,7 +234,7 @@ impl App for CopyCat {
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
         let bg = kit::PAPER;
-        kit::clear(fb, bg);
+        kit::kids_scene(fb, kit::PlayWorld::Sky);
         kit::kids_header(fb, NAME, "AGES 6-9");
 
         // The four mats, laid out like the pads.
@@ -247,6 +247,7 @@ impl App for CopyCat {
             kit::round_rect(fb, x + 4, y + 6, 140, 130, 22, kit::blend(bg, kit::BLACK, 0.25));
             kit::card(fb, x - grow, y - grow, 140 + 2 * grow, 130 + 2 * grow, 22, c);
             kit::text(fb, ["top left", "top right", "bottom left", "bottom right"][m], x + 70, y + 106, Size2::Small, kit::INK, 0);
+            kit::pad_symbol(fb, m, x + 70, y + 54, 23, kit::blend(c, kit::WHITE, 0.8));
             if g > 0.3 {
                 kit::star(fb, x + 70, y + 69, 28 + (g * 10.0) as i32, kit::WHITE);
             }
@@ -270,7 +271,7 @@ impl App for CopyCat {
         // Speech bubble.
         kit::round_rect(fb, 330, 44, 290, 66, 18, kit::WHITE);
         kit::triangle(fb, [(440, 108), (470, 108), (452, 126)], kit::WHITE);
-        kit::text(fb, big, 475, 52, Size2::Large, Rgb565::new(6, 10, 10), 0);
+        kit::kids_title(fb, big, 475, 52, Rgb565::new(6, 10, 10), 0);
         kit::text(fb, small, 475, 88, Size2::Small, Rgb565::new(10, 20, 16), 0);
 
         // Stars and tries.

@@ -895,6 +895,54 @@ Newest at the top. Keep each entry short. Use this format:
   `KitConfig` routes still apply until the player rebinds. `CLAUDE.md` still
   says "two knobs/encoders" (shared file, left alone for Max).
 - Request: none.
+### 2026-10-04: ChatGPT: animated choir and clearer music controls
+- Branch: gpt/kids-ux   Commit: 1fa3fcf
+- Changed: critter_choir.rs, rainbow_bells.rs, sound_detective.rs, beat_lab.rs,
+  kids_kit.rs (opt-in clean label font) and AGENTS.md.
+- Status: done. Eight original animals have resting/singing poses, mouth and
+  posture changes and rhythmic bounces; visual duration follows each actual
+  synthesized call length at the existing ~60 Hz UI rate, for pads and song.
+  Bells use centered clean 20px note badges. Detective has four action cards,
+  a readable control list and one large value/contextual diagram; correct
+  matches have explicit OK labels. Beat Lab expands the selected track to a
+  numbered 4x4 pad grid, intensity bars and compact other-track activity;
+  instrument, tempo, swing and seven styles keep the existing navigation.
+- Tests: four edited-app groups passed (Critter 6, Rainbow 4, Detective 5,
+  Beat 4), shared kids_kit 9 passed. Full suite: 866 passed, 7 ignored, no
+  failures. Focused groups rerun after final gutter/spacing/feedback polish.
+  Permanent animal test verifies all eight react, move for their call length
+  and return to rest; shared test verifies identical device/Slint pixels.
+  Reviewed native screenshots for both choirs, five Detective controls at
+  level 5 and all Beat Lab menu rows/styles. Temporary state fixtures removed.
+- Notes for the other assistant: controls, DSP, dependencies, manifests and
+  manual unchanged. Animal PNG embedded in Critter (542,368 bytes), decoded
+  once on the UI thread, 1.56 MiB cached RGBA. Device performance/memory not
+  measured. Source artwork, exact prompts, actual previews and singing GIF
+  saved in this chat workspace under outputs/kids-ux. Optional existing test
+  screenshot export also captures the singing loop. No other apps changed.
+
+### 2026-10-04: ChatGPT: illustrated play worlds for all ten Kids apps
+- Branch: gpt/kids-ux   Commit: c7be919
+- Changed: only the ten Kids app .rs files, src/apps/kids_kit.rs and AGENTS.md.
+- Status: done. Max supplied the original concept this turn: used its warmth,
+  rounded controls and picture-book scenery as direction. Four original garden,
+  sky, pond and starlight backgrounds; gentler choir faces and smiling ladybugs;
+  shape cues on Copy Cat / Ear Quest pads; small musical buddies; quiet label
+  panels. Existing illustrated cat and eight voice portraits remain.
+- Tests: all ten cargo test --bin portamax-sim apps::<id> groups passed:
+  Critter 5, Rainbow 4, Copy 4, Bug 3, Mic 5, Beat 4, Chord 4, Detective 5,
+  Ear 3, Music 5. Shared kids_kit: 9 passed. Permanent checks cover RGB/RGBA
+  decoding, four distinct scenes and identical device/Slint frames for every
+  app in idle and active states. Critter was rerun after the last whisker polish.
+  Full suite: 864 passed, 7 ignored, 1 failed: untouched Norns bundled-script
+  test reported silent drone. Isolated PORTAMAX_NORNS_ONLY=drone rerun passed.
+- Notes for the other assistant: no controls, audio logic, manifests, docs or
+  dependencies changed. Generic drawing helpers outside Kids remain unchanged.
+  Background PNG is embedded in kids_kit.rs (294,405 bytes), decoded once on
+  the UI thread and cached as native colors (450 KiB). Cached desktop draws
+  measured 0.68-1.06 ms; device performance has not been measured. Original art,
+  exact prompts and actual 640x360 previews are saved in this chat workspace,
+  outputs/kids-ux. Optional PORTAMAX_KIDS_SCREENSHOTS exports test-only PPMs.
 
 ### 2026-10-04: Claude: device clock, Chop, Looper, Tempo, Choir, Sorter, Ledger sync
 - Branch: oracle-pulsar (synced to Max's Mac by patch)   Commits: e456175..e8122c1, cf5cfdc, 8164f37 (Mac hashes)

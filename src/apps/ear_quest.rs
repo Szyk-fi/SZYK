@@ -262,16 +262,17 @@ impl App for EarQuest {
         let bg = kit::PAPER;
         let panel = kit::rgb(225, 216, 235);
         let dim = kit::MUTED;
-        kit::clear(fb, bg);
+        kit::kids_scene(fb, kit::PlayWorld::Starlight);
         kit::kids_header(fb, NAME, "AGES 10-12");
 
         // The quest map down the left: a path of five stops.
+        kit::card(fb, 8, 38, 162, 296, 18, kit::blend(kit::PAPER, panel, 0.35));
         for (i, name) in QUESTS.iter().enumerate() {
             let y = 46 + i as i32 * 54;
             let open = i <= self.unlocked;
             let here = i == self.quest;
             if i > 0 {
-                kit::rect(fb, 27, y - 34, 4, 34, if open { dim } else { panel });
+                kit::round_rect(fb, 27, y - 34, 4, 34, 2, if open { dim } else { panel });
             }
             let c = if here { kit::rgb(250, 200, 60) } else if open { kit::rgb(110, 200, 150) } else { panel };
             kit::circle(fb, 29, y + 10, 14, c);
@@ -284,7 +285,7 @@ impl App for EarQuest {
         // The question.
         let (qx, qw) = (180, 450);
         let title = if !self.started { "Press any pad to start".to_string() } else { QUESTS[self.quest].to_string() };
-        kit::text(fb, &title, qx + qw / 2, 40, if self.started { Size2::Large } else { Size2::Medium }, kit::INK, 0);
+        kit::kids_title(fb, &title, qx + qw / 2, 40, kit::INK, 0);
         let listening = self.playing.is_some();
         let say = match self.phase {
             _ if !self.started => "Listen, then answer on the pads.".to_string(),
@@ -309,6 +310,7 @@ impl App for EarQuest {
                 }
             }
             kit::card(fb, x, y, w, h, 14, c);
+            kit::pad_symbol(fb, k, x + 27, y + 27, 10, kit::blend(c, kit::WHITE, 0.8));
             kit::text(fb, label, x + w / 2, y + h / 2 - 8, Size2::Medium, kit::INK, 0);
             let pads = if n == 2 { ["LEFT PADS", "RIGHT PADS"][k] } else { ["TOP LEFT", "TOP RIGHT", "BOTTOM LEFT", "BOTTOM RIGHT"][k] };
             kit::text(fb, pads, x + w / 2, y + h - 22, Size2::Small, kit::INK, 0);
@@ -316,11 +318,13 @@ impl App for EarQuest {
                 kit::star(fb, x + w - 24, y + 22, 12, kit::INK);
             }
         }
+        kit::round_rect(fb, 180, 300, 450, 36, 14, kit::PAPER);
         kit::text(fb, &format!("streak {}   best {}", self.streak, self.best_streak), qx + qw / 2, 304, Size2::Medium, kit::INK, 0);
         if self.unlocked + 1 < QUESTS.len() {
             let need = UNLOCK_AFTER.saturating_sub(self.right[self.unlocked]);
             kit::text(fb, &format!("{need} more right in quest {} unlocks quest {}", self.unlocked + 1, self.unlocked + 2), qx + qw / 2, 322, Size2::Small, dim, 0);
         }
+        kit::buddy(fb, 106, 313, 12, kit::rgb(173, 142, 227), if matches!(self.phase, Phase::Right(_)) { 0.7 } else { 0.0 });
         kit::kids_footer(fb, "pads: answer   SELECT: hear it again   up/down: quest   hold SELECT: skip");
     }
 

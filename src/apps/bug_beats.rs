@@ -93,26 +93,34 @@ fn bug_color(row: usize) -> Rgb565 {
     kit::rgb(r, g, b)
 }
 
-/// A round bug seen from above: shell, head, spots and wiggly legs.
+/// A little ladybug with a smiling face and soft, short feet.
 fn draw_bug(fb: &mut FrameBuffer, x: i32, y: i32, row: usize, wiggle: i32) {
     let c = bug_color(row);
-    let dark = Rgb565::new(3, 5, 4);
-    for s in [-1, 1] {
+    let dark = kit::rgb(75, 77, 82);
+    for side in [-1, 1] {
         for k in 0..3 {
-            let ly = y - 8 + k * 9;
-            kit::line(fb, x + s * 14, ly, x + s * 26, ly + (k - 1) * 4 + wiggle * s, 3, dark);
+            let ly = y - 6 + k * 7;
+            kit::line(fb, x + side * 13, ly, x + side * 22, ly + wiggle * side, 2, dark);
+            kit::circle(fb, x + side * 22, ly + wiggle * side, 2, dark);
         }
     }
-    kit::circle(fb, x, y - 20, 10, dark);
-    kit::line(fb, x - 4, y - 28, x - 10, y - 38, 2, dark);
-    kit::line(fb, x + 4, y - 28, x + 10, y - 38, 2, dark);
-    kit::circle(fb, x, y, 22, c);
-    kit::line(fb, x, y - 20, x, y + 20, 2, dark);
-    for (dx, dy) in [(-10, -6), (9, -2), (-8, 9), (10, 10)] {
-        kit::circle(fb, x + dx, y + dy, 4, dark);
+    kit::circle(fb, x, y, 19, c);
+    kit::line(fb, x, y - 10, x, y + 17, 1, kit::blend(c, dark, 0.4));
+    for (dx, dy) in [(-9, -2), (9, 1), (-7, 10), (9, 10)] {
+        kit::circle(fb, x + dx, y + dy, 3, kit::blend(c, dark, 0.65));
     }
-    kit::circle(fb, x - 4, y - 22, 3, kit::WHITE);
-    kit::circle(fb, x + 4, y - 22, 3, kit::WHITE);
+    let face = kit::blend(c, kit::WHITE, 0.65);
+    kit::line(fb, x - 5, y - 21, x - 9, y - 28, 2, dark);
+    kit::line(fb, x + 5, y - 21, x + 9, y - 28, 2, dark);
+    kit::circle(fb, x - 9, y - 28, 2, c);
+    kit::circle(fb, x + 9, y - 28, 2, c);
+    kit::circle(fb, x, y - 15, 11, face);
+    kit::circle(fb, x - 4, y - 17, 2, kit::INK);
+    kit::circle(fb, x + 4, y - 17, 2, kit::INK);
+    kit::circle(fb, x - 7, y - 12, 2, kit::rgb(241, 153, 142));
+    kit::circle(fb, x + 7, y - 12, 2, kit::rgb(241, 153, 142));
+    kit::line(fb, x - 3, y - 12, x, y - 10, 1, kit::INK);
+    kit::line(fb, x, y - 10, x + 3, y - 12, 1, kit::INK);
 }
 
 impl App for BugBeats {
@@ -205,14 +213,7 @@ impl App for BugBeats {
     }
 
     fn draw(&mut self, fb: &mut FrameBuffer) {
-        let grass = kit::rgb(216, 233, 186);
-        kit::clear(fb, grass);
-        // Blades of grass.
-        for k in 0..40 {
-            let x = (k * 53 % 640) as i32;
-            let y = 40 + (k * 97 % 300) as i32;
-            kit::line(fb, x, y, x + 3, y - 8, 2, kit::rgb(194, 217, 160));
-        }
+        kit::kids_scene(fb, kit::PlayWorld::Garden);
         kit::kids_header(fb, NAME, "AGES 6-9");
         let p = *self.pattern.lock().unwrap();
         let col_now = self.column();
@@ -224,11 +225,11 @@ impl App for BugBeats {
         for row in 0..4 {
             let y = gy + row as i32 * ch;
             // The sound's name on the left.
-            kit::card(fb, 10, y + 10, 128, ch - 20, 10, kit::blend(bug_color(row), kit::BLACK, 0.3));
-            kit::text(fb, BANDS[band].1[row].name(), 74, y + ch / 2 - 8, Size2::Medium, kit::WHITE, 0);
+            kit::card(fb, 10, y + 10, 128, ch - 20, 10, kit::blend(bug_color(row), kit::WHITE, 0.25));
+            kit::text(fb, BANDS[band].1[row].name(), 74, y + ch / 2 - 8, Size2::Medium, kit::INK, 0);
             for col in 0..4 {
                 let x = gx + col as i32 * cw;
-                kit::card(fb, x + 4, y + 4, cw - 16, ch - 8, 12, kit::PAPER);
+                kit::card(fb, x + 4, y + 4, cw - 16, ch - 8, 18, kit::blend(kit::PAPER, bug_color(row), 0.08));
                 kit::ring(fb, x + cw / 2 - 6, y + ch / 2, 5, 1, kit::rgb(180, 198, 152));
                 if p[row][col] {
                     let j = self.jump[row][col];
@@ -245,18 +246,21 @@ impl App for BugBeats {
         }
 
         // Band and speed.
-        kit::card(fb, 578, 50, 52, 140, 12, Rgb565::new(6, 20, 6));
-        kit::text(fb, "band", 604, 58, Size2::Small, Rgb565::new(20, 50, 18), 0);
-        kit::text(fb, BANDS[band].0, 604, 74, Size2::Small, kit::WHITE, 0);
-        kit::text(fb, "< >", 604, 90, Size2::Small, Rgb565::new(20, 50, 18), 0);
-        kit::text(fb, "speed", 604, 122, Size2::Small, Rgb565::new(20, 50, 18), 0);
-        kit::text(fb, SPEEDS[self.speed].0, 604, 138, Size2::Small, kit::WHITE, 0);
+        kit::card(fb, 578, 50, 52, 140, 12, kit::rgb(215, 234, 197));
+        kit::text(fb, "band", 604, 58, Size2::Small, kit::MUTED, 0);
+        kit::text(fb, BANDS[band].0, 604, 74, Size2::Small, kit::INK, 0);
+        kit::text(fb, "< >", 604, 90, Size2::Small, kit::MUTED, 0);
+        kit::text(fb, "speed", 604, 122, Size2::Small, kit::MUTED, 0);
+        kit::text(fb, SPEEDS[self.speed].0, 604, 138, Size2::Small, kit::INK, 0);
         // Speed shown as one, two or three paw prints.
         for k in 0..=self.speed as i32 {
-            kit::circle(fb, 592 + k * 12, 164, 4, kit::WHITE);
+            kit::circle(fb, 592 + k * 12, 164, 4, kit::TEAL);
         }
-        kit::text(fb, "up/dn", 604, 174, Size2::Small, Rgb565::new(20, 50, 18), 0);
+        kit::text(fb, "up/dn", 604, 174, Size2::Small, kit::MUTED, 0);
 
+        draw_bug(fb, 604, 238, 0, 0);
+        kit::round_rect(fb, 575, 272, 58, 20, 10, kit::PAPER);
+        kit::text(fb, "tap pads", 604, 276, Size2::Small, kit::INK, 0);
         let play = if self.sound.playing() { "SELECT: stop" } else { "SELECT: play" };
         kit::kids_footer(fb, &format!("Tap a pad to add a bug, tap again to shoo it.   {play}   hold SELECT: clear"));
     }

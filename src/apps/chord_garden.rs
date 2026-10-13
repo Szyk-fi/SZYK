@@ -22,7 +22,7 @@
 
 use crate::app::{App, Input, SlintExtra};
 use crate::audio::AudioProcessor;
-use crate::display::{FrameBuffer, WIDTH};
+use crate::display::FrameBuffer;
 use crate::led_output::PadColor;
 use crate::apps::kids_kit::{self as kit, Ev, Note, Size2, Song, Sound, Tone};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -360,8 +360,8 @@ impl App for ChordGarden {
     fn draw(&mut self, fb: &mut FrameBuffer) {
         let sky = kit::rgb(218, 238, 227);
         let soil = kit::rgb(210, 187, 149);
-        kit::clear(fb, sky);
-        kit::rect(fb, 0, 214, WIDTH as i32, 50, soil);
+        kit::kids_scene(fb, kit::PlayWorld::Garden);
+        kit::card(fb, 34, 210, 502, 54, 18, soil);
         kit::kids_header(fb, NAME, "AGES 10-12");
         let g = self.garden.lock().unwrap().clone();
         let playing = self.playing_slot();
@@ -378,14 +378,14 @@ impl App for ChordGarden {
             let n = if c.seventh { 8 } else { 6 };
             for k in 0..n {
                 let a = k as f32 / n as f32 * std::f32::consts::TAU + b * 0.6;
-                kit::circle(fb, x + (a.cos() * r as f32) as i32, top + (a.sin() * r as f32) as i32, r / 2 + 3, kit::blend(col, kit::INK, b * 0.4));
+                kit::circle(fb, x + (a.cos() * r as f32) as i32, top + (a.sin() * r as f32) as i32, r / 2 + 3, kit::blend(col, kit::WHITE, b * 0.4));
             }
             kit::circle(fb, x, top, r / 2 + 4, Rgb565::new(31, 52, 10));
             kit::text(fb, NUMERALS[c.degree], x, top - 8, Size2::Medium, kit::BLACK, 0);
             if c.seventh {
                 kit::text(fb, "7", x + r / 2 + 6, top - 4, Size2::Small, kit::INK, 0);
             }
-            kit::text(fb, &chord_name(g.key, c), x, 222, Size2::Large, kit::INK, 0);
+            kit::kids_title(fb, &chord_name(g.key, c), x, 222, kit::INK, 0);
             if i == self.slot {
                 kit::card(fb, x - 40, 256, 80, 5, 2, kit::INK);
             }
