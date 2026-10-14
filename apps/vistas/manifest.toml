@@ -1,0 +1,18 @@
+id = "vistas"
+name = "Vistas"
+category = "instrument"
+description = "Generative cinematic scapes: pick a mood and key and it composes evolving ambient music across five synthesised layers."
+audio_outputs = ["Vistas"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: Vistas Level",
+    "Vistas: Variation",
+    "Vistas: Complexity",
+    "Vistas: Duration",
+    "Vistas: Reverb",
+    "Vistas: Space",
+    "Vistas: Delay",
+    "Vistas: Density",
+    "Vistas: Width",
+]

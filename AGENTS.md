@@ -89,6 +89,26 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-14: Claude: Vistas, a generative cinematic-scape instrument
+- Branch: claude/june60 (same branch as June-60; Max asked for it as the next app)
+- Why: Max asked for an app comparable to or better than Rast Sound's Cinescapes PRO
+  (a Kontakt library that composes ambient music from a mood and a key). That product is
+  sample based and commercial, so nothing is copied: src/apps/vistas.rs is original and
+  fully synthesised.
+- Changed: new src/apps/vistas.rs and apps/vistas/manifest.toml (mod_inputs synced).
+  Nothing shared was edited. Ten moods (each a real mode), a Markov chord composer with
+  voice leading and Loop / Compose / Evolve modes, Variation / Complexity / Duration,
+  five synthesised layers (pad, bass, noise, ambience, shimmer) each with level, tone,
+  motion (two LFOs) and eight timbre recipes, an FDN reverb (RT60 2-25 s) and a ping-pong
+  delay, twelve original scapes, F3 start/stop, two pad layers (MOOD, KEY), MIDI key
+  sets the key, and a scrolling chord-constellation screen.
+- Status: done. 12 tests pass (chords stay in the mode and the key, voice leading,
+  Loop/Compose/Evolve behaviour, duration, every layer alone, every scape, reverb tail,
+  pads). Not yet listened to: levels are measured (RMS about 0.2) but taste is unchecked.
+- Not done, on purpose: no MIDI drag-out of the generated chords; the note bus could carry
+  them if Max wants (a shared-file change, so left for him to decide).
+- Notes for the other assistant: nothing needed.
+
 ### 2026-10-14: Claude: June-60, a Juno-style polysynth
 - Branch: claude/june60
 - Why: Max asked for an app built on an open-source Juno clone, styled like one.
