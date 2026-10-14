@@ -169,6 +169,7 @@ const CH_II: f32 = 2.0 / 3.0;
 const CH_BOTH: f32 = 1.0;
 const HPF_240: f32 = 2.0 / 3.0;
 const R16: f32 = 0.0;
+#[cfg(test)]
 const R4: f32 = 1.0;
 
 type PatchDef = (&'static str, &'static [(usize, f32)]);
