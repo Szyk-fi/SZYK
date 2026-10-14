@@ -89,6 +89,21 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-14: Claude: June-60, a Juno-style polysynth
+- Branch: claude/june60
+- Why: Max asked for an app built on an open-source Juno clone, styled like one.
+  The open-source Juno emulations (Ultramaster KR-106, the Juno 6 VSTi) are GPL and
+  Portamax is MIT, so nothing is linked or copied. src/apps/june60.rs is a clean-room
+  Rust build of the shared Juno-6/60/106 architecture; its module doc says which
+  numbers (HPF corners, chorus rates/delay range, ranges) are from memory, not measured.
+- Changed: new src/apps/june60.rs and apps/june60/manifest.toml (mod_inputs synced with
+  tools/sync_manifests.sh). Nothing shared was edited. Six voices, band-limited DCO +
+  sub + noise, four-step HPF, TPT ladder filter, ADSR, delayed triangle LFO, stereo BBD-
+  style chorus, poly/unison, portamento, 12 original patches, a 106-style panel on screen.
+- Status: done. 8 tests pass (pitch, range, filter, self-oscillation, 6 voices, unison,
+  chorus, every patch). Not yet listened to against a real Juno.
+- Notes for the other assistant: nothing needed.
+
 ### 2026-10-13: Claude: Beads now runs the real firmware DSP
 - Branch: claude/beads
 - Why: Emilie Gillet open-sourced Beads (MIT) on 12 Oct 2026 (pichenettes/eurorack

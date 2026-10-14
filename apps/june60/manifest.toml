@@ -1,0 +1,18 @@
+id = "june60"
+name = "June-60"
+category = "instrument"
+description = "A six-voice Juno-style polysynth: DCO with sub, 24 dB ladder filter, ADSR, LFO and stereo chorus."
+audio_outputs = ["June-60"]
+notes_in = true
+# Modulation inputs this app registers (checked by registry.rs's tests).
+mod_inputs = [
+    "Mixer: June-60 Level",
+    "June-60: Cutoff",
+    "June-60: Resonance",
+    "June-60: Level",
+    "June-60: LFO Rate",
+    "June-60: Env",
+    "June-60: Mod Wheel",
+    "June-60: Bend",
+    "June-60: PWM",
+]
