@@ -89,6 +89,20 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-15: Claude: ROVE / SZYK crowdfunding website with a playable browser demo
+- Branch: claude/website (not committed; the tree already held the uncommitted ROVE rename)
+- Changed: new site/ only (index.html, styles.css, app.js, rove-demo.js, favicon.svg, README.md).
+  Static, no build. Colour logos drawn as SVG letterforms from Max's 20-palette sheet (Cobalt Pop
+  default, 8 palettes switchable); separate from the one-ink logos in assets/svg_src/make_logos.py.
+  The demo is a replica of the control surface (16:9 screen, 4x4 pads, 2 knobs, D-pad, F1-F4) with
+  five Web Audio voices written for the page. They are NOT the native engines and the page says so.
+- Status: done for review. Indiegogo URL is a placeholder (meta tag in index.html); palette hex
+  values are eyeballed from the sheet; app counts copied from apps/*/manifest.toml today.
+- Tests: no Rust touched. In-browser: all five voices render finite audio offline, pitches checked
+  (String and FM exact, bass sub = A1), every demo loop renders, keyboard arming, mobile 375px
+  layout, 8 palettes pass 4.5:1 text contrast.
+- Notes for the other assistant: none.
+
 ### 2026-10-15: Claude: Product renamed ROVE; new black-and-white SZYK and ROVE logos
 - Branch: claude/june60
 - Changed: every user-visible "Portamax" is now "ROVE" (docs, README, CLAUDE.md, window/home titles,
