@@ -1,5 +1,5 @@
 -- fibonacci
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- each number is the sum of the two
 -- before it. taken modulo the length

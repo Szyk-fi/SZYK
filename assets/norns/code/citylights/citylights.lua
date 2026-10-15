@@ -1,5 +1,5 @@
 -- citylights
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a skyline at night. windows switch
 -- on and off as people come home and

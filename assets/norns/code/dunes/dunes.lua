@@ -1,5 +1,5 @@
 -- dunes
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- wind lifts sand grains off the
 -- windward slopes and drops them

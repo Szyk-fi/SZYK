@@ -1,5 +1,5 @@
 -- collatz
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- pick a number. if it is even,
 -- halve it; if odd, triple it and

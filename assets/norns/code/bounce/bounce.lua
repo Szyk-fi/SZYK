@@ -1,5 +1,5 @@
 -- bounce
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- balls bounce around a box.
 -- the floor and walls are tuned:

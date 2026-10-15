@@ -11,7 +11,7 @@
 //! patched. See the bridge's own top comment for the few things it had to
 //! provide itself (the codec's sample-rate conversion, mainly).
 //!
-//! How the panel maps onto Portamax:
+//! How the panel maps onto ROVE:
 //!
 //! - **IN L / IN R** are two Source rows. With only one picked, the other
 //!   is normalled to it and Beads records in mono, with twice the buffer,

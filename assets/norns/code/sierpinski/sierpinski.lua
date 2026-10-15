@@ -1,5 +1,5 @@
 -- sierpinski
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- the chaos game: a point leaps
 -- part-way toward a random corner,

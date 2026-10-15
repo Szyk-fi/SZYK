@@ -1,8 +1,8 @@
-"""Build, quantise and export the small networks Portamax runs on the
+"""Build, quantise and export the small networks ROVE runs on the
 STM32N6's Neural-ART NPU.
 
 A network is a list of layers from the set the NPU accelerates and the
-Portamax runtime (src/apps/neural.rs) implements:
+ROVE runtime (src/apps/neural.rs) implements:
 
     ("conv", cin, cout, k, stride, pad, relu)   1-D convolution over [C, L]
     ("pool", k)                                  max pool, stride k
@@ -19,7 +19,7 @@ vectors each export writes), so what the sim plays is what the chip would
 compute.
 
 Export writes:
-    <name>.pmxn      the int8 model for the Portamax runtime
+    <name>.pmxn      the int8 model for the ROVE runtime
     <name>.onnx      the float model, for ST Edge AI (`stedgeai generate`)
     <name>.test.json a few inputs and the exact int8 outputs expected
 """

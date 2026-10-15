@@ -1,8 +1,8 @@
 //! Trio: three layered voices, each running its own Plaits engine, that
 //! split up what you play. Inspired by the idea of Polyend's Synth (three
 //! engine layers with chord playing and followers); the roles and layout
-//! here are Portamax's own, and the sound is the real Plaits DSP that
-//! Portamax already ports (plaits_ffi.rs).
+//! here are ROVE's own, and the sound is the real Plaits DSP that
+//! ROVE already ports (plaits_ffi.rs).
 //!
 //! The pads play the scale (bottom-left = root, rising left to right, row
 //! by row). Chord mode turns each pad into a diatonic chord built on that

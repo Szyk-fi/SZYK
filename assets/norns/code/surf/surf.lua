@@ -1,5 +1,5 @@
 -- surf
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- swells roll in from the open sea,
 -- steepen, and break on the beach.

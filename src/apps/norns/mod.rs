@@ -1,21 +1,21 @@
 //! Norns: a cartridge that runs norns scripts (monome's Lua sound
-//! computer platform) on Portamax.
+//! computer platform) on ROVE.
 //!
 //! Scripts live on the SD card in `saves/norns/dust/code/<name>/<name>.lua`
 //! (the same layout as norns' `dust/code`), plus the bundled ones in
 //! `assets/norns/code/`. Pick one from the list and it runs with the norns
 //! API: screen, encoders and keys, params, clock, metro, MIDI in, the
-//! PolyPerc engine and softcut. Everything here is Portamax's own
+//! PolyPerc engine and softcut. Everything here is ROVE's own
 //! implementation of the documented API (see host.rs, engine.rs,
 //! lua/prelude.lua); no norns code is included, so scripts are
 //! user-supplied, like ROMs for Retro.
 //!
-//! Grid: `grid.connect()` gives a script Portamax's grid (the Grid app on
+//! Grid: `grid.connect()` gives a script ROVE's grid (the Grid app on
 //! screen, and a real monome grid when one is plugged in), with `g.key`,
 //! `g:led`, `g:all`, `g:refresh`, `g:rotation` and `g.cols` / `g.rows`; the
 //! script takes the grid when it connects. Play it from the Grid app.
 //!
-//! Arc: `arc.connect()` gives a script Portamax's arc (the Arc app on
+//! Arc: `arc.connect()` gives a script ROVE's arc (the Arc app on
 //! screen, and a real monome arc when one is plugged in), with `a.delta`,
 //! `a.key`, `a:led`, `a:all`, `a:segment` and `a:refresh`; connecting takes
 //! the arc. Turn it from the Arc app.
@@ -83,7 +83,7 @@ pub enum Mode {
 pub struct Script {
     pub name: String,
     pub path: PathBuf,
-    /// Shipped with Portamax rather than on the SD card.
+    /// Shipped with ROVE rather than on the SD card.
     #[allow(dead_code)] // Slint GUI list
     pub bundled: bool,
 }

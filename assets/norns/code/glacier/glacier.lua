@@ -1,5 +1,5 @@
 -- glacier
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a river of ice creeping down a
 -- valley. a slow drone shifts one

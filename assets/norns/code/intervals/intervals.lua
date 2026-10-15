@@ -1,5 +1,5 @@
 -- intervals
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- ear training. an interval plays
 -- over and over: two notes apart,

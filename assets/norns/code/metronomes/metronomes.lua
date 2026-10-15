@@ -1,5 +1,5 @@
 -- metronomes
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- five metronomes, each set to a
 -- slightly different tempo, stand

@@ -235,7 +235,7 @@ impl Patch {
 pub fn migrate(mut v: Value) -> Result<Patch, String> {
     let mut version = v.get("version").and_then(|x| x.as_u64()).unwrap_or(1) as u32;
     if version > CURRENT_VERSION {
-        return Err(format!("made by a newer Portamax (patch version {version}; this one reads up to {CURRENT_VERSION})"));
+        return Err(format!("made by a newer ROVE (patch version {version}; this one reads up to {CURRENT_VERSION})"));
     }
     let obj = v.as_object_mut().ok_or("a patch must be a JSON object")?;
     while version < CURRENT_VERSION {

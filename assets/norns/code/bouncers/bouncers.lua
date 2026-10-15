@@ -1,5 +1,5 @@
 -- bouncers
--- a Portamax norns script
+-- a ROVE norns script
 -- after Rebound by josh g. (monome
 -- community, 2008): notes bounce
 -- across the grid.

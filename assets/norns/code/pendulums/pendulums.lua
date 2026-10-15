@@ -1,5 +1,5 @@
 -- pendulums
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a pendulum wave: twelve
 -- pendulums, each a little

@@ -1,5 +1,5 @@
 -- notedelay
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a delay made of notes, not audio.
 -- each note that comes in (pads or

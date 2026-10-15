@@ -1,4 +1,4 @@
-# The Portamax control contract
+# The ROVE control contract
 
 **Status: decided by Max on 2026-10-04, partly built.** Section 8 records each
 decision. Built so far: the PS5 profile (section 11) and the L1 + joystick

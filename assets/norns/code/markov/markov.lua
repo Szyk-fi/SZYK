@@ -1,5 +1,5 @@
 -- markov
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- teach it a melody with the pads
 -- (or any MIDI keyboard). it learns

@@ -36,7 +36,7 @@ pub fn draw(a: &ProphetApp, f: &mut FrameBuffer) {
     )
     .draw(f)
     .ok();
-    text(f, "PORTAMAX / SOFTWARE INSTRUMENT", 112, 19, DIM);
+    text(f, "ROVE / SOFTWARE INSTRUMENT", 112, 19, DIM);
     text(
         f,
         &format!(

@@ -1,5 +1,5 @@
 -- looper
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- play the pads; every note goes
 -- into a four-bar softcut loop.

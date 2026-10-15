@@ -1,4 +1,4 @@
-"""Mouth Drums: a sound-embedding network for teaching Portamax your own
+"""Mouth Drums: a sound-embedding network for teaching ROVE your own
 sounds.
 
 Input: the first ~80 ms of a sound (from just before its onset) as 32 mel

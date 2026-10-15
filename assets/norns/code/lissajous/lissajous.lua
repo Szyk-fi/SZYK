@@ -1,5 +1,5 @@
 -- lissajous
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- two oscillations, one across and
 -- one up-down, trace a lissajous

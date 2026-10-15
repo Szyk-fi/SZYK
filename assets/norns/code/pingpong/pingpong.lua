@@ -1,5 +1,5 @@
 -- pingpong
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- short plucks thrown into a
 -- ping-pong delay. the left head

@@ -1,5 +1,5 @@
 -- ratchet
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- an eight-step sequencer where any
 -- step can fire as a ratchet: two,

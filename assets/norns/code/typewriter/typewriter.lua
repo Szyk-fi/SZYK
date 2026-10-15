@@ -1,5 +1,5 @@
 -- typewriter
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- an old typewriter taps out a short
 -- text, key by key, at a human pace.

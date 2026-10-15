@@ -1,5 +1,5 @@
 -- traffic
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a crossroads with traffic lights.
 -- cars queue at red and roll on

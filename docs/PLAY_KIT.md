@@ -1,6 +1,6 @@
 # The play kit: giving an app a play view
 
-Every playable Portamax app opens on a **play view** rather than its menu.
+Every playable ROVE app opens on a **play view** rather than its menu.
 The structure is shared (`src/play_kit.rs`) so every app puts the same
 things in the same places:
 

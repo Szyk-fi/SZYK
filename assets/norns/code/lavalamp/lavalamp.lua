@@ -1,5 +1,5 @@
 -- lavalamp
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- warm wax blobs drift up and down
 -- a glass lamp. each blob hums a

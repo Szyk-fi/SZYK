@@ -1,5 +1,5 @@
 -- grains
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a short phrase is written into a
 -- three-second stretch of tape. two

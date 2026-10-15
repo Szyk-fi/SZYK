@@ -1,5 +1,5 @@
 -- lorenz
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- the lorenz attractor: a point
 -- that circles two lobes and never

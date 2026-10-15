@@ -1,5 +1,5 @@
 -- breath
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a breathing pacer. follow the
 -- circle: breathe in as it grows,

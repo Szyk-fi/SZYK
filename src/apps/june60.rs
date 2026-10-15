@@ -1,7 +1,7 @@
 //! June-60: a six-voice Juno-style polysynth, written from scratch in Rust.
 //!
 //! Why not port an open-source Juno? The two real ones (Ultramaster KR-106 and
-//! the Juno 6 VSTi) are GPL, and Portamax is MIT, so their code can't be linked
+//! the Juno 6 VSTi) are GPL, and ROVE is MIT, so their code can't be linked
 //! or copied in (the same rule `docs/ADDING_AN_APP.md` applies to the GPL
 //! Shruthi/Grids firmware). This app is therefore a clean-room build of the
 //! architecture every Juno-6/60/106 shares, not a port of any of them, and it

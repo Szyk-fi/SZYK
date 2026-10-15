@@ -1,5 +1,5 @@
 -- gamelan
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a sixteen-beat gong cycle. a
 -- slow core melody walks around

@@ -1,5 +1,5 @@
 -- freezer
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a shimmering texture of soft
 -- notes is always being written to

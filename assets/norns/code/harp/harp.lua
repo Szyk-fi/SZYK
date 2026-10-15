@@ -1,5 +1,5 @@
 -- harp
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a harp of twenty-two strings
 -- tuned to a scale. glissandi

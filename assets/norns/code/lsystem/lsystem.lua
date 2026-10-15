@@ -1,5 +1,5 @@
 -- lsystem
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a little grammar rewrites a
 -- word over and over, the way

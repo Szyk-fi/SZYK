@@ -1,5 +1,5 @@
 -- radio
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- an old radio scanning the dial.
 -- between stations there is only

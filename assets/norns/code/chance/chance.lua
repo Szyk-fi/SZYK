@@ -1,5 +1,5 @@
 -- chance
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a sixteen-step sequencer where
 -- every step carries its own odds.

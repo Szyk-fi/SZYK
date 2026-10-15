@@ -1,11 +1,11 @@
-# Polyend's instruments, and what Portamax took from them
+# Polyend's instruments, and what ROVE took from them
 
 October 2026 survey of Polyend's line-up (polyend.com and reviews), asking
-which ideas fit a phone-sized 4x4-pad machine. Portamax's versions are
+which ideas fit a phone-sized 4x4-pad machine. ROVE's versions are
 original apps: same idea, our own DSP, sequencing and layout. No Polyend
 code, presets, sample content or names.
 
-| Polyend | What it is | On Portamax |
+| Polyend | What it is | On ROVE |
 |---|---|---|
 | **Mess** | Multi-effect pedal: 4 effect slots, each with its own 16-step parameter sequence (lengths, divisions, probability, locks) | **Mosaic** (new): 4 slots in series, 11 effects, per-slot 16-step patterns with length, division, chance and per-step Amount locks. Pads = steps. |
 | **Synth** | 3 engine layers, chord modes and "chord followers", arpeggiators | **Trio** (new): 3 Plaits-engine layers; pads play scale degrees or diatonic chords; each layer takes a role (Full / Bass / Top / Arp). |

@@ -1,4 +1,4 @@
-//! Portamax Retro -- a multi-console Retro *platform*, not a one-off
+//! ROVE Retro -- a multi-console Retro *platform*, not a one-off
 //! emulator, built on a genuinely different architecture than the
 //! Libretro/dlopen design originally sketched for it.
 //!

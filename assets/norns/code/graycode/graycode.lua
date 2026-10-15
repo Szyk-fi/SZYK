@@ -1,5 +1,5 @@
 -- graycode
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- counting in gray code: from one
 -- number to the next only a single

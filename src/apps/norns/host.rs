@@ -59,13 +59,13 @@ impl HostOut {
     }
 }
 
-/// The grid as a script sees it: vport 1 is Portamax's grid (the screen
+/// The grid as a script sees it: vport 1 is ROVE's grid (the screen
 /// one, and a real grid when one is plugged in). The script draws into
 /// `leds` and `g:refresh()` shows it; presses come back through
 /// `_px_grid_key`. `g:rotation(r)` turns the script's view a quarter turn
 /// at a time, so a script made for a vertical grid still fits.
 ///
-/// The arc the same way: vport 1 is Portamax's arc, `a:refresh()` shows
+/// The arc the same way: vport 1 is ROVE's arc, `a:refresh()` shows
 /// `rings`, turns and pushes come back through `_px_arc_delta` / `_px_arc_key`.
 pub struct GridHost {
     grid: Arc<Grid>,
@@ -471,7 +471,7 @@ pub fn run(script: PathBuf, code_dir: PathBuf, queue: Arc<Queue>, out: Arc<Mutex
             Some(n) if ENGINES.contains(&n.as_str()) => o.engine = n.clone(),
             Some(n) => {
                 o.engine = format!("{n}?");
-                o.say(format!("engine '{n}' isn't on Portamax yet; its commands are ignored"));
+                o.say(format!("engine '{n}' isn't on ROVE yet; its commands are ignored"));
             }
             None => o.engine = "none".into(),
         }

@@ -1,5 +1,5 @@
 -- quickhands
--- a Portamax norns script
+-- a ROVE norns script
 -- after react by dovemouse (monome
 -- community): press as many lit keys
 -- as you can in ten seconds.

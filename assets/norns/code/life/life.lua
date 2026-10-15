@@ -1,5 +1,5 @@
 -- life
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- conway's game of life on a
 -- 16 x 8 board. a scanner sweeps

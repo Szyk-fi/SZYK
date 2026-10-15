@@ -1,5 +1,5 @@
 -- langton
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a few ants wander a small
 -- toroidal field. on a light cell

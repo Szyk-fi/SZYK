@@ -1,5 +1,5 @@
 -- starfield
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- flying through a field of stars.
 -- bright stars that pass close by

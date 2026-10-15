@@ -1,5 +1,5 @@
 -- clockwork
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a train of meshed gears. meshed
 -- teeth all move at the same rate,

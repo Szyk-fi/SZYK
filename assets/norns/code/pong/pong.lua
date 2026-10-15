@@ -1,5 +1,5 @@
 -- pong
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- two paddles rally on their own.
 -- every paddle hit is a note, set

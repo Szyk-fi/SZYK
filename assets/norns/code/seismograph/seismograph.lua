@@ -1,5 +1,5 @@
 -- seismograph
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a pen draws the ground's tremor
 -- on scrolling paper. quakes come

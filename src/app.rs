@@ -1,4 +1,4 @@
-//! The contract every Portamax OS screen implements. Keeping this trait
+//! The contract every ROVE OS screen implements. Keeping this trait
 //! small is what lets the launcher add more audio tools later without
 //! touching the OS or the other apps — that's the "modular app system."
 
@@ -38,7 +38,7 @@ pub struct Input {
     /// Discrete D-pad/joystick row steps, independent of encoder sensitivity.
     pub navigation_steps: i32,
     pub knob2: i32,
-    /// D-pad left/right steps. Portamax has no encoders: the shell adds
+    /// D-pad left/right steps. ROVE has no encoders: the shell adds
     /// these into `knob2` too (so every menu edits with them), and the play
     /// view uses them on its own to turn the focused dial (play_kit.rs).
     pub nav_x: i32,
@@ -165,7 +165,7 @@ impl Input {
         let repeating = |k| window.is_key_pressed(k, KeyRepeat::Yes);
         let knob1 = repeating(Key::RightBracket) as i32 - repeating(Key::LeftBracket) as i32
             + controller.take_knob1_delta();
-        // , and . are the D-pad's left/right (Portamax has no encoders):
+        // , and . are the D-pad's left/right (ROVE has no encoders):
         // they edit values everywhere and turn the play view's focused dial.
         let dpad_x = repeating(Key::Period) as i32 - repeating(Key::Comma) as i32;
         let knob2 = dpad_x + controller.take_knob2_delta();

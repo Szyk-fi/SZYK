@@ -1,6 +1,6 @@
 //! Hot-reloaded panel geometry for the Plaits screen, kept in
 //! `apps/plaits/layout.toml` instead of hardcoded in plaits.rs so it can
-//! be driven by the Figma mockup (see the "Portamax Sim UI" file's
+//! be driven by the Figma mockup (see the "ROVE Sim UI" file's
 //! `Layout/Menu`, `Layout/Panel`, `Layout/PianoRoll` marker rectangles) --
 //! resize/move those in Figma, ask for a re-sync, and this file gets
 //! regenerated from their bounding boxes.

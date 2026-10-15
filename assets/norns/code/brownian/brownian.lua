@@ -1,5 +1,5 @@
 -- brownian
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a melody that drifts like a
 -- particle in water: each note is a

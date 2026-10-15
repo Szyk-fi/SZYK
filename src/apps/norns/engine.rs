@@ -14,7 +14,7 @@
 //! with rate, loop points, crossfaded loop jumps, record level and
 //! pre-level (overdub feedback), a state-variable filter with dry/lp/hp/
 //! bp/br mix, level and pan. Buffers here hold `BUFFER_SECONDS` (norns
-//! has ~350 s; Portamax's RAM budget is smaller).
+//! has ~350 s; ROVE's RAM budget is smaller).
 
 use std::f32::consts::{PI, TAU};
 use std::sync::{Arc, Mutex};

@@ -1,5 +1,5 @@
 -- springs
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- six masses hang from a beam on
 -- springs of different stiffness,

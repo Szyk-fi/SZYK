@@ -1,5 +1,5 @@
 -- magnets
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- eight iron filings drift between
 -- two magnets. the left one pulls,

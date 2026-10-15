@@ -1,5 +1,5 @@
 -- zengarden
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- raked sand around a few stones:
 -- straight furrows across the garden,

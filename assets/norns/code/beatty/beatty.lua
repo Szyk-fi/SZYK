@@ -1,5 +1,5 @@
 -- beatty
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- floor(n*r) for an irrational r
 -- marks some steps; floor(n*s), with

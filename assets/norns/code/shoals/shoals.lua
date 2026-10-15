@@ -1,5 +1,5 @@
 -- shoals
--- a Portamax norns script
+-- a ROVE norns script
 -- after Shoal by JP (monome
 -- community): a chaotic oscillator
 -- you can push around.

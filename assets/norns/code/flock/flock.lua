@@ -1,5 +1,5 @@
 -- flock
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a small flock of birds: each
 -- follows its neighbours, keeps

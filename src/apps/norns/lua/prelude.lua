@@ -1,5 +1,5 @@
--- Portamax's norns environment: the globals a norns script expects,
--- written for Portamax from the documented norns Lua API. The host
+-- ROVE's norns environment: the globals a norns script expects,
+-- written for ROVE from the documented norns Lua API. The host
 -- (host.rs) provides `_px` (engine/softcut/audio commands, time, print)
 -- and the `screen` table before this runs, and calls
 -- `_px_tick(now)` about a thousand times a second.
@@ -575,7 +575,7 @@ function midi.to_data(m)
   return {}
 end
 
--- grid: port 1 is Portamax's grid (on screen, and a real monome grid when
+-- grid: port 1 is ROVE's grid (on screen, and a real monome grid when
 -- one is plugged in); ports 2-4 are empty, like unattached norns vports.
 -- Coordinates are 1-based, levels 0-15. The host (host.rs) keeps the
 -- picture and calls _px_grid_key / _px_grid_resize.
@@ -618,7 +618,7 @@ function _px_grid_resize(cols, rows)
   end
 end
 
--- arc: port 1 is Portamax's arc (the Arc app on screen, and a real monome
+-- arc: port 1 is ROVE's arc (the Arc app on screen, and a real monome
 -- arc when one is plugged in); ports 2-4 are empty. Rings and LEDs count
 -- from 1 (LED 1 at the top, going clockwise), levels 0-15, segment angles
 -- in radians from the top. The host keeps the rings and calls

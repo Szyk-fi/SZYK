@@ -1,5 +1,5 @@
 -- fractree
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a tree grows one branch at a
 -- time: the trunk, then every fork

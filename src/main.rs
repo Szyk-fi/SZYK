@@ -1,4 +1,4 @@
-//! Portamax software simulation harness.
+//! ROVE software simulation harness.
 //!
 //! No microphone input — the Synth app is its own sound source, generated
 //! straight into the output callback and shaped by an "AI" stub before it
@@ -301,7 +301,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // instead of an app/the launcher -- same "look at it without
         // a real window" escape hatch, for the boot screens that
         // aren't an app. The value picks which stage (see
-        // `Os::draw_splash_for_diagnostics`): "mx1" for the second
+        // `Os::draw_splash_for_diagnostics`): "rove" for the second
         // logo, anything else (e.g. "1" or "szyk") for the first.
         if std::env::var("PORTAMAX_SPLASH").is_ok() {
             os.draw_splash_for_diagnostics(&mut fb);

@@ -1,5 +1,5 @@
 -- spiral
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- seeds grow out from the middle
 -- the way a sunflower packs them,

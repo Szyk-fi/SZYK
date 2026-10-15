@@ -1,5 +1,5 @@
 //! Game controller mapping: any gamepad's buttons, sticks and triggers
-//! onto Portamax's own controls, editable from the Controller app (learn
+//! onto ROVE's own controls, editable from the Controller app (learn
 //! mode) and saved to the SD card (`saves/controller_map.json`).
 //!
 //! The backends (`gamepad.rs` on macOS via GameController.framework,
@@ -164,7 +164,7 @@ impl Element {
     }
 }
 
-/// A Portamax control a controller element can drive.
+/// A ROVE control a controller element can drive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
     /// One of the 16 pads, held for as long as the element is.
@@ -444,7 +444,7 @@ pub fn hold_multiplier(held: Duration) -> i32 {
     }
 }
 
-/// Turns snapshots into Portamax input, tracking press edges and
+/// Turns snapshots into ROVE input, tracking press edges and
 /// key-repeat per binding.
 #[derive(Default)]
 pub struct Mapper {

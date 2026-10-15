@@ -1,5 +1,5 @@
 -- logistic
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- x becomes r * x * (1 - x), over
 -- and over. low r settles on one

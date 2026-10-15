@@ -1,5 +1,5 @@
 -- hilbert
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a cursor crawls a hilbert curve,
 -- visiting every cell of a square

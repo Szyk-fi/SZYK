@@ -1,5 +1,5 @@
 -- arcarp
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- an arpeggio you shape on the arc:
 -- ring 1 speed, ring 2 transpose,

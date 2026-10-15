@@ -1,5 +1,5 @@
 -- morse
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a shortwave key sending messages
 -- in morse code. dots and dashes ride

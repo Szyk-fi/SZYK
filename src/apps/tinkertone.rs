@@ -55,7 +55,7 @@
 //! transposed by the held bass key and bent to the Auto Chord. Saved to
 //! `saves/tinkertone/bassline.json`.
 //!
-//! Controls on Portamax: 37 + 15 keys don't fit on 16 pads, so F2 flips the
+//! Controls on ROVE: 37 + 15 keys don't fit on 16 pads, so F2 flips the
 //! pads between KEYS (a 16-note window you slide across the 37 keys from
 //! the menu) and BASS (the 15 bass keys, pad 16 = Fill-in) -- the first two
 //! of the shared play kit's pad layers, followed by its Controls and

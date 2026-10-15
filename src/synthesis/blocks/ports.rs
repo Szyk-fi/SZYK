@@ -1,5 +1,5 @@
 //! Blocks ported from modules that ship in Cardinal (the open-source VCV
-//! Rack distribution): ten that Portamax had no equivalent for, leaving out
+//! Rack distribution): ten that ROVE had no equivalent for, leaving out
 //! Mutable Instruments, whose real code already runs here.
 //!
 //! "Ported" means the technique, not the source code. Nearly every module

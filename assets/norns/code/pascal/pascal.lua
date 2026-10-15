@@ -1,5 +1,5 @@
 -- pascal
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- pascal's triangle, each entry
 -- the sum of the two above it,

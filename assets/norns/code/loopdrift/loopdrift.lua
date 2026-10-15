@@ -1,5 +1,5 @@
 -- loopdrift
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- five loops of unequal,
 -- unrelated lengths each hold a

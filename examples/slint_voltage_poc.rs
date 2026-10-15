@@ -1,7 +1,7 @@
 //! Same scoping-only exercise as `slint_launcher_poc.rs`/
 //! `slint_mixer_poc.rs`, in the same hardware chrome
 //! (`slint_common/device_frame.slint`) -- Voltage, because the
-//! original "Portamax UI Mockup" design artifact's `Main.dc.html`
+//! original "ROVE UI Mockup" design artifact's `Main.dc.html`
 //! literally depicted this screen (list + 2x2 mini-waveform panel
 //! grid), so this is close to a direct port of that reference rather
 //! than a new layout guessed at in its style.

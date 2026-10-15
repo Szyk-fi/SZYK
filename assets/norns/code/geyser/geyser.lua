@@ -1,5 +1,5 @@
 -- geyser
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- deep water heats under rock.
 -- as pressure builds, a slow drone

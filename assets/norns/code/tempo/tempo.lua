@@ -1,5 +1,5 @@
 -- tempo
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a metronome with a feel. pick a
 -- meter and its accent grouping,

@@ -1,5 +1,5 @@
 -- cellular
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a one-dimensional cellular
 -- automaton grows down the screen.

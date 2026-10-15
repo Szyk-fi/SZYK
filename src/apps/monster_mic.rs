@@ -647,7 +647,7 @@ fn illustrated_states_reach_slint() {
     }
 }
 
-// Original picture-book sprites, generated for Portamax Kids (192px cells).
+// Original picture-book sprites, generated for ROVE Kids (192px cells).
 // Embedded to keep the app self-contained for both device and Slint.
 const VOICE_ART: &str = "iVBORw0KGgoAAAANSUhEUgAAAkAAAAJACAYAAABlmtk2AAYGIklEQVR42uy9CZxdR3kn+lXVWe89997u2/uixdrtluVFxsbGizAEsI0xhrSBhCwvIZCXNy8v
 JJPtTRK3k4Eh8xInk3k/MvBmEpIwCbEmC6sTVoXNYCODF8mWLMuStfXefbezV9X7vjotxziQQFhiyeeDtrrvPUudOlXf9/92gJJKKqmkkkoqqaSSSiqppJJK

@@ -1,5 +1,5 @@
 -- seasons
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- one year turns on the wheel.
 -- spring is lydian and quickening,

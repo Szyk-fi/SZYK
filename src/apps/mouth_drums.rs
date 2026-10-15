@@ -1,4 +1,4 @@
-//! Mouth Drums (AI): teach Portamax your own sounds, then beatbox and it
+//! Mouth Drums (AI): teach ROVE your own sounds, then beatbox and it
 //! plays drums.
 //!
 //! Hold one of the top eight pads and make a sound into the mic -- a "b",

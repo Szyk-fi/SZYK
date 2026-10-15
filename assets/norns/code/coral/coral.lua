@@ -1,5 +1,5 @@
 -- coral
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a reef grows by diffusion-
 -- limited aggregation: drifting

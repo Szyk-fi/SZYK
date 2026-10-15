@@ -54,11 +54,11 @@ pub const SZYK: Logo = Logo {
 };
 
 /// The product/device name, shown second in the boot sequence.
-pub const MX1: Logo = Logo {
+pub const ROVE: Logo = Logo {
     width: 400,
-    height: 155,
+    height: 94,
     bytes_per_row: (400 + 7) / 8,
-    bits: include_bytes!("../assets/raw/mx1_logo.raw"),
+    bits: include_bytes!("../assets/raw/rove_logo.raw"),
 };
 
 #[cfg(test)]
@@ -75,7 +75,7 @@ mod tests {
     /// not just fail to compile.
     #[test]
     fn logo_dimensions_match_their_embedded_raw_files() {
-        for (name, logo) in [("SZYK", &SZYK), ("MX1", &MX1)] {
+        for (name, logo) in [("SZYK", &SZYK), ("ROVE", &ROVE)] {
             assert_eq!(
                 logo.bits.len(),
                 (logo.bytes_per_row * logo.height) as usize,
@@ -90,7 +90,7 @@ mod tests {
     /// an odd position shouldn't be able to crash the boot screen).
     #[test]
     fn each_logo_draws_something_when_centered_and_does_not_panic_off_screen() {
-        for logo in [&SZYK, &MX1] {
+        for logo in [&SZYK, &ROVE] {
             let mut fb = FrameBuffer::new();
             logo.draw_centered(&mut fb, Rgb565::WHITE);
             let lit = fb.buffer().iter().filter(|&&p| p != 0).count();

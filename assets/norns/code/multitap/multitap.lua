@@ -1,5 +1,5 @@
 -- multitap
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- one record head, four read heads.
 -- each tap reads the tape a set time

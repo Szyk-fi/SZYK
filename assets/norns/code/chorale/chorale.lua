@@ -1,5 +1,5 @@
 -- chorale
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- four voices sing a slow
 -- progression. each chord is

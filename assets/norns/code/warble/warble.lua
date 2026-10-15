@@ -1,5 +1,5 @@
 -- warble
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a slow melody into a worn-out
 -- tape echo. the echo's speed

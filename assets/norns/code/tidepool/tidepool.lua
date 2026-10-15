@@ -1,5 +1,5 @@
 -- tidepool
--- a Portamax norns demo
+-- a ROVE norns demo
 --
 -- two tides rise and fall;
 -- where they meet, notes fall

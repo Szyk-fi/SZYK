@@ -1,5 +1,5 @@
 -- dragoncurve
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a strip of paper folded in half
 -- again and again, then opened:

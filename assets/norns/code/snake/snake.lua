@@ -1,5 +1,5 @@
 -- snake
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a snake steers itself toward
 -- the food. each bite plays the

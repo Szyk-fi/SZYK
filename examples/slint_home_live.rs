@@ -190,7 +190,7 @@ slint::slint! {
     import { BloomPanel } from "slint_common/bloom_panel.slint";
 
     export component LiveHomeScreen inherits DeviceFrame {
-        // Boot sequence (SZYK -> MX1, see startup_logo.rs): blanks the
+        // Boot sequence (SZYK -> ROVE, see startup_logo.rs): blanks the
         // title/breadcrumb/bottom bar entirely while a splash stage is
         // showing, same bare-screen look `os.rs`'s own `draw_splash`
         // has on the real device -- only the centered logo, nothing
@@ -200,7 +200,7 @@ slint::slint! {
         in-out property <bool> preview-render: false;
         in-out property <image> splash-image;
         in-out property <bool> splash-is-szyk: true;
-        app-name: root.splash-active ? "" : (root.on-home ? "PORTAMAX" : root.active-app-name);
+        app-name: root.splash-active ? "" : (root.on-home ? "ROVE" : root.active-app-name);
         in property <bool> audio-connected: true;
         breadcrumb: root.splash-active ? "" : ((!root.audio-connected && !root.preview-render ? "AUDIO UNAVAILABLE / SETTINGS" : root.on-home ? "SELECT AN APP" : (root.midi-target-label != "" ? "PADS → " + root.midi-target-label : root.preview-render ? "OFFLINE / SOFTWARE RENDER" : root.audio-connected ? "LIVE -- REAL AUDIO" : "AUDIO UNAVAILABLE / SETTINGS")) + (root.cpu-visible ? "   CPU " + Math.round(root.cpu-load-pct) + "%" : ""));
         // F1 doubles as a shortcut to Settings while already on the
@@ -3568,8 +3568,9 @@ slint::slint! {
                 image-fit: contain;
             }
             if !root.splash-is-szyk : Image {
-                source: root.splash-image;
-                width: 100%; height: 100%;
+                source: @image-url("../assets/svg_src/rove_logo.svg");
+                colorize: #ffffff;
+                x: 24px; y: 20px; width: 592px; height: 320px;
                 image-fit: contain;
             }
         }
@@ -3585,7 +3586,7 @@ slint::slint! {
 #[derive(Clone, Copy, PartialEq)]
 enum SplashStage {
     Szyk,
-    Mx1,
+    Rove,
 }
 
 /// Rasterizes a `startup_logo::Logo` (a pre-thresholded 1bpp bitmap,
@@ -4563,7 +4564,7 @@ fn main() {
         ui.set_home_names(Rc::new(slint::VecModel::from(names)).into());
     }
 
-    // Boot sequence: SZYK -> MX1, each up for 2s or until any input,
+    // Boot sequence: SZYK -> ROVE, each up for 2s or until any input,
     // then the launcher takes over -- same behavior/duration as the
     // real device's `Os::run` (see os.rs's own `SPLASH_DURATION`/
     // `SplashStage`), just driven from this timer loop instead.
@@ -4815,7 +4816,7 @@ fn main() {
         // Boot sequence: any input at all dismisses it outright (not
         // just advancing to the next stage), same as the real
         // device's own `any_input` check in os.rs. A timeout instead
-        // advances SZYK -> MX1 -> the launcher.
+        // advances SZYK -> ROVE -> the launcher.
         let splash_stage_now = *splash_stage.borrow(); // a separate `let` so this `Ref` guard drops immediately, not extended across the whole `if let` body below (which would deadlock the `borrow_mut()` inside it)
         if let Some(stage) = splash_stage_now {
             let any_input = navigation != 0 || k1 != 0 || k2 != 0 || press1 || press2 || grid.iter().any(|&p| p);
@@ -4823,8 +4824,8 @@ fn main() {
                 None
             } else if std::time::Instant::now() >= *splash_deadline.borrow() {
                 match stage {
-                    SplashStage::Szyk => Some(SplashStage::Mx1),
-                    SplashStage::Mx1 => None,
+                    SplashStage::Szyk => Some(SplashStage::Rove),
+                    SplashStage::Rove => None,
                 }
             } else {
                 Some(stage)
@@ -4833,9 +4834,9 @@ fn main() {
                 *splash_stage.borrow_mut() = next_stage;
                 match next_stage {
                     Some(SplashStage::Szyk) => unreachable!("never advances backward to Szyk"),
-                    Some(SplashStage::Mx1) => {
+                    Some(SplashStage::Rove) => {
                         ui.set_splash_is_szyk(false);
-                        ui.set_splash_image(logo_to_slint_image(&startup_logo::MX1));
+                        ui.set_splash_image(logo_to_slint_image(&startup_logo::ROVE));
                         *splash_deadline.borrow_mut() = std::time::Instant::now() + SPLASH_DURATION;
                     }
                     None => ui.set_splash_active(false),
@@ -5020,7 +5021,7 @@ fn main() {
     });
 
     ui.show().unwrap();
-    println!("Portamax window shown; starting UI event loop");
+    println!("ROVE window shown; starting UI event loop");
     ui.run().unwrap();
 }
 

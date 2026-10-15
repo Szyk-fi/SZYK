@@ -1,5 +1,5 @@
 -- rainfall
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- rain falls on a tin roof of
 -- tuned panels. wind blows the

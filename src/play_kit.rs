@@ -469,7 +469,7 @@ impl PlayKit {
         Step { menu: self.menu, native, input: out }
     }
 
-    /// The play view's controls. Portamax has no encoders: one dial is
+    /// The play view's controls. ROVE has no encoders: one dial is
     /// focused, the D-pad's left/right turns it (`nav_x`), SELECT moves the
     /// focus on (`knob1_press`: the pair's other dial, then the next pair)
     /// and holding SELECT resets it (`knob2_press`). Up/down steps the

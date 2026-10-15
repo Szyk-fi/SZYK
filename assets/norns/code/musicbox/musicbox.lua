@@ -1,5 +1,5 @@
 -- musicbox
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a pinned cylinder turns past
 -- a steel comb. the spring runs

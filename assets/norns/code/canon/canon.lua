@@ -1,5 +1,5 @@
 -- canon
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a short tune is invented, then
 -- sung as a round: three voices

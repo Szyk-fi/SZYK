@@ -1,5 +1,5 @@
 -- orbits
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- four moons circle a planet at
 -- different speeds. each time a

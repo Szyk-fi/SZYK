@@ -1,5 +1,5 @@
 -- constellations
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- stars appear one by one, each with
 -- a faint high note. then they are

@@ -1,5 +1,5 @@
 -- tapeloop
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a short tape loop that never
 -- stops recording. new notes are

@@ -1,5 +1,5 @@
 -- bellringers
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- six bells rung in changes:
 -- each row is a new order of

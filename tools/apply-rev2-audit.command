@@ -15,7 +15,7 @@ checkout="/Users/max/Developer/Modulade/portamax-sim"
 branch="gpt/rev2-parameter-ui-audit"
 base="977d8c37dab2e8dd874943fe73e60c6a85c86dbc"
 if [ "$(git -C "$checkout" branch --show-current)" != main ]; then
-    echo "Stop: the Portamax checkout must be on main before applying this branch." >&2
+    echo "Stop: the ROVE checkout must be on main before applying this branch." >&2
     exit 1
 fi
 if ! git -C "$checkout" diff --quiet --ignore-submodules=dirty || ! git -C "$checkout" diff --cached --quiet; then

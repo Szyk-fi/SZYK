@@ -1,5 +1,5 @@
 -- lullaby
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a little tune in three,
 -- sung softer and slower each

@@ -5,7 +5,7 @@
 //!
 //! Every card carries a small I2C EEPROM describing itself. At boot the
 //! firmware reads each slot's EEPROM, checks it, switches on that slot's
-//! +5 V only if it's a valid Portamax card, and registers what the card
+//! +5 V only if it's a valid ROVE card, and registers what the card
 //! offers with the rest of the system:
 //! - audio inputs, CV inputs and gate inputs become sources on the audio
 //!   bus (so Portal and every effect's Source row can use them);
@@ -202,7 +202,7 @@ impl std::fmt::Display for ImageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ImageError::Blank => write!(f, "blank EEPROM"),
-            ImageError::BadMagic => write!(f, "not a Portamax card"),
+            ImageError::BadMagic => write!(f, "not a ROVE card"),
             ImageError::UnsupportedVersion(v) => write!(f, "card format v{v} is newer than this firmware"),
             ImageError::Truncated => write!(f, "EEPROM data cut short"),
             ImageError::BadCrc => write!(f, "EEPROM checksum failed"),

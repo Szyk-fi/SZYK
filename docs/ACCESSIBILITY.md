@@ -1,4 +1,4 @@
-# Legibility and accessibility on the Portamax screen
+# Legibility and accessibility on the ROVE screen
 
 The UI is designed for the panel the device actually has, not a desktop
 window. Every number below comes from that panel.

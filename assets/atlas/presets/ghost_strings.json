@@ -3,7 +3,7 @@
   "name": "Ghost Strings",
   "category": "Acoustic",
   "tags": ["plaits", "string", "granular"],
-  "author": "Portamax",
+  "author": "ROVE",
   "description": "Plaits' string engine, plucked, with a frozen-able granular shadow an octave up. TEXTURE thickens the shadow; MORPH blooms it into a drone.",
   "kind": "instrument",
   "voices": 4,

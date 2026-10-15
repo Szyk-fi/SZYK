@@ -1,5 +1,5 @@
 -- walkingbass
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a bass walks four to the bar
 -- through ii-V-I changes that

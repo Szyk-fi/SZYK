@@ -1,5 +1,5 @@
 -- train
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- the rhythm of the rails. every
 -- axle clicks over every rail joint,

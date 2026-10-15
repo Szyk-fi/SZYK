@@ -1,8 +1,8 @@
 //! Tempo: the device transport's front panel. One tempo, one play
 //! button, for everything that follows the device clock (Session,
 //! Skins, the Looper) -- plus tap tempo, a metronome, and MIDI clock in
-//! and out so the Portamax can lead or follow a drum machine, a DAW or
-//! another Portamax.
+//! and out so the ROVE can lead or follow a drum machine, a DAW or
+//! another ROVE.
 //!
 //! Nothing here keeps time itself; it's all `crate::clock`. This app is
 //! the controls and the click.

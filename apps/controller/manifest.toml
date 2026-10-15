@@ -2,5 +2,5 @@ id = "controller"
 name = "Controller"
 module = "controller_setup"
 category = "system"
-description = "Map a PS5, Xbox or any gamepad onto Portamax."
+description = "Map a PS5, Xbox or any gamepad onto ROVE."
 audio_outputs = []

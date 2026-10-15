@@ -1,5 +1,5 @@
 -- fireflies
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- ten fireflies blink on their own
 -- clocks. each one nudges the

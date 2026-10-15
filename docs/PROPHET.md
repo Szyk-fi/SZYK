@@ -1,4 +1,4 @@
-# Portamax Rev2 software instrument
+# ROVE Rev2 software instrument
 
 This replaces the unmerged Prophet-5-inspired prototype with a native
 Prophet Rev2 patch architecture. Launcher: **Rev2**. App identifier: `prophet`; audio and mixer output: `Rev2`. It is working Rust synthesis, not a panel

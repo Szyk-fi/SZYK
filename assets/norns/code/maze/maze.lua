@@ -1,5 +1,5 @@
 -- maze
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a walker feels its way through a
 -- freshly dug maze, one hand on the

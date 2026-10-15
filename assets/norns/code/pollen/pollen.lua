@@ -1,5 +1,5 @@
 -- pollen
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- grains of pollen ride a slow
 -- breeze across a meadow. when a

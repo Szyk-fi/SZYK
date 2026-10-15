@@ -1,5 +1,5 @@
 -- pinball
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a ball rattles around a table of
 -- round bumpers. each bumper is a

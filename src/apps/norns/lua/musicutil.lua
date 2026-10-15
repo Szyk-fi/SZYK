@@ -1,4 +1,4 @@
--- musicutil for the Portamax norns cartridge: scales, note names and
+-- musicutil for the ROVE norns cartridge: scales, note names and
 -- conversions. Scale interval sets are standard music theory; the order
 -- of the first entries follows the order norns scripts index into.
 local MusicUtil = {}

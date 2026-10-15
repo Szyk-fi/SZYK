@@ -1,5 +1,5 @@
 -- rings
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- three euclidean rhythms on
 -- three rings: low, middle, high.

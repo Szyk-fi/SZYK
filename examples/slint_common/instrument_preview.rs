@@ -461,8 +461,8 @@ pub fn render(directory: &str) {
     ui.set_splash_is_szyk(true);
     save_extra_frame(&window, directory, "startup-szyk");
     ui.set_splash_is_szyk(false);
-    ui.set_splash_image(logo_to_slint_image(&startup_logo::MX1));
-    save_extra_frame(&window, directory, "startup-mx1");
+    ui.set_splash_image(logo_to_slint_image(&startup_logo::ROVE));
+    save_extra_frame(&window, directory, "startup-rove");
 }
 
 fn save_extra_frame(window: &MinimalSoftwareWindow, directory: &str, slug: &str) {

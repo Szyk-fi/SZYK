@@ -1,5 +1,5 @@
 -- dice
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- three dice are thrown every few
 -- bars. the first picks the chord

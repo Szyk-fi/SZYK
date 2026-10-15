@@ -1,5 +1,5 @@
 -- drumcircle
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- four hand drums sit in a circle,
 -- each spreading its hits evenly

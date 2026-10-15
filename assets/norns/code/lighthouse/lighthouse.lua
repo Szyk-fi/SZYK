@@ -1,5 +1,5 @@
 -- lighthouse
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a lighthouse beam turns over a
 -- dark sea. ships ride at

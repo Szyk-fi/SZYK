@@ -3,7 +3,7 @@
   "name": "Init",
   "category": "Keys",
   "tags": ["init", "subtractive"],
-  "author": "Portamax",
+  "author": "ROVE",
   "description": "The starting point: two oscillators, a filter with its own envelope, an LFO, chorus, delay and reverb. Every macro does one clear thing.",
   "kind": "instrument",
   "voices": 8,

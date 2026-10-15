@@ -140,7 +140,7 @@ of its modules:
    fixed-rate engine at the device's rate. `rings.rs` is the smallest
    voice, `marbles.rs` a note source, `tides.rs` a modulation source.
 4. Check the license: the STM32 modules are MIT; the AVR ones (Grids,
-   Shruthi...) are GPL and can't be linked into Portamax.
+   Shruthi...) are GPL and can't be linked into ROVE.
 
 ## A full-screen app (the Kids apps)
 

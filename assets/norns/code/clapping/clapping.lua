@@ -1,5 +1,5 @@
 -- clapping
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- one twelve-step cell, two
 -- players. the first holds

@@ -1,5 +1,5 @@
 -- acid
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a sixteen-step bassline. accents
 -- open the filter and push harder;

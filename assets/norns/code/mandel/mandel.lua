@@ -1,5 +1,5 @@
 -- mandel
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a scanner slides along a line
 -- through the mandelbrot set. at

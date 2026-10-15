@@ -1,5 +1,5 @@
 -- stacks
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- blocks fall into eight tuned
 -- columns. each one rings its

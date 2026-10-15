@@ -89,6 +89,18 @@ Remove your line when you're done.
 
 ## 5. Work log
 
+### 2026-10-15: Claude: Product renamed ROVE; new black-and-white SZYK and ROVE logos
+- Branch: claude/june60
+- Changed: every user-visible "Portamax" is now "ROVE" (docs, README, CLAUDE.md, window/home titles,
+  Oracle prompt, norns script headers, Atlas preset authors; ~200 files). New assets/svg_src/make_logos.py
+  draws SZYK and ROVE as one-ink cubes (letter knocked out of a solid rounded square) and writes the
+  SVGs plus assets/raw/{szyk,rove}_logo.raw. Boot sequence is now SZYK -> ROVE (MX1 assets removed);
+  the Slint splash uses the SVGs so it stays sharp at any size. PORTAMAX_SPLASH=rove previews stage two.
+- Left alone on purpose: crate/binary name portamax-sim, PORTAMAX_* env vars, the /portamax OSC prefix,
+  MIDI port names, temp-dir names, chip_player's test fixture author, and "Kicad Projects/Portamax v2".
+- Status: done. Tests: full bin suite 1260 passed; slint_home_live checks.
+- Notes for the other assistant: shared files (docs/, CLAUDE.md, README) were touched by the rename only.
+
 ### 2026-10-14: Claude: Vistas, a generative cinematic-scape instrument
 - Branch: claude/june60 (same branch as June-60; Max asked for it as the next app)
 - Why: Max asked for an app comparable to or better than Rast Sound's Cinescapes PRO

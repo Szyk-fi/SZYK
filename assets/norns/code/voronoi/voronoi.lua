@@ -1,5 +1,5 @@
 -- voronoi
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- seven seeds drift, each claiming
 -- the ground nearest to it. a beam

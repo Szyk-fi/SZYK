@@ -1,5 +1,5 @@
 -- charge
--- a Portamax norns script
+-- a ROVE norns script
 -- after skr by tehn (monome
 -- community): charged-up bits
 -- release tones.

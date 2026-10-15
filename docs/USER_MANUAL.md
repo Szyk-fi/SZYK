@@ -1,6 +1,6 @@
-# Portamax User Manual
+# ROVE User Manual
 
-Portamax is a self-contained groovebox/instrument simulator: 89 installed
+ROVE is a self-contained groovebox/instrument simulator: 89 installed
 apps sharing one audio engine, one clock, one modulation bus, and one 4x4 pad grid +
 D-pad + four knobs/encoders + F1-F4 control surface. This manual covers
 what's actually implemented today, not a roadmap.
@@ -88,7 +88,7 @@ with them.
 
 Modulation works the same way. Every app lists the parameters it accepts
 modulation on (its *inputs*), and every installed app's inputs are
-available from the moment Portamax starts — you don't have to open an app
+available from the moment ROVE starts — you don't have to open an app
 first. Any modulation source (Turing Machine, Pam's, Queen of Pentacles,
 Natural Gate's envelope out, Nautilus's sonar, Portal, MIDI Learn) picks a
 destination in two steps:
@@ -270,7 +270,7 @@ Elements are physical-modelling voices (Plaits has only a simple modal
 engine); Marbles is a generative source for every instrument on the note
 bus; Tides is the modulation source the mod bus didn't have. Grids, the
 other obvious candidate, isn't here because its code is GPL-licensed and
-Portamax is MIT.
+ROVE is MIT.
 
 ### 3.6 Chop
 
@@ -534,7 +534,7 @@ in any of them starts all of them, locked to the same sample. Tempo is its front
   (24 pulses a beat, Start, Continue, Stop and Song Position) drives the
   tempo and the transport. Jittery clocks are smoothed.
 - **Send MIDI clock**: sends clock, Start, Stop and Continue to every MIDI
-  output, so drum machines and DAWs follow the Portamax.
+  output, so drum machines and DAWs follow the ROVE.
 - **Bar**: beats per bar (the Looper's bar length and the metronome's
   accent).
 - **Metronome**: off, on, or only while something records.
@@ -726,7 +726,7 @@ Copy a script folder to the SD card as `saves/norns/dust/code/<name>/`
 (the same layout as norns' `dust/code`), open Norns, pick it from the
 SELECT list and press SELECT. 121 scripts are built in (see below).
 
-| norns | Portamax |
+| norns | ROVE |
 |---|---|
 | E2 | D-pad up / down |
 | E3 | D-pad left / right |
@@ -749,7 +749,7 @@ engine commands are silent, and the status line says so), grid and arc
 (scripts see them as unplugged), crow, audio input into softcut, and
 saving params sets. awake runs unmodified.
 
-**The built-in scripts.** All are original Portamax scripts written
+**The built-in scripts.** All are original ROVE scripts written
 against the documented norns API. Each one's controls are listed at the
 top of its file (`assets/norns/code/<name>/<name>.lua`) and they make
 good starting points for your own.
@@ -784,7 +784,7 @@ They cover nature and physics (snowfall, geyser, metronomes that fall into step)
 
 ### 8.2 Ableton Push 2 lights
 
-With a Push 2 plugged in, the bottom-left 4×4 of its pads are Portamax's
+With a Push 2 plugged in, the bottom-left 4×4 of its pads are ROVE's
 pads, and the four pads above them are F1–F4. Their lights always match
 the pads on screen; both come from one rule (`src/pad_lights.rs`):
 - a pad you're holding is red;
@@ -792,7 +792,7 @@ the pads on screen; both come from one rule (`src/pad_lights.rs`):
   play view's layers, C notes in blue on the keyboards);
 - F1–F4 are always lit: yellow, green, blue, red.
 
-Plug the Push in or power-cycle it at any time: Portamax notices the MIDI
+Plug the Push in or power-cycle it at any time: ROVE notices the MIDI
 port change within a few seconds and sends every light again. It also
 refreshes all of them every few seconds, so a dropped message never
 leaves a pad wrong for long.

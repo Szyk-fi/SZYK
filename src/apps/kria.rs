@@ -34,7 +34,7 @@
 //! track's last clock; ratchets split the step evenly; glide is set before
 //! the note. Written from the Kria documentation with the details checked
 //! against the Ansible firmware's behaviour; no firmware code is copied
-//! (it is GPL-2.0, Portamax is MIT). Not here: the meta-sequencer, Kria's
+//! (it is GPL-2.0, ROVE is MIT). Not here: the meta-sequencer, Kria's
 //! division-sync and division-cue options, the duration "tie" mode, the
 //! fine per-degree scale adjust, Ansible's clock/config grid screens, and
 //! the second view on a 256's lower half.
@@ -55,7 +55,7 @@
 //! and intervals (right). Pattern: top row picks (hold to copy), row 2 sets
 //! the cue length.
 //!
-//! **On Portamax**: the 16 pads are the 16 steps (top-left is step 1).
+//! **On ROVE**: the 16 pads are the 16 steps (top-left is step 1).
 //! F2 turns the pages; D-pad left/right picks the track, up/down changes the
 //! selected step's value. On TRIG a pad toggles a trigger; on a value page
 //! a pad selects the step (tap it again to toggle its trigger). LOOP: tap

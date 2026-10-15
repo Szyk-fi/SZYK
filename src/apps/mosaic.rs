@@ -1,7 +1,7 @@
 //! Mosaic: four effects in series, each switched and shaped by its own
 //! step sequence. Inspired by the idea of Polyend's Mess (a multi-effect
 //! whose effects are sequenced); the effects, sequencer and layout here
-//! are Portamax's own.
+//! are ROVE's own.
 //!
 //! Each slot has an effect, two parameters (Amount and Tone, meaning
 //! whatever that effect needs), a wet Mix, and a pattern: up to 16 steps

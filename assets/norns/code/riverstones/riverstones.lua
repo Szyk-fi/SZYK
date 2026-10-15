@@ -1,5 +1,5 @@
 -- riverstones
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- water runs left to right over
 -- a bed of stones. swells travel

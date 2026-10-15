@@ -1,5 +1,5 @@
 -- aurora
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- curtains of light drift and fold
 -- across the night sky. a slow pad

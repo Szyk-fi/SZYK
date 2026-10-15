@@ -1,4 +1,4 @@
-//! The Portamax synthesis platform: a serializable DSP graph ("patch")
+//! The ROVE synthesis platform: a serializable DSP graph ("patch")
 //! compiled into a real-time engine, shared by every app that builds
 //! sounds from it -- Oracle (patches written by a language model) and
 //! Atlas (curated presets with macros and morphing).

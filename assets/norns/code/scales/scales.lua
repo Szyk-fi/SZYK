@@ -1,5 +1,5 @@
 -- scales
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a scale explorer. every scale in
 -- musicutil, played up and back down

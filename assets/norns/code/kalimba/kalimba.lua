@@ -1,5 +1,5 @@
 -- kalimba
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a thumb piano. the longest, lowest
 -- tine sits in the middle and the

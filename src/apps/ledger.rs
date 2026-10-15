@@ -1,6 +1,6 @@
 //! Ledger: a tracker. Inspired by the idea of Polyend's Tracker (a
 //! hardware tracker with a performance mode); the format, effects and
-//! layout here are Portamax's own. The sound is eight real Plaits voices
+//! layout here are ROVE's own. The sound is eight real Plaits voices
 //! (plaits_ffi.rs), one per track, each with its own engine -- the drum
 //! engines make the kit, the rest the music.
 //!

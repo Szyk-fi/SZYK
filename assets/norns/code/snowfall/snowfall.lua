@@ -1,5 +1,5 @@
 -- snowfall
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- flakes drift down on a slow
 -- wind and settle into drifts.

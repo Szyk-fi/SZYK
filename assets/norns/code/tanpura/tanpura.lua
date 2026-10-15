@@ -1,5 +1,5 @@
 -- tanpura
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- four drone strings are plucked
 -- in the old order, pa sa sa sa,

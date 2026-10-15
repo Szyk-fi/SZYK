@@ -1,5 +1,5 @@
 //! Scoping-only proof of concept: the launcher screen, framed in the
-//! actual "Portamax UI Mockup" design artifact's hardware chrome (see
+//! actual "ROVE UI Mockup" design artifact's hardware chrome (see
 //! `slint_common/device_frame.slint`) instead of a bare black window --
 //! Space Grotesk + JetBrains Mono, the #E7E2D6 bezel, the #5CF07A
 //! accent, physical knob/F-button strip.

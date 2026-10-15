@@ -1,5 +1,5 @@
 -- chordwalk
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- an arpeggiator that walks a
 -- chord progression. the pads

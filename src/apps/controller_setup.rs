@@ -1,5 +1,5 @@
 //! Controller: map any game controller (a PS5 DualSense, an Xbox pad, a
-//! generic USB gamepad) onto Portamax's controls.
+//! generic USB gamepad) onto ROVE's controls.
 //!
 //! Two maps, switched on the first row: **Navigate** (home screen and
 //! apps without a play view) and **Play** (while an app's play view is up

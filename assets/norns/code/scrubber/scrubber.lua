@@ -1,5 +1,5 @@
 -- scrubber
--- a Portamax norns script
+-- a ROVE norns script
 -- after plates by tehn (monome
 -- community): LFOs you can grab and
 -- scrub by hand.

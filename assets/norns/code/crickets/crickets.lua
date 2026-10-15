@@ -1,5 +1,5 @@
 -- crickets
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a field of crickets on a summer
 -- night. like real snowy tree

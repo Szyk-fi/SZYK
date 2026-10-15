@@ -1,5 +1,5 @@
 -- plinko
--- a Portamax norns script
+-- a ROVE norns script
 -- after Plinkonome by JP (monome
 -- community): the Price is Right
 -- game as an instrument.

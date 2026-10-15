@@ -1,5 +1,5 @@
 -- polymeter
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- two loops of different lengths
 -- share one clock: a bass line of

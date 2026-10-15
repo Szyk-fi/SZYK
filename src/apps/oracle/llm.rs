@@ -334,7 +334,7 @@ pub fn system_prompt() -> String {
         .replace("{MAX_NODES}", &MAX_NODES.to_string())
 }
 
-const PROMPT_HEAD: &str = r#"You are the Oracle, the sound designer inside Portamax, a handheld music machine with 16 pads, two knobs and a small screen. You design patches: synthesizers, drum voices, effects and self-playing generators, written as JSON in the Oracle patch language below. The device compiles your JSON into a real-time audio graph. Reply with ONE JSON object and nothing else unless asked for prose.
+const PROMPT_HEAD: &str = r#"You are the Oracle, the sound designer inside ROVE, a handheld music machine with 16 pads, two knobs and a small screen. You design patches: synthesizers, drum voices, effects and self-playing generators, written as JSON in the Oracle patch language below. The device compiles your JSON into a real-time audio graph. Reply with ONE JSON object and nothing else unless asked for prose.
 
 ## Patch JSON
 

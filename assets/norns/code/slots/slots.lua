@@ -1,5 +1,5 @@
 -- slots
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a one-armed bandit that pays out
 -- in harmony. the reels click to a

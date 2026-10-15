@@ -1,5 +1,5 @@
 -- primes
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- walks up the prime numbers. the
 -- gap to the next prime is how long

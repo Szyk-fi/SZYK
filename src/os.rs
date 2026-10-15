@@ -55,7 +55,7 @@ const BOTTOM_BAR_HEIGHT: i32 = 17;
 /// The hint line sits directly above the bar (see `App::hint`).
 const HINT_HEIGHT: i32 = 14;
 
-/// How long each startup logo stays up before advancing (SZYK -> MX1
+/// How long each startup logo stays up before advancing (SZYK -> ROVE
 /// -> launcher) on its own -- any input (any key/knob/button) skips
 /// the *whole* remaining sequence immediately, same as a real
 /// device's boot screen letting you mash past the splash.
@@ -66,7 +66,7 @@ const SPLASH_DURATION: Duration = Duration::from_secs(2);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SplashStage {
     Szyk,
-    Mx1,
+    Rove,
 }
 
 pub struct Os {
@@ -81,7 +81,7 @@ pub struct Os {
     prev_top: [bool; 4],
     /// `Some((stage, deadline))` while the startup logos are still
     /// showing; `None` once the whole sequence has been dismissed (by
-    /// running past MX1's deadline, or by any input) -- see
+    /// running past ROVE's deadline, or by any input) -- see
     /// `SPLASH_DURATION`.
     splash: Option<(SplashStage, Instant)>,
     /// Per-app "is the MIDI controller allowed to feed this app's pads"
@@ -187,8 +187,8 @@ impl Os {
                     self.splash = None;
                 } else if Instant::now() >= deadline {
                     self.splash = match stage {
-                        SplashStage::Szyk => Some((SplashStage::Mx1, Instant::now() + SPLASH_DURATION)),
-                        SplashStage::Mx1 => None,
+                        SplashStage::Szyk => Some((SplashStage::Rove, Instant::now() + SPLASH_DURATION)),
+                        SplashStage::Rove => None,
                     };
                 } else {
                     fb.clear(Rgb565::BLACK).ok();
@@ -392,25 +392,25 @@ impl Os {
 
     /// Thin public hook so `PORTAMAX_RENDER_PNG` (see main.rs) can dump
     /// a splash stage too, the same "look at it without a real window"
-    /// reasoning behind `draw_diagnostic_frame`. `PORTAMAX_SPLASH=mx1`
+    /// reasoning behind `draw_diagnostic_frame`. `PORTAMAX_SPLASH=rove`
     /// previews the second stage; anything else (including unset)
     /// previews SZYK, the first stage.
     pub fn draw_splash_for_diagnostics(&self, fb: &mut FrameBuffer) {
         let stage = match std::env::var("PORTAMAX_SPLASH") {
-            Ok(v) if v.eq_ignore_ascii_case("mx1") => SplashStage::Mx1,
+            Ok(v) if v.eq_ignore_ascii_case("rove") => SplashStage::Rove,
             _ => SplashStage::Szyk,
         };
         self.draw_splash(stage, fb);
     }
 
-    /// The boot sequence: SZYK (the brand) then MX1 (the device),
+    /// The boot sequence: SZYK (the brand) then ROVE (the device),
     /// each up for `SPLASH_DURATION` (or until any input) before the
     /// launcher takes over -- see `startup_logo.rs` for why these are
     /// pre-converted bitmaps instead of SVGs rendered live.
     fn draw_splash(&self, stage: SplashStage, fb: &mut FrameBuffer) {
         let logo = match stage {
             SplashStage::Szyk => &startup_logo::SZYK,
-            SplashStage::Mx1 => &startup_logo::MX1,
+            SplashStage::Rove => &startup_logo::ROVE,
         };
         logo.draw_centered(fb, Rgb565::WHITE);
     }

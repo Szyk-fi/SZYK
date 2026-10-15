@@ -1,5 +1,5 @@
 -- aeolian
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a wind harp: one long string in
 -- the wind. eddies shed off the

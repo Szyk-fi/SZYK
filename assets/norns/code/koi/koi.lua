@@ -1,5 +1,5 @@
 -- koi
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- koi glide around a still pond,
 -- deep and dim, then drift up to

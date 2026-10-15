@@ -1,5 +1,5 @@
 -- reverso
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a slow melody, and behind it its
 -- own shadow played backwards. one

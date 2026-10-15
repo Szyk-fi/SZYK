@@ -1,5 +1,5 @@
 -- invaders
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- rows of invaders march and
 -- drop; every step they take is

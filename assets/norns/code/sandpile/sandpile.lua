@@ -1,5 +1,5 @@
 -- sandpile
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- grains fall onto a table. any
 -- cell holding four grains topples,

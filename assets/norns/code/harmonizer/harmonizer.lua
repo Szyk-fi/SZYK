@@ -1,5 +1,5 @@
 -- harmonizer
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- play a line on the pads (or MIDI
 -- in) and it gains diatonic voices:

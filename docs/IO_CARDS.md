@@ -1,6 +1,6 @@
 # I/O cards
 
-Portamax's jacks live on small plug-in cards instead of the main board.
+ROVE's jacks live on small plug-in cards instead of the main board.
 There are **two slots, A and B**, side by side on the back edge, taking
 about 80% of it, with the L1/R1 buttons beside them. Both slots are wired
 identically, so any card works in either one.
@@ -38,8 +38,8 @@ which the sim already runs with the same two slots (`SLOTS`,
 - Power and ground stay on the M.2 Key E standard positions: +3.3 V on
   pins 2, 4, 72 and 74; GND on 1, 7, 33, 39, 45, 51, 57, 63, 69 and 75
   (plus 11, 15, 20, 23, 37 and 42 beside the clocks). Everything else is
-  Portamax-specific, so a stray Wi-Fi card only ever sees 3.3 V.
-- The slot's +5 V stays off unless the EEPROM reads back as a Portamax
+  ROVE-specific, so a stray Wi-Fi card only ever sees 3.3 V.
+- The slot's +5 V stays off unless the EEPROM reads back as a ROVE
   card.
 - Pins 24–31 are the Key E notch, which leaves 67 contacts.
 - The socket footprint is not in KiCad's library: import the chosen
@@ -164,7 +164,7 @@ WP high on the card, and leave a pad to pull it low for programming.
 | 0 | 4 | magic `PMXC` |
 | 4 | 1 | format version (1) |
 | 5 | 1 | reserved, 0 |
-| 6 | 2 | vendor id (1 = Portamax) |
+| 6 | 2 | vendor id (1 = ROVE) |
 | 8 | 2 | product id |
 | 10 | 1 | hardware revision |
 | 11 | 1 | +5 V current, 10 mA units |

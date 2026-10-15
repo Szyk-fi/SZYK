@@ -1,4 +1,4 @@
-"""Conductor: hand gestures over Portamax's two depth sensors.
+"""Conductor: hand gestures over ROVE's two depth sensors.
 
 Input: the last 0.8 s of both sensors (2 channels x 48 frames at 60 Hz;
 0 = no hand, rising to 1 as a hand comes close). Output: 8 classes --

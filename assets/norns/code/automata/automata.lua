@@ -1,5 +1,5 @@
 -- automata
--- a Portamax norns script
+-- a ROVE norns script
 -- after ricochet by bongo (monome
 -- community) and Otomata by
 -- Batuhan Bozkurt: a generative

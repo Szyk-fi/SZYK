@@ -1,5 +1,5 @@
 -- heartbeat
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a resting heart: lub-dub, lub-dub.
 -- the gap between beats is never

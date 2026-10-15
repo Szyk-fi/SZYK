@@ -1,5 +1,5 @@
 -- pi
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- the digits of pi, worked out at
 -- startup with a spigot algorithm

@@ -1,4 +1,4 @@
-# Portamax neural models
+# ROVE neural models
 
 The AI apps each run a small network made for the STM32N6's
 Neural-ART NPU. This folder trains them, quantises them to int8 and
@@ -56,5 +56,5 @@ stedgeai generate --model hum.onnx --target stm32n6 --st-neural-art
 
 Its report gives each model's real NPU time and memory. The sim's
 "NPU ~x%" figure is an estimate: the model's MACs at 25% of the 600 GOPS
-peak. The `.pmxn` file is Portamax's own container for the int8 weights;
+peak. The `.pmxn` file is ROVE's own container for the int8 weights;
 the sim runs it on the computer's CPU.

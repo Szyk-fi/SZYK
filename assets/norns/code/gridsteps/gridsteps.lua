@@ -1,5 +1,5 @@
 -- gridsteps
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a step sequencer you play on the
 -- grid: a column per step, a row per

@@ -1,5 +1,5 @@
 -- chimes
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- wind chimes on a porch. the wind
 -- rises and falls on its own; the

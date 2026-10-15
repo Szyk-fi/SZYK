@@ -1,5 +1,5 @@
 //! Teletype: monome's algorithmic ecosystem, the Eurorack module you program
-//! in a tiny prefix language, running as a Portamax app.
+//! in a tiny prefix language, running as a ROVE app.
 //!
 //! A scene is eight trigger scripts (1-8), a metronome script (M) and an
 //! init script (I), six lines each, plus four 64-step number patterns. A
@@ -17,7 +17,7 @@
 //! W's 10000-iteration cap, DEL's 64 slots, an 8-deep SCRIPT call limit,
 //! P.NEXT/P.PREV wrapping, the integer rounding of QT/SCALE/AVG, DIV and
 //! MOD by zero giving 0, N/V/VV's volt tables. No firmware code is copied
-//! (the firmware is GPL-2.0; Portamax is MIT).
+//! (the firmware is GPL-2.0; ROVE is MIT).
 //!
 //! **Implemented**: variables A B C D X Y Z T, I J K, O, DRUNK, FLIP, R, TIME,
 //! LAST; maths, comparison, logic and bitwise ops, RAND/RRAND/TOSS, N V VV,
@@ -47,7 +47,7 @@
 //! step 0, which gives the same rhythms as Teletype's tables; for some fills
 //! the firmware's tables may be a rotation of these (not checked on hardware).
 //!
-//! **On Portamax** (there are no jacks):
+//! **On ROVE** (there are no jacks):
 //! - Trigger inputs 1-8 are pads 1-8 on the SCRIPTS page (9 and 10 run M and
 //!   I) and the mod inputs `Teletype: Trig 1`..`8` (a rising edge past 0.5
 //!   fires the script, so any app's gate or LFO can drive one).
@@ -62,7 +62,7 @@
 //! - Time is Teletype's own millisecond clock, not the device tempo (M is in
 //!   ms, like the module; `M BPM 120` gives 500 ms). F3 starts and stops the
 //!   metro: it runs while F3 is on *and* M.ACT is on. On the module a scene
-//!   starts playing as soon as it loads; here, like every Portamax app,
+//!   starts playing as soon as it loads; here, like every ROVE app,
 //!   nothing plays until you start it (the pads and trigger inputs still
 //!   run scripts at any time).
 //!
@@ -1055,7 +1055,7 @@ struct Engine {
     in_raw: i16,
     param_raw: i16,
     /// The device transport (F3). The metro runs while this and M.ACT are
-    /// both on: on the module M.ACT alone decides, but on Portamax nothing
+    /// both on: on the module M.ACT alone decides, but on ROVE nothing
     /// plays until you start it.
     transport: bool,
     /// The grid ops' buttons, faders and LED layer.
@@ -2418,7 +2418,7 @@ impl TeletypeApp {
         }
         let n = (1..1000).find(|n| !dir.join(format!("{n:02}.txt")).exists()).unwrap_or(999);
         let path = dir.join(format!("{n:02}.txt"));
-        match std::fs::write(&path, text.write("Portamax Teletype scene")) {
+        match std::fs::write(&path, text.write("ROVE Teletype scene")) {
             Ok(()) => {
                 self.status = format!("Saved saved/{n:02}");
                 self.rescan();

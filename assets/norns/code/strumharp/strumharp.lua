@@ -1,5 +1,5 @@
 -- strumharp
--- a Portamax norns script
+-- a ROVE norns script
 -- after autoharp by Meng Qi (monome
 -- community): strummers with speed
 -- and resistance.

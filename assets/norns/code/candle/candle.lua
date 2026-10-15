@@ -1,5 +1,5 @@
 -- candle
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a single candle in a quiet room.
 -- the flame wavers on small draughts;

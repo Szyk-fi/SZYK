@@ -1,4 +1,4 @@
-# The Portamax synthesis platform
+# The ROVE synthesis platform
 
 `src/synthesis/` is one engine that more than one app builds sounds with.
 Oracle (patches a language model writes) and Atlas (curated presets with
@@ -59,7 +59,7 @@ patch JSON ──migrate──▶ Patch ──compile (UI thread)──▶ Engin
 **Ported from Cardinal** (`blocks/ports.rs`)
 
 These are ten modules from Cardinal, the open-source VCV Rack distribution,
-that Portamax had no equivalent for. Mutable Instruments is left out
+that ROVE had no equivalent for. Mutable Instruments is left out
 because its real code already runs here. Each port is written from the
 published technique the module uses, not copied from its source. Nearly
 all of Cardinal is GPL-3 and this project is MIT, so copying the code
@@ -110,7 +110,7 @@ Built-in values:
 ```json
 {
   "version": 2,
-  "name": "Init", "category": "Keys", "tags": ["init"], "author": "Portamax",
+  "name": "Init", "category": "Keys", "tags": ["init"], "author": "ROVE",
   "description": "...",
   "kind": "instrument",            // or "effect" (reads `in`) / "generator"
   "voices": 8, "amp_env": true,

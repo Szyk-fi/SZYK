@@ -1,5 +1,5 @@
 -- tron
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- two light-cycles race across
 -- a grid, walls of light behind

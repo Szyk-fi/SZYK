@@ -1,5 +1,5 @@
 -- drone
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a slow chord drone. long notes
 -- are layered into a softcut loop

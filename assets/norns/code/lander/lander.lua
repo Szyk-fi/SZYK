@@ -1,5 +1,5 @@
 -- lander
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a lunar lander falls toward a
 -- pad, steered by an autopilot.

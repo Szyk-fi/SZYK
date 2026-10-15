@@ -1,5 +1,5 @@
 -- steps
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a plain, friendly eight-step
 -- sequencer. each step has a note

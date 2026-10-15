@@ -1,5 +1,5 @@
 -- sonar
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a beam sweeps the dark and
 -- pings. whatever it touches

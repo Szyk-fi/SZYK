@@ -1,5 +1,5 @@
 -- ripples
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- two drops keep rippling a pond.
 -- twelve lily pads float on it.

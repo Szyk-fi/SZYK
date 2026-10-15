@@ -25,7 +25,7 @@
 //!
 //! Without serialosc, a grid plugged straight into the Mac is found and spoken
 //! to directly in monome's serial protocol (`mext`, module below) over its USB
-//! serial port (`serial`). That is also how the Portamax hardware will talk to
+//! serial port (`serial`). That is also how the ROVE hardware will talk to
 //! a grid on its USB host port: `mext` is plain bytes with no allocation, ready
 //! for the firmware. serialosc wins when it's running, since it already has
 //! the grid open; the two never both talk to it.
@@ -790,7 +790,7 @@ pub mod serialosc {
 
 /// monome's serial protocol ("mext", every grid since 2011), as the grid
 /// itself speaks it over USB. Everything here is plain bytes in and out with
-/// no allocation and no OS, so the same code can run on Portamax's STM32 USB
+/// no allocation and no OS, so the same code can run on ROVE's STM32 USB
 /// host; `serial` below is the Mac/Linux transport around it.
 ///
 /// A message is a header byte, `(subsystem << 4) | command`, then a payload

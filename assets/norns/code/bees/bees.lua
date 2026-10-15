@@ -1,5 +1,5 @@
 -- bees
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- bees forage a meadow of flowers,
 -- each flower a pitch. a bee that

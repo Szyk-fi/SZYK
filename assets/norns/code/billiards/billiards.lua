@@ -1,5 +1,5 @@
 -- billiards
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a cue ball breaks a rack of
 -- tuned balls. every knock rings

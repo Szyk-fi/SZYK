@@ -1,5 +1,5 @@
 -- stutter
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a busy little groove plays while
 -- softcut keeps the most recent

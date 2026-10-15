@@ -746,7 +746,7 @@ mod tests {
 
         let mut info = chunk(b"ifil", &[2, 0, 1, 0]);
         info.extend(chunk(b"isng", b"EMU8000\0"));
-        info.extend(chunk(b"INAM", b"Portamax test\0\0\0"));
+        info.extend(chunk(b"INAM", b"ROVE test\0\0\0"));
         let sdta = chunk(b"smpl", &smpl);
         let mut pdta = Vec::new();
         for (id, body) in [(b"phdr", &phdr), (b"pbag", &pbag), (b"pmod", &pmod), (b"pgen", &pgen), (b"inst", &inst), (b"ibag", &ibag), (b"imod", &imod), (b"igen", &igen)] {

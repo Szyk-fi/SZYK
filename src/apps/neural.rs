@@ -1,4 +1,4 @@
-//! The Portamax neural runtime: runs the small int8 networks the AI apps
+//! The ROVE neural runtime: runs the small int8 networks the AI apps
 //! use, exactly as the STM32N6's Neural-ART NPU would.
 //!
 //! The models are trained and quantised by `tools/npu` (PyTorch), which

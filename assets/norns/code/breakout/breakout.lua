@@ -1,5 +1,5 @@
 -- breakout
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a ball chips away at a wall of
 -- tuned bricks. columns are scale

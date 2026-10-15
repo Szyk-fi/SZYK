@@ -1,5 +1,5 @@
 -- comet
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a comet swings round the sun on
 -- an ellipse, obeying Kepler: it

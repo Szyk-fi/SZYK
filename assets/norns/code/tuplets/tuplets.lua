@@ -1,5 +1,5 @@
 -- tuplets
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- one bar, split three ways at
 -- once: into 3, into 4 and into 5

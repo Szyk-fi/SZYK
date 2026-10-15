@@ -1,4 +1,4 @@
-# Portamax — context for an agent writing a new app
+# ROVE — context for an agent writing a new app
 
 > **Two assistants work on this repo.** Read [AGENTS.md](AGENTS.md) first and follow it: ownership, locks and the shared work log live there.
 
@@ -10,7 +10,7 @@ compiling, tested, minimal app. Copy it, don't start from a blank file.
 
 ## What this project actually is
 
-Portamax is a software simulation of a hardware groovebox/instrument that
+ROVE is a software simulation of a hardware groovebox/instrument that
 doesn't exist yet (an STM32N6-based device). Over a hundred installed apps (one `apps/<id>/manifest.toml` each) — synths,
 effects, sequencers, recorders — share one real-time audio engine, one
 modulation bus, and one control surface (4x4 pad grid, D-pad, two

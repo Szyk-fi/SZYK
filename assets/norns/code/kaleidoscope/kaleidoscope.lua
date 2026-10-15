@@ -1,5 +1,5 @@
 -- kaleidoscope
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- coloured shards tumble between
 -- mirrors. they drift in and out

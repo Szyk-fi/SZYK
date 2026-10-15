@@ -1,5 +1,5 @@
 -- thunderhead
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a storm cell gathers charge.
 -- rain patters in soft high

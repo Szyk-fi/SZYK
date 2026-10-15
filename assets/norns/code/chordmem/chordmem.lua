@@ -1,5 +1,5 @@
 -- chordmem
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- hold a few pads together and the
 -- shape is memorised. the shape is

@@ -1,5 +1,5 @@
 -- blocks
--- a Portamax norns script
+-- a ROVE norns script
 -- after Tetris for monome by robb
 -- (monome community): falling
 -- blocks on the grid, with notes.

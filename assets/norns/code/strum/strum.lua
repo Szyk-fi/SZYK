@@ -1,5 +1,5 @@
 -- strum
--- a Portamax norns script
+-- a ROVE norns script
 --
 -- a six-string strummer. each beat
 -- the chord is swept down or up,

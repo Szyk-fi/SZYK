@@ -1,5 +1,5 @@
 -- isogrid
--- a Portamax norns script
+-- a ROVE norns script
 -- after mabalhabla by stretta
 -- (monome community): a tonal grid
 -- with its own interval across and

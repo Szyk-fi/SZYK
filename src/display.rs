@@ -66,7 +66,7 @@ impl DrawTarget for FrameBuffer {
 
 pub fn open_window() -> Window {
     let mut window = Window::new(
-        "Portamax OS (sim) \u{2014} AMS317PN01 640x360 landscape",
+        "ROVE OS (sim) \u{2014} AMS317PN01 640x360 landscape",
         WIDTH,
         HEIGHT,
         WindowOptions::default(),

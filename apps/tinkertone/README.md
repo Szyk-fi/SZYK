@@ -13,7 +13,7 @@ A no-frills recreation of the feature set of Casio's 1981 MT-40 home keyboard, i
 | Fill-in | Hold it for sixteenth-note pulses of snare or kick; the two alternate press to press |
 | Levels | Volume and Accompaniment volume (bass + drums) |
 
-## Playing on Portamax
+## Playing on ROVE
 
 37 + 15 keys don't fit on 16 pads, so **F2** flips the pads between two layers:
 
