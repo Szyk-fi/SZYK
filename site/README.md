@@ -3,7 +3,7 @@
 Static site, no build step: `index.html`, `styles.css`, `app.js` (palettes), `rove-demo.js` (the playable device).
 
 ```sh
-python3 -m http.server 8765 --directory site   # then open http://localhost:8765
+cd /Users/max/Developer/Modulade/portamax-sim && python3 -m http.server 8765 --directory site   # then open http://localhost:8765
 ```
 
 Deploys as-is to any static host (GitHub Pages, Netlify, Cloudflare Pages). The only external request is Google Fonts (Rubik, JetBrains Mono); system fonts take over if it is blocked.
