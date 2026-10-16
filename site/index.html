@@ -3,74 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ROVE — a groovebox with 100+ apps inside | SZYK</title>
-<meta name="description" content="ROVE is a groovebox from SZYK: over a hundred instruments, effects and sequencers on one real-time audio engine. Play a taste of it in your browser.">
-<meta name="theme-color" content="#F4F3EC">
+<title>ROVE: one instrument for every idea | SZYK</title>
+<meta name="description" content="ROVE is a handheld instrument that runs apps. Synths, drum machines, sequencers and effects share one audio engine, and you can build your own. Try 20 apps in your browser.">
+<meta name="theme-color" content="#0C0D0E">
 <meta name="indiegogo-url" content="https://www.indiegogo.com/">
-<meta property="og:title" content="ROVE — a groovebox with 100+ apps inside">
-<meta property="og:description" content="Play five sample instruments on the ROVE control surface, right in your browser.">
+<meta property="og:title" content="ROVE: one instrument for every idea">
+<meta property="og:description" content="A handheld instrument that runs apps. Try 20 of them in your browser.">
 <meta property="og:type" content="website">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Rubik:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css?v=1792144800">
 </head>
 <body>
-
-<!-- Logo letterforms. Square-cut strokes on a 60-unit grid; the symbol viewport clips the
-     over-long diagonals. Colour comes from `color` on each <use>, so the palette picker
-     re-skins every logo on the page. The same paths are used on the device screen
-     (GLYPHS in rove-demo.js). -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
-  <defs>
-    <symbol id="g-S" viewBox="0 0 60 60" fill="none" stroke="currentColor" stroke-width="13" stroke-miterlimit="8"><path d="M60 6.5H6.5V30h47v23.5H0"/></symbol>
-    <symbol id="g-Z" viewBox="0 0 60 60" fill="none" stroke="currentColor" stroke-width="13" stroke-miterlimit="8"><path d="M0 6.5H60M60 0 0 60M0 53.5H60"/></symbol>
-    <symbol id="g-Y" viewBox="0 0 60 60" fill="none" stroke="currentColor" stroke-width="13" stroke-miterlimit="8"><path d="M-4.7-8 30 28 64.7-8M30 28V60"/></symbol>
-    <symbol id="g-K" viewBox="0 0 60 60" fill="none" stroke="currentColor" stroke-width="13" stroke-miterlimit="8"><path d="M6.5 0V60M62-6 14 30 62 66"/></symbol>
-    <symbol id="g-R" viewBox="0 0 60 60" fill="none" stroke="currentColor" stroke-width="13" stroke-miterlimit="8"><path d="M6.5 60V6.5H53.5V30H6.5M26 30 56 66"/></symbol>
-    <symbol id="g-O" viewBox="0 0 60 60" fill="none" stroke="currentColor" stroke-width="13"><rect x="6.5" y="6.5" width="47" height="47" rx="9"/></symbol>
-    <symbol id="g-V" viewBox="0 0 60 60" fill="none" stroke="currentColor" stroke-width="13" stroke-miterlimit="8"><path d="M-4-6 30 56 64-6"/></symbol>
-    <symbol id="g-E" viewBox="0 0 60 60" fill="none" stroke="currentColor" stroke-width="13" stroke-miterlimit="8"><path d="M60 6.5H6.5V53.5H60M6.5 30H50"/></symbol>
-
-    <!-- boxed lockups: four 60-unit tiles, 6-unit gaps -->
-    <symbol id="lk-szyk-boxed" viewBox="0 0 258 60">
-      <rect width="60" height="60" rx="12" fill="var(--c1)"/><use href="#g-S" x="12" y="12" width="36" height="36" style="color:var(--on-c1)"/>
-      <rect x="66" width="60" height="60" rx="12" fill="var(--c2)"/><use href="#g-Z" x="78" y="12" width="36" height="36" style="color:var(--on-c2)"/>
-      <rect x="132" width="60" height="60" rx="12" fill="var(--c3)"/><use href="#g-Y" x="144" y="12" width="36" height="36" style="color:var(--on-c3)"/>
-      <rect x="198" width="60" height="60" rx="12" fill="var(--c4)"/><use href="#g-K" x="210" y="12" width="36" height="36" style="color:var(--on-c4)"/>
-    </symbol>
-    <symbol id="lk-rove-boxed" viewBox="0 0 258 60">
-      <rect width="60" height="60" rx="12" fill="var(--c1)"/><use href="#g-R" x="12" y="12" width="36" height="36" style="color:var(--on-c1)"/>
-      <rect x="66" width="60" height="60" rx="12" fill="var(--c2)"/><use href="#g-O" x="78" y="12" width="36" height="36" style="color:var(--on-c2)"/>
-      <rect x="132" width="60" height="60" rx="12" fill="var(--c3)"/><use href="#g-V" x="144" y="12" width="36" height="36" style="color:var(--on-c3)"/>
-      <rect x="198" width="60" height="60" rx="12" fill="var(--c4)"/><use href="#g-E" x="210" y="12" width="36" height="36" style="color:var(--on-c4)"/>
-    </symbol>
-    <!-- wordmark lockups: bare letters, 24-unit gaps -->
-    <symbol id="lk-szyk-word" viewBox="0 0 312 60">
-      <use href="#g-S" x="0" width="60" height="60" style="color:var(--c1)"/><use href="#g-Z" x="84" width="60" height="60" style="color:var(--c2)"/>
-      <use href="#g-Y" x="168" width="60" height="60" style="color:var(--c3)"/><use href="#g-K" x="252" width="60" height="60" style="color:var(--c4)"/>
-    </symbol>
-  </defs>
-</svg>
-
 <a class="skip" href="#main">Skip to content</a>
 
-<header class="site-header">
+<header class="site-header dark">
   <div class="wrap">
-    <a class="brand" href="#top" aria-label="SZYK, home">
-      <svg viewBox="0 0 258 60" role="img" aria-hidden="true"><use href="#lk-szyk-boxed"/></svg>
-    </a>
+    <a class="brand" href="#top" aria-label="SZYK, home"><img src="assets/szyk-logo-light.svg" alt="SZYK" width="111" height="26"></a>
     <nav class="nav" aria-label="Main">
-      <a href="#play">Play</a>
-      <a href="#inside">Inside</a>
-      <a href="#apps">Apps</a>
+      <a href="#play">Try it</a>
+      <a href="#why">Why ROVE</a>
+      <a href="#build">Build your own</a>
+      <a href="#specs">Specs</a>
+      <a href="#open">Open source</a>
       <a href="#faq">FAQ</a>
-      <details class="palettes" id="palettes">
-        <summary aria-label="Choose a colour palette"><span class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>Palette</span></summary>
-        <div class="palettes__menu" role="radiogroup" aria-label="Colour palette"></div>
-      </details>
-      <a class="btn btn--sm header-cta" data-igg href="https://www.indiegogo.com/">Back it on Indiegogo</a>
+      <a class="btn btn--sm" data-igg href="https://www.indiegogo.com/">Back it on Indiegogo</a>
     </nav>
   </div>
 </header>
@@ -78,264 +37,300 @@
 <main id="main">
 
 <!-- ======================= HERO ======================= -->
-<section class="hero" id="top">
-  <div class="wrap hero__grid">
-    <p class="hero__from">From
-      <svg viewBox="0 0 258 60" role="img" aria-label="SZYK"><use href="#lk-szyk-boxed"/></svg>
-    </p>
-    <h1>
-      <svg class="hero__logo tile-in" viewBox="0 0 258 60" role="img" aria-label="ROVE">
-        <g class="tile"><rect width="60" height="60" rx="12" fill="var(--c1)"/><use href="#g-R" x="12" y="12" width="36" height="36" style="color:var(--on-c1)"/></g>
-        <g class="tile"><rect x="66" width="60" height="60" rx="12" fill="var(--c2)"/><use href="#g-O" x="78" y="12" width="36" height="36" style="color:var(--on-c2)"/></g>
-        <g class="tile"><rect x="132" width="60" height="60" rx="12" fill="var(--c3)"/><use href="#g-V" x="144" y="12" width="36" height="36" style="color:var(--on-c3)"/></g>
-        <g class="tile"><rect x="198" width="60" height="60" rx="12" fill="var(--c4)"/><use href="#g-E" x="210" y="12" width="36" height="36" style="color:var(--on-c4)"/></g>
-      </svg>
-    </h1>
-    <p class="lead">A groovebox with over a hundred instruments, effects and sequencers inside, all running on one real-time audio engine. Try a taste of it right here.</p>
+<section class="hero dark" id="top">
+  <div class="wrap">
+    <img class="hero__logo" src="assets/rove-logo-light.svg" alt="ROVE" width="325" height="76">
+    <h1>One instrument for every idea.</h1>
+    <p class="lede">ROVE is a handheld instrument that runs apps. Synths, drum machines, sequencers and effects share one real-time audio engine, so everything connects to everything. When the instrument you need doesn’t exist, you build it.</p>
     <div class="hero__cta">
-      <a class="btn" href="#play">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
-        Play ROVE in your browser
-      </a>
-      <a class="btn btn--ghost" data-igg href="https://www.indiegogo.com/">Back it on Indiegogo</a>
+      <a class="btn" href="#play">Try 20 apps in your browser</a>
+      <a class="btn btn--line" data-igg href="https://www.indiegogo.com/">Back it on Indiegogo</a>
     </div>
   </div>
 </section>
 
-<!-- ======================= DEMO ======================= -->
-<section class="stage section" id="play" aria-labelledby="play-h">
+<!-- ======================= THE HANDHELD ======================= -->
+<section class="stage dark" id="play" aria-labelledby="play-h">
   <div class="wrap">
-    <div class="section-head">
-      <p class="eyebrow">Live demo · sound on</p>
-      <h2 id="play-h">Play it. Right now.</h2>
-      <p>The ROVE control surface in your browser: 4×4 pads, two knobs, a D-pad and F1–F4. Pick a sound, tap the pads, twist the knobs.</p>
+    <h2 id="play-h" class="sr-only">Try ROVE in your browser</h2>
+    <div class="stage__bar">
+      <span><b>Browser preview</b> · 20 apps · sound on</span>
+      <span class="stage__tools">
+        <label class="vol">Volume <input id="vol" type="range" min="0" max="100" value="75" aria-label="Master volume"></label>
+        <button class="btn btn--line btn--sm" id="silence" type="button">Silence all</button>
+      </span>
     </div>
 
-    <div class="picker" id="picker" role="group" aria-label="Choose an instrument"></div>
-
-    <div class="rove" id="rove" tabindex="0" role="group"
-         aria-label="ROVE simulator. Press keys 1 2 3 4, Q W E R, A S D F, Z X C V to play the pads when this panel is focused.">
-      <div class="rove__fkeys">
-        <svg class="rove__brand" viewBox="0 0 258 60" role="img" aria-label="ROVE"><use href="#lk-rove-boxed"/></svg>
-        <button class="fkey" type="button" data-f="1" aria-pressed="false">F1<small>DEMO</small></button>
-        <button class="fkey" type="button" data-f="2" aria-pressed="true">F2<small>SPACE</small></button>
-        <button class="fkey" type="button" data-f="3">F3<small>RANDOM</small></button>
-        <button class="fkey" type="button" data-f="4">F4<small>RESET</small></button>
-      </div>
-
-      <div class="rove__screen">
-        <canvas id="screen" width="1280" height="720" aria-hidden="true"></canvas>
-        <button class="sound-gate" id="gate" type="button">
-          <span>
-            <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
-            Tap to turn sound on
-          </span>
-        </button>
-      </div>
-
-      <div class="rove__knobs">
-        <div class="knob" id="knob0" role="slider" tabindex="0" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-label="Knob 1">
-          <svg viewBox="0 0 100 100" aria-hidden="true"><path class="knob__track"/><path class="knob__arc"/><g class="knob__cap"><circle cx="50" cy="50" r="31"/><line class="knob__tick" x1="50" y1="30" x2="50" y2="40"/></g></svg>
-          <span class="knob__label"></span><span class="knob__value"></span>
-        </div>
-        <div class="dpad" role="group" aria-label="D-pad">
-          <button class="up" type="button" data-dir="up" aria-label="Octave up"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 6 5 17h14z"/></svg></button>
-          <button class="left" type="button" data-dir="left" aria-label="Previous instrument"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 12l11-7v14z"/></svg></button>
-          <button class="right" type="button" data-dir="right" aria-label="Next instrument"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18 12 7 5v14z"/></svg></button>
-          <button class="down" type="button" data-dir="down" aria-label="Octave down"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 18 5 7h14z"/></svg></button>
-        </div>
-        <div class="knob" id="knob1" role="slider" tabindex="0" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-label="Knob 2">
-          <svg viewBox="0 0 100 100" aria-hidden="true"><path class="knob__track"/><path class="knob__arc"/><g class="knob__cap"><circle cx="50" cy="50" r="31"/><line class="knob__tick" x1="50" y1="30" x2="50" y2="40"/></g></svg>
-          <span class="knob__label"></span><span class="knob__value"></span>
-        </div>
-      </div>
-
-      <div class="rove__pads" id="pads" role="group" aria-label="Pads"></div>
-
-      <p class="rove__hint">
-        <span>Keys: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> / <kbd>Q</kbd>–<kbd>R</kbd> / <kbd>A</kbd>–<kbd>F</kbd> / <kbd>Z</kbd>–<kbd>V</kbd></span>
-        <span>Knob 1 <kbd>[</kbd> <kbd>]</kbd> · Knob 2 <kbd>,</kbd> <kbd>.</kbd> · Arrows: instrument &amp; octave</span>
-      </p>
+    <div class="rotate" role="status">
+      <svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><g class="phone"><rect x="40" y="16" width="40" height="88" rx="7"/><circle cx="60" cy="94" r="2.5" fill="currentColor" stroke="none"/></g></svg>
+      <p>Turn your phone sideways to play ROVE.<small>The device is built to be held in landscape.</small></p>
     </div>
 
-    <div class="stage-controls">
-      <button class="btn btn--ghost" id="demoBtn" type="button" aria-pressed="false">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
-        <span>Play a demo loop</span>
-      </button>
-      <label class="vol">Volume
-        <input id="vol" type="range" min="0" max="100" value="75" aria-label="Master volume">
-      </label>
+    <div class="hh-fit" id="fit">
+      <div class="hh" id="rove" tabindex="0" role="group" aria-label="ROVE handheld simulator. Focus it, then use the keyboard: digits and letters 1 2 3 4, Q W E R, A S D F, Z X C V play the pads; arrow keys are the D-pad; Enter is select; F1 to F4 are keyboard shortcuts for the touchscreen actions; I J K L move the stick; Escape leaves.">
+        <button class="hh__shoulder" data-btn="l1" style="left:45px" type="button" aria-label="L1 shoulder">L1</button>
+        <button class="hh__shoulder" data-btn="r1" style="left:1251px" type="button" aria-label="R1 shoulder">R1</button>
+        <div class="hh__body"></div>
+        <div class="hh__cam" aria-hidden="true" style="left:1077px;top:82px"></div>
+
+        <div class="hh__hand" data-hand="0" style="left:80px;top:64px" aria-hidden="true"><i></i><div class="bar"><b></b></div><span>HAND L</span></div>
+        <div class="hh__hand" data-hand="1" style="left:1320px;top:64px" aria-hidden="true"><i></i><div class="bar"><b></b></div><span>HAND R</span></div>
+
+        <div class="hh__bezel" style="left:200px;top:84px">
+          <div class="hh__screen">
+            <canvas id="screen" width="800" height="432" aria-hidden="true"></canvas>
+            <div class="hh__touchbar" role="group" aria-label="Touchscreen actions">
+              <button class="hh__f" data-f="0" type="button">HOME</button>
+              <button class="hh__f" data-f="1" type="button">PADS</button>
+              <button class="hh__f" data-f="2" type="button">PLAY</button>
+              <button class="hh__f" data-f="3" type="button">MIXER</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="hh__dpad" style="left:44px;top:136px" role="group" aria-label="D-pad">
+          <button class="hh__dir" data-dir="up" type="button" aria-label="Up"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 6 5 17h14z"/></svg></button>
+          <button class="hh__dir" data-dir="left" type="button" aria-label="Left"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 12l11-7v14z"/></svg></button>
+          <button class="hh__dir" data-dir="right" type="button" aria-label="Right"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18 12 7 5v14z"/></svg></button>
+          <button class="hh__dir" data-dir="down" type="button" aria-label="Down"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 18 5 7h14z"/></svg></button>
+          <button class="hh__sel" type="button" aria-label="Select"></button>
+        </div>
+        <div class="hh__stick" id="stick" style="left:64px;top:328px" role="application" aria-label="Analog stick. Drag, or use I J K L." tabindex="-1"><div class="cap"></div></div>
+
+        <div class="hh__deck" style="left:1042px;top:140px"></div>
+        <div class="hh__pads" id="pads" style="left:1050px;top:148px" role="group" aria-label="Pads"></div>
+        <div class="hh__speaker" aria-label="SZYK speaker slots" style="left:1095px;top:530px">
+          <i style="left:0px;top:8px;height:14px"></i>
+          <i style="left:0px;top:48px;height:9px"></i>
+          <i style="left:8px;top:0px;height:30px"></i>
+          <i style="left:8px;top:48px;height:9px"></i>
+          <i style="left:16px;top:0px;height:9px"></i>
+          <i style="left:16px;top:24px;height:9px"></i>
+          <i style="left:16px;top:48px;height:9px"></i>
+          <i style="left:24px;top:0px;height:9px"></i>
+          <i style="left:24px;top:24px;height:9px"></i>
+          <i style="left:24px;top:48px;height:9px"></i>
+          <i style="left:32px;top:0px;height:9px"></i>
+          <i style="left:32px;top:24px;height:9px"></i>
+          <i style="left:32px;top:48px;height:9px"></i>
+          <i style="left:40px;top:0px;height:9px"></i>
+          <i style="left:40px;top:24px;height:30px"></i>
+          <i style="left:48px;top:32px;height:14px"></i>
+          <i style="left:72px;top:0px;height:9px"></i>
+          <i style="left:72px;top:48px;height:9px"></i>
+          <i style="left:80px;top:0px;height:9px"></i>
+          <i style="left:80px;top:40px;height:14px"></i>
+          <i style="left:88px;top:0px;height:9px"></i>
+          <i style="left:88px;top:32px;height:22px"></i>
+          <i style="left:96px;top:0px;height:9px"></i>
+          <i style="left:96px;top:24px;height:14px"></i>
+          <i style="left:96px;top:48px;height:9px"></i>
+          <i style="left:104px;top:0px;height:9px"></i>
+          <i style="left:104px;top:16px;height:14px"></i>
+          <i style="left:104px;top:48px;height:9px"></i>
+          <i style="left:112px;top:0px;height:22px"></i>
+          <i style="left:112px;top:48px;height:9px"></i>
+          <i style="left:120px;top:0px;height:14px"></i>
+          <i style="left:120px;top:48px;height:9px"></i>
+          <i style="left:144px;top:0px;height:14px"></i>
+          <i style="left:152px;top:0px;height:22px"></i>
+          <i style="left:160px;top:16px;height:14px"></i>
+          <i style="left:168px;top:24px;height:30px"></i>
+          <i style="left:176px;top:16px;height:14px"></i>
+          <i style="left:184px;top:0px;height:22px"></i>
+          <i style="left:192px;top:0px;height:14px"></i>
+          <i style="left:216px;top:0px;height:54px"></i>
+          <i style="left:224px;top:0px;height:54px"></i>
+          <i style="left:232px;top:24px;height:9px"></i>
+          <i style="left:240px;top:16px;height:22px"></i>
+          <i style="left:248px;top:8px;height:14px"></i>
+          <i style="left:248px;top:32px;height:14px"></i>
+          <i style="left:256px;top:0px;height:14px"></i>
+          <i style="left:256px;top:40px;height:14px"></i>
+          <i style="left:264px;top:0px;height:9px"></i>
+          <i style="left:264px;top:48px;height:9px"></i>
+        </div>
+      </div>
     </div>
 
-    <p class="stage-note">This is a browser preview. The five voices here are lightweight Web Audio sketches made for this page, in the spirit of ROVE’s synths and drum machines. On the real thing, every app runs on the full native engine. On an iPhone, switch off silent mode to hear it.</p>
     <p class="sr-only" id="live" aria-live="polite"></p>
+
+    <div class="stage__hint">
+      <p><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd> <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd> <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd> play the pads. Click the device first.</p>
+      <p>Arrows = D-pad · <kbd>Enter</kbd> select · <kbd>F1</kbd>–<kbd>F4</kbd> · <kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> stick · <kbd>[</kbd> <kbd>]</kbd> L1 R1 · <kbd>Esc</kbd> leave.</p>
+    </div>
+    <p class="stage__note">A browser preview of the ROVE interface. The screens are drawn the way the device draws them, and each app’s controls mirror the real app. The sound engines are lightweight Web Audio versions written for this page; on ROVE itself the apps run on the native engine.</p>
   </div>
 </section>
 
-<!-- ======================= INSIDE ======================= -->
-<section class="section" id="inside" aria-labelledby="inside-h">
-  <div class="wrap">
-    <div class="section-head">
-      <p class="eyebrow">What’s inside</p>
-      <h2 id="inside-h">One box. A whole studio.</h2>
-      <p>ROVE is built around a single idea: every app shares the same engine, the same controls and the same patch bus, so everything works with everything.</p>
-    </div>
-    <div class="cards">
-      <article class="card">
-        <span class="num" aria-hidden="true">01</span>
-        <h3>Instruments, effects, sequencers</h3>
-        <p>Synths, drum machines, loopers, granular clouds, tape and reverb, step sequencers and generative ones. Over a hundred apps in one launcher.</p>
-      </article>
-      <article class="card">
-        <span class="num" aria-hidden="true">02</span>
-        <h3>Controls you learn once</h3>
-        <p>A 4×4 pad grid, a D-pad, two encoders and F1–F4. Every app uses them the same way, and every app draws its own 640×360 screen.</p>
-      </article>
-      <article class="card">
-        <span class="num" aria-hidden="true">03</span>
-        <h3>Everything patches to everything</h3>
-        <p>Pick another app’s output as your input. Route a modulation source to any parameter. Map MIDI CCs by touch. No cables, no menus-within-menus.</p>
-      </article>
-      <article class="card">
-        <span class="num" aria-hidden="true">04</span>
-        <h3>The real DSP, not look-alikes</h3>
-        <p>Several apps run the actual open-source Mutable Instruments engines (Plaits, Clouds, Warps, Beads) as compiled C++, not approximations of them.</p>
-      </article>
-      <article class="card">
-        <span class="num" aria-hidden="true">05</span>
-        <h3>AI that runs on the chip</h3>
-        <p>Seven apps are built around small neural networks sized for the STM32N6’s NPU. One of them tracks the pitch of your voice a hundred times a second.</p>
-      </article>
-      <article class="card">
-        <span class="num" aria-hidden="true">06</span>
-        <h3>I/O on swappable cards</h3>
-        <p>Two M.2 card slots carry line in/out and MIDI DIN today, and only digital signals cross the connector. Different cards, different jacks.</p>
-      </article>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= APPS ======================= -->
-<section class="section" id="apps" aria-labelledby="apps-h" style="padding-top:0">
-  <div class="wrap">
-    <div class="section-head">
-      <p class="eyebrow">The launcher</p>
-      <h2 id="apps-h">116 apps and counting.</h2>
-    </div>
-
-    <div class="stats">
-      <div class="stat"><b>116</b><span>apps installed</span></div>
-      <div class="stat"><b>31</b><span>instruments</span></div>
-      <div class="stat"><b>21</b><span>effects</span></div>
-      <div class="stat"><b>15</b><span>sequencers</span></div>
-    </div>
-
-    <div class="apps-group" style="--gc:var(--c1)">
-      <h3><i aria-hidden="true"></i>Instruments</h3>
-      <ul class="chips">
-        <li>Atlas</li><li>Blaster</li><li>Bebot</li><li>Braids</li><li>Chordsmith</li><li>Constellation</li><li>Chop</li><li>Dexed</li><li>Elements</li><li>June-60</li><li>Hydra</li><li>Dream</li><li>Forge</li><li>Looper</li><li>Melt FM</li><li>Mutant</li><li>Orbit</li><li>Plaits</li><li>Oracle</li><li>Rev2</li><li>Sample Drum</li><li>Rings</li><li>Skins</li><li>Swarm</li><li>Tinkertone</li><li>Starlab</li><li>SoundFont</li><li>Synth</li><li>Voltage</li><li>Trio</li><li>Vistas</li>
-      </ul>
-    </div>
-    <div class="apps-group" style="--gc:var(--c2)">
-      <h3><i aria-hidden="true"></i>Effects</h3>
-      <ul class="chips">
-        <li>Airwindows</li><li>Beads</li><li>Black Hole</li><li>Clouds</li><li>Fracture</li><li>Ghosts</li><li>Magnito</li><li>Master</li><li>Morph</li><li>Nautilus</li><li>Mosaic</li><li>Natural Gate</li><li>Prism</li><li>Rainmaker</li><li>Singularity</li><li>Squeeze</li><li>Streams</li><li>Tape Machine</li><li>Vector Filter</li><li>Tonestack</li><li>Warps</li>
-      </ul>
-    </div>
-    <div class="apps-group" style="--gc:var(--c3)">
-      <h3><i aria-hidden="true"></i>Sequencers</h3>
-      <ul class="chips">
-        <li>Bloom</li><li>Kria</li><li>Madness</li><li>Ledger</li><li>Marbles</li><li>Nebula</li><li>Pam’s Workout</li><li>Orca</li><li>Pulsar</li><li>Queen of Pentacles</li><li>Session</li><li>Sequencer</li><li>Tides</li><li>Teletype</li><li>Turing Machine</li>
-      </ul>
-    </div>
-    <div class="apps-group" style="--gc:var(--c4)">
-      <h3><i aria-hidden="true"></i>AI on the NPU</h3>
-      <ul class="chips">
-        <li>Band Mate</li><li>Choir</li><li>Conductor</li><li>Hum</li><li>Mouth Drums</li><li>Sorter</li><li>Timbre Map</li>
-      </ul>
-    </div>
-    <p class="more">Plus utilities, a mixer, recorders, a sample library, games and ten apps just for kids.</p>
-  </div>
-</section>
-
-<!-- ======================= ENGINE ======================= -->
-<section class="section engine" id="engine" aria-labelledby="engine-h">
-  <div class="wrap engine__grid">
+<!-- ======================= WHY ======================= -->
+<section class="section light" id="why" aria-labelledby="why-h">
+  <div class="wrap split">
     <div>
-      <p class="eyebrow">How we build it</p>
-      <h2 id="engine-h">No fakes.</h2>
-      <p>If an app says it’s a filter, it’s that filter. If it says it’s a sequencer clock division, it divides the clock. We would rather say “not done yet” than ship something that only looks right.</p>
-      <p>Mutable Instruments published its firmware as open source, and ROVE runs it directly. Thank you, Émilie Gillet.</p>
+      <p class="eyebrow">Why ROVE</p>
+      <h2 id="why-h">The best of what you own, and what comes next.</h2>
+      <p class="lede" style="margin-top:28px">ROVE doesn’t replace your gear. It connects to it. Legacy equipment is why we’re here, and we’re moving forward while embracing the past.</p>
     </div>
-    <ul class="rules">
-      <li><span class="tick" aria-hidden="true">1</span><div><strong>Real-time, always</strong><span>The audio thread never blocks, allocates or waits. A missed deadline is a glitch you can hear, so it’s treated like a bug.</span></div></li>
-      <li><span class="tick" aria-hidden="true">2</span><div><strong>Tested against behaviour</strong><span>“Hold a pad and it makes sound, let go and it goes quiet” is a test. “It constructs without crashing” is not.</span></div></li>
-      <li><span class="tick" aria-hidden="true">3</span><div><strong>Honest limits</strong><span>Every hardware claim that hasn’t been proven on silicon is labelled that way in the code and the manual.</span></div></li>
-    </ul>
+    <ol class="problems">
+      <li><span class="n">01</span><div><h3>Talk to your modular.</h3><p>Send <strong>CV and gates</strong> out to the rack you’ve already built, and bring voltages back in. ROVE’s sequencers, generators and hand sensors become new sources of movement for your modular synth.</p></div></li>
+      <li><span class="n">02</span><div><h3>Direct the synths you love.</h3><p>With <strong>MIDI in and out</strong>, ROVE can stand in front of the instruments you already play. Use it as a possibility machine: generate patterns, morph parameters, and let your classic gear do what it does best.</p></div></li>
+      <li><span class="n">03</span><div><h3>One engine, every idea.</h3><p>Inside, every app shares one real-time engine and one modulation bus, so <strong>anything can feed anything</strong>. Instruments, effects and sequencers behave like parts of a single instrument.</p></div></li>
+      <li><span class="n">04</span><div><h3>Hands-on, wherever you play.</h3><p>A pad deck, D-pad, stick and two hand sensors keep you <strong>making music, not managing menus</strong>, whether you’re at the rack, on the couch or on the road.</p></div></li>
+    </ol>
+  </div>
+</section>
+
+<!-- ======================= BUILD YOUR OWN ======================= -->
+<section class="section dark" id="build" aria-labelledby="build-h">
+  <div class="wrap">
+    <p class="eyebrow">Make your own</p>
+    <h2 id="build-h" style="max-width:18ch">An app is a small thing. Make the one you need.</h2>
+    <p class="lede" style="margin-top:28px">ROVE’s apps are small and self-contained. A new one is a single source file and a short manifest, and the system does the rest.</p>
+    <div class="ways">
+      <div class="way"><span class="tag">Add to one</span><h3>Presets and scripts.</h3><p>Some apps only need presets or scripts added to them. Change what an instrument does without touching its engine.</p></div>
+      <div class="way"><span class="tag">Start from a template</span><h3>A working app on day one.</h3><p>Copy the template app and you have real, compiling code with controls, a screen and sound. Change it one piece at a time.</p></div>
+      <div class="way"><span class="tag">Start from the ground up</span><h3>Write it, or have an AI help.</h3><p>Rewrite an app from scratch. If your coding skills aren’t there yet, an AI system like Claude or ChatGPT can write it with you.</p></div>
+    </div>
+<pre class="code" aria-label="Excerpt from the template app"><code><span class="c">// the controls arrive once per frame; audio runs on its own thread</span>
+fn tick(&amp;mut self, input: &amp;Input) {
+    self.held.store(input.grid[0], Ordering::Relaxed);
+    if input.knob1 != 0 {
+        let next = (self.freq.get() * 1.05f32.powf(input.knob1 as f32)).clamp(MIN_FREQ, MAX_FREQ);
+        self.freq.set(next);
+    }
+}
+
+<span class="c">// the screen is yours: 640 x 360</span>
+fn draw(&amp;mut self, fb: &amp;mut FrameBuffer) {
+    Text::new("Template", Point::new(20, 30), title).draw(fb).ok();
+    Text::new(&amp;format!("Frequency {:.0} Hz", self.freq.get()), Point::new(20, 60), dim).draw(fb).ok();
+}
+
+<span class="c">// the audio callback: never blocks, never allocates</span>
+fn process(&amp;mut self, buffer: &amp;mut [f32], channels: usize, sample_rate: f32) {
+    for frame in buffer.chunks_mut(channels) {
+        let sample = (self.phase * TAU).sin() * self.amp * volume;
+        self.phase = (self.phase + freq / sample_rate).fract();
+        for out in frame.iter_mut() { *out = sample; }
+    }
+}</code></pre>
+    <p class="code-cap">Excerpt from the template app in the ROVE source. A real app starts from a copy of that file.</p>
+  </div>
+</section>
+
+<!-- ======================= SPECS ======================= -->
+<section class="section light" id="specs" aria-labelledby="specs-h">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow">Specifications</p>
+      <h2 id="specs-h">What’s in the box.</h2>
+    </div>
+    <div>
+      <table class="specs">
+        <tbody>
+          <tr><th scope="row">Display</th><td>800 × 480 landscape multitouch screen (proposed). App raster artwork keeps its native proportions.</td></tr>
+          <tr><th scope="row">Processor</th><td>STM32N6, with the neural processing unit used by the AI apps.</td></tr>
+          <tr><th scope="row">Play surface</th><td>4×4 pad deck, D-pad, analog stick, L1 / R1, touchscreen action buttons, two depth sensors for hand control, and a small camera above the pad deck.</td></tr>
+          <tr><th scope="row">Expansion</th><td>Four card slots. Cards can add MIDI in/out, CV in/out, sensors, audio in/out and more, and you choose your four.</td></tr>
+          <tr><th scope="row">Audio engine</th><td>One real-time engine and one modulation bus shared by every app, with a mixer channel per app.</td></tr>
+          <tr><th scope="row">Software</th><td>Instruments, effects and sequencers today, plus your own. Open source.</td></tr>
+        </tbody>
+      </table>
+      <p class="specs-note">Design targets. ROVE is in development and final specifications may change before production.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= OPEN + COMMUNITY ======================= -->
+<section class="section dark" id="open" aria-labelledby="open-h">
+  <div class="wrap">
+    <p class="eyebrow">Open by design</p>
+    <h2 id="open-h" style="max-width:20ch">All of it is open source. All of it is yours.</h2>
+    <p class="lede" style="margin-top:28px">The whole system is open source: the apps, the audio engine, the interface. Read it, run it, change it, share it. You can even rewrite the entire ecosystem if you want to.</p>
+    <div class="ways">
+      <div class="way"><span class="tag">Open source</span><h3>Every line, available.</h3><p>ROVE’s own code is MIT licensed. Bundled third-party components keep their original licences.</p></div>
+      <div class="way"><span class="tag">Community</span><h3>Post, rate and review.</h3><p>There will be a community where people can post the apps they create, and rate and review what others have made.</p></div>
+      <div class="way"><span class="tag">Ecosystem</span><h3>Grow it together.</h3><p>Share an app, a preset pack or a script, find what other players use, and build on each other’s ideas.</p></div>
+    </div>
   </div>
 </section>
 
 <!-- ======================= CAMPAIGN ======================= -->
-<section class="band section" aria-labelledby="band-h" style="padding-block:clamp(48px,7vw,80px)">
+<section class="cta dark section" aria-labelledby="cta-h" style="padding-block:clamp(56px,8vw,104px)">
   <div class="wrap">
     <div>
-      <h2 id="band-h">Help us build ROVE.</h2>
+      <h2 id="cta-h">Help us build ROVE.</h2>
       <p>Perks, pricing and delivery estimates live on the campaign page.</p>
     </div>
-    <a class="btn" data-igg href="https://www.indiegogo.com/">Back it on Indiegogo
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-    </a>
+    <a class="btn" data-igg href="https://www.indiegogo.com/">Back it on Indiegogo</a>
   </div>
 </section>
 
 <!-- ======================= FAQ ======================= -->
-<section class="section" id="faq" aria-labelledby="faq-h">
+<section class="section light" id="faq" aria-labelledby="faq-h">
   <div class="wrap">
-    <div class="section-head">
-      <p class="eyebrow">Questions</p>
-      <h2 id="faq-h">Good questions.</h2>
-    </div>
+    <p class="eyebrow">Questions</p>
+    <h2 id="faq-h">Good questions.</h2>
     <div class="faq">
-      <details>
-        <summary>Is ROVE a real device yet?</summary>
-        <div class="ans"><p>ROVE is the hardware we’re crowdfunding. The apps already run today in a full desktop simulator, built so the architecture could be proven before any hardware exists. The device itself is designed around an STM32N6 processor.</p></div>
-      </details>
-      <details>
-        <summary>Is the demo above the real engine?</summary>
-        <div class="ans"><p>No. It’s a browser preview: five small Web Audio voices written for this page, wired to a replica of the control surface. They show how ROVE feels to play, not how it sounds. The real apps run on the native engine, including the Mutable Instruments DSP.</p></div>
-      </details>
-      <details>
-        <summary>What controls does it have?</summary>
-        <div class="ans"><p>A 4×4 pad grid, a D-pad, two encoders and four function buttons (F1–F4), with a 640×360 screen. In the simulator you can also drive it from a MIDI controller or a game controller.</p></div>
-      </details>
-      <details>
-        <summary>How do I get audio in and out?</summary>
-        <div class="ans"><p>Through I/O cards. ROVE has two M.2 card slots; in the current design one holds a stereo line in/out card and the other a MIDI DIN card. Only digital signals cross the connector, so new cards can add different jacks later.</p></div>
-      </details>
-      <details>
-        <summary>What does it cost, and when does it ship?</summary>
-        <div class="ans"><p>Pricing, perk tiers and delivery estimates are on the Indiegogo campaign page, which is always the source of truth.</p></div>
-      </details>
+      <details><summary>Is ROVE a real device yet?</summary><div class="ans"><p>ROVE is the hardware we’re crowdfunding. The software already runs today in a full desktop simulator, built so the architecture could be proven before any hardware exists. The device is designed around an STM32N6 processor.</p></div></details>
+      <details><summary>Is the demo above the real thing?</summary><div class="ans"><p>It’s the real interface, with different sound engines. The screens and controls are ported from the real apps, but the audio here is a lightweight Web Audio version made for this page. On ROVE, every app runs on the native engine.</p></div></details>
+      <details><summary>Do all of these apps ship?</summary><div class="ans"><p>The 20 apps in the preview are a selection. What’s installed at launch will be listed on the campaign page.</p></div></details>
+      <details><summary>Can I really make my own app?</summary><div class="ans"><p>Yes. You can start from a template, or start from the ground up. Some apps just need presets or scripts added to them. And if your coding skills aren’t developed enough yet, an AI system like Claude or ChatGPT is an easy way to write one with you. Apps you make can be shared with the community.</p></div></details>
+      <details><summary>Is it really open source?</summary><div class="ans"><p>Yes. The whole system is open source, so you have access to all of the code, and you can even rewrite the entire ecosystem if you want to. ROVE’s own code is MIT licensed; bundled third-party components keep their own licences.</p></div></details>
+      <details><summary>Will there be a community for apps?</summary><div class="ans"><p>Yes. There will be a community where people can post the apps they create, and rate and review the apps others have made.</p></div></details>
+      <details><summary>Can ROVE work with my modular and my other synths?</summary><div class="ans"><p>That’s a big part of the idea. With the right cards, ROVE can send and receive CV and MIDI, so it can sit in front of your modular system and your existing synths as a possibility machine.</p></div></details>
+      <details><summary>How do audio, MIDI and CV get in and out?</summary><div class="ans"><p>Through expansion cards. ROVE has four card slots, and cards can include extra MIDI in/out, CV in/out, sensors, audio in/out and more. You choose your four, so the device fits the way you play.</p></div></details>
+      <details><summary>What does it cost, and when does it ship?</summary><div class="ans"><p>Pricing, perk tiers and delivery estimates are on the Indiegogo campaign page, which is always the source of truth.</p></div></details>
     </div>
   </div>
 </section>
 
 </main>
 
-<footer class="site-footer">
+<footer class="site-footer dark">
   <div class="wrap">
-    <div>
-      <svg class="mark" viewBox="0 0 258 60" role="img" aria-label="SZYK"><use href="#lk-szyk-boxed"/></svg>
-    </div>
+    <div><img src="assets/szyk-logo-light.svg" alt="SZYK" width="146" height="34"></div>
     <div>
       <p>ROVE is made by SZYK.</p>
-      <p>ROVE’s Plaits, Clouds, Warps and Beads apps run Mutable Instruments’ open-source firmware (MIT licence, © Émilie Gillet). ROVE is not affiliated with or endorsed by Mutable Instruments. Product and company names belong to their owners.</p>
+      <p>ROVE is open source. Screens use the Spleen bitmap font (BSD-2-Clause, © Frederic Cambus). Product and company names belong to their owners.</p>
     </div>
   </div>
 </footer>
 
-<script src="app.js"></script>
-<script src="rove-demo.js"></script>
+<script src="js/spleen.js?v=1792144800"></script>
+<script src="js/fb.js?v=1792144800"></script>
+<script src="js/audio.js?v=1792144800"></script>
+<script src="js/playkit.js?v=1792144800"></script>
+<script src="js/slint.js?v=1792144800"></script>
+<script src="js/os.js?v=1792144800"></script>
+<script src="js/apps/_base.js?v=1792144800"></script>
+<!-- apps:begin -->
+<script src="js/data/atlas.js?v=1792144800"></script>
+<script src="js/data/dx7.js?v=1792144800"></script>
+<script src="js/data/tinkertone.js?v=1792144800"></script>
+<script src="js/data/voltage.js?v=1792144800"></script>
+<script src="js/apps/_effect.js?v=1792144800"></script>
+<script src="js/apps/voltage.js?v=1792144800"></script>
+<script src="js/apps/atlas.js?v=1792144800"></script>
+<script src="js/apps/hydra.js?v=1792144800"></script>
+<script src="js/apps/dexed.js?v=1792144800"></script>
+<script src="js/apps/tinkertone.js?v=1792144800"></script>
+<script src="js/apps/blaster.js?v=1792144800"></script>
+<script src="js/apps/swarm.js?v=1792144800"></script>
+<script src="js/apps/chordsmith.js?v=1792144800"></script>
+<script src="js/apps/june60.js?v=1792144800"></script>
+<script src="js/apps/bebot.js?v=1792144800"></script>
+<script src="js/apps/vistas.js?v=1792144800"></script>
+<script src="js/apps/skins.js?v=1792144800"></script>
+<script src="js/apps/pulsar.js?v=1792144800"></script>
+<script src="js/apps/sequencer.js?v=1792144800"></script>
+<script src="js/apps/bloom.js?v=1792144800"></script>
+<script src="js/apps/turing.js?v=1792144800"></script>
+<script src="js/apps/squeeze.js?v=1792144800"></script>
+<script src="js/apps/prism.js?v=1792144800"></script>
+<script src="js/apps/vectorfilter.js?v=1792144800"></script>
+<script src="js/apps/tonestack.js?v=1792144800"></script>
+<!-- apps:end -->
+<script src="js/main.js?v=1792144800"></script>
 </body>
 </html>
