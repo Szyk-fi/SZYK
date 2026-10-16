@@ -1,5 +1,6 @@
 import { ParamListColumn } from "device_frame.slint";
 export component RetroPanel inherits Rectangle {
+    callback parameter-touched(int, int);
     in property <color> paper; in property <color> ink; in property <color> accent;
     in property <[string]> names; in property <[string]> values; in property <int> selected;
     in property <string> console; in property <string> rom; in property <string> loaded;
@@ -12,7 +13,7 @@ export component RetroPanel inherits Rectangle {
     HorizontalLayout {spacing:18px;
         VerticalLayout {width:206px;spacing:8px;
             Text {text:"SYSTEM / GAME LIBRARY";color:root.accent;font-size:12px;height:18px;}
-            ParamListColumn {row-names:root.names;row-values:root.values;selected-row:root.selected;ink:root.ink;paper:root.paper;accent:root.accent;instrument-style:true;}
+            ParamListColumn { row-picked(i) => { root.parameter-touched(i, 0); } row-adjusted(i,d) => { root.parameter-touched(i,d); }row-names:root.names;row-values:root.values;selected-row:root.selected;ink:root.ink;paper:root.paper;accent:root.accent;instrument-style:true;}
         }
         VerticalLayout {spacing:8px;padding-top:4px;
             HorizontalLayout {height:25px;spacing:4px;

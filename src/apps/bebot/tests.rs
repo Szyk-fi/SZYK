@@ -58,6 +58,20 @@ fn leaving_releases_mouse_and_keys() {
     assert!(a.pointer.is_none());
 }
 #[test]
+fn changing_the_edit_screen_releases_mouse_gesture_but_preserves_keyboard_voices() {
+    let mut a = app();
+    let mut input = Input::default(); input.midi_keys.0[60] = 100;
+    a.tick(&input);
+    a.slint_pointer_pick(200., 150.);
+    let keyboard_gate = a.state.gates[1];
+    assert!(keyboard_gate > 0.);
+    a.on_performance_blur();
+    assert!(a.pointer.is_none()); assert_eq!(a.state.gates[0], 0.);
+    assert_eq!(a.state.gates[1], keyboard_gate);
+    a.tick(&Input::default());
+    assert_eq!(a.state.gates[1], 0.);
+}
+#[test]
 fn snap_lands_in_selected_key() {
     let mut patch = Patch::default();
     patch.v[1] = 1.;

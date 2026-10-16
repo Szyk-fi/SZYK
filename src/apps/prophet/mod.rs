@@ -364,9 +364,12 @@ impl ProphetApp {
         self.publish();
     }
     fn rows(&self) -> Vec<Row> {
+        self.rows_for(self.layer, self.section, self.seq_page, self.track)
+    }
+    fn rows_for(&self, layer: usize, section: usize, seq_page: usize, track: usize) -> Vec<Row> {
         let mut rows = Vec::new();
-        let b = self.layer * 1024;
-        let ranges: &[(usize, usize)] = match self.section {
+        let b = layer * 1024;
+        let ranges: &[(usize, usize)] = match section {
             0 => &[(0, 22)],
             1 => &[(22, 30)],
             2 => &[(30, 53)],
@@ -411,15 +414,15 @@ impl ProphetApp {
                 });
             }
         }
-        if (10..=13).contains(&self.section) {
-            let tracks: Vec<usize> = if self.section == 13 {
-                vec![self.track]
+        if (10..=13).contains(&section) {
+            let tracks: Vec<usize> = if section == 13 {
+                vec![track]
             } else {
-                vec![(self.section - 10) * 2, (self.section - 10) * 2 + 1]
+                vec![(section - 10) * 2, (section - 10) * 2 + 1]
             };
             for t in tracks {
-                for s in self.seq_page * 16..self.seq_page * 16 + 16 {
-                    let i = b + 256 + t * 128 + s + if self.section == 13 { 64 } else { 0 };
+                for s in seq_page * 16..seq_page * 16 + 16 {
+                    let i = b + 256 + t * 128 + s + if section == 13 { 64 } else { 0 };
                     rows.push(Row {
                         name: format!("Track {} step {:02}", t + 1, s + 1),
                         value: spec::text(i, self.state.patch.data[i]),
@@ -437,7 +440,7 @@ impl ProphetApp {
                 action: id,
             })
         };
-        if self.section == 14 {
+        if section == 14 {
             action(
                 1,
                 "Program",
@@ -466,7 +469,7 @@ impl ProphetApp {
             action(9, "Swap poly sequences", "A / B".into());
             action(10, "Initialize", "Press encoder".into());
         }
-        if self.section == 15 {
+        if section == 15 {
             action(11, "Voices", self.state.voices.to_string());
             action(12, "Hold", self.state.hold.to_string());
             action(13, "Pad octave", self.octave.to_string());
@@ -508,6 +511,35 @@ impl ProphetApp {
         }
         rows
     }
+    fn controller_entries(&self) -> Vec<(usize, usize, usize, usize, Row)> {
+        let mut result = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for layer in 0..2 {
+            for section in 0..14 {
+                let pages = if section >= 10 { 4 } else { 1 };
+                let tracks = if section == 13 { 6 } else { 1 };
+                for track in 0..tracks {
+                    for page in 0..pages {
+                        for row in self.rows_for(layer, section, page, track) {
+                            if row
+                                .offset
+                                .is_some_and(|i| i < patch::RAW_LEN && seen.insert(i))
+                            {
+                                result.push((layer, section, page, track, row));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for section in 14..16 {
+            for row in self.rows_for(self.layer, section, 0, 0) {
+                result.push((self.layer, section, 0, 0, row));
+            }
+        }
+        result
+    }
+
     fn edit(&mut self, d: i32, press: bool) {
         let rows = self.rows();
         let Some(row) = rows.get(self.selected).cloned() else {
@@ -773,6 +805,51 @@ impl ProphetApp {
     }
 }
 impl App for ProphetApp {
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> {
+        Some(
+            self.controller_entries()
+                .into_iter()
+                .map(|(layer, section, _, _, row)| {
+                    let group = if row.offset.is_some_and(|i| i == 231 || i == 232) {
+                        "Global".to_string()
+                    } else if section < 14 {
+                        format!(
+                            "{} {}",
+                            if layer == 0 { "A" } else { "B" },
+                            SECTIONS[section]
+                        )
+                    } else {
+                        SECTIONS[section].into()
+                    };
+                    crate::app::Setting {
+                        label: format!("{group} / {}", row.name),
+                        value: row.value,
+                    }
+                })
+                .collect(),
+        )
+    }
+    fn controller_select(&mut self, index: usize) {
+        if let Some((layer, section, page, track, row)) =
+            self.controller_entries().into_iter().nth(index)
+        {
+            self.layer = layer;
+            self.section = section;
+            self.seq_page = page;
+            self.track = track;
+            self.selected = self
+                .rows()
+                .iter()
+                .position(|r| r.offset == row.offset && r.action == row.action)
+                .unwrap_or(0);
+        }
+    }
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        if index < self.controller_entries().len() {
+            self.controller_select(index);
+            self.edit(delta, false);
+        }
+    }
     fn adjust_setting(&mut self, index: usize, delta: i32) {
         if index < self.rows().len() {
             let keep = std::mem::replace(&mut self.selected, index);

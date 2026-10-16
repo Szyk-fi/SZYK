@@ -20,7 +20,7 @@ pub fn render(directory: &str) {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     let clock = Rc::new(std::cell::Cell::new(std::time::Duration::ZERO));
     slint::platform::set_platform(Box::new(PreviewPlatform(window.clone(), clock.clone()))).unwrap();
-    window.set_size(PhysicalSize::new(1240, 560));
+    window.set_size(PhysicalSize::new(1460, 656));
     std::fs::create_dir_all(directory).unwrap();
     let ui = LiveHomeScreen::new().unwrap();
     ui.set_splash_active(false);
@@ -54,7 +54,7 @@ pub fn render(directory: &str) {
             Box::new(cv_out::CvOutApp::with_output(Arc::new(AtomicF32::new(0.1)), Arc::new(AtomicF32::new(3.0)), bus, led_output::LedOutput::none()))
         } else { isolated.build(std::slice::from_ref(manifest)).pop().unwrap().1 };
         app.tick(&Input::default());
-        let _ = app.slint_windowed_rows(10);
+        let _ = app.slint_windowed_rows(VISIBLE_ROWS);
         let _ = app.slint_extra();
         if let Some(mut processor) = app.audio_processor() {
             let mut samples = [0.0; 1024];
@@ -179,7 +179,7 @@ pub fn render(directory: &str) {
         println!("{name}: short D-pad taps move one row; MIDI encoder sensitivity preserved");
         }
         // A full-screen app (the Kids apps) has no menu column to tap.
-        if name != "Synth" && app.slint_rows().len() > 1 && !matches!(app.slint_extra(), app::SlintExtra::Screen(_) | app::SlintExtra::Rev2(_)) {
+        if name != "Synth" && app.slint_rows().len() > 1 && !matches!(app.slint_extra(), app::SlintExtra::Screen(_) | app::SlintExtra::Rev2(_) | app::SlintExtra::Chop(_)) {
             let before = app.slint_selected();
             for (y, delta) in [(249.0, 1), (167.0, -1)] {
                 let position = slint::LogicalPosition::new(113.0, y);
@@ -198,7 +198,7 @@ pub fn render(directory: &str) {
             input.grid[0] = true;
             app.tick(&input);
         }
-        let (rows, selected, above, below) = app.slint_windowed_rows(10);
+        let (rows, selected, above, below) = app.slint_windowed_rows(VISIBLE_ROWS);
         ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.0.clone().into()).collect::<Vec<slint::SharedString>>())).into());
         ui.set_row_values(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.1.clone().into()).collect::<Vec<slint::SharedString>>())).into());
         ui.set_row_is_group(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.2).collect::<Vec<bool>>())).into());
@@ -210,7 +210,7 @@ pub fn render(directory: &str) {
         ui.set_transport_action(app.transport_action().unwrap_or("").into());
         ui.set_hint_text(app.hint().into());
         ui.set_pad_lock_available(app.supports_pad_lock());
-        let levels = app.slint_levels(10);
+        let levels = app.slint_levels(VISIBLE_ROWS);
         ui.set_row_levels(Rc::new(slint::VecModel::from(levels.into_iter().map(|l| l.unwrap_or(-1.0)).collect::<Vec<_>>())).into());
         ui.set_transport_label(match app.running() { Some(true) => "RUNNING", Some(false) => "STOPPED", None => "" }.into());
         let (bg, ink, accent, _) = app_palette(name).unwrap_or((slint::Color::from_rgb_u8(20,25,31), slint::Color::from_rgb_u8(231,237,244), slint::Color::from_rgb_u8(165,188,233), slint::Color::from_rgb_u8(137,148,170)));
@@ -220,23 +220,23 @@ pub fn render(directory: &str) {
         apply_instrument_visual(&ui, app.slint_extra());
         slint::platform::update_timers_and_animations();
         window.request_redraw();
-        let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1240, 560);
-        window.draw_if_needed(|renderer| { renderer.render(pixels.make_mut_slice(), 1240); });
+        let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1460, 656);
+        window.draw_if_needed(|renderer| { renderer.render(pixels.make_mut_slice(), 1460); });
         // Save only the actual 640x360 display, omitting simulator controls.
-        let mut screen = Vec::with_capacity(640 * 360 * 3);
-        for y in 92..452 {
-            let start = (y * 1240 + 208) * 3;
-            screen.extend_from_slice(&pixels.as_bytes()[start..start + 640 * 3]);
+        let mut screen = Vec::with_capacity(800 * 480 * 3);
+        for y in 92..572 {
+            let start = (y * 1460 + 208) * 3;
+            screen.extend_from_slice(&pixels.as_bytes()[start..start + 800 * 3]);
         }
         let slug = name.to_lowercase().replace(' ', "-").replace('\'', "");
         let path = std::path::Path::new(directory).join(format!("{slug}.png"));
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(&path).unwrap()), 640, 360);
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(&path).unwrap()), 800, 480);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.write_header().unwrap().write_image_data(&screen).unwrap();
         println!("Rendered {} from real module state", path.display());
         let enclosure = std::path::Path::new(directory).join(format!("{slug}-console.png"));
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(&enclosure).unwrap()), 1240, 560);
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(&enclosure).unwrap()), 1460, 656);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.write_header().unwrap().write_image_data(pixels.as_bytes()).unwrap();
@@ -262,7 +262,7 @@ pub fn render(directory: &str) {
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: slint::LogicalPosition::new(307.,286.), button: slint::platform::PointerEventButton::Left });
             assert_eq!(*events.borrow(), vec![(1100.,0.), (1100.,1.)], "vertical knob drag must edit the parameter");
             for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
-            click(560., 20.); // Layer selector
+            click(696., 20.); // Layer selector
             assert_eq!(*events.borrow(), vec![(1205., 0.)]);
             for (x,y) in events.borrow_mut().drain(..) { app.slint_pointer_pick(x,y); }
             apply_instrument_visual(&ui, app.slint_extra());
@@ -305,9 +305,9 @@ pub fn render(directory: &str) {
                 position, button: slint::platform::PointerEventButton::Left,
             });
             window.request_redraw();
-            window.draw_if_needed(|renderer| { renderer.render(pixels.make_mut_slice(), 1240); });
+            window.draw_if_needed(|renderer| { renderer.render(pixels.make_mut_slice(), 1460); });
             let pressed = std::path::Path::new(directory).join("plaits-pressed-console.png");
-            let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(pressed).unwrap()), 1240, 560);
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(pressed).unwrap()), 1460, 656);
             encoder.set_color(png::ColorType::Rgb);
             encoder.set_depth(png::BitDepth::Eight);
             encoder.write_header().unwrap().write_image_data(pixels.as_bytes()).unwrap();
@@ -320,7 +320,7 @@ pub fn render(directory: &str) {
             // render the dense menu state with the same real orbital payload.
             app.tick(&Input { navigation_steps: 1, ..Default::default() });
             app.tick(&Input { knob1_press: true, ..Default::default() });
-            let (rows, selected, above, below) = app.slint_windowed_rows(10);
+            let (rows, selected, above, below) = app.slint_windowed_rows(VISIBLE_ROWS);
             assert!(rows.iter().any(|r| !r.2), "Bloom group must expand into editable parameters");
             ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.0.clone().into()).collect::<Vec<slint::SharedString>>())).into());
             ui.set_row_values(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.1.clone().into()).collect::<Vec<slint::SharedString>>())).into());
@@ -340,9 +340,9 @@ pub fn render(directory: &str) {
             }
             assert_eq!(transport.get(), 2, "Bloom status button must route to F3 transport");
             window.request_redraw();
-            window.draw_if_needed(|renderer| { renderer.render(pixels.make_mut_slice(), 1240); });
+            window.draw_if_needed(|renderer| { renderer.render(pixels.make_mut_slice(), 1460); });
             let path = std::path::Path::new(directory).join("bloom-expanded-console.png");
-            let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap()), 1240, 560);
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap()), 1460, 656);
             encoder.set_color(png::ColorType::Rgb);
             encoder.set_depth(png::BitDepth::Eight);
             encoder.write_header().unwrap().write_image_data(pixels.as_bytes()).unwrap();
@@ -354,12 +354,12 @@ pub fn render(directory: &str) {
             if let Some(group) = group {
                 app.tick(&Input { navigation_steps: group as i32 - app.slint_selected() as i32, ..Default::default() });
                 app.tick(&Input { knob1_press: true, ..Default::default() });
-                let (rows, selected, above, below) = app.slint_windowed_rows(10);
+                let (rows, selected, above, below) = app.slint_windowed_rows(VISIBLE_ROWS);
                 ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.0.clone().into()).collect::<Vec<slint::SharedString>>())).into());
                 ui.set_row_values(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.1.clone().into()).collect::<Vec<slint::SharedString>>())).into());
                 ui.set_row_is_group(Rc::new(slint::VecModel::from(rows.iter().map(|r| r.2).collect::<Vec<bool>>())).into());
                 ui.set_selected_row(selected as i32); ui.set_more_above(above); ui.set_more_below(below);
-                ui.set_row_levels(Rc::new(slint::VecModel::from(app.slint_levels(10).into_iter().map(|l| l.unwrap_or(-1.0)).collect::<Vec<_>>())).into());
+                ui.set_row_levels(Rc::new(slint::VecModel::from(app.slint_levels(VISIBLE_ROWS).into_iter().map(|l| l.unwrap_or(-1.0)).collect::<Vec<_>>())).into());
                 apply_instrument_visual(&ui, app.slint_extra());
                 save_extra_frame(&window, directory, &format!("{slug}-expanded"));
                 println!("{name}: expanded menu rendered");
@@ -368,7 +368,7 @@ pub fn render(directory: &str) {
         if ["Orbit","Swarm","Mutant","Constellation","Dream"].contains(&name) {
             let last=app.slint_rows().len()-1;
             app.tick(&Input {navigation_steps: last as i32 - app.slint_selected() as i32, ..Default::default()});
-            let (rows,selected,above,below)=app.slint_windowed_rows(10);
+            let (rows,selected,above,below)=app.slint_windowed_rows(VISIBLE_ROWS);
             assert!(rows.len()<=10 && above && !below);
             ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r|r.0.clone().into()).collect::<Vec<slint::SharedString>>())).into());
             ui.set_row_values(Rc::new(slint::VecModel::from(rows.iter().map(|r|r.1.clone().into()).collect::<Vec<slint::SharedString>>())).into());
@@ -382,7 +382,7 @@ pub fn render(directory: &str) {
                     app.tick(&Input {navigation_steps:scale as i32-app.slint_selected() as i32,..Default::default()});
                     apply_scale_visual(&ui,app.slint_scale_info());
                     assert!(ui.get_scale_visible(),"{} scale view missing",name);
-                    let (rows,selected,above,below)=app.slint_windowed_rows(10);
+                    let (rows,selected,above,below)=app.slint_windowed_rows(VISIBLE_ROWS);
                     ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r|r.0.clone().into()).collect::<Vec<slint::SharedString>>())).into());
                     ui.set_row_values(Rc::new(slint::VecModel::from(rows.iter().map(|r|r.1.clone().into()).collect::<Vec<slint::SharedString>>())).into());
                     ui.set_selected_row(selected as i32);ui.set_more_above(above);ui.set_more_below(below);
@@ -410,7 +410,7 @@ pub fn render(directory: &str) {
                     if let Some(p)=processor.as_mut(){p.process(&mut buffer,2,48000.);}
                     if name=="Scope" {let _=app.slint_extra();}
                 }
-                let(rows,selected,above,below)=app.slint_windowed_rows(10);
+                let(rows,selected,above,below)=app.slint_windowed_rows(VISIBLE_ROWS);
                 ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r|slint::SharedString::from(r.0.as_str())).collect::<Vec<_>>())).into());
                 ui.set_row_values(Rc::new(slint::VecModel::from(rows.iter().map(|r|slint::SharedString::from(r.1.as_str())).collect::<Vec<_>>())).into());
                 ui.set_selected_row(selected as i32);ui.set_more_above(above);ui.set_more_below(below);apply_instrument_visual(&ui,app.slint_extra());
@@ -421,7 +421,7 @@ pub fn render(directory: &str) {
             for (section,slug) in [(0,"settings-output"),(1,"settings-input"),(2,"settings-controls"),(3,"settings-appearance")] {
                 app.slint_pointer_pick(1000.+section as f32,0.);
                 if section==2 {app.tick(&Input{navigation_steps:1,..Default::default()});}
-                let (rows,selected,above,below)=app.slint_windowed_rows(10);
+                let (rows,selected,above,below)=app.slint_windowed_rows(VISIBLE_ROWS);
                 ui.set_row_names(Rc::new(slint::VecModel::from(rows.iter().map(|r|slint::SharedString::from(r.0.as_str())).collect::<Vec<_>>())).into());
                 ui.set_row_values(Rc::new(slint::VecModel::from(rows.iter().map(|r|slint::SharedString::from(r.1.as_str())).collect::<Vec<_>>())).into());
                 ui.set_row_is_group(Rc::new(slint::VecModel::from(rows.iter().map(|r|r.2).collect::<Vec<_>>())).into());
@@ -467,18 +467,18 @@ pub fn render(directory: &str) {
 
 fn save_extra_frame(window: &MinimalSoftwareWindow, directory: &str, slug: &str) {
     window.request_redraw();
-    let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1240, 560);
+    let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1460, 656);
     let started = std::time::Instant::now();
-    window.draw_if_needed(|renderer| { renderer.render(pixels.make_mut_slice(), 1240); });
+    window.draw_if_needed(|renderer| { renderer.render(pixels.make_mut_slice(), 1460); });
     println!("{slug}: full software frame {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
     for full in [false, true] {
-        let (width, height, bytes) = if full { (1240, 560, pixels.as_bytes().to_vec()) } else {
-            let mut crop = Vec::with_capacity(640 * 360 * 3);
-            for y in 92..452 {
-                let start = (y * 1240 + 208) * 3;
-                crop.extend_from_slice(&pixels.as_bytes()[start..start + 640 * 3]);
+        let (width, height, bytes) = if full { (1460, 656, pixels.as_bytes().to_vec()) } else {
+            let mut crop = Vec::with_capacity(800 * 480 * 3);
+            for y in 92..572 {
+                let start = (y * 1460 + 208) * 3;
+                crop.extend_from_slice(&pixels.as_bytes()[start..start + 800 * 3]);
             }
-            (640, 360, crop)
+            (800, 480, crop)
         };
         let suffix = if full { "-console" } else { "" };
         let path = std::path::Path::new(directory).join(format!("{slug}{suffix}.png"));
@@ -543,7 +543,7 @@ fn verify_console_controls(ui: &LiveHomeScreen, clock: &std::cell::Cell<std::tim
     let count = selections.clone();
     ui.on_knob1_clicked(move || count.set(count.get() + 1));
     click(116.0, 208.0);
-    click(1113.0, 41.0);
+    click(1333.0, 41.0);
     click(116.0, 380.0);
     assert_eq!(selections.get(), 3, "D-pad center, R1 and stick click select");
     press(116.0, 380.0);
@@ -557,18 +557,18 @@ fn verify_console_controls(ui: &LiveHomeScreen, clock: &std::cell::Cell<std::tim
     let events = buttons.clone();
     ui.on_f_clicked(move |i| events.borrow_mut().push(i));
     ui.set_transport_action("".into()); ui.set_pad_lock_available(false); ui.set_grid_mode_label("".into()); ui.set_midi_target_label("".into());
-    click(446.5, 489.0); click(609.5, 489.0);
+    click(506.5, 548.0); click(709.5, 548.0);
     assert!(buttons.borrow().is_empty(), "unsupported F2/F3 must not fire");
     ui.set_pad_lock_available(true); ui.set_transport_action("PLAY".into());
-    for i in 0..4 { click(283.5 + i as f32 * 163.0, 489.0); }
+    for i in 0..4 { click(308.0 + i as f32 * 200.0, 548.0); }
     click(127.0, 41.0);
     assert_eq!(*buttons.borrow(), vec![0, 1, 2, 3, 0], "F1–F4 and L1 Home");
     let pads = Rc::new(RefCell::new(Vec::new()));
     let events = pads.clone();
     ui.on_pad_toggled(move |i, down| events.borrow_mut().push((i, down)));
     for i in 0..16 {
-        let x = 913.0 + (i % 4) as f32 * 82.0;
-        let y = 149.0 + (i / 4) as f32 * 82.0;
+        let x = 1093.5 + (i % 4) as f32 * 91.0;
+        let y = 191.5 + (i / 4) as f32 * 91.0;
         click(x, y);
     }
     let expected: Vec<_> = (0..16).flat_map(|i| [(i, true), (i, false)]).collect();
@@ -576,7 +576,7 @@ fn verify_console_controls(ui: &LiveHomeScreen, clock: &std::cell::Cell<std::tim
     println!("Console controls passed: D-pad, joystick, L1/R1, F1–F4, and all 16 pads");
 }
 
-fn isolated_registry() -> (Registry, Arc<ModBus>) {registry_with_audio(Arc::new(AudioBus::new()))}
+pub(super) fn isolated_registry() -> (Registry, Arc<ModBus>) {registry_with_audio(Arc::new(AudioBus::new()))}
 fn registry_with_audio(audio_bus:Arc<AudioBus>) -> (Registry, Arc<ModBus>) {
     let sensitivity = Arc::new(AtomicF32::new(0.1));
     let nav = Arc::new(AtomicF32::new(3.0));

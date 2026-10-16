@@ -729,16 +729,19 @@ impl PlaitsApp {
     }
 
     fn visible_rows(&self) -> Vec<Row> {
+        self.rows_with_groups(&self.expanded, &self.mod_expanded)
+    }
+    fn rows_with_groups(&self, expanded: &[bool], mod_expanded: &[bool]) -> Vec<Row> {
         let mut rows = Vec::new();
         for g in 0..NUM_GROUPS {
             rows.push(Row::Group(g));
-            if !self.expanded[g] {
+            if !expanded[g] {
                 continue;
             }
             if g == MOD_GROUP {
                 for slot in 0..NUM_MOD_SLOTS {
                     rows.push(Row::ModSlot(slot));
-                    if self.mod_expanded[slot] {
+                    if mod_expanded[slot] {
                         rows.push(Row::Leaf(Selection::ModTarget(slot)));
                         rows.push(Row::Leaf(Selection::ModRate(slot)));
                         rows.push(Row::Leaf(Selection::ModDepth(slot)));
@@ -751,6 +754,23 @@ impl PlaitsApp {
             }
         }
         rows
+    }
+    fn controller_entries(&self) -> Vec<(usize, Selection)> {
+        let mut group = 0;
+        self.rows_with_groups(
+            &vec![true; self.expanded.len()],
+            &vec![true; self.mod_expanded.len()],
+        )
+        .into_iter()
+        .filter_map(|r| match r {
+            Row::Group(g) => {
+                group = g;
+                None
+            }
+            Row::Leaf(sel) => Some((group, sel)),
+            _ => None,
+        })
+        .collect()
     }
 
     /// What the right-hand panel should show for the current selection.
@@ -1669,6 +1689,42 @@ impl PlayHost for PlaitsApp {
 }
 
 impl App for PlaitsApp {
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> {
+        Some(
+            self.controller_entries()
+                .into_iter()
+                .map(|(g, sel)| {
+                    let group: String = match sel {
+                        Selection::ModTarget(slot)
+                        | Selection::ModRate(slot)
+                        | Selection::ModDepth(slot) => format!("Modulator {}", slot + 1),
+                        _ => group_name(g).to_string(),
+                    };
+                    crate::app::Setting {
+                        label: format!("{group} / {}", self.leaf_name(sel)),
+                        value: self.leaf_value(sel),
+                    }
+                })
+                .collect(),
+        )
+    }
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        if let Some((_, sel)) = self.controller_entries().get(index).copied() {
+            self.edit(sel, delta);
+        }
+    }
+    fn controller_select(&mut self, index: usize) {
+        if let Some((group, sel)) = self.controller_entries().get(index).copied() {
+            self.expanded[group] = true;
+            self.mod_expanded.fill(true);
+            self.list.selected = self
+                .visible_rows()
+                .iter()
+                .position(|r| matches!(r,Row::Leaf(s) if *s==sel))
+                .unwrap_or(self.list.selected);
+        }
+    }
+
     fn instrument_settings(&self) -> Vec<crate::app::Setting> {
         crate::app::play_kit::settings_of(self)
     }

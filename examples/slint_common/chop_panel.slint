@@ -1,0 +1,186 @@
+import { AudioLibrary, LibraryButton } from "audio_library.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// Cobalt Night: navy surfaces, blue actions and lavender waveform.
+// Color-only theme; shared library controls opt in without changing other apps.
+component ChopButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    in property <bool> disabled: false;
+    in property <bool> primary: false;
+    callback clicked();
+    background: root.disabled ? #182334 : root.primary ? #69bfff : root.active ? #355575 : #203148;
+    border-radius: 8px; border-width: 1px;
+    border-color: root.active ? #a4b0ff : root.primary ? #69bfff : #3e526c;
+    Text { text: root.label; color: root.disabled ? #71839b : root.primary ? #0e2030 : #edf5ff;
+        font-family: "Space Grotesk"; font-size: 14px; font-weight: 600;
+        horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+    TouchArea { enabled: !root.disabled; clicked => {root.clicked();} }
+}
+
+export component ChopPanel inherits Rectangle {
+    in property <int> view; in property <int> pad; in property <int> bank; in property <int> banks;
+    in property <int> count; in property <string> filename; in property <string> status;
+    in property <[string]> names; in property <[bool]> loaded; in property <[float]> heads;
+    in property <[float]> wave; in property <[float]> markers;
+    in property <float> seconds; in property <float> preview-head;
+    in property <bool> previewing; in property <bool> armed; in property <bool> recording; in property <bool> looping;
+    in property <float> loop-head;
+    in property <bool> beat;in property <float> bpm;in property <string> beat-pattern;
+    in property <[string]> rows; in property <[string]> values; in property <int> selected;
+    in property <[string]> library-files;in property <[int]> library-ids;in property <int> library-selected;
+    in property <string> erase;in property <string> backing-name;in property <bool> loaded-backing;
+    private property <bool> library-open:false;private property <bool> manage-open:false;
+    in property <bool> ending;in property <int> queued-pad;in property <bool> sync;in property <bool> fit-samples;in property <int> grid;in property <float> sample-beats;in property <float> backing-beats;in property <float> beat-position;
+    private property <bool> sync-open:false;
+    property <bool> has-source:root.loaded[root.pad - root.bank*16];
+    callback search(string);callback action(float,float);
+    background: #111926;
+    Text {x:16px;y:12px;text:"CHOP";font-family:"Space Grotesk";font-size:26px;font-weight:700;color:#edf5ff;}
+    for name[i] in ["Play","Slices","Edit","Input","FX","Loop"] : ChopButton {
+        x:128px+i*72px;y:8px;width:66px;height:40px;label:name;
+        property <int> target:[0,4,1,2,3,5][i];active:root.view==self.target;
+        clicked=>{root.action(2000,self.target);}
+    }
+    ChopButton {x:574px;y:8px;width:100px;height:40px;label:root.sync?"Sync ●":"Sync ○";active:root.sync;clicked=>{root.sync-open=true;}}
+    Text {x:684px;y:10px;width:parent.width - 700px;height:36px;
+        text:root.armed?"● ARMED":root.recording?"● RECORDING":root.previewing?"◉ PREVIEW":root.looping?"● LOOPING":root.sync?round(root.bpm)+" BPM":"SAMPLER";
+        color:root.recording?#ff8b7c:root.armed?#efc27c:#a4b0ff;font-size:12px;font-family:"JetBrains Mono";horizontal-alignment:right;vertical-alignment:center;}
+    Rectangle {x:16px;y:55px;width:parent.width - 32px;height:1px;background:#30435b;}
+
+    // Stable pad targets: changing names or playheads never interrupts a held pad.
+    ChopButton {x:16px;y:58px;width:176px;height:40px;label:"Bank "+(root.bank+1)+" / "+root.banks+"  ···";clicked=>{root.manage-open=true;}}
+    ChopButton {x:200px;y:58px;width:96px;height:40px;label:"+ Bank";disabled:root.banks>=8;clicked=>{root.action(2040,0);}}
+    ChopButton {x:304px;y:58px;width:44px;height:40px;label:"‹";disabled:root.bank==0;clicked=>{root.action(2003,-1);}}
+    ChopButton {x:356px;y:58px;width:44px;height:40px;label:"›";disabled:root.bank+1>=root.banks;clicked=>{root.action(2003,1);}}
+    for row in 4 : Rectangle {
+        x:16px;y:100px+row*60px;width:384px;height:52px;background:transparent;
+        for col in 4 : pad-cell := Rectangle {
+            property <int> i:row*4+col;
+            property <bool> filled:root.loaded[self.i];
+            property <bool> sounding:root.heads[self.i]>=0;
+            property <bool> chosen:root.bank*16+self.i==root.pad;
+            property <bool> queued:root.bank*16+self.i==root.queued-pad;
+            x:col*98px;width:90px;height:52px;border-radius:8px;
+            background:self.sounding?#69bfff:self.chosen?#304d70:self.filled?#203148:#182334;
+            border-width:1px;border-color:self.queued?#efc27c:self.chosen?#a4b0ff:self.filled?#486785:#30435b;
+            Text {x:10px;y:6px;text:root.bank*16+parent.i+1;color:parent.sounding?#0e2030:parent.filled?#edf5ff:#8b9db5;
+                font-family:"Space Grotesk";font-size:20px;font-weight:600;}
+            Text {x:10px;y:33px;width:72px;text:parent.queued?"Queued…":parent.filled?root.names[parent.i]:"Empty";
+                color:parent.sounding?#203148:#a6b8cf;font-size:11px;overflow:elide;}
+            Rectangle {x:10px;y:48px;height:2px;width:70px*max(0,root.heads[parent.i]);background:#69bfff;}
+            TouchArea {
+                property <int> held-pad;
+                pointer-event(e)=>{
+                    if e.kind==PointerEventKind.down {self.held-pad=root.bank*16+pad-cell.i;root.action(2001,self.held-pad);}
+                    else if e.kind==PointerEventKind.up || e.kind==PointerEventKind.cancel {root.action(2002,self.held-pad);}
+                }
+            }
+        }
+    }
+    ChopButton {x:16px;y:350px;width:184px;height:48px;primary:true;
+        disabled:root.ending;label:root.ending?"Ending at bar…":root.armed?"Cancel arm":root.recording?"Stop recording":root.view==2?"●  Record input":root.view==3?"●  Resample":"●  Record loop";
+        clicked=>{root.action(root.view==2?2045:root.view==3?2046:2010,0);}}
+    ChopButton {x:208px;y:350px;width:92px;height:48px;label:root.looping?"Pause":"Play loop";active:root.looping;clicked=>{root.action(2011,0);}}
+    ChopButton {x:308px;y:350px;width:92px;height:48px;label:"Clear loop";clicked=>{root.action(2012,0);}}
+    Rectangle {x:16px;y:403px;width:384px;height:2px;background:#30435b;
+        Rectangle {height:2px;width:parent.width*max(0,root.loop-head);background:#69bfff;}}
+    Text {x:16px;y:411px;width:384px;text:root.status;color:root.armed?#efc27c:#a6b8cf;font-size:12px;overflow:elide;}
+
+    Rectangle {x:416px;y:64px;width:parent.width - 432px;height:176px;border-radius:10px;background:#203148;border-width:1px;border-color:#3e526c;
+        Text {x:14px;y:10px;text:"SAMPLE BROWSER";font-family:"JetBrains Mono";font-size:10px;color:#a6b8cf;letter-spacing:1px;}
+        ChopButton {x:parent.width - 110px;y:5px;width:96px;height:40px;label:"Library";clicked=>{root.library-open=true;root.search("");root.action(2048,0);}}
+        Text {x:14px;y:27px;width:parent.width - 138px;text:root.filename;color:#edf5ff;font-family:"Space Grotesk";font-size:16px;font-weight:600;overflow:elide;}
+        wave-box := Rectangle {x:14px;y:57px;width:parent.width - 28px;height:60px;background:#111926;border-radius:5px;clip:true;
+            Rectangle {y:30px;width:parent.width;height:1px;background:#30435b;}
+            for peak[i] in root.wave : Rectangle {x:i*parent.width/max(1,root.wave.length);y:(parent.height - self.height)/2;
+                width:max(1px,parent.width/max(1,root.wave.length) - 1px);height:max(2px,peak*54px);border-radius:1px;background:#a4b0ff;}
+            for marker[i] in root.markers : Rectangle {x:parent.width*marker;width:1px;height:parent.height;background:i==root.pad?#edf5ff:#596e92;}
+            Rectangle {visible:root.previewing;x:parent.width*max(0,root.preview-head);width:2px;height:parent.height;background:#69bfff;}
+            Text {visible:root.wave.length==0;text:"Preview a file or load a sample";color:#a6b8cf;font-size:13px;horizontal-alignment:center;vertical-alignment:center;}
+            TouchArea {enabled:root.view==4&&!root.previewing;
+                pointer-event(e)=>{if e.kind==PointerEventKind.down {root.action(2013,self.mouse-x/self.width);} else if e.kind==PointerEventKind.up || e.kind==PointerEventKind.cancel {root.action(2014,0);}}
+                moved=>{if self.pressed {root.action(2013,max(0,min(1,self.mouse-x/self.width)));}}
+            }
+        }
+        ChopButton {x:14px;y:125px;width:36px;height:40px;label:"‹";clicked=>{root.action(2008,-1);}}
+        ChopButton {x:56px;y:125px;width:36px;height:40px;label:"›";clicked=>{root.action(2008,1);}}
+        ChopButton {x:100px;y:125px;width:112px;height:40px;label:root.previewing?"■  Stop":"▶  Preview";active:root.previewing;clicked=>{root.action(2007,0);}}
+        ChopButton {x:220px;y:125px;width:parent.width - 234px;height:40px;label:"Load + cut";primary:true;clicked=>{root.action(2004,0);}}
+    }
+    if root.view==4 : Rectangle {x:416px;y:252px;width:parent.width - 432px;height:174px;background:transparent;
+        Text {x:0px;y:10px;text:"Slices";font-family:"Space Grotesk";font-size:18px;color:#edf5ff;}
+        ChopButton {x:parent.width - 160px;y:0px;width:44px;height:44px;label:"−";disabled:root.count<=1;clicked=>{root.action(2009,-1);}}
+        Text {x:parent.width - 110px;y:5px;width:60px;height:34px;text:root.count;font-size:24px;font-family:"Space Grotesk";font-weight:600;color:#a4b0ff;horizontal-alignment:center;vertical-alignment:center;}
+        ChopButton {x:parent.width - 44px;y:0px;width:44px;height:44px;label:"+";disabled:root.count>=128;clicked=>{root.action(2009,1);}}
+        HorizontalLayout {y:56px;height:44px;spacing:8px;
+            ChopButton {label:"Cut " + root.count;clicked=>{root.action(2005,0);}}
+            ChopButton {label:"At hits";clicked=>{root.action(2017,0);}}
+            ChopButton {label:"Markers";clicked=>{root.action(2006,0);}}
+        }
+        ChopButton {x:0px;y:112px;width:parent.width - 52px;height:44px;label:"Apply " + root.markers.length + " slices";disabled:root.markers.length==0;clicked=>{root.action(2018,0);}}
+        ChopButton {x:parent.width - 44px;y:112px;width:44px;height:44px;label:"−";disabled:root.pad==0;clicked=>{root.action(2019,0);}}
+        Text {y:162px;text:"Tap the waveform to place markers. Drag to refine.";color:#a6b8cf;font-size:11px;}
+    }
+    if root.view!=4 && root.rows.length>0 : ScrollView {x:416px;y:252px;width:parent.width - 432px;height:174px;
+        VerticalLayout {spacing:6px;
+            for label[i] in root.rows : Rectangle {height:44px;border-radius:7px;background:i==root.selected?#304d70:#203148;
+                Text {x:10px;width:parent.width - 170px;height:44px;text:label;color:#edf5ff;font-family:"Space Grotesk";font-size:14px;vertical-alignment:center;overflow:elide;}
+                Text {x:parent.width - 164px;width:72px;height:44px;text:root.values[i];color:#a4b0ff;font-size:12px;horizontal-alignment:right;vertical-alignment:center;overflow:elide;}
+                TouchArea {width:parent.width - 90px;clicked=>{root.action(2016,i);}}
+                ChopButton {x:parent.width - 84px;width:40px;height:44px;label:"−";disabled:root.view==5;clicked=>{root.action(2020+i,-1);}}
+                ChopButton {x:parent.width - 40px;width:40px;height:44px;label:"+";disabled:root.view==5;clicked=>{root.action(2020+i,1);}}
+            }
+        }
+    }
+    if root.view==0 : Rectangle {x:416px;y:252px;width:parent.width - 432px;height:174px;border-radius:10px;background:#203148;
+        Text {x:16px;y:12px;text:"BACKING DRUMS";font-size:11px;letter-spacing:1px;color:#a6b8cf;font-family:"JetBrains Mono";}
+        ChopButton {x:16px;y:38px;width:140px;height:44px;label:root.beat?"■ Stop beat":"▶ Drum beat";active:root.beat;clicked=>{root.action(2041,0);}}
+        ChopButton {x:164px;y:38px;width:parent.width - 180px;height:44px;label:root.loaded-backing?"Use built-in":root.beat-pattern;clicked=>{root.action(2043,0);}}
+        ChopButton {x:16px;y:94px;width:44px;height:44px;label:"−";disabled:root.loaded-backing&&!root.sync;clicked=>{root.action(2042,-5);}}
+        Text {x:64px;y:94px;width:108px;height:44px;text:root.loaded-backing&&!root.sync?"Original":round(root.bpm)+" BPM";font-size:20px;color:#a4b0ff;horizontal-alignment:center;vertical-alignment:center;}
+        ChopButton {x:176px;y:94px;width:44px;height:44px;label:"+";disabled:root.loaded-backing&&!root.sync;clicked=>{root.action(2042,5);}}
+        ChopButton {x:232px;y:94px;width:parent.width - 248px;height:44px;label:"Load pad";clicked=>{root.action(2044,0);}}
+        Text {x:16px;y:151px;text:root.loaded-backing?root.backing-name:"Load your drum loop from Library → Load backing";width:parent.width - 32px;overflow:elide;font-size:12px;color:#a6b8cf;}
+    }
+
+    if root.sync-open : Rectangle {background:#090f1bed;TouchArea {}
+        Rectangle {x:(parent.width - 600px)/2;y:32px;width:600px;height:368px;background:#203148;border-radius:12px;border-width:1px;border-color:#596e92;
+            Text {x:16px;y:14px;text:"PLAY TOGETHER";font-family:"Space Grotesk";font-size:24px;font-weight:600;color:#edf5ff;}
+            Text {x:16px;y:48px;width:568px;text:"One tempo. Pitch stays. The first pad can start the drums.";font-size:15px;color:#b6c6dc;}
+            ChopButton {x:16px;y:82px;width:168px;height:44px;label:root.sync?"Sync ON":"Sync OFF";active:root.sync;disabled:root.recording||root.armed;clicked=>{root.action(2060,0);}}
+            ChopButton {x:196px;y:82px;width:180px;height:44px;label:"Launch: "+["Free","1/16","1/8","Beat"][root.grid];clicked=>{root.action(2061,0);}}
+            ChopButton {x:388px;y:82px;width:196px;height:44px;label:root.fit-samples?"Fit samples: ON":"Fit samples: OFF";active:root.fit-samples;disabled:root.recording;clicked=>{root.action(2065,0);}}
+            Text {x:16px;y:151px;text:"Tempo";font-size:16px;color:#edf5ff;}
+            ChopButton {x:112px;y:140px;width:44px;height:44px;label:"−";disabled:root.recording;clicked=>{root.action(2042,-1);}}
+            Text {x:164px;y:144px;width:100px;height:36px;text:round(root.bpm)+" BPM";font-size:20px;color:#a4b0ff;horizontal-alignment:center;vertical-alignment:center;}
+            ChopButton {x:272px;y:140px;width:44px;height:44px;label:"+";disabled:root.recording;clicked=>{root.action(2042,1);}}
+            ChopButton {x:328px;y:140px;width:256px;height:44px;label:"Use drum loop tempo";disabled:!root.loaded-backing||root.recording;clicked=>{root.action(2064,0);}}
+            for label[i] in ["Source length","Drum loop length"] : Rectangle {x:16px;y:198px+i*52px;width:568px;height:44px;background:transparent;
+                Text {x:0px;y:0px;width:220px;height:44px;text:label;font-size:16px;color:#b6c6dc;horizontal-alignment:left;vertical-alignment:center;}
+                ChopButton {x:248px;width:44px;height:44px;label:"−";disabled:root.recording||(i==0&&!root.has-source)||(i==1&&!root.loaded-backing);clicked=>{root.action(i==0?2062:2063,-1);}}
+                Text {x:300px;width:156px;height:44px;text:i==0&&!root.has-source?"No sample":i==0&&root.sample-beats<=0?"Natural":(i==0?root.sample-beats:root.backing-beats)+" beats";font-size:20px;color:#a4b0ff;horizontal-alignment:center;vertical-alignment:center;}
+                ChopButton {x:464px;width:104px;height:44px;label:"+";disabled:root.recording||(i==0&&!root.has-source)||(i==1&&!root.loaded-backing);clicked=>{root.action(i==0?2062:2063,1);}}
+            }
+            Text {x:16px;y:307px;text:"4 beats = 1 bar. Lengths are estimates; adjust by ear.";font-size:13px;color:#b6c6dc;}
+            ChopButton {x:440px;y:322px;width:144px;height:44px;label:"Done";clicked=>{root.sync-open=false;}}
+        }
+    }
+    if root.library-open : AudioLibrary {files:root.library-files;ids:root.library-ids;selected:root.library-selected;chop:true;previewing:root.previewing;
+        close=>{root.library-open=false;}refresh=>{root.action(2048,0);}search(q)=>{root.search(q);}choose(i)=>{root.action(2049,i);}
+        use-file(a)=>{root.action(a==0?2007:a==1?2004:a==2?2044:2047,0);if a!=0 {root.library-open=false;}}
+    }
+    if root.manage-open || root.erase!="" : Rectangle {background:#090f1bed;
+        TouchArea {}
+        Rectangle {x:(parent.width - 480px)/2;y:70px;width:480px;height:286px;background:#203148;border-radius:12px;border-width:1px;border-color:#596e92;
+            Text {x:24px;y:24px;text:root.erase!=""?root.erase:"Manage pads";font-family:"Space Grotesk";font-size:26px;font-weight:600;color:#edf5ff;}
+            Text {x:24px;y:72px;width:432px;text:root.erase!=""?"This removes pad assignments and stops sounding pads. Source files, backing audio and the recorded loop stay. This cannot be undone.":"Erase this bank and move later banks left, or clear every pad across all banks. You will confirm before anything is erased.";wrap:word-wrap;color:#b6c6dc;font-size:16px;}
+            if root.erase=="" : HorizontalLayout {x:24px;y:172px;width:432px;height:44px;spacing:12px;
+                LibraryButton {cobalt:true;label:"Erase bank "+(root.bank+1);clicked=>{root.action(2050,0);}}
+                LibraryButton {cobalt:true;label:"Clear all pads";clicked=>{root.action(2051,0);}}
+            }
+            LibraryButton {cobalt:true;x:24px;y:230px;width:200px;height:44px;label:"Cancel";clicked=>{root.action(2053,0);root.manage-open=false;}}
+            if root.erase!="" : LibraryButton {cobalt:true;x:256px;y:230px;width:200px;height:44px;label:"Confirm erase";clicked=>{root.action(2052,0);root.manage-open=false;}}
+        }
+    }
+}

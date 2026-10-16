@@ -56,6 +56,17 @@ pub const SPLEEN_8X16: MonoFont = MonoFont {
     strikethrough: DecorationDimensions::new(16 / 2, 1),
 };
 
+/// A moderate value readout for the Push's 120-pixel-wide control columns.
+pub const SPLEEN_12X24: MonoFont = MonoFont {
+    image: ImageRaw::new(include_bytes!("../fonts/raw/spleen_12x24.raw"), 1140),
+    glyph_mapping: &MAPPING,
+    character_size: Size::new(12, 24),
+    character_spacing: 0,
+    baseline: 18, // FONT_ASCENT (19) - 1
+    underline: DecorationDimensions::new(20, 1),
+    strikethrough: DecorationDimensions::new(12, 1),
+};
+
 /// Replaces `FONT_10X20` -- each app's title. (Spleen's 12x24 was the
 /// first size tried here and fit better proportionally, but 16x32 --
 /// tried on Voltage, then swept everywhere once it held up -- reads

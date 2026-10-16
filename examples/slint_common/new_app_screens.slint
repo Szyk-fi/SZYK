@@ -144,7 +144,7 @@ export component NewAppScreen inherits DeviceFrame {
                         background: root.enabled[i] ? root.accent.with-alpha(0.23) : root.screen-ink.with-alpha(0.035);
                         DemoWave { y: 17px; height: parent.height - 28px; width: 100%; ink: root.enabled[i] ? root.accent : root.secondary.with-alpha(0.5); phase: root.phase; amount: 0.4 + root.controls[0] * 0.5; seed: i + root.generation; }
                         SmallLabel { x: 4px; y: 2px; text: i + 1; ink: root.screen-ink.with-alpha(0.55); font-size: 12px; }
-                        TouchArea { clicked => { root.pad(i, true); } }
+                        TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.pad(i,true); } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { root.pad(i,false); } } }
                     }
                 }
                 // Ghosts: successive decaying generations.
@@ -183,7 +183,7 @@ export component NewAppScreen inherits DeviceFrame {
                             y: parent.height - self.height - 18px; background: i < 2 ? root.secondary : root.accent;
                         }
                         SmallLabel { x: 7px; y: parent.height - 16px; text: i == 0 ? "PARENT A" : i == 1 ? "PARENT B" : "CHILD " + (i - 1); ink: root.screen-ink.with-alpha(0.65); font-size: 12px; }
-                        TouchArea { clicked => { root.pad(i,true); } }
+                        TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.pad(i,true); } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { root.pad(i,false); } } }
                     }
                 }
                 // Constellation: pitch-space map with selectable chord tones.
@@ -195,7 +195,7 @@ export component NewAppScreen inherits DeviceFrame {
                         width: 26px; height: 26px; border-radius: 13px;
                         background: root.enabled[i] ? root.accent : root.screen-ink.with-alpha(0.06);
                         Text { text: ["C","C♯","D","E♭","E","F","F♯","G","A♭","A","B♭","B"][i]; color: root.enabled[i] ? root.screen-bg : root.screen-ink.with-alpha(0.72); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { clicked => { root.pad(i,true); } }
+                        TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.pad(i,true); } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { root.pad(i,false); } } }
                     }
                     Text { text: root.values[0] + " / ROOT"; color: root.secondary; font-family: "Space Grotesk"; font-size: 26px; horizontal-alignment: center; vertical-alignment: center; }
                 }
@@ -224,7 +224,7 @@ export component NewAppScreen inherits DeviceFrame {
                         background: mod(floor(root.phase * (0.3 + root.controls[2])),4) == i ? root.accent : root.screen-bg;
                         border-width: 1px; border-color: root.accent.with-alpha(0.5);
                         Text { text: ["CALM","TENSION","CHAOS","RELEASE"][i]; color: mod(floor(root.phase * (0.3 + root.controls[2])),4) == i ? root.screen-bg : root.screen-ink; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { clicked => { root.pad(i,true); } }
+                        TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.pad(i,true); } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { root.pad(i,false); } } }
                     }
                 }
                 // Portal: route nodes and visible on/off connections.
@@ -239,7 +239,7 @@ export component NewAppScreen inherits DeviceFrame {
                         width: 100px; height: 42px; border-radius: 4px; background: root.screen-bg;
                         border-width: 1px; border-color: root.enabled[i] ? root.accent : root.screen-ink.with-alpha(0.25);
                         Text { text: ["PLAITS","BEADS","ORBIT","BLACK HOLE","PAM'S","MASTER"][i]; color: root.screen-ink; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { clicked => { root.pad(i,true); } }
+                        TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.pad(i,true); } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { root.pad(i,false); } } }
                     }
                 }
                 // Reference / Vinyl: original vector album art, explicitly demo content.
@@ -257,7 +257,7 @@ export component NewAppScreen inherits DeviceFrame {
                             border-radius: self.width / 2; border-width: 2px; border-color: root.screen-bg.with-alpha(0.65);
                         }
                         SmallLabel { x: 8px; y: parent.height - 21px; text: root.kind == 15 ? ["SLOW LIGHT","STILL / LIFE","BLUE HOURS"][mod(i+root.generation,3)] : "THE SPACE BETWEEN"; ink: root.screen-bg; font-size: 12px; }
-                        TouchArea { clicked => { root.pad(i,true); } }
+                        TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.pad(i,true); } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { root.pad(i,false); } } }
                     }
                     if root.kind == 10 : VerticalLayout {
                         x: 185px; y: 17px; width: parent.width - 198px; height: 154px;
@@ -307,7 +307,7 @@ export component NewAppScreen inherits DeviceFrame {
                         background: root.enabled[i] ? root.accent.with-alpha(0.16) : root.screen-ink.with-alpha(0.03);
                         SmallLabel { x: 5px; text: "0" + (i+1); ink: root.enabled[i] ? root.secondary : root.screen-ink.with-alpha(0.45); font-size: 12px; }
                         DemoWave { x: 40px + mod(i*17,40) * 1px; width: parent.width - 100px; height: 100%; ink: root.enabled[i] ? root.accent : root.screen-ink.with-alpha(0.22); phase: root.phase * 0.1; seed: i+root.generation; }
-                        TouchArea { clicked => { root.pad(i,true); } }
+                        TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.pad(i,true); } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { root.pad(i,false); } } }
                     }
                     Rectangle { x: 45px + root.controls[1] * (parent.width - 55px); height: 100%; width: 1px; background: root.secondary; }
                 }
@@ -358,7 +358,7 @@ export component NewAppScreen inherits DeviceFrame {
                         Rectangle { x: 10px; y: 17px; width: 8px; height: 8px; border-radius: 4px; background: root.accent; }
                         SmallLabel { x: 29px; y: 4px; text: ["MORNING / RAIN ON GLASS","IDEA / A SMALL MELODY","PLACE / THE LAST TRAIN"][i]; ink: root.screen-ink; font-size: 12px; }
                         DemoWave { x: 30px; y: 22px; width: parent.width - 50px; height: 18px; ink: root.secondary.with-alpha(0.65); seed: i; phase: 0; }
-                        TouchArea { clicked => { root.pad(i,true); } }
+                        TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.pad(i,true); } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { root.pad(i,false); } } }
                     }
                 }
             }

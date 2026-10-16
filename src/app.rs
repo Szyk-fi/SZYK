@@ -27,6 +27,10 @@ use minifb::{Key, KeyRepeat, Window};
 /// is one click; positive = clockwise).
 #[derive(Default, Clone, Copy)]
 pub struct Input {
+    /// A hardware parameter-bank edit bypasses the play-view knob mapping.
+    pub controller_edit: bool,
+    /// Exact menu row for hardware edits; independent of navigation detents.
+    pub controller_row: Option<usize>,
     /// 4x4 grid, row-major: `grid[row * 4 + col]`. True while held down.
     pub grid: [bool; 16],
     /// The 4 buttons above the grid (F1-F4). Global quick-nav, not part
@@ -233,6 +237,10 @@ pub trait App {
     fn system_role(&self) -> Option<SystemRole> { None }
     /// Only apps that meaningfully consume performance pads can own the pad lock.
     fn supports_pad_lock(&self) -> bool { false }
+    /// Host-owned keyboard/pad focus, independent of the visible screen.
+    fn set_performance_active(&mut self, _active: bool) {}
+    /// Drop a screen-only gesture while keeping routed keyboard/pad voices alive.
+    fn on_performance_blur(&mut self) {}
     /// True for an instrument that plays the joystick, depth sensors,
     /// L1/R1 and MIDI keyboard itself (see the `Input` play-surface
     /// fields). The shell then stops using those for navigation while
@@ -341,6 +349,7 @@ pub trait App {
     /// one real use so far is Settings' color wheel (`apps/settings.
     /// rs`): `x`/`y` are the click offset from the wheel's center.
     #[allow(dead_code)] // not used by the main binary
+    fn slint_library_search(&mut self, _query: &str) {}
     fn slint_pointer_pick(&mut self, x: f32, y: f32) {
         let _ = (x, y);
     }
@@ -380,6 +389,20 @@ pub trait App {
     /// Steps setting `index` of `instrument_settings` by `delta` clicks.
     /// Nothing happens for an app whose settings are read-only.
     fn adjust_setting(&mut self, _index: usize, _delta: i32) {}
+
+    /// Explicit capability: controller banks may edit these without ticking
+    /// the app's transport a second time. Other apps use
+    /// their normal menu input, once per frame.
+    fn controller_settings(&self) -> Option<Vec<Setting>> {
+        None
+    }
+    /// Edits the matching entry of controller_settings. Its index space can
+    /// differ from an instrument's sequencer-facing settings or visible menu.
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        self.adjust_setting(index, delta);
+    }
+    /// Select a controller parameter in the app's own view, without editing it.
+    fn controller_select(&mut self, _index: usize) {}
 
     /// Which row `slint_rows` should show as selected.
     #[allow(dead_code)] // not used by the main binary
@@ -487,6 +510,7 @@ pub fn polyline_segments(samples: &[f32], width_px: f32, height_px: f32, centere
 /// See `App::slint_extra`.
 #[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub enum SlintExtra {
+    Chop(ChopExtra),
     None,
     Plaits(PlaitsExtra),
     Controller(ControllerExtra),
@@ -530,6 +554,38 @@ pub enum SlintExtra {
     Atlas(AtlasExtra),
     Screen(ScreenExtra),
     Rev2(Rev2Extra),
+}
+
+pub struct ChopExtra {
+    pub queued_pad:i32,pub ending:bool,
+    pub sync:bool,pub fit_samples:bool,pub grid:i32,pub sample_beats:f32,pub backing_beats:f32,pub beat_position:f32,
+    pub library_files: Vec<String>,pub library_ids:Vec<i32>,pub library_selected:i32,
+    pub erase:String,pub loaded_backing:bool,pub backing_name:String,
+    pub beat: bool,
+    pub bpm: f32,
+    pub beat_pattern: String,
+    pub view: usize,
+    pub pad: usize,
+    pub bank: usize,
+    pub banks: usize,
+    pub count: usize,
+    pub filename: String,
+    pub status: String,
+    pub names: Vec<String>,
+    pub loaded: Vec<bool>,
+    pub heads: Vec<f32>,
+    pub wave: Vec<f32>,
+    pub markers: Vec<f32>,
+    pub seconds: f32,
+    pub previewing: bool,
+    pub preview_head: f32,
+    pub armed: bool,
+    pub recording: bool,
+    pub looping: bool,
+    pub loop_head: f32,
+    pub rows: Vec<String>,
+    pub values: Vec<String>,
+    pub selected: usize,
 }
 
 /// Native Slint Rev2 panel: every control comes from the app's parameter rows.
@@ -1355,6 +1411,7 @@ pub fn cascade_connection_lines(connections: &[(usize, usize)]) -> CurveSegments
 /// Bounded live telemetry for the independently installed collection apps.
 #[allow(dead_code)] // read by the Slint front end (examples/), not by this binary
 pub struct CollectionExtra {
+    pub library_files:Vec<String>,pub library_ids:Vec<i32>,pub library_selected:i32,pub has_library:bool,pub library_previewing:bool,
     pub visual_lines:Vec<f32>,
     pub terrain:Vec<f32>,
     pub controls:Vec<f32>,pub buffer:Vec<f32>,pub tracks:Vec<f32>,pub voice_phases:Vec<f32>,pub notes:Vec<f32>,pub genes:Vec<f32>,

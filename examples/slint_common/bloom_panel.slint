@@ -40,6 +40,7 @@ export component BloomPanel inherits Rectangle {
     in property <[float]> line-angle;
     callback toggle-running();
     in property <bool> play;
+    callback parameter-touched(int, int);
     background: BloomTheme.ground;
     HorizontalLayout {
         spacing: 16px;
@@ -60,8 +61,9 @@ export component BloomPanel inherits Rectangle {
                 alignment: start;
                 for name[i] in root.row-names : row := Rectangle {
                     property <bool> chosen: i == root.selected-row;
+                    TouchArea { clicked => { root.parameter-touched(i, 0); } }
                     property <bool> group: root.row-is-group[i];
-                    height: 22px;
+                    height: 44px;
                     border-radius: 3px;
                     background: self.chosen ? BloomTheme.lime : (self.group ? BloomTheme.surface : transparent);
                     Rectangle { x: 0px; y: 6px; width: 2px; height: 10px; background: parent.chosen ? BloomTheme.ground : transparent; }
@@ -102,7 +104,7 @@ export component BloomPanel inherits Rectangle {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 Rectangle {
-                    width: 70px; height: 22px;
+                    width: 70px; height: 44px;
                     border-radius: 11px;
                     background: root.running ? BloomTheme.lime : BloomTheme.surface;
                     Text {

@@ -264,6 +264,12 @@ impl App for TimbreMap {
             crate::app::Setting { label: "Map Y".into(), value: format!("{:.2}", self.y.get()) },
         ]
     }
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> {
+        Some(self.instrument_settings().into_iter().skip(1).collect())
+    }
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        self.adjust_setting(index + 1, delta);
+    }
     fn adjust_setting(&mut self, index: usize, delta: i32) {
         let span = [self.info.hi[0] - self.info.lo[0], self.info.hi[1] - self.info.lo[1]];
         let (x, y) = (self.x.get(), self.y.get());

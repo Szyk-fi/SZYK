@@ -1105,14 +1105,30 @@ impl TinkertoneApp {
     }
 
     fn visible_rows(&self) -> Vec<Row> {
+        self.rows_with_groups(&self.expanded)
+    }
+    fn rows_with_groups(&self, expanded: &[bool]) -> Vec<Row> {
         let mut rows = Vec::new();
         for g in 0..GROUPS.len() {
             rows.push(Row::Group(g));
-            if self.expanded[g] {
+            if expanded[g] {
                 rows.extend(group_leaves(g).iter().map(|s| Row::Leaf(*s)));
             }
         }
         rows
+    }
+    fn controller_entries(&self) -> Vec<(usize, Sel)> {
+        let mut group = 0;
+        self.rows_with_groups(&vec![true; self.expanded.len()])
+            .into_iter()
+            .filter_map(|r| match r {
+                Row::Group(g) => {
+                    group = g;
+                    None
+                }
+                Row::Leaf(sel) => Some((group, sel)),
+            })
+            .collect()
     }
 
     fn leaf_name(sel: Sel) -> &'static str {
@@ -1616,6 +1632,43 @@ impl PlayHost for TinkertoneApp {
 }
 
 impl App for TinkertoneApp {
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> {
+        Some(
+            self.controller_entries()
+                .into_iter()
+                .map(|(g, sel)| {
+                    let group: String = self
+                        .slint_rows()
+                        .into_iter()
+                        .filter(|r| r.2)
+                        .nth(g)
+                        .map(|r| r.0.trim_start_matches(['>', 'v', ' ']).to_string())
+                        .unwrap_or_else(|| format!("Group {}", g + 1));
+                    crate::app::Setting {
+                        label: format!("{group} / {}", Self::leaf_name(sel)),
+                        value: self.leaf_value(sel),
+                    }
+                })
+                .collect(),
+        )
+    }
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        if let Some((_, sel)) = self.controller_entries().get(index).copied() {
+            self.edit(sel, delta);
+        }
+    }
+    fn controller_select(&mut self, index: usize) {
+        if let Some((group, sel)) = self.controller_entries().get(index).copied() {
+            self.expanded[group] = true;
+
+            self.list.selected = self
+                .visible_rows()
+                .iter()
+                .position(|r| matches!(r,Row::Leaf(s) if *s==sel))
+                .unwrap_or(self.list.selected);
+        }
+    }
+
     fn instrument_settings(&self) -> Vec<crate::app::Setting> {
         crate::app::play_kit::settings_of(self)
     }

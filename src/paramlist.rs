@@ -70,8 +70,13 @@ impl ParamList {
 
     /// Applies encoder ticks and discrete button steps through separate paths.
     pub fn navigate_input(&mut self, input: &crate::app::Input, len: usize, ticks_per_step: i32) {
-        self.navigate(input.knob1, len, ticks_per_step);
-        self.navigate_steps(input.navigation_steps, len);
+        if let Some(row) = input.controller_row {
+            self.selected = row.min(len.saturating_sub(1));
+            self.accum = 0;
+        } else {
+            self.navigate(input.knob1, len, ticks_per_step);
+            self.navigate_steps(input.navigation_steps, len);
+        }
     }
 
     /// A button action always moves a complete row, even at slow encoder settings.
@@ -302,5 +307,17 @@ mod discrete_navigation_tests {
         assert_eq!(list.selected, 2);
         list.navigate_steps(1, 0);
         assert_eq!(list.selected, 2);
+    }
+    #[test]
+    fn controller_target_wins_over_simultaneous_navigation() {
+        let mut list = ParamList::new();
+        list.selected = 3;
+        list.navigate_input(&crate::app::Input {
+            controller_row: Some(12), knob1: -90, navigation_steps: 6,
+            ..Default::default()
+        }, 18, 1);
+        assert_eq!(list.selected, 12);
+        list.navigate_input(&crate::app::Input { navigation_steps: 1, ..Default::default() }, 18, 1);
+        assert_eq!(list.selected, 13);
     }
 }

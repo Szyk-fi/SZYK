@@ -157,6 +157,7 @@ pub fn connect_all(controller: Arc<ControllerState>, midi_map: Arc<crate::midi_m
         midi_in.ignore(Ignore::None);
         let Some(port) = midi_in.ports().into_iter().nth(i) else { continue };
         let Ok(name) = midi_in.port_name(&port) else { continue };
+        if crate::controller::push2::owns_port(&name) { continue; }
 
         let controller = Arc::clone(&controller);
         let midi_map = Arc::clone(&midi_map);

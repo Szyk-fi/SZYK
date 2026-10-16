@@ -126,6 +126,7 @@ impl PlayHost for ForgeApp{
 }
 impl App for ForgeApp{
     fn instrument_settings(&self) -> Vec<crate::app::Setting> { crate::app::play_kit::settings_of(self) }
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> { Some(self.instrument_settings()) }
     fn adjust_setting(&mut self, index: usize, delta: i32) { crate::app::play_kit::adjust_in(self, index, delta) }
  fn play_surface(&self)->bool{true}
  fn play_column(&self)->Option<crate::app::PlayColumn>{(!self.kit.menu).then(||self.kit.column(self))}

@@ -410,6 +410,17 @@ impl Grid {
     }
 }
 
+/// Hands this grid to Push 2, which can't name `apps::grid_kit` itself.
+pub fn register_with_push2() {
+    crate::controller::push2::set_grid_hooks(crate::controller::push2::GridHooks {
+        press: |x, y, down| grid().press(x, y, down),
+        leds: || {
+            let g = grid().snapshot();
+            crate::controller::push2::GridLeds { rows: g.rows, cols: g.cols, leds: g.leds }
+        },
+    });
+}
+
 /// The one grid. Opening it the first time also starts looking for a real
 /// grid (and arc, arc_kit.rs), through serialosc and on the USB serial ports.
 #[cfg(not(test))]

@@ -370,16 +370,32 @@ impl PamsApp {
     }
 
     fn visible_rows(&self) -> Vec<Row> {
+        self.rows_with_groups(&self.expanded)
+    }
+    fn rows_with_groups(&self, expanded: &[bool]) -> Vec<Row> {
         let mut rows = Vec::new();
         for g in 0..NUM_GROUPS {
             rows.push(Row::Group(g));
-            if self.expanded[g] {
+            if expanded[g] {
                 for sel in self.group_leaves(g) {
                     rows.push(Row::Leaf(sel));
                 }
             }
         }
         rows
+    }
+    fn controller_entries(&self) -> Vec<(usize, Selection)> {
+        let mut group = 0;
+        self.rows_with_groups(&vec![true; self.expanded.len()])
+            .into_iter()
+            .filter_map(|r| match r {
+                Row::Group(g) => {
+                    group = g;
+                    None
+                }
+                Row::Leaf(sel) => Some((group, sel)),
+            })
+            .collect()
     }
 
     fn selection_channel(sel: Selection) -> Option<usize> {
@@ -754,6 +770,37 @@ impl PlayHost for PamsApp {
 }
 
 impl App for PamsApp {
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> {
+        Some(
+            self.controller_entries()
+                .into_iter()
+                .map(|(g, sel)| {
+                    let group: String = self.group_name(g).to_string();
+                    crate::app::Setting {
+                        label: format!("{group} / {}", self.leaf_name(sel)),
+                        value: self.leaf_value(sel),
+                    }
+                })
+                .collect(),
+        )
+    }
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        if let Some((_, sel)) = self.controller_entries().get(index).copied() {
+            self.edit(sel, delta);
+        }
+    }
+    fn controller_select(&mut self, index: usize) {
+        if let Some((group, sel)) = self.controller_entries().get(index).copied() {
+            self.expanded[group] = true;
+
+            self.list.selected = self
+                .visible_rows()
+                .iter()
+                .position(|r| matches!(r,Row::Leaf(s) if *s==sel))
+                .unwrap_or(self.list.selected);
+        }
+    }
+
     fn play_surface(&self) -> bool { true }
     fn play_column(&self) -> Option<crate::app::PlayColumn> {
         (!self.kit.menu).then(|| self.kit.column(self))

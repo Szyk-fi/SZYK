@@ -1,0 +1,46 @@
+import { ScrollView, LineEdit } from "std-widgets.slint";
+export component LibraryButton inherits Rectangle {
+    in property <string> label;in property <bool> primary:false;in property <bool> disabled:false;
+    in property <bool> cobalt:false;
+    callback clicked();
+    background:root.disabled?(root.cobalt?#182334:#253033):root.primary?(root.cobalt?#69bfff:#c5ef82):(root.cobalt?#304d70:#304240);border-radius:8px;
+    Text {text:root.label;color:root.disabled?(root.cobalt?#71839b:#71817c):root.primary?(root.cobalt?#0e2030:#142019):(root.cobalt?#edf5ff:#edf0e9);font-family:"Space Grotesk";font-size:15px;font-weight:600;horizontal-alignment:center;vertical-alignment:center;overflow:elide;}
+    TouchArea {enabled:!root.disabled;clicked=>{root.clicked();}}
+}
+export component AudioLibrary inherits Rectangle {
+    in property <[string]> files;in property <[int]> ids;in property <int> selected;
+    in property <bool> chop:false;in property <bool> previewing:false;
+    callback close();callback refresh();callback search(string);callback choose(int);callback use-file(int);
+    background:(root.chop?#090f1be8:#071110e8);
+    TouchArea {}
+    Rectangle {x:16px;y:12px;width:parent.width - 32px;height:parent.height - 24px;background:(root.chop?#111926:#172427);border-radius:12px;border-width:1px;border-color:(root.chop?#596e92:#52675d);
+        Text {x:16px;y:14px;text:"AUDIO LIBRARY";font-family:"Space Grotesk";font-size:22px;font-weight:600;color:(root.chop?#edf5ff:#edf0e9);}
+        LibraryButton {cobalt:root.chop;x:parent.width - 210px;y:8px;width:132px;height:44px;label:"Rescan files";clicked=>{root.refresh();}}
+        LibraryButton {cobalt:root.chop;x:parent.width - 66px;y:8px;width:50px;height:44px;label:"×";clicked=>{root.close();}}
+        LineEdit {x:16px;y:64px;width:parent.width - 32px;height:44px;placeholder-text:"Search filenames or folders…";edited=>{list.viewport-y=0px;root.search(self.text);}}
+        Text {x:16px;y:115px;text:root.files.length+" files · drag to scroll · select a file, then choose an action";font-size:12px;color:(root.chop?#b6c6dc:#a6bdb0);}
+        list := ScrollView {x:16px;y:138px;width:parent.width - 32px;height:parent.height - 216px;
+            VerticalLayout {spacing:4px;
+                for name[i] in root.files : Rectangle {height:48px;background:root.ids[i]==root.selected?(root.chop?#304d70:#3c5849):(root.chop?#203148:#213235);border-radius:6px;
+                    Text {x:12px;width:parent.width - 24px;height:48px;text:name;font-family:"Space Grotesk";font-size:16px;color:(root.chop?#edf5ff:#e7eee4);vertical-alignment:center;overflow:elide;}
+                    TouchArea {
+                        property <length> anchor;property <length> origin;property <bool> dragged;
+                        pointer-event(e)=>{if e.kind==PointerEventKind.down {self.anchor=self.mouse-y;self.origin=list.viewport-y;self.dragged=false;}else if e.kind==PointerEventKind.up && !self.dragged {root.choose(root.ids[i]);}}
+                        moved=>{if self.pressed {if abs(self.mouse-y - self.anchor)>8px {self.dragged=true;}if self.dragged {list.viewport-y=max(min(0px,list.height - list.viewport-height),min(0px,list.viewport-y+self.mouse-y - self.anchor));}}}
+                    }
+                }
+            }
+        }
+        Rectangle {visible:list.viewport-height>list.height;x:parent.width - 27px;y:138px;width:11px;height:parent.height - 216px;background:(root.chop?#30435b:#31423f);border-radius:5px;
+            Rectangle {width:11px;height:max(32px,parent.height*list.height/max(1px,list.viewport-height));y:(parent.height - self.height)*(-list.viewport-y)/max(1px,list.viewport-height - list.height);background:(root.chop?#69bfff:#90ae9d);border-radius:5px;}
+            TouchArea {pointer-event(e)=>{if e.kind==PointerEventKind.down {list.viewport-y=-max(0px,list.viewport-height - list.height)*max(0,min(1,self.mouse-y/self.height));}}moved=>{if self.pressed{list.viewport-y=-max(0px,list.viewport-height - list.height)*max(0,min(1,self.mouse-y/self.height));}}}
+        }
+        Text {visible:root.files.length==0;x:32px;y:160px;width:parent.width - 64px;text:"No matching files. Add audio to "+(root.chop?"samples/ or media/":"media/")+" and tap Rescan files.";wrap:word-wrap;font-size:16px;color:(root.chop?#b6c6dc:#a6bdb0);}
+        HorizontalLayout {x:16px;y:parent.height - 64px;width:parent.width - 32px;height:48px;spacing:8px;
+            LibraryButton {cobalt:root.chop;label:root.previewing?"Stop preview":"Preview";disabled:root.files.length==0;clicked=>{root.use-file(0);}}
+            if root.chop : LibraryButton {cobalt:root.chop;label:"Load pad";disabled:root.files.length==0;clicked=>{root.use-file(2);}}
+            LibraryButton {cobalt:root.chop;label:root.chop?"Load + cut":"Load & play";primary:true;disabled:root.files.length==0;clicked=>{root.use-file(1);}}
+            if root.chop : LibraryButton {cobalt:root.chop;label:"Load backing";disabled:root.files.length==0;clicked=>{root.use-file(3);}}
+        }
+    }
+}

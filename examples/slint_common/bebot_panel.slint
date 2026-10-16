@@ -2,14 +2,16 @@
 // desktop; this component maps captured mouse drags back to picture pixels.
 export component BebotPanel inherits Rectangle {
     in property <image> frame;
+    in property <float> frame-width: 640;
+    in property <float> frame-height: 360;
     callback finger(float, float);
     background: #081418;
     Image { source: root.frame; image-fit: contain; width: 100%; height: 100%; }
     TouchArea {
         property <bool> finger-held: false;
-        property <float> scale: min(self.width / 640px, self.height / 360px);
-        property <float> finger-x: (self.mouse-x - (self.width - 640px * scale) / 2) / 1px / scale;
-        property <float> finger-y: (self.mouse-y - (self.height - 360px * scale) / 2) / 1px / scale;
+        property <float> scale: min(self.width / (root.frame-width * 1px), self.height / (root.frame-height * 1px));
+        property <float> finger-x: (self.mouse-x - (self.width - root.frame-width * 1px * scale) / 2) / 1px / scale;
+        property <float> finger-y: (self.mouse-y - (self.height - root.frame-height * 1px * scale) / 2) / 1px / scale;
         pointer-event(event) => {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                 self.finger-held = true;

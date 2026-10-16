@@ -11,6 +11,7 @@ pub struct LazyApp {
     processor: Arc<Mutex<Option<Box<dyn AudioProcessor>>>>,
     enabled: Arc<AtomicBool>,
     screen_open: bool,
+    performance_active: bool,
     last_input: Option<Instant>,
     bus: Arc<AudioBus>,
     /// Writing into one of this app's declared modulation inputs wakes it.
@@ -30,7 +31,7 @@ pub struct LazyApp {
 }
 impl LazyApp {
     pub fn new(id: String, make: Rc<dyn Fn() -> Box<dyn App>>, bus: Arc<AudioBus>) -> Self {
-        Self { id, make, instance: None, processor: Arc::new(Mutex::new(None)), enabled: Arc::new(AtomicBool::new(false)), screen_open: false, last_input: None, bus, modbus: None, notes: None, inbox: None, view: Default::default(), delivering: false, outputs: Vec::new(), grid_client: false }
+        Self { id, make, instance: None, processor: Arc::new(Mutex::new(None)), enabled: Arc::new(AtomicBool::new(false)), screen_open: false, performance_active: false, last_input: None, bus, modbus: None, notes: None, inbox: None, view: Default::default(), delivering: false, outputs: Vec::new(), grid_client: false }
     }
     pub fn with_modbus(mut self, modbus: Arc<crate::modbus::ModBus>) -> Self {
         self.modbus = Some(modbus);
@@ -91,7 +92,7 @@ impl LazyApp {
         let grid_wanted = self.grid_client && crate::apps::grid_kit::grid().focus_owner().as_deref() == Some(self.id.as_str());
         let requested=settings_wanted || grid_wanted || self.bus.requested(&self.id) || self.modbus.as_ref().is_some_and(|m| m.requested(&self.id)) || self.notes.as_ref().is_some_and(|n| n.requested(&self.id));
         if requested {self.ensure();}
-        let needed = self.instance.as_ref().is_some_and(|app| requested || self.screen_open || app.running() == Some(true) || app.needs_background_audio()
+        let needed = self.instance.as_ref().is_some_and(|app| requested || self.screen_open || self.performance_active || app.running() == Some(true) || app.needs_background_audio()
             || self.last_input.is_some_and(|t| t.elapsed() < Duration::from_secs(5)));
         if self.enabled.swap(needed, Ordering::AcqRel) && !needed {
             for index in self.outputs.clone() { if let Some(buffer) = self.bus.peek(index) { buffer.lock().unwrap().fill(0.0); } }
@@ -112,15 +113,34 @@ impl AudioProcessor for DeferredProcessor {
 }
 impl App for LazyApp {
     fn system_role(&self) -> Option<SystemRole> { match self.id.as_str() { "mixer" => Some(SystemRole::Mixer), "settings" => Some(SystemRole::Settings), _ => self.instance.as_ref().and_then(|a| a.system_role()) } }
-    fn supports_pad_lock(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.supports_pad_lock()) }
+    fn supports_pad_lock(&self) -> bool { self.inbox.is_some() || self.instance.as_ref().is_some_and(|a| a.supports_pad_lock()) }
+    fn set_performance_active(&mut self, active: bool) {
+        if self.performance_active == active { return; }
+        self.performance_active = active;
+        if active { self.ensure(); self.wake(); }
+        else if !self.screen_open { if let Some(app) = self.instance.as_mut() { app.on_exit(); } }
+        self.update_activity();
+    }
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> {
+        self.instance.as_ref().and_then(|a| a.controller_settings())
+    }
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        self.ensure().controller_adjust(index, delta);
+        self.wake();
+    }
+    fn controller_select(&mut self, index: usize) {
+        self.ensure().controller_select(index);
+    }
+    fn instrument_settings(&self) -> Vec<crate::app::Setting> { self.instance.as_ref().map_or_else(Vec::new, |a| a.instrument_settings()) }
+    fn adjust_setting(&mut self, index: usize, delta: i32) { self.ensure().adjust_setting(index, delta); self.wake(); }
     fn play_surface(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.play_surface()) }
     fn play_column(&self) -> Option<crate::app::PlayColumn> { self.instance.as_ref().and_then(|a| a.play_column()) }
     fn transport_action(&self) -> Option<&'static str> { self.instance.as_ref().and_then(|a| a.transport_action()) }
     fn running(&self) -> Option<bool> { self.instance.as_ref().and_then(|a| a.running()) }
     fn wants_fullscreen(&self) -> bool { self.instance.as_ref().is_some_and(|a| a.wants_fullscreen()) }
     fn grid_mode_label(&self) -> Option<&'static str> { self.instance.as_ref().and_then(|a| a.grid_mode_label()) }
-    fn on_enter(&mut self) { self.screen_open = true; self.ensure().on_enter(); self.wake(); }
-    fn on_exit(&mut self) { if let Some(app) = self.instance.as_mut() { app.on_exit(); } self.screen_open = false; self.update_activity(); }
+    fn on_enter(&mut self) { self.screen_open = true; if !self.performance_active { self.ensure().on_enter(); } self.wake(); }
+    fn on_exit(&mut self) { if let Some(app) = self.instance.as_mut() { if self.performance_active { app.on_performance_blur(); } else { app.on_exit(); } } self.screen_open = false; self.update_activity(); }
     fn tick(&mut self, input: &Input) { let input = self.with_bus_notes(input); self.delivering = false; self.ensure().tick(&input); self.wake(); }
     fn draw(&mut self, fb: &mut FrameBuffer) { self.ensure().draw(fb); }
     fn audio_processor(&mut self) -> Option<Box<dyn AudioProcessor>> { Some(Box::new(DeferredProcessor { processor: Arc::clone(&self.processor), enabled: Arc::clone(&self.enabled) })) }
@@ -131,7 +151,7 @@ impl App for LazyApp {
         self.serve_settings();
         // An instrument off screen still plays what other apps send it:
         // its notes arrive as keys on an otherwise empty frame.
-        if !self.screen_open && self.inbox.is_some() {
+        if !self.screen_open && !self.performance_active && self.inbox.is_some() {
             let input = self.with_bus_notes(&Input::default());
             let any = self.view.any();
             if any || self.delivering {
@@ -189,6 +209,42 @@ mod tests {
  use super::*;use std::cell::Cell;
  struct Silent;impl App for Silent{fn tick(&mut self,_:&Input){}fn draw(&mut self,_:&mut FrameBuffer){}}
  #[test] fn catalog_read_wakes_only_the_requested_owner(){let bus=Arc::new(AudioBus::new());bus.declare("bloom","Bloom");bus.declare("plaits","Plaits");let count=Rc::new(Cell::new(0));let make={let c=count.clone();Rc::new(move||{c.set(c.get()+1);Box::new(Silent) as Box<dyn App>})};let mut bloom=LazyApp::new("bloom".into(),make.clone(),bus.clone());let mut plaits=LazyApp::new("plaits".into(),make,bus.clone());bus.names();bus.peek(0);bloom.background_tick();plaits.background_tick();assert_eq!(count.get(),0);bus.get(0);bloom.background_tick();plaits.background_tick();assert_eq!(count.get(),1);assert!(bloom.instance.is_some());assert!(plaits.instance.is_none());}
+}
+
+#[cfg(test)]
+mod performance_lifecycle_tests {
+    use super::*;
+    struct Player { frames: Arc<Mutex<Vec<Input>>>, exits: Arc<std::sync::atomic::AtomicUsize> }
+    impl App for Player {
+        fn tick(&mut self, i: &Input) { self.frames.lock().unwrap().push(*i); }
+        fn draw(&mut self, _: &mut FrameBuffer) {}
+        fn on_exit(&mut self) { self.exits.fetch_add(1, Ordering::Relaxed); }
+    }
+    #[test]
+    fn pinned_lazy_instrument_defers_exit_and_merges_bus_notes_once_per_performance_tick() {
+        let notes = Arc::new(crate::note_bus::NoteBus::new());
+        let slot = notes.declare_instrument("player", "Player").unwrap();
+        let frames = Arc::new(Mutex::new(Vec::new())); let exits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let make = { let frames = frames.clone(); let exits = exits.clone(); Rc::new(move || Box::new(Player { frames: frames.clone(), exits: exits.clone() }) as Box<dyn App>) };
+        let mut app = LazyApp::new("player".into(), make, Arc::new(AudioBus::new()))
+            .with_notes(notes.clone(), Some(notes.inbox_ref(slot)));
+        assert!(app.supports_pad_lock(), "declared instruments are selectable without constructing them");
+        assert!(app.instance.is_none());
+        app.on_enter(); app.set_performance_active(true);
+        notes.inbox(slot).unwrap().note_on(67, 80);
+        let mut input = Input::default(); input.midi_keys.0[60] = 100;
+        app.tick(&input); app.on_exit(); app.background_tick();
+        assert_eq!(exits.load(Ordering::Relaxed), 0);
+        assert_eq!(frames.lock().unwrap().len(), 1, "background work must not inject a bus-only tick between held keyboard frames");
+        app.tick(&input);
+        let last = *frames.lock().unwrap().last().unwrap();
+        assert_eq!(last.midi_keys.0[60], 100); assert_eq!(last.midi_keys.0[67], 80);
+        app.set_performance_active(false);
+        assert_eq!(exits.load(Ordering::Relaxed), 1);
+        app.background_tick();
+        let last = *frames.lock().unwrap().last().unwrap();
+        assert_eq!(last.midi_keys.0[60], 0); assert_eq!(last.midi_keys.0[67], 80);
+    }
 }
 
 #[cfg(test)]

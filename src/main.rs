@@ -163,6 +163,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // processor has summed in -- see audio.rs and apps/mixer.rs.
     let master_volume = Arc::new(AtomicF32::new(1.0));
     let controller = Arc::new(ControllerState::new());
+    apps::grid_kit::register_with_push2();
+    let _push2_device = controller::push2::Device::start(controller.clone(), master_volume.clone());
     // Prism's macro knobs, shared directly with a fixed set of MIDI CC
     // numbers (see PRISM_*_CC and handle_midi_message) -- the same
     // atomics apps::prism::Params reads, threaded into Registry::new
@@ -587,6 +589,7 @@ fn run_midi_listener(
             None => continue, // port list changed since the probe; skip it
         };
         let name = midi_in.port_name(&port)?;
+        if controller::push2::owns_port(&name) { continue; }
 
         let cutoff = Arc::clone(&cutoff);
         let controller = Arc::clone(&controller);

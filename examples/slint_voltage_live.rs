@@ -41,6 +41,8 @@ mod spleen_fonts;
 mod util;
 #[path = "../src/apps/voltage.rs"]
 mod voltage;
+#[path = "../src/apps/voltage_fx.rs"]
+mod voltage_fx;
 pub fn run_inference(block: &mut [f32]) {
     let _ = block;
 }

@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 /// app.rs) -- always visible, always live, the same on every screen.
 /// F1 (Home) is first/far-left -- the one button that always gets you
 /// somewhere known, so it gets the position your thumb lands on
-/// without thinking. F3 (Start/Stop) and F2 (MIDI-armed) are each
+/// without thinking. F3 (Start/Stop) and F2 (pad mode/MIDI Arm) are each
 /// their own toggle -- they used to share one slot (doing double duty
 /// depending on whether the active app had a Start/Stop concept),
 /// which meant an app with *both* a transport and a reason to arm/
@@ -76,7 +76,7 @@ pub struct Os {
     controller: Arc<ControllerState>,
     audio_host: AudioHost,
     device_state: Arc<AudioDeviceState>,
-    /// F3 (Start/Stop) and F2 (MIDI-armed) need the *rising* edge, not
+    /// F3 (Start/Stop) and F2 (pad mode/MIDI Arm) need the *rising* edge, not
     /// "currently held" -- see the const doc comment above.
     prev_top: [bool; 4],
     /// `Some((stage, deadline))` while the startup logos are still
@@ -84,13 +84,8 @@ pub struct Os {
     /// running past ROVE's deadline, or by any input) -- see
     /// `SPLASH_DURATION`.
     splash: Option<(SplashStage, Instant)>,
-    /// Per-app "is the MIDI controller allowed to feed this app's pads"
-    /// latch, index-aligned with `apps`, defaulting to *off* -- a
-    /// stray Push 2 touch or another connected keyboard shouldn't be
-    /// able to trigger notes in whatever app happens to be on screen
-    /// until it's explicitly armed (F2, independent of F3's Start/Stop
-    /// -- see `toggle_midi`/`bottom_bar_labels`).
-    midi_armed: Vec<bool>,
+    /// Keys/pads may stay on one instrument while the screen edits another.
+    routing: crate::controller::performance::Routing,
     /// A connected controller's pad/button LEDs, kept equal to the
     /// screen -- see `pad_lights.rs` and `update_leds`.
     lights: crate::pad_lights::LightSync,
@@ -104,7 +99,6 @@ impl Os {
         device_state: Arc<AudioDeviceState>,
         leds: LedOutput,
     ) -> Self {
-        let midi_armed = vec![false; apps.len()];
         Self {
             apps,
             selected: 0,
@@ -114,7 +108,7 @@ impl Os {
             device_state,
             prev_top: [false; 4],
             splash: Some((SplashStage::Szyk, Instant::now() + SPLASH_DURATION)),
-            midi_armed,
+            routing: Default::default(),
             lights: crate::pad_lights::LightSync::new(leds),
         }
     }
@@ -122,6 +116,7 @@ impl Os {
     pub fn run(mut self) {
         let mut window = display::open_window();
         let mut fb = FrameBuffer::new();
+        let mut push2_ui = crate::controller::push2::Host::new(self.controller.clone());
 
         // Dev convenience: skip the launcher and go straight into an app,
         // e.g. `PORTAMAX_APP=plaits cargo run` -- useful for testing an
@@ -150,27 +145,23 @@ impl Os {
             // where it actually gets swapped -- see audio_devices.rs.
             self.audio_host.poll(&self.device_state);
 
-            // Every installed app, not just the active one -- see
-            // `App::background_tick`'s doc comment for why this exists
-            // (continuous work, like CV Out's MIDI CC stream, that
-            // can't stop just because you looked at another screen,
-            // but also can't safely live on the real-time audio
-            // thread).
-            for (_, app) in self.apps.iter_mut() {
-                app.background_tick();
-            }
-
-            // Grid/pad input from the controller is gated by the active
-            // app's own MIDI-armed toggle (F2 -- see the `midi_armed`
-            // field doc and `bottom_bar_labels`) so it can't leak notes
-            // into whatever app happens to be on screen; during the
-            // splash there's no active app to arm, so it stays live --
-            // any Push 2 pad still cuts the boot screen short, same as
-            // every other input already does below.
-            let midi_armed = self.splash.is_some() || self.active.map(|i| self.midi_armed[i]).unwrap_or(false);
+            // Capture the playing app's MIDI independently of the visible app.
+            let midi_armed = self.splash.is_some() || self.routing.target(self.active).is_some();
             let play_surface = self.splash.is_none() && self.active.is_some_and(|i| self.apps[i].1.play_surface());
+            self.controller.set_keyboard_target_active(self.routing.captures_keyboard(self.active, &self.apps));
             self.controller.set_play_surface(play_surface);
-            let input = Input::poll(&window, &self.controller, midi_armed);
+            let mut input = Input::poll(&window, &self.controller, midi_armed);
+            if midi_armed { push2_ui.performance(&mut input); }
+            if window.is_key_pressed(minifb::Key::F5, minifb::KeyRepeat::No) { push2_ui.choose_keyboard_target(); }
+            if window.is_key_pressed(minifb::Key::F6, minifb::KeyRepeat::No) { self.routing.toggle(self.active, &self.apps); }
+            let selecting_target = push2_ui.keyboard_target_menu().is_some();
+            if selecting_target {
+                let step = window.is_key_pressed(minifb::Key::Down, minifb::KeyRepeat::Yes) as i32
+                    - window.is_key_pressed(minifb::Key::Up, minifb::KeyRepeat::Yes) as i32;
+                push2_ui.keyboard_target_input(input.knob1 + input.navigation_steps + step,
+                    window.is_key_pressed(minifb::Key::Enter, minifb::KeyRepeat::No) || input.knob1_press, input.home);
+                input.home = false;
+            }
 
             if let Some((stage, deadline)) = self.splash {
                 let any_input = input.grid.iter().any(|&p| p)
@@ -193,7 +184,7 @@ impl Os {
                 } else {
                     fb.clear(Rgb565::BLACK).ok();
                     self.draw_splash(stage, &mut fb);
-                    window.update_with_buffer(fb.buffer(), display::WIDTH, display::HEIGHT).expect("failed to present frame");
+                    window.update_with_buffer(fb.panel_buffer(), display::PANEL_WIDTH, display::PANEL_HEIGHT).expect("failed to present frame");
                     continue;
                 }
             }
@@ -209,6 +200,7 @@ impl Os {
             // F1-F4 preempt everything else this frame, same as `home`
             // does below -- a global jump/toggle shouldn't also feed
             // this frame's input to whatever screen we're leaving.
+            let mut navigation_frame = true;
             if top_pressed[0] {
                 if self.active.is_some() { self.go_home(); } else { self.jump_to_role(crate::app::SystemRole::Settings); }
             } else if top_pressed[1] {
@@ -219,19 +211,38 @@ impl Os {
                 self.jump_to_role(crate::app::SystemRole::Mixer);
             } else {
                 match self.active {
-                    None => self.tick_launcher(&input),
-                    Some(i) => {
+                    None if !selecting_target => self.tick_launcher(&input),
+                    Some(_) => {
                         if input.home {
-                            self.apps[i].1.on_exit();
-                            self.active = None;
+                            self.go_home();
                         } else {
-                            self.apps[i].1.tick(&input);
+                            navigation_frame = selecting_target;
                         }
                     }
+                    _ => {}
                 }
             }
 
-            self.update_leds(&input);
+            push2_ui.update_targets(&mut self.routing, self.active, &self.apps);
+            self.controller.set_keyboard_target_active(self.routing.captures_keyboard(self.active, &self.apps));
+            let held = input;
+            if navigation_frame { input = crate::controller::performance::performance_input(input); }
+            let mut input = self.routing.route(self.active, &mut self.apps, input);
+            for (_, app) in self.apps.iter_mut() { app.background_tick(); }
+            if let Some(i) = self.active {
+                let (name, app) = &mut self.apps[i];
+                if !navigation_frame { push2_ui.prepare(name, app.as_mut(), &mut input); }
+                app.tick(&input);
+            }
+            let overlay = self.routing.target(self.active).map(|i| self.apps[i].1.grid_led_overlay());
+            push2_ui.performance_overlay(overlay);
+
+            if let Some(i) = self.active {
+                let (name, app) = &mut self.apps[i];
+                push2_ui.present(name, Some(app.as_mut()));
+            } else { push2_ui.home(); }
+
+            self.update_leds(&held);
 
             fb.clear(Rgb565::BLACK).ok();
             let fullscreen = self.active.is_some_and(|i| self.apps[i].1.wants_fullscreen());
@@ -242,12 +253,15 @@ impl Os {
             // A screen that wants the whole device (Retro's game
             // video, so far) must not have the bottom bar painted
             // over whatever it just drew -- see `App::wants_fullscreen`.
-            if !fullscreen {
+            if !fullscreen || self.routing.pinned().is_some() {
                 self.draw_bottom_bar(&mut fb);
+            }
+            if let Some((names, selected)) = push2_ui.keyboard_target_menu() {
+                draw_keyboard_targets(&mut fb, names, selected);
             }
 
             window
-                .update_with_buffer(fb.buffer(), display::WIDTH, display::HEIGHT)
+                .update_with_buffer(fb.panel_buffer(), display::PANEL_WIDTH, display::PANEL_HEIGHT)
                 .expect("failed to present frame");
         }
     }
@@ -292,7 +306,7 @@ impl Os {
     fn jump_to_role(&mut self, role: crate::app::SystemRole) {
         let Some(i) = self.apps.iter().position(|(_,app)| app.system_role() == Some(role)) else { return };
         if self.active == Some(i) { return; }
-        if let Some(old) = self.active { self.apps[old].1.tick(&Input::default()); self.apps[old].1.on_exit(); }
+        if let Some(old) = self.active { self.apps[old].1.on_exit(); }
         self.apps[i].1.on_enter(); self.selected = i; self.active = Some(i);
     }
 
@@ -315,7 +329,6 @@ impl Os {
     /// Same "back to launcher" transition `home` already does.
     fn go_home(&mut self) {
         if let Some(i) = self.active {
-            self.apps[i].1.tick(&Input::default());
             self.apps[i].1.on_exit();
             self.active = None;
         }
@@ -325,7 +338,7 @@ impl Os {
     /// screen uses (`pad_lights::compose`): held pads red, otherwise the
     /// active app's own pad colours, the top row always lit.
     fn update_leds(&mut self, input: &Input) {
-        let overlay = match self.active {
+        let overlay = match self.routing.target(self.active) {
             Some(i) => self.apps[i].1.grid_led_overlay(),
             None => [PadColor::Off; 16],
         };
@@ -342,15 +355,11 @@ impl Os {
         }
     }
 
-    /// F2: toggles whether the controller's pads are allowed to feed
-    /// the active app (see `midi_armed`) -- independent of, and no
-    /// longer sharing a button with, Start/Stop (F3) -- an app like
-    /// the Sequencer has real uses for both at once. A no-op on the
-    /// launcher.
+    /// F2 preserves an app's grid-layer action; other instruments toggle MIDI Arm.
     fn toggle_midi(&mut self) {
         if let Some(i) = self.active {
             if self.apps[i].1.grid_mode_label().is_some() { self.apps[i].1.toggle_grid_mode(); }
-            else if self.apps[i].1.supports_pad_lock() { self.midi_armed[i] = !self.midi_armed[i]; }
+            else { self.routing.toggle(self.active, &self.apps); }
         }
     }
 
@@ -465,11 +474,11 @@ impl Os {
         let active = self.active.map(|i| self.apps[i].1.as_ref());
         labels[2] = active.and_then(|a| a.transport_action()).unwrap_or("").into();
         let f3_chip_lit = active.and_then(|a| a.running()) == Some(true);
-        let midi_on = self.active.map(|i| self.midi_armed[i]).unwrap_or(false);
+        let midi_on = self.routing.pinned().is_some();
         labels[1] = match active {
             Some(a) => match a.grid_mode_label() {
                 Some(other) => format!("PADS: {other}"),
-                None if a.supports_pad_lock() => if midi_on { "MIDI ON".into() } else { "MIDI OFF".into() },
+                None if a.supports_pad_lock() => if midi_on { "DISARM".into() } else { "MIDI ARM".into() },
                 _ => String::new(),
             },
             None => String::new(),
@@ -484,6 +493,7 @@ impl Os {
             Some(a) => a.hint(),
             None => crate::app::hints::HOME.into(),
         };
+        let hint = if let Some(i) = self.routing.pinned() { format!("MIDI ARM: {} | {hint}", self.apps[i].0) } else { format!("F5: MIDI ARM | {hint}") };
         Rectangle::new(Point::new(0, bar_y - HINT_HEIGHT), Size::new(display::WIDTH as u32, HINT_HEIGHT as u32))
             .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
             .draw(fb)
@@ -513,6 +523,21 @@ impl Os {
             }
         }
     }
+}
+
+fn draw_keyboard_targets(fb: &mut FrameBuffer, names: &[String], selected: usize) {
+    Rectangle::new(Point::new(54, 12), Size::new(532, 336))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK)).draw(fb).ok();
+    let title = MonoTextStyle::new(&SPLEEN_8X16, ACCENT);
+    Text::new("MIDI ARM: CHOOSE INSTRUMENT", Point::new(72, 36), title).draw(fb).ok();
+    let start = selected.saturating_sub(5).min(names.len().saturating_sub(11));
+    for (row, name) in names.iter().enumerate().skip(start).take(11) {
+        let text = format!("{} {}", if row == selected { ">" } else { " " }, name);
+        Text::new(&text, Point::new(72, 65 + (row - start) as i32 * 22),
+            MonoTextStyle::new(&SPLEEN_8X16, if row == selected { ACCENT } else { Rgb565::WHITE })).draw(fb).ok();
+    }
+    Text::new("UP/DOWN: CHOOSE | ENTER: SELECT | ESC: CANCEL", Point::new(72, 330),
+        MonoTextStyle::new(&SPLEEN_6X12, ACCENT)).draw(fb).ok();
 }
 
 #[cfg(test)]

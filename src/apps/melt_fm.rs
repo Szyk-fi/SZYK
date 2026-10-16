@@ -2547,6 +2547,7 @@ impl App for MeltFmApp {
         self.slint_rows().into_iter().take(4).map(|(label, value, _)| Setting { label, value }).collect()
     }
 
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> { Some(self.instrument_settings()) }
     fn adjust_setting(&mut self, index: usize, delta: i32) {
         match index {
             0 => self.cycle_genre(delta.signum()),

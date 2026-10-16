@@ -12,7 +12,7 @@ pub fn render(directory: &str) {
     }
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
-    window.set_size(PhysicalSize::new(1240, 560));
+    window.set_size(PhysicalSize::new(1460, 656));
     let ui = LiveHomeScreen::new().unwrap();
     ui.set_splash_active(false);
     ui.set_preview_render(true);
@@ -32,12 +32,12 @@ pub fn render(directory: &str) {
     let target = a.clone();
     ui.on_screen_touched(move |x, y| target.borrow_mut().slint_pointer_pick(x, y));
     apply_instrument_visual(&ui, a.borrow_mut().slint_extra());
-    let mut initial_pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1240, 560);
+    let mut initial_pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1460, 656);
     window.request_redraw();
     window.draw_if_needed(|renderer| {
-        renderer.render(initial_pixels.make_mut_slice(), 1240);
+        renderer.render(initial_pixels.make_mut_slice(), 1460);
     });
-    let position = |x: f32, y: f32| LogicalPosition::new(208. + x, 92. + y);
+    let position = |x: f32, y: f32| LogicalPosition::new(208. + 16. + x * 1.2, 92. + y * 1.2);
     let mut b = vec![0.; 24000];
     ui.window().dispatch_event(WindowEvent::PointerPressed {
         position: position(200., 120.),
@@ -83,13 +83,13 @@ pub fn render(directory: &str) {
     apply_instrument_visual(&ui, a.borrow_mut().slint_extra());
     std::fs::create_dir_all(directory).unwrap();
     let save = |name: &str| {
-        let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1240, 560);
+        let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1460, 656);
         window.request_redraw();
         window.draw_if_needed(|renderer| {
-            renderer.render(pixels.make_mut_slice(), 1240);
+            renderer.render(pixels.make_mut_slice(), 1460);
         });
         let file = std::fs::File::create(std::path::Path::new(directory).join(name)).unwrap();
-        let mut encoder = png::Encoder::new(file, 1240, 560);
+        let mut encoder = png::Encoder::new(file, 1460, 656);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder

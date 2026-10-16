@@ -1071,6 +1071,7 @@ impl App for June60App {
     fn instrument_settings(&self) -> Vec<crate::app::Setting> {
         kit::settings_of(self)
     }
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> { Some(self.instrument_settings()) }
     fn adjust_setting(&mut self, index: usize, delta: i32) {
         kit::adjust_in(self, index, delta)
     }

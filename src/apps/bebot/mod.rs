@@ -119,7 +119,6 @@ pub struct BebotApp {
     menu: bool,
     selected: usize,
     preset: usize,
-    phase: f32,
     status: String,
     peak: Arc<AtomicF32>,
     level: Arc<AtomicF32>,
@@ -137,7 +136,6 @@ impl BebotApp {
             menu: false,
             selected: 0,
             preset: 0,
-            phase: 0.,
             status: String::new(),
             peak: Arc::new(AtomicF32::new(0.)),
             level,
@@ -290,6 +288,11 @@ impl App for BebotApp {
     fn hint(&self) -> String {
         "Hold left mouse + drag: pitch / tone. Release: stop. SELECT: settings".into()
     }
+    fn on_performance_blur(&mut self) {
+        self.pointer = None;
+        self.state.gates[0] = 0.;
+        self.publish();
+    }
     fn on_exit(&mut self) {
         self.pointer = None;
         self.keys.fill(None);
@@ -364,7 +367,6 @@ impl App for BebotApp {
         self.publish();
     }
     fn tick(&mut self, input: &Input) {
-        self.phase += 0.045;
         if input.knob1_press || input.stick_click {
             self.menu = !self.menu;
         }
@@ -433,6 +435,7 @@ impl App for BebotApp {
             })
             .collect()
     }
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> { Some(self.instrument_settings()) }
     fn adjust_setting(&mut self, index: usize, delta: i32) {
         if index < 17 {
             self.edit(index, delta as f32);
@@ -491,35 +494,6 @@ impl App for BebotApp {
             };
             kit::rect(fb, x, 42, 1, 294, c);
         }
-        let active = self.state.gates.iter().any(|x| *x > 0.);
-        let bob = if active {
-            (self.phase.sin() * 7.) as i32
-        } else {
-            0
-        };
-        let cx = 320;
-        let cy = 170 + bob;
-        // Original squat radio robot: circular ears, glass visor and equalizer mouth.
-        kit::circle(fb, cx - 103, cy, 23, DIM);
-        kit::circle(fb, cx + 103, cy, 23, DIM);
-        kit::rect(fb, cx - 92, cy - 68, 184, 143, DIM);
-        kit::rect(fb, cx - 82, cy - 57, 164, 91, Rgb565::new(1, 8, 7));
-        for dx in [-43, 43] {
-            kit::circle(fb, cx + dx, cy - 13, 17, if active { TEAL } else { INK });
-            kit::circle(fb, cx + dx + (self.state.y[0] * 6.) as i32, cy - 13, 6, BG);
-        }
-        for i in 0..7 {
-            let h = if active {
-                8 + ((self.phase + i as f32).sin().abs() * 19.) as i32
-            } else {
-                6
-            };
-            kit::rect(fb, cx - 48 + i * 15, cy + 51 - h / 2, 8, h, TEAL);
-        }
-        kit::rect(fb, cx - 3, cy - 95, 6, 28, DIM);
-        kit::circle(fb, cx, cy - 98, 7, TEAL);
-        kit::rect(fb, cx - 62, cy + 87, 124, 35, DIM);
-        kit::text(fb, "SZYK", cx, cy + 98, Size2::Small, BG, 0);
         if let Some((x, y)) = self.pointer {
             let px = (x * 639.) as i32;
             let py = 42 + ((1. - y) * 294.) as i32;

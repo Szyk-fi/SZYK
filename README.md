@@ -15,6 +15,12 @@ actual C++ engines via FFI, not reimplementations. See
 [docs/USER_MANUAL.md](docs/USER_MANUAL.md) for the full app list and what
 each one actually does today.
 
+The proposed screen target is **800 × 480 landscape (5:3)**. The Slint
+preview and enclosure mockup use that geometry; existing pixel artwork and
+console video retain their own proportions. See [display conventions and
+verification](docs/DISPLAY_800_480.md), including the current hardware
+multitouch limitations.
+
 ## Quickstart
 
 ```sh
@@ -54,9 +60,17 @@ cargo test
 - **Keyboard**: arrow keys navigate, `[`/`]` and `,`/`.` are the two
   encoders, `\` and `/` are their clicks, number/letter keys `1234 QWER
   ASDF ZXCV` are the 4x4 pad grid, `F1`-`F4` are the top row.
-- **MIDI controller**: an Ableton Push 2 (or any class-compliant MIDI
-  controller sending the same note/CC layout) drives the same pads/knobs —
-  see `src/controller.rs` for the exact note map.
+- **Push 2**: native support starts automatically in the simulator and full
+  Slint app. Eight encoders edit paged parameters; Page buttons or Swing browse
+  banks, and all 64 pads can play keyboard layouts. The display shows controls
+  and values. See [the Push 2 guide](docs/PUSH2.md).
+  Other MIDI controllers use the note/CC map in `src/controller.rs`.
+- **Play one app, edit another**: choose the playing instrument in the
+  **MIDI ARM** selector below ROVE's console. Every installed MIDI instrument
+  is available. On Push, lower display button 2 arms/disarms the instrument;
+  Shift + that button opens the target picker. **Disarm** stops keyboard/pad
+  input; **Follow screen** restores automatic routing. The framebuffer
+  simulator uses F5/F6.
 - **PS5 DualSense (macOS only)**: D-pad navigates and edits values, face
   buttons and shoulders map to select/back/F2/F3/Mixer/Home, right stick
   browses (left stick is intentionally unused — see `src/gamepad.rs` for

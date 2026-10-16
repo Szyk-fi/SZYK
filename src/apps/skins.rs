@@ -671,6 +671,97 @@ impl App for Skins {
     fn instrument_settings(&self) -> Vec<crate::app::Setting> {
         (0..self.sound_rows()).map(|i| self.sound_row(i)).map(|(label, value)| crate::app::Setting { label, value }).collect()
     }
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> {
+        use crate::app::Setting;
+        let mut settings = vec![
+            Setting {
+                label: "View".into(),
+                value: format!("{:?}", VIEWS[self.view]),
+            },
+            Setting {
+                label: "Voice".into(),
+                value: VOICE_NAMES[self.voice].into(),
+            },
+        ];
+        settings.extend(
+            self.instrument_settings()
+                .into_iter()
+                .enumerate()
+                .map(|(i, mut s)| {
+                    s.label = format!(
+                        "{} / {}",
+                        if i < 8 {
+                            VOICE_NAMES[self.voice]
+                        } else {
+                            "Global"
+                        },
+                        s.label
+                    );
+                    s
+                }),
+        );
+        let k = self.s.kit.lock().unwrap();
+        let lane = &k.lanes[self.voice];
+        settings.push(Setting {
+            label: format!("{} / Lane length", VOICE_NAMES[self.voice]),
+            value: lane.length.to_string(),
+        });
+        settings.push(Setting {
+            label: format!("{} / Mute", VOICE_NAMES[self.voice]),
+            value: lane.mute.to_string(),
+        });
+        if let Some(step) = self.held {
+            settings.extend((0..STEP_FIELDS).map(|f| Setting {
+                label: format!(
+                    "{} step {} / {}",
+                    VOICE_NAMES[self.voice],
+                    step + 1,
+                    self.field_name(f)
+                ),
+                value: self.field_value(&lane.steps[step], f),
+            }));
+        }
+        Some(settings)
+    }
+    fn controller_select(&mut self, index: usize) {
+        if (2..2 + self.sound_rows()).contains(&index) {
+            self.row = index - 2;
+        }
+    }
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        let sound_end = 2 + self.sound_rows();
+        match index {
+            0 => {
+                self.view = (self.view as i32 + delta).rem_euclid(VIEWS.len() as i32) as usize;
+                self.held = None;
+            }
+            1 => {
+                self.voice = (self.voice as i32 + delta).rem_euclid(VOICES as i32) as usize;
+                self.held = None;
+            }
+            i if i < sound_end => self.adjust_setting(i - 2, delta),
+            i if i == sound_end => {
+                let mut k = self.s.kit.lock().unwrap();
+                let length = &mut k.lanes[self.voice].length;
+                *length = (*length as i32 + delta).clamp(1, STEPS as i32) as usize;
+            }
+            i if i == sound_end + 1 => {
+                let mut k = self.s.kit.lock().unwrap();
+                let mute = &mut k.lanes[self.voice].mute;
+                *mute = !*mute;
+            }
+            i => {
+                if let Some(step) = self.held {
+                    let field = i - sound_end - 2;
+                    if field < STEP_FIELDS {
+                        self.field = field;
+                        self.edit_field(step, delta);
+                        self.edited = true;
+                    }
+                }
+            }
+        }
+    }
     fn adjust_setting(&mut self, index: usize, delta: i32) {
         if index < self.sound_rows() {
             let keep = std::mem::replace(&mut self.row, index);

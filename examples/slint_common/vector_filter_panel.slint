@@ -1,6 +1,7 @@
 import { ParamListColumn } from "device_frame.slint";
 import { VectorSegment } from "instrument_widgets.slint";
 export component VectorFilterPanel inherits Rectangle {
+    callback parameter-touched(int, int);
  in property <color> paper;in property <color> ink;in property <color> accent;
  in property <[string]> names;in property <[string]> values;in property <int> selected;
  in property <[float]> xyz;in property <[float]> wave;in property <string> source;in property <string> mode;in property <bool> enabled;
@@ -9,8 +10,8 @@ export component VectorFilterPanel inherits Rectangle {
  HorizontalLayout {spacing:18px;
  // The shared play column (play_kit.rs) is laid over this spot on the
  // play view, so the list steps aside rather than being drawn under it.
-  if !root.play : ParamListColumn {width:220px;row-names:root.names;row-values:root.values;selected-row:root.selected;paper:root.paper;ink:root.ink;accent:root.accent;instrument-style:true;}
-  if root.play : Rectangle {width:220px;}
+  if !root.play : ParamListColumn { row-picked(i) => { root.parameter-touched(i, 0); } row-adjusted(i,d) => { root.parameter-touched(i,d); }width:300px;row-names:root.names;row-values:root.values;selected-row:root.selected;paper:root.paper;ink:root.ink;accent:root.accent;instrument-style:true;}
+  if root.play : Rectangle {width:300px;}
   VerticalLayout {spacing:6px;padding-top:6px;
    HorizontalLayout {height:20px;Text {text:"RESONANT SPACE";color:root.accent;font-size:12px;font-weight:600;}Text {text:root.enabled?root.mode:"BYPASSED";color:root.ink.with-alpha(0.72);font-size:12px;horizontal-alignment:right;}}
    Rectangle {height:198px;background:root.ink.with-alpha(0.025);border-radius:6px;clip:true;

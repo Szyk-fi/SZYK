@@ -28,6 +28,8 @@ mod display;
 mod led_output;
 #[path = "../src/mixer_bus.rs"]
 mod mixer_bus;
+#[path = "../src/note_bus.rs"]
+mod note_bus;
 #[path = "../src/modbus.rs"]
 mod modbus;
 #[path = "../src/paramlist.rs"]

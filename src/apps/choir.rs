@@ -540,6 +540,7 @@ impl Choir {
 }
 
 impl App for Choir {
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> { Some(self.instrument_settings()) }
     fn adjust_setting(&mut self, index: usize, delta: i32) {
         if index < ROWS.len() {
             let keep = std::mem::replace(&mut self.row, index);

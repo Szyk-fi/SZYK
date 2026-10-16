@@ -85,22 +85,367 @@ Remove your line when you're done.
 
 | Who | What | Files | Since |
 |---|---|---|---|
-| — | none | — | — |
 
 ## 5. Work log
 
-### 2026-10-15: Claude: ROVE / SZYK crowdfunding website with a playable browser demo
-- Branch: claude/website (not committed; the tree already held the uncommitted ROVE rename)
-- Changed: new site/ only (index.html, styles.css, app.js, rove-demo.js, favicon.svg, README.md).
-  Static, no build. Colour logos drawn as SVG letterforms from Max's 20-palette sheet (Cobalt Pop
-  default, 8 palettes switchable); separate from the one-ink logos in assets/svg_src/make_logos.py.
-  The demo is a replica of the control surface (16:9 screen, 4x4 pads, 2 knobs, D-pad, F1-F4) with
-  five Web Audio voices written for the page. They are NOT the native engines and the page says so.
-- Status: done for review. Indiegogo URL is a placeholder (meta tag in index.html); palette hex
-  values are eyeballed from the sheet; app counts copied from apps/*/manifest.toml today.
-- Tests: no Rust touched. In-browser: all five voices render finite audio offline, pitches checked
-  (String and FM exact, bass sub = A1), every demo loop renders, keyboard arming, mobile 375px
-  layout, 8 palettes pass 4.5:1 text contrast.
+### 2026-10-16: Claude: site demo keeps its landscape shape on phones
+- Max didn't like the stacked mobile layout. Removed it (styles.css, js/main.js resize). The device is always
+  the scaled 1460x640 handheld; portrait screens up to 920px wide get a "turn your phone sideways" card
+  instead, and the demo appears once the phone is in landscape. Asset `?v=` bumped in index.html.
+- Checked in the browser pane at 375x812 (prompt) and 812x375 (device). Not tested on a real phone.
+
+### 2026-10-16: Claude: standalone Slint examples compile again
+- Push 2 (`src/push2.rs`) named `crate::apps::grid_kit`, which the small `#[path]` examples can't build.
+  It now goes through `push2::set_grid_hooks`; `grid_kit::register_with_push2()` is called from
+  `src/main.rs` and `slint_home_live.rs` (and the Push 2 grid test). Unregistered, the Grid layout is dark.
+- Also added the missing `note_bus` module to the nebula/bloom/madness/sequencer examples and `voltage_fx`
+  to the voltage example (those were broken before Push 2).
+- Checks: `cargo build --release --examples` clean; `cargo test --release`: 1316 bin tests pass
+  (one melt_fm draw-time test flaked under load, passes alone). Not committed.
+
+### 2026-10-16: ChatGPT: Chop scans the real samples folder
+- Max reported no samples loading and requested scanning samples/.
+- Chop now scans both media/ (or its explicit override) and project samples/,
+  including nested folders, with sorted/deduplicated entries. Edit view uses
+  the same rescan path. Empty-state help and manual name both folders.
+- Removed the temporary fixture-library override from the home launch.
+- Regression verifies discovery in nested samples folders, real WAV loading
+  into pads and audible playback, plus duplicate-root handling.
+- Checks: all 26 Chop tests and native Slint touch/audio harness pass; review
+  and optimized home builds pass. Full suite: 1322 pass, 30 ignored; two
+  socket restrictions and OC firmware timing fail, then pass isolated retries.
+  Norns drone intermittently silent in the broad run; isolated retry passes.
+- Branch gpt/display-800x480; home reopened with real folders. No merge/push.
+
+### 2026-10-16: ChatGPT: Cobalt Night for Chop, preserving every control
+- Max chose Cobalt Night and requested full existing feature availability.
+- Native Chop uses navy surfaces, blue actions/pads and lavender waveform;
+  library and guarded erase dialogs follow the same palette. Shared library
+  defaults remain unchanged for other apps. Geometry/callbacks/audio unchanged.
+- Color-stripped comparison confirms identical Chop behavior/structure;
+  shared library callbacks/drag handlers are unchanged. Native Slint touch/audio
+  harness passes all six views, slicing, preview, banks, loaded backing, armed
+  recording, protected erase and Sync. Home installation uses a narrow patch.
+- Checks: native and optimized home builds pass. Full suite 1323 pass, 30
+  ignored; two socket-restricted discovery checks pass with socket access.
+  Home simulator reopened. Branch gpt/display-800x480; not merged or pushed.
+
+### 2026-10-16: ChatGPT: Chop Pads button follows visible tab order
+- Max reported incorrect settings cycling from the touchscreen Pads button.
+- Kept stable internal view IDs; Pads and controller View adjustment now use
+  Play → Slices → Edit → Input → FX → Loop, matching the native tabs.
+- Input label now agrees across the Pads button and tabs; fallback raster
+  tabs/touch selection follow the same order. Audio/recording state unchanged.
+- Regression checks cover forward/wrap/backward cycling and selection from
+  every tab; native harness presses the actual touchscreen Pads button.
+- Checks: 25 Chop tests and native Slint touch/audio harness pass; optimized
+  home build passes and is open. Full suite: 1323 pass, 30 ignored; two
+  sandbox socket failures pass with local socket access. Colors unchanged.
+
+
+### 2026-10-16: ChatGPT: Chop sample/backing synchronization
+- Max requested an elegant way to synchronize samples with drum backing.
+- Added opt-in Sync: one audio clock, Free/16th/8th/beat launches, queued-pad
+  feedback, explicit source/drum beat counts and shared BPM/adopt-drum tempo.
+- Reuses existing Sample Drum WSOLA by a private module import; no edits to
+  that app or synthesis internals. Pitch-preserving fit for sources/backing;
+  short one-shots stay natural unless explicitly assigned beats.
+- Armed performance recording starts on the actual quantized hit, closes on
+  whole four-beat bars and follows the same clock across repeats/tempo edits.
+- Checks: 24 Chop/stretch tests pass, including exact grid launch, original
+  pitch at fitted duration, whole-bar attack capture, long-run phase and
+  half-tempo recorded-loop playback. Native Slint touch/audio harness passes.
+  Full suite: 1321 pass, 30 ignored; two socket failures pass outside sandbox.
+- Sync metadata saves with kits; old kits default to Free timing. App visual
+  payload and native Slint panel extended; unrelated files/styles untouched.
+
+
+### 2026-10-15: ChatGPT: loadable Chop backing and shared audio library browser
+- Max requested loading backing drums, better libraries, bank erasure and
+  clearing all pads with protection against accidental deletion.
+- Added a reusable searchable, draggable file browser with folder paths,
+  stable row models, explicit Preview/Load actions and rescan. Used by Chop
+  and Collection media players/sample instruments; App gets a search hook.
+- Chop loads original-speed backing loops independently of pads and capture;
+  loaded audio persists with the kit. Shared decoder supports common formats.
+- Bank menu offers erase-bank and clear-all; separate confirmation required.
+  Erasing moves subsequent banks left; source files/backing/loop stay intact.
+- Checks: 17 Chop tests and shared-browser selection test pass; Slint
+  pointer/audio harness checks scrolling, search, backing load and erase/cancel.
+  Eleven app renders and console controls pass; optimized home build passes.
+  Full suite: 1315 pass, 30 ignored; two sandbox socket failures pass on retry.
+- Scope: Chop, Collection, shared Slint payload/trait, live example and manual.
+  No changes to synthesis internals or kids visual styles.
+
+
+### 2026-10-15: ChatGPT: native Chop panel, preview, choke, backing drums and added banks
+- Max requested sample audition, a refreshed UI, exclusive pad playback,
+  independent backing drums and an explicit way to add banks.
+- Native Slint panel replaces the raster presentation; consistent charcoal,
+  mint/lime surfaces, readable type, waveform preview and stable touch pads.
+- Preview is independent of sample assignment/record arming; valid pad hits
+  choke every previous pad across banks. Finger release preserves one-shots.
+- Play offers three synthesized backing patterns, BPM control, Add bank and
+  Load pad. Up to eight banks; empty bank count and pattern save with the kit.
+- Backing drums and audition are excluded from performance-loop recordings.
+- Checks: 14 Chop tests and native Slint pointer/audio flow pass; 800×480
+  and desktop renders inspected; optimized home build passes. Full suite:
+  1311 passed, 30 ignored, two socket-restricted discovery failures; both
+  pass when retried with local socket access. Home simulator launched.
+- Scope: Chop, shared visual payload, Slint example and manual; no synthesis
+  engine or kids-app styling changes. Home installation preserves its index.
+
+
+### 2026-10-15: ChatGPT: first-pad-triggered Chop performance recording
+- Max requested Record to arm until the first pad hit, avoiding empty lead-in.
+- REC LOOP now arms, shows ARMED and CANCEL ARM; a second tap disarms.
+  The first valid sample voice (touch, console or MIDI) starts the recorder
+  in the audio block before the attack sample. Empty pads/releases do not.
+- Input recording/resampling retain existing behavior; clear/load disarm.
+- Checks cover waiting with zero recorded frames, empty-pad exclusion,
+  cancellation, MIDI first-attack capture, and Slint arm/wait/pad/finish audio.
+- Applied to home preserving branch/index/unrelated edits; no merge or push.
+
+### 2026-10-15: ChatGPT: configurable Chop count and pad banks
+- Max requested arbitrary pad counts rather than a fixed 16.
+- Added integer Slices control (1..128), count-aware WAV loading/auto-cut,
+  up to 128 manual markers, eight accessible banks of 16 console/touch pads.
+- Pad labels and LEDs reflect bank offsets; console releases retain their
+  original pad target across bank changes. Count saved/restored with bank.
+- Audio voices/playheads preallocated for the bounded 128-slot capacity;
+  MIDI note scan stays within the 128-key inbox. Sample data remains shared.
+- Checks cover counts 1, 7, 23 and 128, banked touch/audio, release ownership,
+  existing Chop WAV/markers/loop/FX/MIDI/bank paths and Slint integration.
+- Applied to home preserving its branch/index; no merge or push.
+
+### 2026-10-15: ChatGPT: Chop WAV slicing, markers and performance looper
+- Max assigned Chop repair/features: load a drum loop into 16 one-shots,
+  manually mark sample regions, and loop the playing. No synthesis engine
+  changes; implementation is in the assigned Chop app and its preview/docs.
+- Added touchscreen pads, six view tabs, file browsing/loading, auto-16/hits,
+  marker insertion/drag/apply/removal and pad trim controls. Shared source
+  sample ranges preserve timing; importing does not trim leading silence.
+- Added a separate post-FX audio performance loop: record/finish/repeat,
+  pause/resume/clear, save/load with bank. Maximum 32 seconds; manually timed,
+  no quantization/overdub. Loop keeps running across app switches.
+- Recording origin is now snapshotted so resamples are not accidentally sliced
+  after stop. UI queue drains in place; loop buffer exchange uses try_lock,
+  preallocated recording storage, and UI-side retirement of cached clips.
+- Tests cover actual WAV touch load, manual markers, one-shots after release,
+  loop audio/pause/save, and existing record/FX/MIDI/bank functions. Added
+  --render-chop real Slint -> app -> audio harness with labelled test fixture.
+- Installed into home preserving existing branch/index/unrelated edits.
+  No merge or push.
+
+### 2026-10-15: ChatGPT: shared play screens touch coverage
+- Max clarified that many apps still had unresponsive controls. Audit found
+  shared play pads, layer/menu labels, stick and hands were display-only.
+- Wired these shared controls to the existing pad gates, F2 layer, R1 menu,
+  stick axes and hand values in both Slint play-column placements. Finger
+  release/cancel releases pads and expression. New-app pad controls now send
+  both down and up/cancel, instead of a click-only held gate.
+- Browser shared kit now handles pad gates, layer/menu controls, menu row
+  selection/drag, explicit Play return, stick and hand expression regions.
+- Native gesture checks cover pad edges, layer/menu actions and stick release,
+  alongside launcher refresh/tap/drag and actual knob parameter edits.
+- Home install preserves unrelated edits/index; no DSP edits, merge or push.
+
+### 2026-10-15: ChatGPT: repair live touchscreen launcher and speaker slots
+- Max reported app taps/swipes still failing and requested SZYK slots.
+- Moved launcher gesture capture outside repeated rows so live model
+  replacement cannot destroy a held pointer target. Capture app ID on press;
+  keep drag separate from tap. Open Application now has a real touch action.
+- Preserve unchanged parameter-name models so their drag targets survive
+  live updates. Browser queues pointer edges rather than dropping fast taps
+  between frames; coalesces consecutive moves and retains down/up order.
+- SZYK grille uses narrow rounded vertical slots in native/browser mockups.
+- Regression coverage replaces launcher models during held taps and swipes,
+  checks the visible Open button, and checks queued fast browser taps.
+- Applied to home with its branch, index and unrelated changes preserved.
+  No merge or push. No DSP changes.
+
+### 2026-10-15: ChatGPT: touchscreen gestures and denser speaker grille
+- Max requested larger/more SZYK holes, no left slots, camera up and hand
+  sensors down, launcher scrollbar, smartphone-style mouse/finger drags,
+  and draggable knobs. Updated Slint and browser mockups together.
+- Grille: 94 holes at 6.5px (was 54 at 5px); camera up 10px, sensors down 10px.
+- Launcher rail shows list position and supports seeking/dragging. App rows
+  swipe vertically and open only on taps. Category list retains ScrollView.
+- Shared play dials and parameter rows accept vertical drags; existing Rev2
+  knob drag remains. App settings API preserves bounds and edit side effects;
+  browser knobs use normalized control values. No audio/DSP changes.
+- Checks: browser swipe/tap/seek/cancel and knob value/release checks;
+  native headless layout, launcher input, knob hit target and real Plaits
+  parameter value checks. Installed in home with
+  original branch/index and unrelated edits preserved; no merge or push.
+
+### 2026-10-15: ChatGPT: tighter console and SZYK speaker grille
+- Requested by Max: reduce former F-button space, widen console slightly,
+  enlarge pads and replace the console logo with SZYK speaker holes.
+- Slint and browser enclosure now 1420x560 (was 1360x600); preview window
+  1460x656. Screen stays 800x480 without stretching; pads 78 -> 87px.
+- Pad deck stays vertically centered; 33px camera and right shoulder/sensor
+  follow the wider grip. SZYK is formed by individual recessed round holes.
+- Updated render dimensions and actual pad/shoulder input verification.
+- Tests: live Slint build and headless screenshots pass; D-pad repeat, stick,
+  shoulders, touchscreen actions and all 16 pad press/release gates pass.
+- Scope: console geometry only; app typography, Kids styling and DSP retained.
+- Installed in home without switching branches or changing its staged files.
+  No merge or push.
+
+### 2026-10-15: ChatGPT: touchscreen actions, centered pads and larger camera
+- Branch: gpt/display-800x480; installed into the existing home checkout at Max's
+  request without switching its branch, changing staged files or merging.
+- Changed: pad deck centered vertically in the console, camera lens 22 -> 33px,
+  logo moved below the pads. Physical F-button row removed in Slint and browser
+  mockups. Actions are labelled touchscreen buttons, retained for full-screen
+  apps; boot alone hides them. Home category/recent touch actions enabled.
+- Layout: full-screen body is 800x432 above a 48px touch bar; Rev2 and raster
+  pointer mapping adapted without stretching. Keyboard F shortcuts remain.
+- Tests: live Slint builds, headless shared touch hits, full console controls
+  including moved pad targets, and real Bebot press/drag/release audio pass.
+  Native app font review requested; existing app font sizes retained, touch
+  action labels increased to 16px. No DSP or audio routing changes.
+- Status: applied at home; no merge or push. Existing staged site deletions and
+  modified Eurorack ramp extractor retained.
+
+### 2026-10-15: ChatGPT: 800x480 panel compatibility and enclosure mockup
+- Branch: gpt/display-800x480, based on reviewed home integration 6fe3a80.
+- Authorization: Max requested cross-cutting display compatibility for every app
+  and the mockup. The existing ten Kids apps retain their exclusive illustrated
+  style. Existing dirty home checkout and Eurorack changes are preserved.
+- Changed: native panel presentation, shared Slint shell/rails, dedicated menus,
+  Rev2 controls, dynamic raster hit coordinates, preview harnesses, website mockup.
+  Existing 640x360 raster artwork uniformly fits; it is not stretched or claimed
+  to have been individually redrawn at native resolution. No DSP changes.
+- Tests: native suite 1302 passed, 30 ignored; both UDP permission failures
+  passed in a separate 12-test grid run. Norns passed. Live Slint build/check
+  pass; all 116 apps rendered in play/menu at four sizes (928 captures), actual
+  shared touch targets, Bebot audio gestures, MIDI arm routing, console controls
+  and real visualizer states pass. Browser mobile/desktop mockup checked.
+- Status: desktop compatibility done; local branch, not merged/pushed. The
+  display-only patch passes git apply --check against the dirty home checkout.
+  Legacy standalone examples still fail on existing missing module imports.
+  FT5426G driver/contact-ID routing are not implemented or hardware-verified.
+- Notes for the other assistant: PANEL_WIDTH/HEIGHT identify the physical panel;
+  WIDTH/HEIGHT retain the logical raster contract. docs/DISPLAY_800_480.md explains
+  sizing and --render-display captures all installed apps at four window sizes.
+
+### 2026-10-15: ChatGPT: global MIDI Arm independent of the edited app
+- Branch: gpt/independent-key-target, based on 385dd3b.
+- Why: Max requested playing any instrument while editing another app in ROVE
+  and on Push, with an instrument arm like Ableton. This applies to all declared
+  MIDI instruments, including ones not opened yet; one arm at a time.
+- Changed: shared performance routing, separate Follow screen / Disarmed / armed
+  instrument states, ROVE selector and Arm/Disarm button; native Push lower
+  display button 2 arms/disarms, Shift+button 2 or Shift+Note opens the paged
+  picker. Framebuffer F5/F6 offers the same actions. Parameters stay on the
+  visible app, notes/pads/pressure/bend/modulation stay on the armed instrument.
+- Lifecycle: lazy apps defer screen exit while playing; no bus-only tick can
+  interrupt held hardware notes. Bebot drops its pointer gesture on screen blur
+  while keeping keyboard voices. Reassignment releases and suppresses held keys
+  until physical release. MIDI note-off works while an effect is visible.
+- Tests: permitted full bin suite 1290 passed, 20 ignored, the same 3 existing
+  exclusions. Includes global manifest coverage and real Bebot audio while
+  editing Beads. Slint launcher builds and its software-rendered selector
+  callback/audio check passes. Native Push and ROVE previews inspected.
+- Delivery: reviewed installer updates previous uncommitted Push installs while
+  preserving unrelated work. Read-only check against the actual checkout passes;
+  temporary upgrade, repeat and fresh installs pass. All 119 existing user files
+  and the staged index were preserved. The normal checkout is outside writable
+  roots; physical Push MIDI/USB remains unverified in this session.
+
+### 2026-10-15: ChatGPT: more readable Push parameter typography
+- Branch: gpt/push2-default-controls.
+- Changed: Push parameter names use Spleen 8x16 (previously 6x10), wrapping
+  over two lines in each column. Short values use Spleen 12x24 (previously
+  10x20); longer values use 10x20 or 8x16 to fit the same column. Rebalanced
+  vertical spacing, preserving all eight controls, focus detail and button hints.
+  Uses the existing bundled 12x24 font bitmap; no new assets or dependencies.
+- Installer: recognizes earlier applied revisions, including uncommitted
+  installs, and applies an incremental patch. Normal launch remains the default.
+- Tests: full permitted bin regression passes (1281 passed, 20 ignored, same
+  3 existing exclusions). June-60, keyboard settings and Rev2 long-name previews
+  rendered; Slint launcher checked. Physical display remains unverified here.
+- Notes: active checkout already contains the previous update. This session's
+  filesystem restrictions still require running the reviewed installer to
+  apply the font update there. No app, MIDI or audio behavior changed.
+
+### 2026-10-15: ChatGPT: Push parameters throughout, no mirrored app screen
+- Branch: gpt/push2-default-controls, builds on b5e07f1.
+- Why: Max requested all available parameter pages, correct assignments and
+  normal-launch integration, then explicitly removed the app image from Push.
+- Changed: controller catalogs now use the native menu selection identities
+  across 27 grouped apps, including collapsed groups/channels/modulators. Rev2
+  exposes both layers and every supported sequence step; Chop includes Sample
+  and FX; Skins adds voice/lane/held-step controls; TimbreMap omits read-only
+  status. LazyApp forwards controller-specific selection/edit methods.
+- Behavior: Page buttons, lower buttons 5/6 and Swing cycle every bank with
+  wraparound; Shift jumps eight pages. Catalog/page changes cannot misdirect
+  queued turns. Generic menu targeting is absolute, independent of navigation.
+  Push draws only parameter names, larger values, focused detail and hints over
+  960x160; no app draw or app-image mode exists. Keyboard settings preserve the
+  app's bank. Both normal hosts already start the driver by default; removed
+  tools/run-push2.command and updated README/docs to normal-launch instructions.
+- Tests: 23 focused tests pass, including comparison to nine native menus,
+  collapsed Pam's channel 8, both Rev2 layers/distant steps, Chop and Skins.
+  Regression: 1280 passed, 20 ignored, 3 excluded (the existing stalled Norns
+  bundled-script test and two UDP-blocked serialosc tests). Full Slint launcher
+  checks; both native display previews regenerated and visually inspected.
+- Status: software checks pass. Physical MIDI/USB operation remains unverified
+  in this sandbox, as recorded below. No synthesis/DSP changes or dependencies.
+- Installation: applying the complete patch to Max's original checkout passed
+  git apply --check but writing was sandbox-blocked. Its 51 existing modified
+  and untracked files were confirmed unchanged. tools/apply-push2-default.command
+  is a one-time source installer; it preserves local edits and the branch/index.
+  Verified in a temporary checkout with Max's Bebot edits, another dirty tracked
+  file, a staged deletion and an untracked file; repeat installation is a no-op.
+- Notes for the other assistant: controller_settings/controller_adjust have
+  their own index space; do not substitute instrument_settings/adjust_setting.
+  The app screen was removed at Max's request. Ordinary launch is now the entry
+  point; PORTAMAX_PUSH2=0 remains the explicit opt-out.
+
+### 2026-10-15: ChatGPT: Push 2 native encoders, display, keyboard and grid
+- Branch: gpt/push2-integration (isolated from claude/website at c52077a).
+- Changed: new src/push2.rs under controller; native and Slint hosts, MIDI/LED
+  ownership filtering, lazy settings forwarding, Input::controller_edit and the
+  play-kit bypass; one controller_settings capability method in each existing
+  settings-editor app (including Atlas and Oracle; no DSP changes). New launcher,
+  docs/PUSH2.md and three rendered native display previews.
+- Behavior: eight real parameter editors in banks; display/parameter feedback;
+  64-note chromatic, fourths, in-key and drum layouts; original 4x4 app pads;
+  8x8 monome window with banks; pitch/pressure/velocity; pinned-note routing and
+  release on remap. MIDI and USB use separate workers, bounded shutdown even
+  when CoreMIDI stalls. libusb loaded dynamically on Unix; Windows MIDI only.
+- Tests: 14 focused pass, including real lazy June-60 edits/audio and Pam's
+  grouped menu. Slint launcher cargo check passes; display previews rendered
+  and inspected; bash -n and git diff --check pass. Regression: 1271 passed,
+  20 ignored, 3 excluded (existing stalled Norns bundled-script test; two
+  serialosc UDP tests fail here with Operation not permitted). First broad run
+  included the UDP tests and confirmed their permission failure.
+- Status: implementation done; physical verification blocked. IOUSB sees Max's
+  Push 2, but this sandbox cannot discover its MIDI ports or claim the USB LCD.
+  Do not claim a hardware pass, pad/encoder audition or verified LCD appearance.
+- Notes for the other assistant: do not send generic LED messages to Push while
+  the native driver owns it. New controller_settings explicitly marks an already
+  editable settings bridge; generic menus use one normal tick. Bank/keyboard
+  options are session-local. Current original checkout's dirty website/Bebot
+  files were not edited. Run bash tools/run-push2.command in this checkout.
+
+### 2026-10-16: Claude: ROVE site rebuilt (monotone, 20-app handheld simulator); Bebot robot removed
+- Branch: claude/website
+- Changed: site/ (static, no build). The page is monotone; the handheld frame follows
+  examples/slint_common/device_frame.slint and runs 20 apps with the Slint shell look and the
+  firmware's own screens, using real preset/tone/DX7 data where the repo has it. Sounds are Web Audio
+  versions written for the page, and the page says so. New copy: CV/MIDI to legacy gear, four card slots
+  (the repo docs still say two), camera, open source (MIT), community, AI-assisted app making.
+- Also changed, outside site/ (Max asked): examples/slint_common/device_frame.slint (removed the "R O V E"
+  label, added a camera lens above pad 1); src/apps/bebot/mod.rs (removed the animated robot and its now
+  unused `phase` field; Bebot is ChatGPT's app, please review). cargo check is clean for bebot; the Slint
+  example was not rebuilt.
+- Status: done for review. Indiegogo URL is a placeholder.
+- Tests: no Rust tests run. In-browser: all 20 apps render and make finite audio (offline renders and live
+  checks), 375px layout, keyboard play.
 - Notes for the other assistant: none.
 
 ### 2026-10-15: Claude: Product renamed ROVE; new black-and-white SZYK and ROVE logos

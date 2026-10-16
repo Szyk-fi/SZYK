@@ -1,30 +1,78 @@
+import { ScrollView } from "std-widgets.slint";
 export component LauncherPanel inherits Rectangle {
     in property <[string]> names; in property <[int]> ids; in property <[bool]> running;
     in property <int> selected; in property <int> category; in property <int> total; in property <int> count;
+    in property <int> offset;
     in property <bool> above; in property <bool> below;
     in property <string> title; in property <string> description; in property <string> family;
+    callback scroll-to(float);
     callback category-picked(int); callback open-app(int);
     background:#121b1b;
     HorizontalLayout {spacing:18px;padding-top:7px;padding-bottom:9px;
-        VerticalLayout {width:106px;spacing:3px;
+        ScrollView { width:132px;
+        VerticalLayout {spacing:3px;
             Text {text:"WORKSPACE";color:#809792;font-size:12px;height:22px;}
             for name[i] in ["ALL APPS","INSTRUMENTS","EFFECTS","SEQUENCING","LIBRARY","UTILITIES","AI","KIDS","RECENT"] : Rectangle {
-                height:21px;border-radius:4px;background:root.category==i?#b7d6c5:#ffffff04;
+                height:44px;border-radius:4px;background:root.category==i?#b7d6c5:#ffffff04;
                 Text {x:8px;text:name;color:root.category==i?#17221c:#a8b8b2;font-size:12px;font-weight:root.category==i?600:400;vertical-alignment:center;}
                 TouchArea {clicked=>{root.category-picked(i);}}
             }
             Rectangle {vertical-stretch:1;}
             Text {text:root.total+" INSTALLED";color:#718982;font-size:12px;height:18px;}
         }
-        VerticalLayout {width:228px;spacing:5px;
+        }
+        HorizontalLayout { spacing: 3px;
+        Rectangle { width:260px;
+        VerticalLayout {spacing:5px;
             HorizontalLayout {height:22px;Text {text:root.count+" APPS";color:#809792;font-size:12px;}Text {text:(root.above?"↑ ":"")+(root.below?"↓":"");color:#b7d6c5;horizontal-alignment:right;font-size:12px;}}
-            for name[i] in root.names : Rectangle {height:34px;border-radius:5px;background:i==root.selected?#b7d6c5:#ffffff06;
+            for name[i] in root.names : Rectangle {height:44px;border-radius:5px;background:i==root.selected?#b7d6c5:#ffffff06;
                 Text {x:11px;width:parent.width - 30px;height:100%;text:name;color:i==root.selected?#17221c:#c5d2cc;font-family:"Space Grotesk";font-size:16px;font-weight:i==root.selected?600:400;vertical-alignment:center;overflow:elide;}
                 Rectangle {x:parent.width - 15px;y:14px;width:5px;height:5px;border-radius:3px;visible:root.running[i];background:i==root.selected?#3a6951:#8ed9a1;}
-                TouchArea {clicked=>{root.open-app(root.ids[i]);}}
+
             }
             if root.names.length==0 : Text {text:"No recent apps yet.\nChoose All apps to begin.";color:#809792;font-size:12px;wrap:word-wrap;}
             Rectangle {vertical-stretch:1;}
+        }
+        // This gesture target survives list model updates during the live timer.
+        TouchArea {
+            property <bool> dragged: false;
+            property <float> initial-index: 0;
+            property <int> tapped-id: -1;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    self.dragged = false;
+                    self.initial-index = root.offset + floor(root.names.length / 2);
+                    self.tapped-id = self.mouse-y >= 27px && floor((self.mouse-y - 27px) / 49px) < root.ids.length ? root.ids[floor((self.mouse-y - 27px) / 49px)] : -1;
+                }
+            }
+            moved => {
+                if self.pressed && (self.dragged || Math.abs(self.mouse-y - self.pressed-y) > 8px || Math.abs(self.mouse-x - self.pressed-x) > 8px) {
+                    self.dragged = true;
+                    root.scroll-to(max(0, min(1, (self.initial-index + (self.pressed-y - self.mouse-y) / 49px) / max(1, root.count - 1))));
+                }
+            }
+            clicked => { if !self.dragged && self.tapped-id >= 0 { root.open-app(self.tapped-id); } }
+            scroll-event(event) => { root.scroll-to(max(0,min(1,(root.offset + floor(root.names.length / 2) - event.delta-y / 49px) / max(1,root.count - 1)))); return accept; }
+        }
+        }
+            scroll-rail := Rectangle {
+                width: 26px; background: #ffffff08; border-radius: 5px;
+                Rectangle {
+                    x: 8px; y: 27px; width: 10px; height: parent.height - 27px;
+                    background: #344640; border-radius: 5px;
+                    Rectangle {
+                        width: 10px;
+                        height: min(parent.height, max(32px, parent.height * root.names.length / max(1, root.count)));
+                        y: (parent.height - self.height) * root.offset / max(1, root.count - root.names.length);
+                        background: #b7d6c5; border-radius: 5px;
+                    }
+                }
+                TouchArea {
+                    enabled: root.count > root.names.length;
+                    pointer-event(event) => { if event.kind == PointerEventKind.down { root.scroll-to(max(0, min(1, (self.mouse-y - 27px) / (self.height - 27px)))); } }
+                    moved => { if self.pressed { root.scroll-to(max(0, min(1, (self.mouse-y - 27px) / (self.height - 27px)))); } }
+                }
+            }
         }
         VerticalLayout {spacing:10px;
             Text {text:root.family;color:#91b29f;font-size:12px;height:22px;}
@@ -34,7 +82,7 @@ export component LauncherPanel inherits Rectangle {
             }
             Text {text:root.title==""?"Your next session":root.title;color:#f1f0e6;font-family:"Space Grotesk";font-size:29px;font-weight:600;wrap:word-wrap;height:69px;}
             Text {text:root.description;color:#9bafa5;font-size:12px;wrap:word-wrap;vertical-stretch:1;}
-            Rectangle {height:27px;border-radius:4px;background:#ffffff0b;Text {text:root.names.length>0?"R1  OPEN APPLICATION":"← →  BROWSE CATEGORIES";color:#b7d6c5;font-size:12px;horizontal-alignment:center;vertical-alignment:center;}}
+            Rectangle {height:27px;border-radius:4px;background:#ffffff0b;Text {text:root.names.length>0?"OPEN APPLICATION":"← →  BROWSE CATEGORIES";color:#b7d6c5;font-size:12px;horizontal-alignment:center;vertical-alignment:center;} TouchArea { enabled: root.ids.length > 0; clicked => { root.open-app(root.ids[root.selected]); } }}
         }
     }
 }

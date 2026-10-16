@@ -1,30 +1,45 @@
-//! Simulated framebuffer standing in for the target panel: AMS317PN01,
-//! 360x640 native portrait, rotated 90° by the firmware driver for
-//! landscape use. The sim just runs at the rotated 640x360 logical
-//! resolution directly — physical rotation is a driver-level concern, not
-//! something the desktop architecture validation needs to reproduce.
-//!
-//! Pixel format is a placeholder (Rgb565, the common choice for small
-//! SPI/QSPI panels this size) — the AMS317PN01's driver IC wasn't
-//! confirmed when this was picked, so revisit once it is.
+//! The proposed landscape panel is 800x480. Existing app raster artwork uses
+//! a 640x360 logical canvas, fitted uniformly into 800x450 with 15px bars.
+//! Keeping that coordinate contract preserves games, instruments and embedded
+//! artwork without distorting circles, changing hit tests or cropping controls.
+//! Slint panels lay out at native panel size independently of this raster path.
 
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::prelude::*;
 use embedded_graphics::Pixel;
 use minifb::{Window, WindowOptions};
 
+pub const PANEL_WIDTH: usize = 800;
+pub const PANEL_HEIGHT: usize = 480;
+/// Logical raster canvas; do not confuse with the physical panel dimensions.
 pub const WIDTH: usize = 640;
 pub const HEIGHT: usize = 360;
 
 pub struct FrameBuffer {
     pixels: Vec<u32>,
+    panel: Vec<u32>,
 }
 
 impl FrameBuffer {
     pub fn new() -> Self {
         Self {
             pixels: vec![0; WIDTH * HEIGHT],
+            panel: vec![0; PANEL_WIDTH * PANEL_HEIGHT],
         }
+    }
+
+    /// Uniform nearest-neighbour fit, with a persistent output allocation.
+    pub fn panel_buffer(&mut self) -> &[u32] {
+        const FIT_HEIGHT: usize = HEIGHT * PANEL_WIDTH / WIDTH;
+        const TOP: usize = (PANEL_HEIGHT - FIT_HEIGHT) / 2;
+        self.panel.fill(0);
+        for y in 0..FIT_HEIGHT {
+            for x in 0..PANEL_WIDTH {
+                self.panel[(y + TOP) * PANEL_WIDTH + x] =
+                    self.pixels[(y * WIDTH / PANEL_WIDTH) * WIDTH + x * WIDTH / PANEL_WIDTH];
+            }
+        }
+        &self.panel
     }
 
     pub fn buffer(&self) -> &[u32] {
@@ -66,14 +81,33 @@ impl DrawTarget for FrameBuffer {
 
 pub fn open_window() -> Window {
     let mut window = Window::new(
-        "ROVE OS (sim) \u{2014} AMS317PN01 640x360 landscape",
-        WIDTH,
-        HEIGHT,
-        WindowOptions::default(),
+        "ROVE OS (sim) \u{2014} 800x480 landscape",
+        PANEL_WIDTH,
+        PANEL_HEIGHT,
+        WindowOptions { resize: true, scale_mode: minifb::ScaleMode::AspectRatioStretch, ..WindowOptions::default() },
     )
     .expect("failed to open simulator window");
     // Without this, update_with_buffer spins as fast as the OS will let it —
     // pins a core for no reason since this is just a UI, not the audio path.
     window.set_target_fps(60);
     window
+}
+
+#[cfg(test)]
+mod panel_tests {
+    use super::*;
+    #[test]
+    fn panel_preserves_raster_proportions_edges_and_clears_bars() {
+        let mut fb = FrameBuffer::new();
+        fb.pixels.fill(0x123456);
+        fb.pixels[0] = 0xff0000;
+        fb.pixels[WIDTH * HEIGHT - 1] = 0x00ff00;
+        let panel = fb.panel_buffer();
+        assert_eq!(panel.len(), 800 * 480);
+        assert!(panel[..15 * 800].iter().all(|p| *p == 0));
+        assert!(panel[465 * 800..].iter().all(|p| *p == 0));
+        assert_eq!(panel[15 * 800], 0xff0000);
+        assert_eq!(panel[465 * 800 - 1], 0x00ff00);
+        assert_eq!(panel[240 * 800 + 400], 0x123456);
+    }
 }

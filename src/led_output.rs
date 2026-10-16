@@ -155,6 +155,7 @@ impl LedOutput {
                 continue; // port list changed since the probe; skip it
             };
             let name = midi_out.port_name(&port).unwrap_or_default();
+        if crate::controller::push2::owns_port(&name) { continue; }
             match midi_out.connect(&port, "portamax-sim-led-out") {
                 Ok(conn) => {
                     println!("Connected to MIDI output (LEDs): {name}");

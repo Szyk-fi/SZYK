@@ -1,6 +1,7 @@
 import { ParamListColumn } from "device_frame.slint";
 import { VectorSegment } from "instrument_widgets.slint";
 export component ForgePanel inherits Rectangle {
+    callback parameter-touched(int, int);
  in property <color> paper;in property <color> ink;in property <color> accent;
  in property <[string]> names;in property <[string]> values;in property <int> selected;in property <bool> more-above;in property <bool> more-below;
  in property <[float]> wave;in property <[float]> starts;in property <[float]> ends;in property <[float]> levels;in property <[string]> labels;
@@ -11,8 +12,8 @@ export component ForgePanel inherits Rectangle {
  HorizontalLayout {spacing:18px;
  // The shared play column (play_kit.rs) is laid over this spot on the
  // play view, so the list steps aside rather than being drawn under it.
-  if !root.play : ParamListColumn {width:220px;row-names:root.names;row-values:root.values;selected-row:root.selected;more-above:root.more-above;more-below:root.more-below;paper:root.paper;ink:root.ink;accent:root.accent;instrument-style:true;}
-  if root.play : Rectangle {width:220px;}
+  if !root.play : ParamListColumn { row-picked(i) => { root.parameter-touched(i, 0); } row-adjusted(i,d) => { root.parameter-touched(i,d); }width:300px;row-names:root.names;row-values:root.values;selected-row:root.selected;more-above:root.more-above;more-below:root.more-below;paper:root.paper;ink:root.ink;accent:root.accent;instrument-style:true;}
+  if root.play : Rectangle {width:300px;}
   VerticalLayout {spacing:7px;padding-top:4px;padding-bottom:8px;
    HorizontalLayout {height:18px;Text {text:"SOUND → INSTRUMENT";color:root.accent;font-size:12px;font-weight:600;}Text {text:root.mode;color:root.ink;font-size:12px;horizontal-alignment:right;}}
    Rectangle {height:90px;border-radius:6px;background:root.ink.with-alpha(0.035);clip:true;

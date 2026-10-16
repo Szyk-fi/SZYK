@@ -1,7 +1,11 @@
+import { AudioLibrary, LibraryButton } from "audio_library.slint";
 import { ParamListColumn } from "device_frame.slint";
 import { CollectionScene } from "collection_scenes.slint";
 component Label inherits Text { in property <color> ink; color: ink; font-family: "JetBrains Mono"; font-size: 12px; overflow: elide; }
 export component CollectionPanel inherits Rectangle {
+    in property <[string]> library-files;in property <[int]> library-ids;in property <int> library-selected;in property <bool> has-library;in property <bool> library-previewing;
+    private property <bool> library-open:false;callback search(string);
+    callback parameter-touched(int, int);
     in property <[float]> terrain;
     in property <[float]> visual-lines;
     in property <int> kind;
@@ -30,9 +34,9 @@ export component CollectionPanel inherits Rectangle {
         spacing: 18px;
         // The shared play column (play_kit.rs) is laid over this spot on
         // the play view, so the list steps aside rather than being drawn under it.
-        if !root.play : ParamListColumn { width: 220px; row-names: root.names; row-values: root.values; selected-row: root.selected;
+        if !root.play : ParamListColumn { row-picked(i) => { root.parameter-touched(i, 0); } row-adjusted(i,d) => { root.parameter-touched(i,d); } width: 300px; row-names: root.names; row-values: root.values; selected-row: root.selected;
             more-above: root.more-above; more-below: root.more-below; accent: root.accent; ink: root.ink; paper: root.paper; instrument-style: true; }
-        if root.play : Rectangle { width: 220px; }
+        if root.play : Rectangle { width: 300px; }
         VerticalLayout {
             spacing: 7px; padding-top: 4px; padding-bottom: 10px;
             Label { text: root.kind==14 ? "LIVE ANALYSIS / MONITOR OFF" : root.recording ? "● RECORDING / BOUNDED TAKE" : root.playing ? "● RUNNING / LIVE ENGINE" : "○ READY / LIVE ENGINE"; ink: root.accent; height: 14px; }
@@ -77,5 +81,10 @@ export component CollectionPanel inherits Rectangle {
             Text { text: root.status; color: root.ink; font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap; height: root.kind==2 || root.kind==3 || root.kind==6 || root.kind==4 || root.kind==14 ? 20px : 29px; }
             Text { text: root.hint; color: root.ink.with-alpha(0.72); font-family: "Space Grotesk"; font-size: 12px; wrap: word-wrap; height: root.kind==2 || root.kind==3 || root.kind==6 || root.kind==4 || root.kind==14 ? 17px : 25px; }
         }
+    }
+    if root.has-library : LibraryButton {x:parent.width - 112px;y:0px;width:112px;height:44px;label:"Library";clicked=>{root.search("");root.library-open=true;root.xy(-201,0);}}
+    if root.library-open : AudioLibrary {files:root.library-files;ids:root.library-ids;selected:root.library-selected;previewing:root.library-previewing;
+        close=>{root.library-open=false;}refresh=>{root.xy(-201,0);}search(q)=>{root.search(q);}choose(i)=>{root.xy(-200,i);}
+        use-file(a)=>{root.xy(a==0&&root.library-previewing?-203:-202,0);if a==1{root.library-open=false;}}
     }
 }

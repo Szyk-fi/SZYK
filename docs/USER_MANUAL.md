@@ -22,14 +22,23 @@ cargo run --example slint_home_live
 - **D-pad up/down** selects a parameter row; **left/right** changes its value.
 - **R1** performs the selected row's action (load a scene, trigger a menu item, etc).
 - **F1** goes Home (opens Settings from Home, if installed).
-- **F2** is contextual: Sequencer's pad/step mode, or Pad Lock/Unlock for
-  instruments that use the pad grid for notes (keeps the instrument
-  listening to pads while another screen is open).
+- **F2** is contextual: the app's pad-layer action, or MIDI Arm/Disarm for
+  instruments without a pad-layer action.
 - **F3** always shows and performs the current app's next transport action
   (Record/Stop/Play, etc.) — never a generic "play" button.
 - **F4** opens Mixer, when installed.
 - The 4x4 pad grid means different things per app (notes, sample slices,
   track select, mute/solo...) — each app's own section below says what.
+
+To play one instrument while editing another, choose any installed MIDI
+instrument in the **MIDI ARM** selector below the ROVE console. One instrument
+is armed at a time; the keyboard and pads keep playing it while you edit any
+other app. The red **DISARM** button stops keyboard/pad input. Choose **Follow
+screen** to restore automatic routing, or **ARM** to arm the visible instrument.
+On Push 2, lower display button 2 arms/disarms; Shift + that button opens the
+target chooser. The Push display names both the armed and edited apps. In the
+framebuffer simulator, F5 opens the chooser and F6 arms/disarms. See
+[Push 2](PUSH2.md) for all controls.
 
 The launcher groups installed apps into **Instruments, Effects, Sequencing,
 Library, Utilities, AI** and **Kids**. Up/down selects an app, left/right changes
@@ -274,7 +283,8 @@ ROVE is MIT.
 
 ### 3.6 Chop
 
-F2 cycles four views. **SAMPLE**: pick the source (the hardware input,
+The touchscreen tabs select Play, Slices, Edit, Input, FX and Loop.
+F2 cycles the same views. **INPUT / SAMPLE**: pick the source (the hardware input,
 or any app's output), how to chop (whole, 4, 8, 16 slices, or at each
 hit, with a sensitivity), and press SELECT (or F3) to record; press again
 to stop. The take lands on the picked pad, or across the pads from there
@@ -285,6 +295,120 @@ vinyl, lo-fi, DJ filter, tempo delay, reverb, compressor, isolator, tape.
 **PLAY**: the pads play; SELECT resamples Chop's own output, effects and
 all, into the next empty pad. Banks save to `saves/chop/` as WAVs and a
 JSON sheet.
+
+**Touchscreen chopping:** put audio files in `samples/` or `media/`. Chop scans
+both folders and their subfolders; `PORTAMAX_MEDIA_DIR` overrides the media
+folder while `samples/` remains included. Tap **Library → Rescan files** after
+adding files. Open **Slices**, use the browser arrows to pick a file, and set **Slices**
+to any count from **1 to 128**, then tap **Load + cut**. This assigns the
+selected file directly to the chosen number of one-shot pads; the original timing, including leading silence, is preserved.
+Tap the pads to play slices: lifting your finger does not cut off a one-shot. Each new pad hit immediately
+cuts off the previous pad, including hits across banks or from MIDI.
+**CUT N** recuts the source equally; **At hits** uses transient detection.
+These actions replace the current pad assignments.
+
+**Manual slice markers:** tap **MARKERS** to start with the sample's beginning.
+Tap the waveform to add up to 127 more start markers. Drag a marker to
+move it; markers cannot cross. The numbers show which pad will receive each
+slice. Tap **Apply markers** to assign the regions as one-shots. Select a pad
+then **Remove marker** to remove its start point (the first stays fixed).
+Trim individual slices in EDIT with Start/End, or adjust pitch and gain.
+
+**Loop your playing:** tap **REC LOOP** to arm. The display shows **ARMED**;
+the first playable pad hit (touchscreen, console or MIDI) starts recording.
+Waiting and empty-pad presses are excluded. Tap **CANCEL ARM** to disarm
+before playing. Once recording, tap **END LOOP**. Chop records up to 32
+seconds of its own post-effects output
+and immediately repeats that audio. **PAUSE / PLAY LOOP** pauses or resumes;
+**CLEAR LOOP** removes the performance. This is an audio loop, timed by your
+record/stop gestures, rather than a quantized MIDI pattern or overdub mode.
+Bank save/load also keeps the loop; a restored loop waits for Play.
+
+**Pad banks:** the touchscreen and console show sixteen pads at a time.
+Tap **+ Bank** above the pads to create another empty bank, then select a pad
+and use **Load pad** in Play to assign the browser file without changing other
+pads. Empty banks remain available when navigating away and are saved.
+Use **‹ / ›** above the pads to reach additional slices (up to eight
+banks). The pad labels show absolute slice numbers, for example 17–32.
+Changing banks while holding a console pad still releases the original slice.
+The slice count is saved with the bank. Counts need not be powers of two:
+7, 13, 23 and 48 work just like 8 or 16. Very short sources are limited to
+at least two audio frames per slice.
+
+**Preview:** use the sample browser arrows to choose a WAV, then **Preview**
+to hear it before loading. **Stop** cancels; changing files also stops preview.
+Preview leaves pad assignments and slice markers untouched, and never starts
+an armed performance recording. **Load + cut** replaces the slice set;
+**Load pad** changes only the selected pad.
+
+**Backing drums:** in Play, tap **Drum beat** to start or stop the independent
+synthesized drum track. Tap its pattern button to cycle Straight, Half-time,
+and Breakbeat. The tempo buttons change BPM by five, from 40–240. Drums
+continue through pad changes and are excluded from performance-loop capture,
+so replaying a loop does not double the beat. Drum playback alone never
+triggers armed recording. Added banks and pattern selection save with the kit;
+playback waits for an explicit tap after launch.
+
+**Load your own backing drums:** tap **Library**, select a drum-loop file and
+choose **Load backing**. In Play, **Drum beat** starts/stops the loaded loop;
+its filename appears underneath. It repeats at the file's original speed,
+without changing pitch or following the built-in BPM controls. **Use built-in**
+returns to synthesized patterns. The backing file is saved with the kit and
+waits for Play when restored. Samples/backing loops may be up to 32 seconds;
+WAV, FLAC, MP3, Ogg, M4A/AAC and AIFF use the shared audio decoder.
+
+**Sync samples with drums:** tap **Sync** at the top of Chop, then **Sync ON**.
+The first playable pad starts the drums on beat one if they are stopped.
+With drums already running, pad hits wait for the selected **Launch** grid:
+Free, 1/16, 1/8 or Beat. An amber **Queued** pad shows a waiting hit; the
+previous pad is cut off when the new one actually starts. Quick taps still
+launch one-shots; releasing a queued gate/held-loop cancels that hit.
+
+The **Source length** is the number of beats in the entire source file, before
+it was chopped. For example, a one-bar loop has four beats; two bars have eight.
+Slices keep their proportional lengths. **Drum loop length** describes the
+loaded backing file in the same way. Initial lengths are estimates based on
+duration and tempo, not automatic beat detection: correct them with −/+.
+**Use drum loop tempo** derives the shared BPM from that declared length.
+Turning Sync on initially adopts the loaded drum loop's tempo this way.
+Set lengths for clean loops whose first frame is the downbeat; use Edit's
+Start/End to correct sample attack/trim where needed.
+
+**Fit samples ON** fits source timing to the shared tempo while keeping pitch
+(and the pad's chosen pitch offset). Loaded backing loops also follow BPM with
+pitch preserved. Short individual hits start in **Natural**, preserving their
+original attack and tail; Source length + can explicitly assign them beats.
+Source length − below a quarter-beat restores Natural. **Fit samples OFF**
+keeps all pad samples at their original duration while retaining launch timing.
+**Sync OFF** returns to immediate pad hits and original-speed backing playback.
+The existing waveform-overlap stretcher works best with modest tempo changes;
+large changes and sustained tones can produce audible grain/phase artifacts.
+
+In Sync, **Record loop** still arms until the first actual pad launch. **Stop
+recording** changes to **Ending at bar…**, finishing at a whole number of four-
+beat bars from that first hit, so no empty lead-in is recorded. The resulting
+performance follows the shared beat clock and later tempo changes. The bounded
+recorder automatically closes at the last complete bar that fits its 32-second
+capacity. Sync/grid, beat lengths and recorded-loop timing save with the kit.
+
+**Manage pads safely:** tap the **Bank … ···** button above the pads. Choose
+**Erase bank** to remove that bank and move later banks left, or **Clear all
+pads** to empty every pad and return to one empty bank. A separate screen
+shows what will happen; only **Confirm erase** performs it. **Cancel** leaves
+the pads intact. Erasing stops pad voices and cancels an armed take; original
+library files, loaded backing audio and the recorded performance loop remain.
+These changes cannot be undone; use Input → Save bank to save the current kit.
+
+**Shared audio browser:** Chop and the collection's media players/sample
+instruments have a **Library** button. Search matches filenames and folder
+paths without regard to capitalization. The complete matching list scrolls
+by finger/mouse drag or scrollbar; dragging does not load a file. Select a
+row, then Preview or the labeled load action. Rescan files picks up audio
+added under the configured media folder. Collection preview uses its player;
+Chop preview stays separate from pad assignments and performance recording.
+
+The Slint Chop panel uses native text, waveform bars, and touch controls at
+800×480; the desktop panel can grow without stretching the original artwork.
 
 ### 3.7 Looper
 

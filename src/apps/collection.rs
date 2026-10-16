@@ -701,6 +701,7 @@ pub struct CollectionApp {
     worker: Receiver<WorkerResult>,
     work_tx: Sender<WorkerResult>,
     files: Vec<PathBuf>,
+    library_query:String,
     file: usize,
     status: String,
     busy: bool,
@@ -978,6 +979,7 @@ impl CollectionApp {
             work_tx,
             files: vec![],
             file: 0,
+            library_query:String::new(),
             status: if kind.synth() {
                 "Pads play • F3 starts the generator"
             } else if kind.media() {
@@ -1925,6 +1927,7 @@ impl App for CollectionApp {
     fn instrument_settings(&self) -> Vec<crate::app::Setting> {
         crate::app::play_kit::settings_of(self)
     }
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> { Some(self.instrument_settings()) }
     fn adjust_setting(&mut self, index: usize, delta: i32) {
         crate::app::play_kit::adjust_in(self, index, delta)
     }
@@ -2325,7 +2328,19 @@ impl App for CollectionApp {
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.rows()
     }
+    fn slint_library_search(&mut self, query:&str){self.library_query=query.to_lowercase();if let Some(i)=self.files.iter().position(|p|p.to_string_lossy().to_lowercase().contains(&self.library_query)){self.file=i;}}
     fn slint_pointer_pick(&mut self, x: f32, y: f32) {
+        if x<=-200. && x>=-203. {
+            match x as i32 {
+                -200=>{let i=y as usize;if i<self.files.len(){self.file=i;}},
+                -201=>self.scan(),
+                -202=>{if self.busy{self.pending_load=Some(true);}else{self.auto_start=true;self.load();}},
+                -203=>{self.p.play.store(false,Ordering::Relaxed);},
+                _=>{}
+            }
+            return;
+        }
+
         if self.kind==Kind::Constellation && (-72. ..=-70.).contains(&x) {
             let slot=match x as i32 {-70=>0,-71=>2,_=>1};let (lo,hi,step)=self.kind.ranges()[slot];
             self.p.values[slot].set(((lo+y.clamp(0.,1.)*(hi-lo))/step).round()*step);
@@ -2433,6 +2448,11 @@ impl App for CollectionApp {
             voice_phases: v.phases,
             notes: v.notes,
             genes: v.genes,
+            library_previewing:self.p.play.load(Ordering::Relaxed)&&self.loaded_file.as_ref()==self.files.get(self.file),
+            has_library:self.kind.media()||self.kind.synth(),
+            library_files:self.files.iter().filter(|p|p.to_string_lossy().to_lowercase().contains(&self.library_query)).map(|p|p.strip_prefix(media_root()).unwrap_or(p).to_string_lossy().into_owned()).collect(),
+            library_ids:self.files.iter().enumerate().filter(|(_,p)|p.to_string_lossy().to_lowercase().contains(&self.library_query)).map(|(i,_)|i as i32).collect(),
+            library_selected:self.file as i32,
             files: self
                 .files
                 .iter()
@@ -4538,6 +4558,17 @@ mod tests {
 mod play_view_tests {
     use super::*;
     use kit::rank_pad;
+
+    #[test]
+    fn library_browser_uses_absolute_indices_and_preserves_selection_on_stop() {
+        let mut a=app(Kind::Reference);
+        a.files=vec![PathBuf::from("drums/kick.wav"),PathBuf::from("vocals/hello.wav")];
+        a.slint_library_search("HELLO");
+        let SlintExtra::Collection(extra)=a.slint_extra()else{panic!()};
+        assert_eq!(extra.library_ids,vec![1]);assert_eq!(extra.library_selected,1);
+        a.slint_pointer_pick(-200.,0.);assert_eq!(a.file,0);
+        a.p.play.store(true,Ordering::Relaxed);a.slint_pointer_pick(-203.,0.);assert!(!a.p.play.load(Ordering::Relaxed));assert_eq!(a.file,0);
+    }
 
     fn app(kind: Kind) -> CollectionApp {
         let bus = Arc::new(AudioBus::new());

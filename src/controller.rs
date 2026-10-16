@@ -11,6 +11,11 @@
 //! how many render frames land between the Note On and the next poll.
 //! `knob*_delta` accumulates encoder ticks the same way.
 
+#[path = "push2.rs"]
+pub mod push2;
+#[path = "performance_routing.rs"]
+pub mod performance;
+
 use crate::util::AtomicF32;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 
@@ -38,6 +43,7 @@ pub const GRID_NOTES: [u8; 16] = [
 pub const TOP_NOTES: [u8; 4] = [68, 69, 70, 71]; // G#4 A4 A#4 B4
 
 pub struct ControllerState {
+    pub push2: std::sync::Mutex<push2::Surface>,
     pub grid: [AtomicBool; 16],
     /// Pads held by a game controller (see controller_map.rs), kept apart
     /// from `grid` so a controller poll never cancels a MIDI pad press.
@@ -59,6 +65,7 @@ pub struct ControllerState {
     /// itself, so MIDI notes go to `midi_keys` (not the pads) and the
     /// gamepad's stick/shoulders/triggers stop navigating.
     pub play_surface: AtomicBool,
+    keyboard_target_active: AtomicBool,
     pub stick: [AtomicF32; 2],
     stick_click: AtomicBool,
     pub hands: [AtomicF32; 2],
@@ -78,6 +85,7 @@ pub struct ControllerState {
 impl ControllerState {
     pub fn new() -> Self {
         Self {
+            push2: std::sync::Mutex::new(push2::Surface::default()),
             grid: std::array::from_fn(|_| AtomicBool::new(false)),
             gamepad_grid: std::array::from_fn(|_| AtomicBool::new(false)),
             nav_delta: AtomicI32::new(0),
@@ -89,6 +97,7 @@ impl ControllerState {
             knob2_press: AtomicBool::new(false),
             home: AtomicBool::new(false),
             play_surface: AtomicBool::new(false),
+            keyboard_target_active: AtomicBool::new(false),
             stick: std::array::from_fn(|_| AtomicF32::new(0.0)),
             stick_click: AtomicBool::new(false),
             hands: std::array::from_fn(|_| AtomicF32::new(0.0)),
@@ -102,16 +111,24 @@ impl ControllerState {
         }
     }
 
-    /// Called by the UI each frame with whether the app on screen plays
-    /// the surface. Leaving such an app releases any MIDI keys it held so
-    /// nothing sticks.
+    /// The screen owns gesture controls; a separately armed instrument can keep
+    /// owning MIDI when that screen is closed.
     pub fn set_play_surface(&self, on: bool) {
-        if self.play_surface.swap(on, Ordering::Relaxed) && !on {
+        if self.play_surface.swap(on, Ordering::Relaxed) && !on && !self.keyboard_target_active.load(Ordering::Relaxed) {
             for k in &self.midi_keys {
                 k.store(0, Ordering::Relaxed);
             }
             self.pitch_bend.set(0.0);
             self.aftertouch.set(0.0);
+        }
+    }
+
+    /// MIDI follows the armed instrument while an effect or launcher is visible.
+    pub fn set_keyboard_target_active(&self, on: bool) {
+        if self.keyboard_target_active.swap(on, Ordering::Relaxed) && !on && !self.play_surface.load(Ordering::Relaxed) {
+            for k in &self.midi_keys { k.store(0, Ordering::Relaxed); }
+            self.pitch_bend.set(0.);
+            self.aftertouch.set(0.);
         }
     }
 
@@ -153,13 +170,19 @@ impl ControllerState {
     /// `midi_keys`, pitch bend, mod wheel, channel aftertouch. Returns
     /// true if it was consumed (so the caller skips its pad mapping).
     pub fn play_surface_midi(&self, status: u8, d1: u8, d2: u8) -> bool {
-        if !self.play_surface.load(Ordering::Relaxed) {
+        if !self.play_surface.load(Ordering::Relaxed) && !self.keyboard_target_active.load(Ordering::Relaxed) {
             return false;
         }
         let r = Ordering::Relaxed;
         match status & 0xF0 {
             0x90 if d2 > 0 => self.midi_keys[(d1 & 0x7F) as usize].store(d2, r),
-            0x80 | 0x90 => self.midi_keys[(d1 & 0x7F) as usize].store(0, r),
+            0x80 | 0x90 => {
+                self.midi_keys[(d1 & 0x7F) as usize].store(0, r);
+                if let Some(i) = GRID_NOTES.iter().position(|n| *n == d1) {
+                    self.grid[i].store(false, r);
+                    self.pad_pressure[i].set(0.);
+                }
+            }
             0xE0 => {
                 let v = ((d2 as i32) << 7 | d1 as i32) - 8192;
                 self.pitch_bend.set((v as f32 / 8192.0).clamp(-1.0, 1.0));

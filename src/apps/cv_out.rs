@@ -152,15 +152,31 @@ impl CvOutApp {
     }
 
     fn visible_rows(&self) -> Vec<Row> {
+        self.rows_with_groups(&self.expanded)
+    }
+    fn rows_with_groups(&self, expanded: &[bool]) -> Vec<Row> {
         let mut rows = vec![Row::Group(0)];
-        if self.expanded[0] {
+        if expanded[0] {
             rows.push(Row::Leaf(Selection::MidiChannel));
         }
         rows.push(Row::Group(1));
-        if self.expanded[1] {
+        if expanded[1] {
             rows.extend((0..NUM_CHANNELS).map(|i| Row::Leaf(Selection::Channel(i))));
         }
         rows
+    }
+    fn controller_entries(&self) -> Vec<(usize, Selection)> {
+        let mut group = 0;
+        self.rows_with_groups(&vec![true; self.expanded.len()])
+            .into_iter()
+            .filter_map(|r| match r {
+                Row::Group(g) => {
+                    group = g;
+                    None
+                }
+                Row::Leaf(sel) => Some((group, sel)),
+            })
+            .collect()
     }
 
     fn group_name(&self, g: usize) -> &'static str {
@@ -266,6 +282,37 @@ impl CvOutApp {
 }
 
 impl App for CvOutApp {
+    fn controller_settings(&self) -> Option<Vec<crate::app::Setting>> {
+        Some(
+            self.controller_entries()
+                .into_iter()
+                .map(|(g, sel)| {
+                    let group: String = self.group_name(g).to_string();
+                    crate::app::Setting {
+                        label: format!("{group} / {}", self.leaf_name(sel)),
+                        value: self.leaf_value(sel),
+                    }
+                })
+                .collect(),
+        )
+    }
+    fn controller_adjust(&mut self, index: usize, delta: i32) {
+        if let Some((_, sel)) = self.controller_entries().get(index).copied() {
+            self.edit(sel, delta);
+        }
+    }
+    fn controller_select(&mut self, index: usize) {
+        if let Some((group, sel)) = self.controller_entries().get(index).copied() {
+            self.expanded[group] = true;
+
+            self.list.selected = self
+                .visible_rows()
+                .iter()
+                .position(|r| matches!(r,Row::Leaf(s) if *s==sel))
+                .unwrap_or(self.list.selected);
+        }
+    }
+
     fn needs_background_audio(&self) -> bool { true }
     fn slint_rows(&self) -> Vec<(String, String, bool)> {
         self.display_rows()

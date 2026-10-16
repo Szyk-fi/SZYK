@@ -1,5 +1,6 @@
 import { ParamListColumn } from "device_frame.slint";
 export component PortalPanel inherits Rectangle {
+    callback parameter-touched(int, int);
     in property <color> paper; in property <color> ink; in property <color> accent;
     in property <[string]> names; in property <[string]> values; in property <int> selected;
     in property <bool> more-above; in property <bool> more-below;
@@ -8,7 +9,7 @@ export component PortalPanel inherits Rectangle {
     in property <bool> active; in property <string> status;
     callback choose(float,float);
     HorizontalLayout {spacing:16px;
-        ParamListColumn {width:220px;row-names:root.names;row-values:root.values;selected-row:root.selected;more-above:root.more-above;more-below:root.more-below;ink:root.ink;accent:root.accent;paper:root.paper;instrument-style:true;}
+        ParamListColumn { row-picked(i) => { root.parameter-touched(i, 0); } row-adjusted(i,d) => { root.parameter-touched(i,d); }width:300px;row-names:root.names;row-values:root.values;selected-row:root.selected;more-above:root.more-above;more-below:root.more-below;ink:root.ink;accent:root.accent;paper:root.paper;instrument-style:true;}
         VerticalLayout {padding-top:7px;spacing:4px;
             HorizontalLayout {height:24px;
                 Text {text:"PATCH MATRIX";color:root.ink;font-family:"Space Grotesk";font-size:21px;font-weight:600;}

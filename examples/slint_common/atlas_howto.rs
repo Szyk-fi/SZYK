@@ -1,7 +1,7 @@
 //! Screenshots for the Atlas how-to (docs/ATLAS_HOWTO.md), rendered from
 //! the real app driven with real `Input` -- nothing is mocked up. Run the
 //! live example with `--render-atlas-howto OUTPUT_DIRECTORY`; it writes
-//! `NN-name.png`, each the whole device frame (1240x560) so the buttons the
+//! `NN-name.png`, each the whole device frame (1460x656) so the buttons the
 //! text talks about are in the picture.
 use super::*;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
@@ -23,7 +23,7 @@ pub fn render(directory: &str) {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     let clock = Rc::new(std::cell::Cell::new(std::time::Duration::ZERO));
     slint::platform::set_platform(Box::new(HowtoPlatform(window.clone(), clock.clone()))).unwrap();
-    window.set_size(PhysicalSize::new(1240, 560));
+    window.set_size(PhysicalSize::new(1460, 656));
     std::fs::create_dir_all(directory).unwrap();
     // The run stores a moment and binds a route; keep those out of the
     // player's real saves/.
@@ -87,12 +87,12 @@ pub fn render(directory: &str) {
         clock.set(clock.get() + std::time::Duration::from_secs(2));
         slint::platform::update_timers_and_animations();
         window.request_redraw();
-        let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1240, 560);
+        let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(1460, 656);
         window.draw_if_needed(|renderer| {
-            renderer.render(pixels.make_mut_slice(), 1240);
+            renderer.render(pixels.make_mut_slice(), 1460);
         });
         let path = std::path::Path::new(directory).join(file);
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(&path).unwrap()), 1240, 560);
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(&path).unwrap()), 1460, 656);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.write_header().unwrap().write_image_data(pixels.as_bytes()).unwrap();

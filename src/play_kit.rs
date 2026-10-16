@@ -422,7 +422,7 @@ impl PlayKit {
         let mut out = *input;
         out.shoulder_press = [false; 2];
 
-        if !self.menu {
+        if !self.menu && !input.controller_edit {
             self.play_controls(host, input, layer);
             out.knob1 = 0;
             out.knob2 = 0;
@@ -466,7 +466,7 @@ impl PlayKit {
                 self.learn(host, input, n);
             }
         }
-        Step { menu: self.menu, native, input: out }
+        Step { menu: self.menu || input.controller_edit, native, input: out }
     }
 
     /// The play view's controls. ROVE has no encoders: one dial is
